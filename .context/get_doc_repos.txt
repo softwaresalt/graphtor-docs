@@ -1,0 +1,38 @@
+import requests
+
+def get_all_ms_docs_repos(github_token=None):
+    headers = {'Accept': 'application/vnd.github.v3+json'}
+    if github_token:
+        headers['Authorization'] = f'token {github_token}'
+        
+    repos = []
+    page = 1
+    
+    while True:
+        url = f"[https://api.github.com/orgs/MicrosoftDocs/repos?per_page=100&page=](https://api.github.com/orgs/MicrosoftDocs/repos?per_page=100&page=){page}"
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        data = response.json()
+        if not data:
+            break
+            
+        for repo in data:
+            # Optional: Filter out localization repos to save space
+            if not repo['name'].count('.') > 0 or repo['name'].endswith('.en-us'):
+                repos.append({
+                    "name": repo['name'],
+                    "url": repo['html_url'],
+                    "clone_url": repo['clone_url'],
+                    "description": repo['description']
+                })
+        page += 1
+        
+    return repos
+
+# Example usage
+all_repos = get_all_ms_docs_repos()
+print(f"Discovered {len(all_repos)} repositories.")
+for r in all_repos[:5]:
+    print(r['url'])
+

@@ -1,0 +1,69 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			".specify/scripts/bash/": true,
+			".specify/scripts/powershell/": true,
+			"/^python(3)?(\\.exe)?\\s+[^;|&`]+(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^& python(3)?(\\.exe)?\\s+[^;|&`]+(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^(pip|pip3)\\s+(install|uninstall|list|show|freeze|check|search|download|wheel|hash|config|debug|inspect)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^pytest(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^mypy(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^ruff\\s+(check|format|rule|linter|version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^ollama\\s+(list|show|pull|run|ps|serve|help|version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^git\\s+(status|add|commit|diff|log|fetch|pull|push|checkout|branch|--version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^& git\\s+(status|add|commit|diff|log|fetch|pull|push|checkout|branch|--version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^(Out-File|Set-Content|Add-Content|Get-Content|Get-ChildItem|Copy-Item|Move-Item|New-Item|Test-Path)(\\s[^;|&`]*)?$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^(echo|dir|mkdir|where\\.exe)(\\s[^;|&`]*)?$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"pip": true,
+			"pip install": true,
+			"pytest": true,
+			"mypy": true,
+			"ruff check": true,
+			"ruff format": true,
+			"git add": true,
+			"git commit": true,
+			"git push": true,
+			"New-Item": true,
+			"Out-Null": true,
+			"ForEach-Object": true
+		}
+	}
+}
