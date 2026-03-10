@@ -17,3 +17,5 @@ pub mod config;
 pub mod error;
 pub mod logging;
 pub mod path;
+
+pub use error::GraphtorError;

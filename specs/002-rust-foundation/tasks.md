@@ -37,16 +37,16 @@
 
 ### Tests for Error Types
 
-- [ ] T006 [P] [US2] Write unit tests for GraphtorError variant construction and Display output in src/error/types.rs (test module)
-- [ ] T007 [P] [US2] Write unit tests for From conversions (std::io::Error → GraphtorError::Io, serde_yaml::Error → GraphtorError::Config) in src/error/types.rs (test module)
-- [ ] T008 [US2] Write integration test verifying all 8 error categories produce distinct, human-readable messages with context in tests/error_test.rs
+- [x] T006 [P] [US2] Write unit tests for GraphtorError variant construction and Display output in src/error/types.rs (test module)
+- [x] T007 [P] [US2] Write unit tests for From conversions (std::io::Error → GraphtorError::Io, serde_yaml::Error → GraphtorError::Config) in src/error/types.rs (test module)
+- [x] T008 [US2] Write integration test verifying all 8 error categories produce distinct, human-readable messages with context in tests/error_test.rs
 
 ### Implementation for Error Types
 
-- [ ] T009 [US2] Define GraphtorError enum with thiserror derives in src/error/types.rs: Config, Database, Pipeline, Parse, Embed, PathViolation, Sync, Io variants per data-model.md
-- [ ] T010 [P] [US2] Implement From<std::io::Error> and From<serde_yaml::Error> conversions in src/error/types.rs
-- [ ] T011 [US2] Implement Display format `[{category}] {message}: {context}` for all variants in src/error/types.rs
-- [ ] T012 [US2] Export error types from src/error/mod.rs and re-export from src/lib.rs
+- [x] T009 [US2] Define GraphtorError enum with thiserror derives in src/error/types.rs: Config, Database, Pipeline, Parse, Embed, PathViolation, Sync, Io variants per data-model.md
+- [x] T010 [P] [US2] Implement From<std::io::Error> and From<serde_yaml::Error> conversions in src/error/types.rs
+- [x] T011 [US2] Implement Display format `[{category}] {message}: {context}` for all variants in src/error/types.rs
+- [x] T012 [US2] Export error types from src/error/mod.rs and re-export from src/lib.rs
 
 **Checkpoint**: Error types available — all modules can now use `GraphtorError` for typed error handling
 
