@@ -131,17 +131,17 @@
 
 ### Tests for User Story 5
 
-- [ ] T036 [P] [US5] Write unit tests for valid paths: relative within root, absolute within root in src/path/security.rs (test module)
-- [ ] T037 [P] [US5] Write unit tests for rejected paths: .. traversal, absolute outside root in src/path/security.rs (test module)
-- [ ] T038 [P] [US5] Write unit tests for edge cases: redundant separators, Windows-style paths in src/path/security.rs (test module)
-- [ ] T039 [US5] Write integration test for path validation with real filesystem (temp dirs) in tests/path_security_test.rs
+- [x] T036 [P] [US5] Write unit tests for valid paths: relative within root, absolute within root in src/path/security.rs (test module)
+- [x] T037 [P] [US5] Write unit tests for rejected paths: .. traversal, absolute outside root in src/path/security.rs (test module)
+- [x] T038 [P] [US5] Write unit tests for edge cases: redundant separators, Windows-style paths in src/path/security.rs (test module)
+- [x] T039 [US5] Write integration test for path validation with real filesystem (temp dirs) in tests/path_security_test.rs
 
 ### Implementation for User Story 5
 
-- [ ] T040 [US5] Implement validate_path(path, allowed_root) → Result<PathBuf, GraphtorError> in src/path/security.rs per contracts/library-api-contract.md
-- [ ] T041 [US5] Implement canonicalization and starts_with boundary check in src/path/security.rs
-- [ ] T042 [US5] Handle non-existent path case: canonicalize parent, validate constructed child in src/path/security.rs
-- [ ] T043 [US5] Export path types from src/path/mod.rs and re-export from src/lib.rs
+- [x] T040 [US5] Implement validate_path(path, allowed_root) → Result<PathBuf, GraphtorError> in src/path/security.rs per contracts/library-api-contract.md
+- [x] T041 [US5] Implement canonicalization and starts_with boundary check in src/path/security.rs
+- [x] T042 [US5] Handle non-existent path case: canonicalize parent, validate constructed child in src/path/security.rs
+- [x] T043 [US5] Export path types from src/path/mod.rs and re-export from src/lib.rs
 
 **Checkpoint**: Path security functional — all file operations can be validated against workspace boundaries
 

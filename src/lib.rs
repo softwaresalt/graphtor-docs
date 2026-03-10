@@ -22,3 +22,4 @@ pub use chunk::generate_chunk_id;
 pub use config::{GitSource, LocalSource, Source, SourceConfig};
 pub use error::GraphtorError;
 pub use logging::{init_logging, LogVerbosity};
+pub use path::validate_path;
