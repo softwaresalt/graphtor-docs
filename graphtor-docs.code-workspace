@@ -5,65 +5,65 @@
 		}
 	],
 	"settings": {
+    "chat.agent.maxRequests": 1000,
 		"chat.tools.terminal.autoApprove": {
-			".specify/scripts/bash/": true,
-			".specify/scripts/powershell/": true,
-			"/^python(3)?(\\.exe)?\\s+[^;|&`]+(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^& python(3)?(\\.exe)?\\s+[^;|&`]+(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^(pip|pip3)\\s+(install|uninstall|list|show|freeze|check|search|download|wheel|hash|config|debug|inspect)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^pytest(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^mypy(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^ruff\\s+(check|format|rule|linter|version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^ollama\\s+(list|show|pull|run|ps|serve|help|version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^git\\s+(status|add|commit|diff|log|fetch|pull|push|checkout|branch|--version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^& git\\s+(status|add|commit|diff|log|fetch|pull|push|checkout|branch|--version)(\\s[^;|&`]*)?(\\s*(>|>>|2>&1|\\|\\s*(Out-File|Set-Content|Out-String))\\s*[^;|&`]*)*$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^(Out-File|Set-Content|Add-Content|Get-Content|Get-ChildItem|Copy-Item|Move-Item|New-Item|Test-Path)(\\s[^;|&`]*)?$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"/^(echo|dir|mkdir|where\\.exe)(\\s[^;|&`]*)?$/": {
-				"approve": true,
-				"matchCommandLine": true
-			},
-			"pip": true,
-			"pip install": true,
-			"pytest": true,
-			"mypy": true,
-			"ruff check": true,
-			"ruff format": true,
-			"git add": true,
-			"git commit": true,
-			"git push": true,
-			"New-Item": true,
-			"Out-Null": true,
-			"ForEach-Object": true
+      ".specify/scripts/bash/": true,
+      ".specify/scripts/powershell/": true,
+      "/^cargo metadata --format-version 1 2>\\$null \\| python -c \"import json,sys; data=json\\.load\\(sys\\.stdin\\); pkgs=\\[p for p in data\\['packages'\\] if p\\['name'\\]=='rmcp'\\]; print\\(pkgs\\[0\\]\\['manifest_path'\\] if pkgs else 'not found'\\)\"$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/check-prerequisites\\.ps1 -Json -RequireTasks -IncludeTasks$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/check-prerequisites\\.ps1 -Json$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/setup-plan\\.ps1 -Json$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/update-agent-context\\.ps1 -AgentType copilot$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "Clear-Host": true,
+      "ForEach-Object": true,
+      "Get-Item": true,
+      "Get-NetTCPConnection": true,
+      "Group-Object": true,
+      "New-Item": true,
+      "Out-File": true,
+      "Out-Null": true,
+      "Test-Path": true,
+      "cargo add": true,
+      "cargo audit": true,
+      "cargo build": true,
+      "cargo check": true,
+      "cargo clippy": true,
+      "cargo doc": true,
+      "cargo fmt": true,
+      "cargo home": true,
+      "cargo info": true,
+      "cargo metadata": true,
+      "cargo search": true,
+      "cargo test": true,
+      "git add": true,
+      "git commit": true,
+      "git ls-remote": true,
+      "git push": true,
+      "git restore": true,
+      "netstat": true,
+      "rustup": true,
+      "^gh(\\s[^;|&`]*)?$": {
+        "approve": true,
+        "matchCommandLine": true
+			}
 		}
+    "github.copilot.chat.advanced.workspace.codeSearchExternalIngest.enabled": true,
+    "github.copilot.chat.copilotMemory.enabled": true,
+    "powershell.cwd": "graphtor-docs"
 	}
 }

@@ -12,6 +12,10 @@
 			"type": "http",
 			"url": "https://learn.microsoft.com/api/mcp"
 		},
+		"agent-intercom": {
+			"type": "http",
+			"url": "http://127.0.0.1:3000/mcp?workspace_id=graphtor-docs"
+		},
 		"tavily": {
 			"url": "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
 			"type": "http"
