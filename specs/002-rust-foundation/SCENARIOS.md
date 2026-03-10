@@ -20,6 +20,7 @@
 | S009 | Config – Edge | Non-existent config file | The path to sources.yaml does not exist on disk | The config is parsed | An Io error is reported with the file path and "not found" context | FR-002 | P2 |
 | S010 | Config – Edge | UTF-8 BOM in config file | A sources.yaml file starting with a UTF-8 BOM marker | The config is parsed | The file is parsed successfully (BOM is handled) | FR-001 | P3 |
 | S011 | Config – Edge | Source ID with special characters | A sources.yaml where a source `id` is "my source!" (contains spaces and punctuation) | Validation runs | An error is reported that the ID contains invalid characters, explaining the allowed pattern | FR-002 | P2 |
+| S040 | Config – Edge | Include/exclude pattern precedence | A sources.yaml where a file matches both an `include` and an `exclude` pattern | Validation or filtering runs | The `exclude` pattern takes priority and the file is excluded | FR-012 | P2 |
 
 ### Error Handling
 
@@ -68,14 +69,15 @@
 | S037 | Path – Edge | Path with redundant separators | Path is "docs///azure//auth.md" | Path is validated | The path is normalized and accepted if within root | FR-008 | P2 |
 | S038 | Path – Edge | Non-existent path within root | A path that doesn't exist yet but is within the allowed root | Path is validated | Validation either accepts it (parent exists) or returns an appropriate error | FR-007 | P2 |
 | S039 | Path – Edge | Windows-style path separators | Path uses backslashes "docs\\azure\\auth.md" on Windows | Path is validated | The path is normalized using platform conventions and validated correctly | FR-008 | P2 |
+| S041 | Path – Security | Symlink escaping allowed root | A symlink inside the allowed root points to a directory outside the root (e.g., /home/dev/docs/link → /etc/) | A file accessed through the symlink is validated | A PathViolation error is returned because the resolved path is outside the allowed root | FR-007, FR-008 | P1 |
 
 ## Summary
 
 | Category | Count | P1 | P2 | P3 |
 |----------|-------|----|----|----|
-| Configuration Parsing | 11 | 6 | 4 | 1 |
+| Configuration Parsing | 12 | 6 | 5 | 1 |
 | Error Handling | 6 | 4 | 0 | 1 |
 | Chunk ID Generation | 8 | 5 | 2 | 1 |
 | Logging | 6 | 4 | 2 | 0 |
-| Path Security | 8 | 5 | 3 | 0 |
-| **Total** | **39** | **24** | **11** | **3** |
+| Path Security | 9 | 6 | 3 | 0 |
+| **Total** | **41** | **25** | **12** | **3** |

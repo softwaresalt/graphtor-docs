@@ -29,6 +29,7 @@ LocalSource
   - id: String
   - path: String
   - include: Vec<String>
+  - exclude: Vec<String> (default: empty)
 ```
 
 ### Key Behaviors
@@ -64,14 +65,14 @@ GraphtorError (enum)
 ### Public Functions
 
 ```text
-generate_chunk_id(content: &str, source_path: &str) -> String
+generate_chunk_id(content: &str, source_path: &str) -> Result<String, GraphtorError>
 ```
 
 ### Key Behaviors
 
-- Returns 64-character lowercase hex string (SHA-256).
+- Returns 64-character lowercase hex string (SHA-256) on success.
 - Input: `content + "\0" + source_path`.
-- Panics if `content` or `source_path` is empty (caught by validation before reaching this point).
+- Returns `GraphtorError::Parse` if `content` or `source_path` is empty.
 - Deterministic: same inputs always produce the same output.
 
 ## Module: `logging`

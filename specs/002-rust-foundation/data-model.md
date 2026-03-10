@@ -16,7 +16,7 @@ Top-level configuration parsed from `sources.yaml`.
 
 ### Source (enum)
 
-A documentation source, either a Git repository or a local directory.
+A documentation source, either a Git repository or a local directory. Discriminated in YAML by the `type` field (e.g., `type: git` or `type: local`). Uses serde's internally tagged enum deserialization (`#[serde(tag = "type")]`).
 
 **Variant: GitSource**
 
@@ -35,6 +35,7 @@ A documentation source, either a Git repository or a local directory.
 | id | String | Unique identifier for this source (e.g., "internal-api-docs") |
 | path | String | Filesystem path to the local documentation directory |
 | include | Vec&lt;String&gt; | Glob patterns for files to include |
+| exclude | Vec&lt;String&gt; | Glob patterns for files to exclude (default: empty) |
 
 **Uniqueness**: Source `id` must be unique across all sources in the config.
 

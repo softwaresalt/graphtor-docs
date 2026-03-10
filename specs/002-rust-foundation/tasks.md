@@ -27,24 +27,26 @@
 
 ---
 
-## Phase 2: Foundational — Error Type Hierarchy (US2 prerequisite)
+## Phase 2: Foundational — Error Type Hierarchy (US2, promoted to foundational)
 
 **Purpose**: Error types are used by every other module — MUST complete before user story phases
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
+> **Note**: User Story 2 (Error Diagnostics) was promoted to the Foundational phase because all other user stories depend on the error type hierarchy. Tasks carry the [US2] label for traceability.
+
 ### Tests for Error Types
 
-- [ ] T006 [P] Write unit tests for GraphtorError variant construction and Display output in src/error/types.rs (test module)
-- [ ] T007 [P] Write unit tests for From conversions (std::io::Error → GraphtorError::Io, serde_yaml::Error → GraphtorError::Config) in src/error/types.rs (test module)
-- [ ] T008 Write integration test verifying all 8 error categories produce distinct, human-readable messages with context in tests/error_test.rs
+- [ ] T006 [P] [US2] Write unit tests for GraphtorError variant construction and Display output in src/error/types.rs (test module)
+- [ ] T007 [P] [US2] Write unit tests for From conversions (std::io::Error → GraphtorError::Io, serde_yaml::Error → GraphtorError::Config) in src/error/types.rs (test module)
+- [ ] T008 [US2] Write integration test verifying all 8 error categories produce distinct, human-readable messages with context in tests/error_test.rs
 
 ### Implementation for Error Types
 
-- [ ] T009 Define GraphtorError enum with thiserror derives in src/error/types.rs: Config, Database, Pipeline, Parse, Embed, PathViolation, Sync, Io variants per data-model.md
-- [ ] T010 [P] Implement From<std::io::Error> and From<serde_yaml::Error> conversions in src/error/types.rs
-- [ ] T011 Implement Display format `[{category}] {message}: {context}` for all variants in src/error/types.rs
-- [ ] T012 Export error types from src/error/mod.rs and re-export from src/lib.rs
+- [ ] T009 [US2] Define GraphtorError enum with thiserror derives in src/error/types.rs: Config, Database, Pipeline, Parse, Embed, PathViolation, Sync, Io variants per data-model.md
+- [ ] T010 [P] [US2] Implement From<std::io::Error> and From<serde_yaml::Error> conversions in src/error/types.rs
+- [ ] T011 [US2] Implement Display format `[{category}] {message}: {context}` for all variants in src/error/types.rs
+- [ ] T012 [US2] Export error types from src/error/mod.rs and re-export from src/lib.rs
 
 **Checkpoint**: Error types available — all modules can now use `GraphtorError` for typed error handling
 
@@ -91,8 +93,8 @@
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Implement generate_chunk_id(content, source_path) → 64-char hex SHA-256 hash in src/chunk/id.rs per contracts/library-api-contract.md
-- [ ] T028 [US3] Implement input validation: reject empty content or path with descriptive error in src/chunk/id.rs
+- [ ] T027 [US3] Implement generate_chunk_id(content, source_path) → Result<String, GraphtorError> with 64-char hex SHA-256 hash in src/chunk/id.rs per contracts/library-api-contract.md
+- [ ] T028 [US3] Implement input validation: return GraphtorError::Parse for empty content or path in src/chunk/id.rs
 - [ ] T029 [US3] Export chunk types from src/chunk/mod.rs and re-export from src/lib.rs
 
 **Checkpoint**: Chunk ID generation functional — deterministic cross-database correlation key available

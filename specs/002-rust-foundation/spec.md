@@ -105,7 +105,7 @@ A developer's documentation sources may reference paths that attempt to escape t
 
 ### Functional Requirements
 
-- **FR-001**: System MUST parse a `sources.yaml` configuration file that defines documentation sources, supporting both Git repository sources (with id, url, branch, include/exclude patterns) and local directory sources (with id, path, include patterns).
+- **FR-001**: System MUST parse a `sources.yaml` configuration file that defines documentation sources, supporting both Git repository sources (with id, url, branch, include/exclude patterns) and local directory sources (with id, path, include/exclude patterns).
 - **FR-002**: System MUST validate all configuration fields at parse time and report specific, actionable error messages for any malformed entries.
 - **FR-003**: System MUST define a categorized error type hierarchy covering: configuration errors, database errors, pipeline errors, parsing errors, embedding errors, path security violations, sync errors, and I/O errors.
 - **FR-004**: Every error reported by the system MUST include the error category, a human-readable description, and sufficient context (file path, operation name, etc.) to diagnose the issue.
@@ -122,7 +122,7 @@ A developer's documentation sources may reference paths that attempt to escape t
 
 - **SourceConfig**: The top-level configuration representing a parsed `sources.yaml` file, containing a list of documentation sources.
 - **GitSource**: A documentation source defined by a Git repository URL, branch, and file filtering patterns (include/exclude globs). Identified by a unique string ID.
-- **LocalSource**: A documentation source defined by a local filesystem path and file filtering patterns. Identified by a unique string ID.
+- **LocalSource**: A documentation source defined by a local filesystem path and file filtering patterns (include/exclude globs). Identified by a unique string ID.
 - **ChunkId**: A 64-character hexadecimal string derived from SHA-256 hash of content and source path. Used as the cross-database correlation key.
 - **GraphtorError**: A categorized error with variant, human-readable message, and diagnostic context. Variants cover all pipeline failure modes.
 
