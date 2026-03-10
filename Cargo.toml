@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "graphtor-core"
+version = "0.1.0"
+edition = "2021"
+description = "GraphRAG documentation index — core library and CLI"
+license = "MIT"
+rust-version = "1.75"
+
+[lib]
+name = "graphtor_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "graphtor-docs"
+path = "src/main.rs"
+
+[dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+sha2 = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+globset = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

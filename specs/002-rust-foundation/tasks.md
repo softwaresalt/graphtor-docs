@@ -19,11 +19,11 @@
 
 **Purpose**: Initialize the Rust project structure and dependency manifest
 
-- [ ] T001 Create Cargo.toml workspace with library crate (graphtor-core) and binary target (graphtor-docs) per plan.md structure
-- [ ] T002 [P] Create directory structure: src/config/, src/error/, src/chunk/, src/logging/, src/path/ with mod.rs files
-- [ ] T003 [P] Create src/lib.rs with module declarations and public re-exports
-- [ ] T004 [P] Create src/main.rs with placeholder binary entry point
-- [ ] T005 [P] Create tests/ directory for integration tests
+- [x] T001 Create Cargo.toml workspace with library crate (graphtor-core) and binary target (graphtor-docs) per plan.md structure
+- [x] T002 [P] Create directory structure: src/config/, src/error/, src/chunk/, src/logging/, src/path/ with mod.rs files
+- [x] T003 [P] Create src/lib.rs with module declarations and public re-exports
+- [x] T004 [P] Create src/main.rs with placeholder binary entry point
+- [x] T005 [P] Create tests/ directory for integration tests
 
 ---
 
