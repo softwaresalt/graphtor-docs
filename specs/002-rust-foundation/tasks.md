@@ -109,15 +109,15 @@
 
 ### Tests for User Story 4
 
-- [ ] T030 [P] [US4] Write unit tests for LogVerbosity enum → tracing level mapping in src/logging/init.rs (test module)
-- [ ] T031 [US4] Write integration test for logging initialization and verbosity filtering in tests/logging_test.rs
+- [x] T030 [P] [US4] Write unit tests for LogVerbosity enum → tracing level mapping in src/logging/init.rs (test module)
+- [x] T031 [US4] Write integration test for logging initialization and verbosity filtering in tests/logging_test.rs
 
 ### Implementation for User Story 4
 
-- [ ] T032 [US4] Define LogVerbosity enum (Quiet, Normal, Verbose) in src/logging/init.rs
-- [ ] T033 [US4] Implement init_logging(verbosity) to configure tracing-subscriber with level filter and stderr output in src/logging/init.rs
-- [ ] T034 [US4] Handle double-initialization gracefully (return error, do not panic) in src/logging/init.rs
-- [ ] T035 [US4] Export logging types from src/logging/mod.rs and re-export from src/lib.rs
+- [x] T032 [US4] Define LogVerbosity enum (Quiet, Normal, Verbose) in src/logging/init.rs
+- [x] T033 [US4] Implement init_logging(verbosity) to configure tracing-subscriber with level filter and stderr output in src/logging/init.rs
+- [x] T034 [US4] Handle double-initialization gracefully (return error, do not panic) in src/logging/init.rs
+- [x] T035 [US4] Export logging types from src/logging/mod.rs and re-export from src/lib.rs
 
 **Checkpoint**: Logging infrastructure functional — all pipeline stages can emit structured diagnostics
 
