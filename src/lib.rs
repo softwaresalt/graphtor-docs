@@ -18,4 +18,5 @@ pub mod error;
 pub mod logging;
 pub mod path;
 
+pub use config::{GitSource, LocalSource, Source, SourceConfig};
 pub use error::GraphtorError;

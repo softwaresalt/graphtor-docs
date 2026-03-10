@@ -4,3 +4,9 @@
 //! [`LocalSource`] types for reading and validating the documentation source
 //! registry. Configuration is parsed from a YAML file and validated before
 //! any pipeline stage begins.
+
+pub mod source;
+pub mod validation;
+
+pub use source::{GitSource, LocalSource, Source, SourceConfig};
+pub use validation::validate;

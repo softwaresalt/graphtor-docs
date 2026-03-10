@@ -60,19 +60,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T013 [P] [US1] Write unit tests for SourceConfig deserialization from valid YAML (Git + local sources, all fields, defaults) in src/config/source.rs (test module)
-- [ ] T014 [P] [US1] Write unit tests for config validation: duplicate IDs, empty fields, invalid glob patterns in src/config/validation.rs (test module)
-- [ ] T015 [P] [US1] Write unit tests for edge cases: empty sources list, wrong YAML structure, non-existent file in src/config/source.rs (test module)
-- [ ] T016 [US1] Write integration test for end-to-end config parsing from file in tests/config_test.rs
+- [x] T013 [P] [US1] Write unit tests for SourceConfig deserialization from valid YAML (Git + local sources, all fields, defaults) in src/config/source.rs (test module)
+- [x] T014 [P] [US1] Write unit tests for config validation: duplicate IDs, empty fields, invalid glob patterns in src/config/validation.rs (test module)
+- [x] T015 [P] [US1] Write unit tests for edge cases: empty sources list, wrong YAML structure, non-existent file in src/config/source.rs (test module)
+- [x] T016 [US1] Write integration test for end-to-end config parsing from file in tests/config_test.rs
 
 ### Implementation for User Story 1
 
-- [ ] T017 [P] [US1] Define SourceConfig, GitSource, LocalSource structs with serde derives in src/config/source.rs per data-model.md
-- [ ] T018 [P] [US1] Implement default values (branch = "main") via serde default attributes in src/config/source.rs
-- [ ] T019 [US1] Implement SourceConfig::parse(path) to read YAML file and deserialize in src/config/source.rs
-- [ ] T020 [US1] Implement config validation: duplicate ID detection, source ID format check, glob pattern syntax check in src/config/validation.rs
-- [ ] T021 [US1] Implement clear error mapping: serde_yaml errors → GraphtorError::Config with field/position context in src/config/source.rs
-- [ ] T022 [US1] Export config types from src/config/mod.rs and re-export from src/lib.rs
+- [x] T017 [P] [US1] Define SourceConfig, GitSource, LocalSource structs with serde derives in src/config/source.rs per data-model.md
+- [x] T018 [P] [US1] Implement default values (branch = "main") via serde default attributes in src/config/source.rs
+- [x] T019 [US1] Implement SourceConfig::parse(path) to read YAML file and deserialize in src/config/source.rs
+- [x] T020 [US1] Implement config validation: duplicate ID detection, source ID format check, glob pattern syntax check in src/config/validation.rs
+- [x] T021 [US1] Implement clear error mapping: serde_yaml errors → GraphtorError::Config with field/position context in src/config/source.rs
+- [x] T022 [US1] Export config types from src/config/mod.rs and re-export from src/lib.rs
 
 **Checkpoint**: sources.yaml parsing and validation functional — can load developer's documentation registry
 
