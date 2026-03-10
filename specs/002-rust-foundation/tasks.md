@@ -151,12 +151,12 @@
 
 **Purpose**: Quality improvements across all modules
 
-- [ ] T044 [P] Add rustdoc documentation comments to all public types and functions across src/
-- [ ] T045 [P] Run clippy lints and fix all warnings: `cargo clippy -- -W clippy::all`
-- [ ] T046 [P] Run rustfmt and ensure formatting compliance: `cargo fmt --check`
-- [ ] T047 Run full test suite and verify all SCENARIOS.md P1 scenarios pass: `cargo test`
-- [ ] T048 [P] Update quickstart.md with verified, runnable code examples
-- [ ] T049 Validate against contracts/library-api-contract.md: all public APIs match contract
+- [x] T044 [P] Add rustdoc documentation comments to all public types and functions across src/
+- [x] T045 [P] Run clippy lints and fix all warnings: `cargo clippy -- -W clippy::all`
+- [x] T046 [P] Run rustfmt and ensure formatting compliance: `cargo fmt --check`
+- [x] T047 Run full test suite and verify all SCENARIOS.md P1 scenarios pass: `cargo test`
+- [x] T048 [P] Update quickstart.md with verified, runnable code examples
+- [x] T049 Validate against contracts/library-api-contract.md: all public APIs match contract
 
 ---
 

@@ -38,6 +38,18 @@ impl SourceConfig {
         crate::config::validation::validate(&config)?;
         Ok(config)
     }
+
+    /// Validate this configuration against all semantic rules.
+    ///
+    /// Checks for duplicate source IDs, empty required fields, and valid glob
+    /// patterns. Validation is also run automatically by [`parse`](Self::parse).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphtorError::Config`] if any validation rule fails.
+    pub fn validate(&self) -> Result<(), GraphtorError> {
+        crate::config::validation::validate(self)
+    }
 }
 
 /// A documentation source — either a remote Git repository or a local directory.
