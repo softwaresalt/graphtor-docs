@@ -1,21 +1,23 @@
 <!--
   SYNC IMPACT REPORT
   ==================
-  Version change: N/A → 1.0.0 (initial ratification)
-  Modified principles: N/A (initial)
+  Version change: 1.0.0 → 2.0.0 (MAJOR: Rust-native rewrite)
+  Modified principles:
+    - I. Local-First Architecture: Ollama → Candle in-process embeddings
+    - II. Lightweight Footprint: Python → single Rust binary, Ollama models → Candle all-MiniLM-L6-v2
+    - III. Data Pipeline Integrity: LLM graph extraction → deterministic pulldown-cmark parsing
+    - V. Automation & Reproducibility: sources.yaml dynamic registry, git2 incremental sync
   Added sections:
-    - Core Principles (5): Local-First Architecture,
-      Lightweight Footprint, Data Pipeline Integrity,
-      MCP-Native Interface, Automation & Reproducibility
-    - Technology Stack Constraints
-    - Development Workflow
-    - Governance
-  Removed sections: N/A (initial)
+    - None (existing sections updated)
+  Removed sections:
+    - None (existing sections updated)
   Templates requiring updates:
-    - .specify/templates/plan-template.md ✅ no changes needed
-    - .specify/templates/spec-template.md ✅ no changes needed
-    - .specify/templates/tasks-template.md ✅ no changes needed
-  Follow-up TODOs: None
+    - .specify/templates/plan-template.md ✅ no changes needed (generic)
+    - .specify/templates/spec-template.md ✅ no changes needed (generic)
+    - .specify/templates/tasks-template.md ✅ no changes needed (generic)
+  Follow-up TODOs:
+    - Update .github/copilot-instructions.md for Rust conventions
+    - Update AGENTS.md for Rust development workflow
 -->
 
 # LocalDocRAG Constitution
@@ -28,52 +30,71 @@ All components MUST run locally with zero cloud service dependencies.
 
 - Embedded databases MUST be used for storage (LanceDB for vectors,
   Kùzu for property graphs). No networked database servers.
-- LLM inference (embedding and extraction) MUST use locally-hosted
-  models via Ollama. No API calls to remote LLM providers.
-- The MCP plugin server MUST bind to localhost only.
+- Embedding inference MUST use the in-process Candle framework running
+  the all-MiniLM-L6-v2 model natively in Rust. No external model
+  servers, no API calls to remote providers.
+- Graph extraction MUST use deterministic parsing (pulldown-cmark AST)
+  rather than LLM inference. No LLM is required for the ingestion
+  pipeline.
+- The MCP plugin server MUST bind to localhost only (STDIO transport).
 - No documentation content or user queries leave the developer's
   machine.
+- The entire system compiles to a single binary with zero runtime
+  dependencies.
 
-**Rationale**: Guarantees privacy, eliminates network latency,
-and enables fully offline operation.
+**Rationale**: Guarantees privacy, eliminates network latency, removes
+environment friction (no Python, pip, or ML framework installation),
+and enables fully offline operation on any developer workstation.
 
 ### II. Lightweight Footprint
 
 Every dependency and resource choice MUST minimize disk, memory,
 and CPU consumption.
 
+- The system MUST compile to a single, zero-dependency Rust binary.
+  Developers in C#, Go, Java, or Node.js workspaces can install and
+  run the plugin without configuring interpreters or package managers.
 - Use embedded/specialized databases over general-purpose servers.
-- Target specific documentation repositories via shallow clones
-  (`--depth 1`) rather than full history or web scraping.
-- Prefer efficient models: `nomic-embed-text` (8k context) for
-  embeddings, `phi-4` or `llama-3.2` for graph extraction.
-- Every new dependency MUST justify its inclusion — if the standard
-  library or an existing dependency can accomplish the task, use it.
-- Filter localized repositories at acquisition time to prevent
-  duplicate content bloat.
+- Use a dynamic `sources.yaml` registry so developers index only the
+  documentation they need, not the entire corpus.
+- Prefer efficient models: `all-MiniLM-L6-v2` (~80MB) for embeddings
+  via the Candle framework. No heavyweight ML runtimes (PyTorch, etc.).
+- Graph relationships are extracted deterministically from Markdown
+  structure (headings, links, code blocks) — no LLM required.
+- Every new crate dependency MUST justify its inclusion — if the
+  standard library or an existing dependency can accomplish the task,
+  use it.
+- For Git sources, use shallow clones (`--depth 1`) via the git2 crate
+  to minimize disk usage.
 
-**Rationale**: The Microsoft Docs corpus is massive; the system
-MUST remain practical on a single developer workstation.
+**Rationale**: The documentation corpus can be massive; the system
+MUST remain practical on a single developer workstation with standard
+hardware. A single binary eliminates the "Python virtual environment"
+problem entirely.
 
 ### III. Data Pipeline Integrity
 
 The ingestion pipeline MUST produce deterministic, reproducible,
 and verifiable results.
 
-- Every chunk MUST carry a stable `chunk_id` (UUID) that serves as
-  the correlation key across vector and graph stores.
-- Normalization steps (YAML frontmatter stripping, UI-tag removal,
-  locale filtering) MUST be idempotent — running them twice on the
-  same input MUST produce identical output.
-- Graph extraction prompts MUST enforce strict JSON schema output.
-  Freeform or unstructured LLM responses MUST be rejected and
-  retried.
+- Every chunk MUST carry a stable `chunk_id` (SHA-256 of content +
+  source path) that serves as the correlation key across vector and
+  graph stores.
+- Markdown parsing uses pulldown-cmark's AST event stream to
+  deterministically extract headings, links, and code blocks with
+  100% precision — no probabilistic LLM extraction.
+- Normalization steps (YAML frontmatter stripping, heading-based
+  chunking) MUST be idempotent — running them twice on the same
+  input MUST produce identical output.
 - Schema changes to LanceDB or Kùzu MUST be versioned and
   accompanied by a migration path or full rebuild procedure.
+- Incremental sync MUST use git commit hashes (for Git sources) and
+  file modification timestamps (for local sources) to identify
+  changed files and perform surgical re-ingestion.
 
-**Rationale**: Corrupt or inconsistent data silently degrades
-retrieval quality and is extremely difficult to diagnose after
-the fact.
+**Rationale**: Deterministic parsing eliminates the unpredictability
+of LLM-based extraction. Corrupt or inconsistent data silently
+degrades retrieval quality and is extremely difficult to diagnose.
 
 ### IV. MCP-Native Interface
 
@@ -100,50 +121,63 @@ All data acquisition, processing, and loading MUST be fully
 scriptable, idempotent, and re-runnable without manual
 intervention.
 
+- The `sources.yaml` registry defines exactly what documentation
+  the developer wants indexed. Adding a new source is a single
+  config edit followed by `graphtor-docs sync`.
 - Clone operations MUST skip repositories that already exist
-  locally.
-- Group organization MUST be deterministic from the source
-  manifest (`ms-docs-grouped.txt`).
-- The full pipeline (acquire → normalize → chunk → extract → load)
-  MUST be executable as a single command or ordered script
-  sequence.
-- Generated artifacts (batch scripts, database files) MUST be
+  locally. Incremental sync MUST only re-process changed files.
+- The full pipeline (acquire → parse → embed → load) MUST be
+  executable as a single `sync` command.
+- The system MUST support incremental updates: track last-processed
+  commit (Git) or file mtime (local), compute diffs, and surgically
+  re-ingest only what changed.
+- Generated artifacts (database files, sync state) MUST be
   reproducible from source inputs alone.
 
 **Rationale**: A pipeline that requires manual steps will drift,
-break silently, and resist updates when Microsoft publishes new
-documentation.
+break silently, and resist updates when documentation publishers
+release new content.
 
 ## Technology Stack Constraints
 
 | Layer | Technology | Justification |
 |-------|-----------|---------------|
-| Language | Python 3.11+ | MCP SDK, LanceDB, and Kùzu all have first-class Python bindings |
-| Vector Store | LanceDB (embedded) | Zero-server columnar vector DB with PyArrow integration |
-| Graph Store | Kùzu (embedded) | High-performance embedded property-graph engine with Cypher support |
-| Embeddings | `nomic-embed-text` via Ollama | 8k context window, efficient for code and documentation |
-| Extraction LLM | `phi-4` or `llama-3.2` via Ollama | Small-footprint models sufficient for structured JSON extraction |
-| Plugin Server | Python MCP SDK | Official protocol implementation for tool exposure |
-| Scripting | Python + Windows Batch | Batch scripts for clone orchestration; Python for all processing |
+| Language | Rust (stable) | Memory safety, single-binary distribution, zero runtime dependencies, native performance |
+| Vector Store | LanceDB (`lancedb` crate) | Rust-native columnar vector DB with zero-copy Arrow integration, disk-based ANN indexing |
+| Graph Store | Kùzu (`kuzu` crate) | High-performance embedded property-graph engine with Cypher support, C++ core with Rust bindings |
+| Embeddings | `all-MiniLM-L6-v2` via Candle (`candle-core`, `candle-transformers`) | ~80MB model, 384-dim vectors, pure Rust ML inference, no external runtime |
+| Graph Extraction | `pulldown-cmark` | Deterministic AST-based Markdown parsing, 100% precision edge extraction from links/headings |
+| Plugin Server | `rmcp` crate | Rust MCP SDK, async STDIO JSON-RPC transport via tokio |
+| Git Operations | `git2` crate | Native Git bindings for cloning, diff detection, no shell-out to system git |
+| Configuration | `serde_yaml` + `serde_json` | Type-safe YAML/JSON parsing for sources.yaml and .sync_state.json |
+| CLI | `clap` crate | Derive-based CLI framework with subcommands |
+| Async Runtime | `tokio` | Industry-standard async runtime for MCP server |
+| Error Handling | `thiserror` + `anyhow` | Typed domain errors (thiserror) and ad-hoc error propagation (anyhow) |
+| Logging | `tracing` + `tracing-subscriber` | Structured async-safe logging |
 
-- Adding a new dependency MUST be justified against this table.
+- Adding a new crate dependency MUST be justified against this table.
 - Replacing a stack component is a MAJOR constitution amendment.
 
 ## Development Workflow
 
-- **Scripts first**: All automation lives under `.scripts/`. New
-  pipeline stages MUST be implemented as standalone Python scripts
-  with CLI entry points before any integration work.
-- **Idempotent by default**: Every script MUST be safe to re-run.
+- **Cargo workspace**: The project is a single Cargo workspace with a
+  library crate (`graphtor-core`) and a binary target (`graphtor-docs`).
+  All shared types live in the library crate.
+- **Test-first**: Every new function and module MUST have tests written
+  before implementation (red-green-refactor TDD cycle).
+- **Idempotent by default**: Every pipeline stage MUST be safe to re-run.
   Use existence checks, upserts, and skip-if-exists patterns.
-- **Group-based organization**: Documentation repositories are
-  organized into thematic groups defined in
-  `paths/ms-docs-grouped.txt`. New repos MUST be assigned to an
-  existing group or a new group MUST be proposed and documented.
-- **Shallow clones only**: Repository cloning MUST use `--depth 1`
-  to minimize disk usage. Full history is never required.
-- **Structured logging**: Pipeline scripts MUST emit progress to
-  stdout and errors to stderr. Silent failures are prohibited.
+- **sources.yaml registry**: Documentation sources are defined in a
+  user-managed `sources.yaml` file. The system supports both Git
+  repositories and local directories with include/exclude glob patterns.
+- **Incremental sync**: The system tracks sync state per source
+  (`.sync_state.json`) and only re-processes files that have changed
+  since the last sync.
+- **Structured logging**: Pipeline stages MUST emit progress via the
+  `tracing` crate. Silent failures are prohibited.
+- **Single binary distribution**: `cargo build --release` produces one
+  executable with all dependencies statically linked. No runtime
+  interpreters, package managers, or model servers required.
 
 ## Governance
 
@@ -166,4 +200,4 @@ and procedural decisions for the LocalDocRAG project.
 - **Guidance file**: Refer to `AGENTS.md` for runtime AI-agent
   development guidance that complements this constitution.
 
-**Version**: 1.0.0 | **Ratified**: 2026-03-09 | **Last Amended**: 2026-03-09
+**Version**: 2.0.0 | **Ratified**: 2026-03-09 | **Last Amended**: 2026-03-10

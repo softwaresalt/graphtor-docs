@@ -21,7 +21,7 @@
       "id": "PRE-001",
       "name": "Constitution Amendment",
       "description": "Update .specify/memory/constitution.md to reflect Rust-native architecture: replace Python 3.11+ with Rust, Ollama/phi-4/llama with Candle/all-MiniLM-L6-v2, LLM-based graph extraction with deterministic pulldown-cmark parsing, add sources.yaml dynamic registry, update technology stack constraints table and development workflow sections",
-      "status": "pending",
+      "status": "done",
       "blocks": ["FG-001"]
     }
   ],
