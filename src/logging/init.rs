@@ -25,7 +25,7 @@ pub enum LogVerbosity {
 
 impl LogVerbosity {
     /// Convert this verbosity level to the corresponding [`tracing::Level`].
-    pub(crate) fn as_tracing_level(self) -> tracing::Level {
+    fn as_tracing_level(self) -> tracing::Level {
         match self {
             Self::Quiet => tracing::Level::ERROR,
             Self::Normal => tracing::Level::INFO,

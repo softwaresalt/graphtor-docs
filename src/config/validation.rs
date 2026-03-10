@@ -82,7 +82,7 @@ mod tests {
     fn local(id: &str) -> Source {
         Source::Local(LocalSource {
             id: id.to_string(),
-            path: "/docs".to_string(),
+            path: std::path::PathBuf::from("/docs"),
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
         })

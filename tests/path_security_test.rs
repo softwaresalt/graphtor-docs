@@ -9,22 +9,27 @@ use std::fs;
 use graphtor_core::path::validate_path;
 use graphtor_core::GraphtorError;
 
+/// Strip the Windows verbatim `\\?\` prefix that `canonicalize` adds on Windows.
+///
+/// On other platforms this is a no-op. Used in assertions to ensure
+/// `starts_with` comparisons work against non-verbatim paths.
+fn strip_verbatim(path: &std::path::Path) -> std::path::PathBuf {
+    let c = std::fs::canonicalize(path).expect("canonicalize failed in test helper");
+    let s = c.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        std::path::PathBuf::from(stripped)
+    } else {
+        c
+    }
+}
+
 // ── T039: Integration tests with real filesystem ──────────────────────────
 
 /// A file inside the temp root is accepted and the resolved path is returned.
 #[test]
 fn validate_path_accepts_file_inside_root() {
     let root = tempfile::tempdir().expect("failed to create temp dir");
-    // Use canonical root for assertions — avoids Windows casing/verbatim mismatch
-    let canonical_root = {
-        let c = std::fs::canonicalize(root.path()).unwrap();
-        let s = c.to_string_lossy();
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            std::path::PathBuf::from(stripped)
-        } else {
-            c
-        }
-    };
+    let canonical_root = strip_verbatim(root.path());
     let file = root.path().join("docs").join("guide.md");
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(&file, b"# guide").unwrap();
@@ -58,40 +63,26 @@ fn validate_path_rejects_dotdot_traversal() {
     );
 }
 
-/// An absolute path that exists outside the root is rejected.
+/// An absolute path that exists outside the root is rejected with `PathViolation`.
 #[test]
 fn validate_path_rejects_absolute_path_outside_root() {
     let root = tempfile::tempdir().expect("failed to create temp dir");
-    // Parent of the temp root is guaranteed to exist but is outside
-    let outside = root
-        .path()
-        .parent()
-        .expect("temp dir has a parent")
-        .join("other_project");
+    // A second real temp dir: guaranteed to exist, guaranteed outside root.
+    // Both paths canonicalize successfully, so the result is always PathViolation.
+    let other = tempfile::tempdir().expect("failed to create outside temp dir");
 
-    let result = validate_path(&outside, root.path());
-    // Either the path doesn't exist (Io error from canonicalize) or it's a PathViolation
-    match result {
-        Err(GraphtorError::PathViolation { .. } | GraphtorError::Io(_)) => {
-            // Either error type is acceptable
-        }
-        Ok(_) | Err(_) => panic!("path outside root must be rejected: {result:?}"),
-    }
+    let result = validate_path(other.path(), root.path());
+    assert!(
+        matches!(result, Err(GraphtorError::PathViolation { .. })),
+        "path outside allowed root must return PathViolation: {result:?}"
+    );
 }
 
 /// A non-existent file inside the root is accepted; resolved path is returned.
 #[test]
 fn validate_path_accepts_non_existent_leaf_inside_root() {
     let root = tempfile::tempdir().expect("failed to create temp dir");
-    let canonical_root = {
-        let c = std::fs::canonicalize(root.path()).unwrap();
-        let s = c.to_string_lossy();
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            std::path::PathBuf::from(stripped)
-        } else {
-            c
-        }
-    };
+    let canonical_root = strip_verbatim(root.path());
     let new_file = root.path().join("new_output.json");
 
     // The file doesn't exist yet — but its parent (root) does

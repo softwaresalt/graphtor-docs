@@ -114,6 +114,21 @@ fn resolve_path(path: &Path) -> std::io::Result<PathBuf> {
 /// `allowed_root`, or [`GraphtorError::Io`] if `allowed_root` cannot be
 /// resolved.
 ///
+/// # Limitations
+///
+/// **TOCTOU:** There is a brief window between the `path.exists()` check and
+/// the subsequent `canonicalize` call during which the filesystem may change
+/// (file created, deleted, or replaced with a symlink). This is an inherent
+/// limitation of filesystem-based path checks. For batch ingestion pipelines
+/// this risk is acceptable; high-security server contexts should use
+/// `openat`/`O_PATH`-based approaches instead.
+///
+/// **Symlinks for non-existent paths:** If an *intermediate* component in a
+/// non-existent path is a symlink pointing outside `allowed_root`, the
+/// walk-up algorithm will canonicalize at that ancestor, which expands the
+/// symlink — the violation will still be detected. However, if the symlink
+/// itself doesn't exist yet, it cannot be detected at validation time.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -209,19 +224,16 @@ mod tests {
     #[test]
     fn absolute_path_outside_root_is_rejected() {
         let root = setup_root();
-        let outside = root
-            .path()
-            .parent()
-            .expect("temp dir has a parent")
-            .join("other_project");
+        // Use a second real temp dir that is guaranteed to exist but is NOT
+        // a descendant of root — canonicalize succeeds on both, so the
+        // violation is always PathViolation, never Io.
+        let other = tempfile::tempdir().expect("failed to create outside temp dir");
 
-        let result = validate_path(&outside, root.path());
-        match result {
-            Err(GraphtorError::PathViolation { .. } | GraphtorError::Io(_)) => {
-                // Either error type is acceptable: path is outside or unresolvable
-            }
-            other => panic!("path outside root must be rejected: {other:?}"),
-        }
+        let result = validate_path(other.path(), root.path());
+        assert!(
+            matches!(result, Err(GraphtorError::PathViolation { .. })),
+            "path outside root must return PathViolation: {result:?}"
+        );
     }
 
     // ── T038: Edge cases ──────────────────────────────────────────────────

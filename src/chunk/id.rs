@@ -174,20 +174,15 @@ mod tests {
 
     #[test]
     fn known_input_produces_deterministic_64_char_hex() {
-        // Regression anchor: capture the actual hash and verify it's stable.
-        // The exact value is verified by the determinism tests; here we confirm
-        // format and a stable length for a well-known input.
+        // Regression anchor: SHA-256("hello\0world") pinned to a known value.
+        // Algorithm: SHA-256(content_bytes + b"\0" + source_path_bytes).
+        // To recompute: echo -n $'hello\x00world' | sha256sum
+        // Expected: b206899bc103669c8e7b36de29d73f95b46795b508aa87d612b2ce84bfb29df2
         let id = generate_chunk_id("hello", "world").unwrap();
-        assert_eq!(id.len(), 64, "known input must still produce 64-char id");
-        assert!(
-            id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
-            "known input id must be lowercase hex: {id}"
-        );
-        // Verify stability: calling again produces the same value
         assert_eq!(
-            id,
-            generate_chunk_id("hello", "world").unwrap(),
-            "known-input hash must be stable across calls"
+            id, "b206899bc103669c8e7b36de29d73f95b46795b508aa87d612b2ce84bfb29df2",
+            "SHA-256 regression anchor must not change — algorithm or separator drift detected"
         );
+        assert_eq!(id.len(), 64);
     }
 }

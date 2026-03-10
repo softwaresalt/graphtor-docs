@@ -3,7 +3,7 @@
 //! Defines [`SourceConfig`], [`Source`], [`GitSource`], and [`LocalSource`]
 //! with `serde` derives for YAML deserialization.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -98,7 +98,7 @@ pub struct LocalSource {
     /// Unique identifier for this source (e.g., `"internal-api-docs"`).
     pub id: String,
     /// Filesystem path to the local documentation directory.
-    pub path: String,
+    pub path: PathBuf,
     /// Glob patterns selecting files to include (e.g., `["**/*.md"]`).
     #[serde(default)]
     pub include: Vec<String>,
@@ -192,7 +192,7 @@ sources:
             panic!("expected LocalSource");
         };
         assert_eq!(local.id, "internal-docs");
-        assert_eq!(local.path, "/workspace/docs");
+        assert_eq!(local.path, PathBuf::from("/workspace/docs"));
         assert_eq!(local.include, vec!["**/*.md"]);
         assert!(local.exclude.is_empty(), "exclude should default to empty");
     }
