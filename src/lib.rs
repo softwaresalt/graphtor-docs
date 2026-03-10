@@ -18,5 +18,6 @@ pub mod error;
 pub mod logging;
 pub mod path;
 
+pub use chunk::generate_chunk_id;
 pub use config::{GitSource, LocalSource, Source, SourceConfig};
 pub use error::GraphtorError;

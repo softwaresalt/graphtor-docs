@@ -4,3 +4,7 @@
 //! SHA-256-based identifier for a documentation chunk. The identifier is
 //! the cross-database correlation key linking `LanceDB` vectors to Kùzu
 //! graph nodes.
+
+pub mod id;
+
+pub use id::generate_chunk_id;

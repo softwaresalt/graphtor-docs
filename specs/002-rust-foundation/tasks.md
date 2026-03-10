@@ -86,16 +86,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T023 [P] [US3] Write unit tests for chunk_id determinism: same input → same ID across calls in src/chunk/id.rs (test module)
-- [ ] T024 [P] [US3] Write unit tests for chunk_id uniqueness: different content → different ID, different path → different ID in src/chunk/id.rs (test module)
-- [ ] T025 [P] [US3] Write unit tests for chunk_id format: output matches `^[0-9a-f]{64}$` in src/chunk/id.rs (test module)
-- [ ] T026 [US3] Write unit tests for edge cases: unicode content, very large content, empty input handling in src/chunk/id.rs (test module)
+- [x] T023 [P] [US3] Write unit tests for chunk_id determinism: same input → same ID across calls in src/chunk/id.rs (test module)
+- [x] T024 [P] [US3] Write unit tests for chunk_id uniqueness: different content → different ID, different path → different ID in src/chunk/id.rs (test module)
+- [x] T025 [P] [US3] Write unit tests for chunk_id format: output matches `^[0-9a-f]{64}$` in src/chunk/id.rs (test module)
+- [x] T026 [US3] Write unit tests for edge cases: unicode content, very large content, empty input handling in src/chunk/id.rs (test module)
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Implement generate_chunk_id(content, source_path) → Result<String, GraphtorError> with 64-char hex SHA-256 hash in src/chunk/id.rs per contracts/library-api-contract.md
-- [ ] T028 [US3] Implement input validation: return GraphtorError::Parse for empty content or path in src/chunk/id.rs
-- [ ] T029 [US3] Export chunk types from src/chunk/mod.rs and re-export from src/lib.rs
+- [x] T027 [US3] Implement generate_chunk_id(content, source_path) → Result<String, GraphtorError> with 64-char hex SHA-256 hash in src/chunk/id.rs per contracts/library-api-contract.md
+- [x] T028 [US3] Implement input validation: return GraphtorError::Parse for empty content or path in src/chunk/id.rs
+- [x] T029 [US3] Export chunk types from src/chunk/mod.rs and re-export from src/lib.rs
 
 **Checkpoint**: Chunk ID generation functional — deterministic cross-database correlation key available
 
