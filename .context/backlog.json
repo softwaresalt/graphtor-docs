@@ -447,6 +447,66 @@
           "description": "Exit 0 = success, 1 = partial failures (some files failed), 2 = fatal error (stage failed). Structured error summaries to stderr."
         }
       ]
+    },
+    {
+      "id": "FG-011",
+      "name": "workspace-plugin-install",
+      "title": "Workspace Plugin Installation & Lifecycle",
+      "branch": "011-workspace-plugin-install",
+      "spec_path": "specs/011-workspace-plugin-install/",
+      "description": "End-to-end installation, configuration, and lifecycle management for deploying graphtor-docs as a per-project workspace plugin. The compiled binary, databases, cached clones, configuration, and all runtime artifacts live under a .graphtor/ directory at the project workspace root. This feature group covers the install command that provisions .graphtor/ with the correct directory structure and platform-appropriate binary, the init wizard that generates a starter sources.yaml tailored to the project, gitignore management to keep .graphtor/ out of version control, MCP client configuration generation for supported editors (VS Code, Cursor, GitHub Copilot CLI), health-check and self-diagnostic tooling, upgrade and uninstall workflows, and cross-platform path resolution so .graphtor/ works on Windows, macOS, and Linux. The goal is a single-command install experience: a developer runs `graphtor-docs install` from their project root and immediately has a fully provisioned local documentation plugin ready for their AI agent to use.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P2",
+      "depends_on": ["FG-001", "FG-010"],
+      "features": [
+        {
+          "id": "FG-011-F01",
+          "name": "install command & .graphtor/ scaffold",
+          "description": "New CLI subcommand `graphtor-docs install` that creates the .graphtor/ directory tree at the workspace root: .graphtor/bin/ (binary), .graphtor/data/ (LanceDB + Kùzu databases), .graphtor/cache/ (shallow git clones), .graphtor/config/ (sources.yaml, settings), .graphtor/logs/ (runtime logs). Copies or symlinks the platform-appropriate compiled binary into .graphtor/bin/. Idempotent: re-running install on an existing .graphtor/ upgrades the binary without touching data or config."
+        },
+        {
+          "id": "FG-011-F02",
+          "name": "Workspace sources.yaml initialization",
+          "description": "Interactive or flag-driven init wizard that generates .graphtor/config/sources.yaml pre-populated with context-aware defaults. Detects project type (Rust/Cargo, Node/package.json, .NET/csproj, Python/pyproject.toml) and suggests relevant Microsoft Docs source groups from the manifest. Supports --non-interactive flag for CI/scripted installs with sensible defaults."
+        },
+        {
+          "id": "FG-011-F03",
+          "name": "Gitignore management",
+          "description": "Automatically append .graphtor/ to the workspace .gitignore during install if not already present. Handles edge cases: missing .gitignore (creates one), existing entry (no-op), nested gitignore files (only modifies root). Provides --no-gitignore flag to skip. Ensures databases, caches, and binaries never leak into version control."
+        },
+        {
+          "id": "FG-011-F04",
+          "name": "MCP client configuration generation",
+          "description": "Generate editor-specific MCP client configuration files that point to the workspace-local binary. VS Code: .vscode/mcp.json with stdio transport pointing to .graphtor/bin/graphtor-docs serve. Cursor: .cursor/mcp.json equivalent. GitHub Copilot CLI: .github/copilot/mcp.json. Each config uses relative paths so the project remains portable. Supports --editor flag to target a specific editor or generates all detected configurations."
+        },
+        {
+          "id": "FG-011-F05",
+          "name": "Workspace health check & diagnostics",
+          "description": "New CLI subcommand `graphtor-docs doctor` that validates a .graphtor/ installation: verifies binary version and integrity, checks database accessibility and schema version, validates sources.yaml syntax and source reachability, confirms MCP client configs reference the correct binary path, reports disk usage per component (data, cache, logs). Outputs structured diagnostic report with pass/warn/fail per check."
+        },
+        {
+          "id": "FG-011-F06",
+          "name": "Upgrade workflow",
+          "description": "New CLI subcommand `graphtor-docs upgrade` that replaces the binary in .graphtor/bin/ with the currently running version. Performs schema migration checks: if the new binary requires a database schema change, prompts for re-index confirmation or runs automatic migration. Preserves all user configuration and cached data. Supports --force to skip confirmation prompts."
+        },
+        {
+          "id": "FG-011-F07",
+          "name": "Uninstall workflow",
+          "description": "New CLI subcommand `graphtor-docs uninstall` that cleanly removes the .graphtor/ directory and all generated MCP client configurations from the workspace. Requires explicit --confirm flag to prevent accidental data loss. Supports --keep-config to preserve sources.yaml for future reinstallation. Removes .graphtor/ entry from .gitignore if no other entries remain."
+        },
+        {
+          "id": "FG-011-F08",
+          "name": "Cross-platform path resolution",
+          "description": "Platform-aware path handling for all .graphtor/ operations. Resolves workspace root via upward directory traversal (looking for .git, Cargo.toml, package.json, or explicit --workspace-root flag). Handles Windows UNC paths, macOS case-insensitive filesystems, and Linux symlinked directories. All internal paths stored as forward-slash relative paths for portability; converted to platform-native on access."
+        },
+        {
+          "id": "FG-011-F09",
+          "name": "Workspace lock file & concurrency guard",
+          "description": "Implement .graphtor/graphtor.lock file to prevent concurrent operations (e.g., two terminals running sync simultaneously). Advisory file-based locking with PID tracking and stale-lock detection. Lock acquired during install, sync, upgrade, and uninstall commands. Provides --force-unlock recovery for crashed processes that left stale locks."
+        }
+      ]
     }
   ]
 }
