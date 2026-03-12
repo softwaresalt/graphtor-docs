@@ -31,10 +31,7 @@ impl SourceConfig {
     /// Returns [`GraphtorError::Config`] if the YAML is malformed or fails validation.
     pub fn parse(path: &Path) -> Result<Self, GraphtorError> {
         let content = std::fs::read_to_string(path)?;
-        let config: Self = serde_yaml::from_str(&content).map_err(|e| GraphtorError::Config {
-            message: e.to_string(),
-            field: None,
-        })?;
+        let config: Self = serde_yaml::from_str(&content)?;
         crate::config::validation::validate(&config)?;
         Ok(config)
     }
@@ -228,8 +225,8 @@ sources:
         let e = result.unwrap_err();
         let s = e.to_string();
         assert!(
-            s.starts_with("[io]") || s.starts_with("[config]"),
-            "unexpected error type: {s}"
+            s.starts_with("[io]"),
+            "missing file must produce an Io error, got: {s}"
         );
     }
 }

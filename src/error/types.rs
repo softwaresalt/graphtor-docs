@@ -17,6 +17,7 @@ use std::path::PathBuf;
 /// Each variant produces a human-readable message in the form
 /// `[{category}] {message}: {context}`.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum GraphtorError {
     /// Configuration parsing or validation error.
     #[error("[config] {message}{}", .field.as_deref().map(|f| format!(": field '{f}'")).unwrap_or_default())]

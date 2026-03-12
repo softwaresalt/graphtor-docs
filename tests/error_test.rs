@@ -42,7 +42,7 @@ fn all_variants_produce_non_empty_distinct_messages() {
         (
             "Embed",
             GraphtorError::Embed {
-                message: "ollama timeout".to_string(),
+                message: "embedding timeout".to_string(),
                 chunk_id: Some("abc".to_string()),
             },
         ),

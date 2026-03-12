@@ -6,7 +6,6 @@
 //! any pipeline stage begins.
 
 pub mod source;
-pub mod validation;
+pub(crate) mod validation;
 
 pub use source::{GitSource, LocalSource, Source, SourceConfig};
-pub use validation::validate;
