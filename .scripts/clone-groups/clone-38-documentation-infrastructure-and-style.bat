@@ -11,7 +11,7 @@ echo.
 echo ======================================================================
 echo  Group 38: DOCUMENTATION INFRASTRUCTURE & STYLE
 echo  Target: %TARGET%
-echo  Repos:  16
+echo  Repos:  15
 echo ======================================================================
 echo.
 
@@ -106,13 +106,6 @@ if not exist "%TARGET%\azure-docs-pr-template" (
     git clone --depth 1 https://github.com/MicrosoftDocs/azure-docs-pr-template.git "%TARGET%\azure-docs-pr-template"
 ) else (
     echo SKIP ^(exists^): azure-docs-pr-template
-)
-
-if not exist "%TARGET%\DocsContentNav" (
-    echo Cloning DocsContentNav...
-    git clone --depth 1 https://github.com/MicrosoftDocs/DocsContentNav.git "%TARGET%\DocsContentNav"
-) else (
-    echo SKIP ^(exists^): DocsContentNav
 )
 
 if not exist "%TARGET%\executable-docs" (

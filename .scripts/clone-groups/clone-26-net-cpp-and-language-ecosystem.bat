@@ -5,7 +5,7 @@ REM .NET framework/runtime, C++, F#, EF Core, Aspire, and IoT libraries — refe
 REM ======================================================================
 
 SET BASE_PATH=E:\Source\ms-docs
-SET TARGET=%BASE_PATH%\net-candand-and-language-ecosystem
+SET TARGET=%BASE_PATH%\net-cpp-and-language-ecosystem
 
 echo.
 echo ======================================================================

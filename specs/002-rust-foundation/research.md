@@ -80,7 +80,7 @@
 | `thiserror` | Derive macros for typed error enum | ✅ No stdlib equivalent for derive-based error types |
 | `serde` | Serialization/deserialization framework | ✅ Required by constitution for sources.yaml and .sync_state.json |
 | `serde_yaml` | YAML configuration parsing | ✅ Required by constitution for sources.yaml |
-| `serde_json` | JSON state persistence | ✅ Required by constitution for .sync_state.json |
+| `serde_json` | JSON state persistence | ⏳ Deferred to FG-008 (Incremental Sync) — not required by the FG-001 foundation layer |
 | `sha2` | SHA-256 hash for chunk_id | ✅ No stdlib SHA-256. Required for deterministic chunk correlation |
 | `tracing` | Structured logging | ✅ Required by constitution for structured logging via tracing |
 | `tracing-subscriber` | Log output formatting | ✅ Required companion to tracing |

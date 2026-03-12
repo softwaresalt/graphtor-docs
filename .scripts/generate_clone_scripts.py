@@ -8,11 +8,22 @@ GROUPED_FILE = os.path.join(os.path.dirname(__file__), "..", "paths", "ms-docs-g
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", ".scripts", "clone-groups")
 
 
-def sanitize_folder_name(title):
-    """Turn a group title like 'AZURE CORE & CLI' into 'azure-core-and-cli'."""
+def sanitize_folder_name(title: str) -> str:
+    """Turn a group title like 'AZURE CORE & CLI' into 'azure-core-and-cli'.
+
+    Special cases handled:
+    - ``C++`` -> ``cpp`` (avoids ``candand`` artefact from naive ``+``->``and`` replacement)
+    - ``&`` -> ``and``
+    - Repeated ``-and-and`` sequences collapsed to ``-and``
+    """
     name = title.lower()
-    name = name.replace("&", "and").replace("+", "and")
+    # Must special-case C++ before generic '+' replacement.
+    name = re.sub(r"c\+\+", "cpp", name)
+    name = name.replace("&", "and")
     name = re.sub(r"[^a-z0-9]+", "-", name)
+    # Collapse repeated "and" tokens that result from e.g. "& LANGUAGE" -> "and-language"
+    # alongside an earlier "and" already in the title: "net-and-and-lang" -> "net-and-lang".
+    name = re.sub(r"(?:-and)+(-and)", r"\1", name)
     return name.strip("-")
 
 

@@ -650,7 +650,6 @@ https://github.com/MicrosoftDocs/ObjectiveC-ref-template.git
 https://github.com/MicrosoftDocs/archive-template.git
 https://github.com/MicrosoftDocs/swa-template.git
 https://github.com/MicrosoftDocs/azure-docs-pr-template.git
-https://github.com/MicrosoftDocs/DocsContentNav.git
 https://github.com/MicrosoftDocs/executable-docs.git
 https://github.com/MicrosoftDocs/typography-issues.git
 

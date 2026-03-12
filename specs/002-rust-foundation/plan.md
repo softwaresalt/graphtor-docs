@@ -10,7 +10,8 @@ Build the foundational Rust library crate that all other feature groups depend o
 ## Technical Context
 
 **Language/Version**: Rust (stable, 1.75+)
-**Primary Dependencies**: thiserror, serde, serde_yaml, serde_json, sha2, tracing, tracing-subscriber, globset
+**Primary Dependencies**: thiserror, serde, serde_yaml, sha2, tracing, tracing-subscriber, globset
+> **Note**: `serde_json` is intentionally deferred to FG-008 (Incremental Sync) where `.sync_state.json` is first required.
 **Storage**: N/A (foundation layer — no database access)
 **Testing**: cargo test (built-in Rust test framework)
 **Target Platform**: Windows 10/11, Linux, macOS (cross-platform single binary)
