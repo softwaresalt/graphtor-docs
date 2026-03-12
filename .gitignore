@@ -1,5 +1,13 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+
+# Rust
+target/
+Cargo.lock.bak
+
+# Transient output files (logs, test results, lint reports)
+logs/
+
 *.py[codz]
 *$py.class
 

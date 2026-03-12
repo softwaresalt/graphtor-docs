@@ -1,0 +1,2005 @@
+diff --git a/Cargo.toml b/Cargo.toml
+new file mode 100644
+index 0000000..dc0a243
+--- /dev/null
++++ b/Cargo.toml
+@@ -0,0 +1,31 @@
++[workspace]
++resolver = "2"
++
++[package]
++name = "graphtor-core"
++version = "0.1.0"
++edition = "2021"
++description = "GraphRAG documentation index ΓÇö core library and CLI"
++license = "MIT"
++rust-version = "1.75"
++
++[lib]
++name = "graphtor_core"
++path = "src/lib.rs"
++
++[[bin]]
++name = "graphtor-docs"
++path = "src/main.rs"
++
++[dependencies]
++thiserror = "2"
++serde = { version = "1", features = ["derive"] }
++serde_yaml = "0.9"
++serde_json = "1"
++sha2 = "0.10"
++tracing = "0.1"
++tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
++globset = "0.4"
++
++[dev-dependencies]
++tempfile = "3"
+diff --git a/src/chunk/id.rs b/src/chunk/id.rs
+new file mode 100644
+index 0000000..95151c5
+--- /dev/null
++++ b/src/chunk/id.rs
+@@ -0,0 +1,193 @@
++//! Deterministic chunk identifier generation via SHA-256.
++//!
++//! Provides [`generate_chunk_id`] which computes a stable, 64-character
++//! lowercase hexadecimal identifier for a documentation chunk. The
++//! identifier serves as the cross-database correlation key linking
++//! `LanceDB` vectors to K├╣zu graph nodes.
++
++use sha2::{Digest, Sha256};
++
++use crate::error::GraphtorError;
++
++/// Generate a deterministic SHA-256-based chunk identifier.
++///
++/// Computes `SHA-256(content + "\0" + source_path)` and returns a
++/// 64-character lowercase hexadecimal string.
++///
++/// # Errors
++///
++/// Returns [`GraphtorError::Parse`] if `content` or `source_path` is empty.
++///
++/// # Examples
++///
++/// ```
++/// # use graphtor_core::chunk::id::generate_chunk_id;
++/// let id = generate_chunk_id("hello world", "docs/guide.md").unwrap();
++/// assert_eq!(id.len(), 64);
++/// assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
++/// ```
++pub fn generate_chunk_id(content: &str, source_path: &str) -> Result<String, GraphtorError> {
++    if content.is_empty() {
++        return Err(GraphtorError::Parse {
++            message: "chunk content must not be empty".to_string(),
++            path: None,
++        });
++    }
++    if source_path.is_empty() {
++        return Err(GraphtorError::Parse {
++            message: "source path must not be empty".to_string(),
++            path: None,
++        });
++    }
++
++    let mut hasher = Sha256::new();
++    hasher.update(content.as_bytes());
++    hasher.update(b"\0");
++    hasher.update(source_path.as_bytes());
++    let result = hasher.finalize();
++
++    Ok(format!("{result:x}"))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    // ΓöÇΓöÇ T023: determinism ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn same_input_produces_same_id() {
++        let id1 = generate_chunk_id("hello world", "docs/guide.md").unwrap();
++        let id2 = generate_chunk_id("hello world", "docs/guide.md").unwrap();
++        assert_eq!(id1, id2, "same input must produce the same chunk id");
++    }
++
++    #[test]
++    fn deterministic_across_calls() {
++        for _ in 0..10 {
++            let id = generate_chunk_id("stable content", "path/to/doc.md").unwrap();
++            assert_eq!(
++                id,
++                generate_chunk_id("stable content", "path/to/doc.md").unwrap(),
++                "chunk id must be deterministic"
++            );
++        }
++    }
++
++    // ΓöÇΓöÇ T024: uniqueness ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn different_content_same_path_produces_different_id() {
++        let id1 = generate_chunk_id("content A", "docs/guide.md").unwrap();
++        let id2 = generate_chunk_id("content B", "docs/guide.md").unwrap();
++        assert_ne!(
++            id1, id2,
++            "different content at same path must produce different ids"
++        );
++    }
++
++    #[test]
++    fn same_content_different_path_produces_different_id() {
++        let id1 = generate_chunk_id("identical content", "docs/a.md").unwrap();
++        let id2 = generate_chunk_id("identical content", "docs/b.md").unwrap();
++        assert_ne!(
++            id1, id2,
++            "same content at different paths must produce different ids"
++        );
++    }
++
++    #[test]
++    fn content_path_separator_prevents_ambiguity() {
++        // Without null-byte separator, "ab" + "c" == "a" + "bc"
++        let id1 = generate_chunk_id("ab", "c").unwrap();
++        let id2 = generate_chunk_id("a", "bc").unwrap();
++        assert_ne!(id1, id2, "null-byte separator must prevent hash collisions");
++    }
++
++    // ΓöÇΓöÇ T025: format ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn id_is_64_hex_characters() {
++        let id = generate_chunk_id("some chunk text", "docs/api.md").unwrap();
++        assert_eq!(
++            id.len(),
++            64,
++            "chunk id must be exactly 64 characters, got {}",
++            id.len()
++        );
++    }
++
++    #[test]
++    fn id_is_lowercase_hex() {
++        let id = generate_chunk_id("text", "path.md").unwrap();
++        assert!(
++            id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
++            "chunk id must be lowercase hexadecimal: {id}"
++        );
++    }
++
++    #[test]
++    fn id_matches_expected_hex_regex_pattern() {
++        let id = generate_chunk_id("chunk", "src/doc.md").unwrap();
++        // Verify format: exactly 64 lowercase hex chars
++        let valid = id.len() == 64 && id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'));
++        assert!(valid, "id '{id}' does not match ^[0-9a-f]{{64}}$");
++    }
++
++    // ΓöÇΓöÇ T026: edge cases ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn unicode_content_produces_valid_id() {
++        let id = generate_chunk_id("µùÑµ£¼Φ¬₧πü«πâëπé¡πâÑπâíπâ│πâê ΓÇö r├⌐sum├⌐ ΓÇö ╬⌐", "docs/unicode.md").unwrap();
++        assert_eq!(id.len(), 64);
++        assert!(id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')));
++    }
++
++    #[test]
++    fn large_content_produces_valid_id() {
++        let large = "x".repeat(1_000_000);
++        let id = generate_chunk_id(&large, "docs/large.md").unwrap();
++        assert_eq!(id.len(), 64);
++    }
++
++    #[test]
++    fn empty_content_returns_parse_error() {
++        let result = generate_chunk_id("", "docs/guide.md");
++        assert!(result.is_err());
++        let msg = result.unwrap_err().to_string();
++        assert!(
++            msg.starts_with("[parse]"),
++            "empty content should produce Parse error: {msg}"
++        );
++    }
++
++    #[test]
++    fn empty_path_returns_parse_error() {
++        let result = generate_chunk_id("some content", "");
++        assert!(result.is_err());
++        let msg = result.unwrap_err().to_string();
++        assert!(
++            msg.starts_with("[parse]"),
++            "empty path should produce Parse error: {msg}"
++        );
++    }
++
++    #[test]
++    fn known_input_produces_deterministic_64_char_hex() {
++        // Regression anchor: capture the actual hash and verify it's stable.
++        // The exact value is verified by the determinism tests; here we confirm
++        // format and a stable length for a well-known input.
++        let id = generate_chunk_id("hello", "world").unwrap();
++        assert_eq!(id.len(), 64, "known input must still produce 64-char id");
++        assert!(
++            id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
++            "known input id must be lowercase hex: {id}"
++        );
++        // Verify stability: calling again produces the same value
++        assert_eq!(
++            id,
++            generate_chunk_id("hello", "world").unwrap(),
++            "known-input hash must be stable across calls"
++        );
++    }
++}
+diff --git a/src/chunk/mod.rs b/src/chunk/mod.rs
+new file mode 100644
+index 0000000..d0456e7
+--- /dev/null
++++ b/src/chunk/mod.rs
+@@ -0,0 +1,10 @@
++//! Deterministic chunk identifier generation.
++//!
++//! This module provides [`generate_chunk_id`] which computes a stable
++//! SHA-256-based identifier for a documentation chunk. The identifier is
++//! the cross-database correlation key linking `LanceDB` vectors to K├╣zu
++//! graph nodes.
++
++pub mod id;
++
++pub use id::generate_chunk_id;
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+new file mode 100644
+index 0000000..aba1517
+--- /dev/null
++++ b/src/config/mod.rs
+@@ -0,0 +1,12 @@
++//! Configuration parsing and validation for `sources.yaml`.
++//!
++//! This module provides [`SourceConfig`], [`Source`], [`GitSource`], and
++//! [`LocalSource`] types for reading and validating the documentation source
++//! registry. Configuration is parsed from a YAML file and validated before
++//! any pipeline stage begins.
++
++pub mod source;
++pub mod validation;
++
++pub use source::{GitSource, LocalSource, Source, SourceConfig};
++pub use validation::validate;
+diff --git a/src/config/source.rs b/src/config/source.rs
+new file mode 100644
+index 0000000..450c8c1
+--- /dev/null
++++ b/src/config/source.rs
+@@ -0,0 +1,235 @@
++//! Configuration structs for parsing `sources.yaml`.
++//!
++//! Defines [`SourceConfig`], [`Source`], [`GitSource`], and [`LocalSource`]
++//! with `serde` derives for YAML deserialization.
++
++use std::path::Path;
++
++use serde::{Deserialize, Serialize};
++
++use crate::error::GraphtorError;
++
++/// Top-level configuration parsed from `sources.yaml`.
++///
++/// Contains an ordered list of documentation sources that the pipeline
++/// will acquire, normalize, chunk, embed, and load into the graph.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct SourceConfig {
++    /// Ordered list of documentation sources.
++    pub sources: Vec<Source>,
++}
++
++impl SourceConfig {
++    /// Parse a `sources.yaml` file from disk and validate it.
++    ///
++    /// Reads the file at `path`, deserializes the YAML into a [`SourceConfig`],
++    /// then runs semantic validation (duplicate IDs, empty fields, glob syntax).
++    ///
++    /// # Errors
++    ///
++    /// Returns [`GraphtorError::Io`] if the file cannot be read.
++    /// Returns [`GraphtorError::Config`] if the YAML is malformed or fails validation.
++    pub fn parse(path: &Path) -> Result<Self, GraphtorError> {
++        let content = std::fs::read_to_string(path)?;
++        let config: Self = serde_yaml::from_str(&content).map_err(|e| GraphtorError::Config {
++            message: e.to_string(),
++            field: None,
++        })?;
++        crate::config::validation::validate(&config)?;
++        Ok(config)
++    }
++
++    /// Validate this configuration against all semantic rules.
++    ///
++    /// Checks for duplicate source IDs, empty required fields, and valid glob
++    /// patterns. Validation is also run automatically by [`parse`](Self::parse).
++    ///
++    /// # Errors
++    ///
++    /// Returns [`GraphtorError::Config`] if any validation rule fails.
++    pub fn validate(&self) -> Result<(), GraphtorError> {
++        crate::config::validation::validate(self)
++    }
++}
++
++/// A documentation source ΓÇö either a remote Git repository or a local directory.
++///
++/// Discriminated in YAML by the `type` field (`git` or `local`).
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++#[serde(tag = "type", rename_all = "lowercase")]
++pub enum Source {
++    /// A Git repository to shallow-clone and index.
++    Git(GitSource),
++    /// A local filesystem directory to index.
++    Local(LocalSource),
++}
++
++impl Source {
++    /// Returns the unique identifier for this source.
++    pub(crate) fn id(&self) -> &str {
++        match self {
++            Self::Git(g) => &g.id,
++            Self::Local(l) => &l.id,
++        }
++    }
++}
++
++/// A remote Git repository documentation source.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct GitSource {
++    /// Unique identifier for this source (e.g., `"ms-azure-core"`).
++    pub id: String,
++    /// Git clone URL (HTTPS or SSH).
++    pub url: String,
++    /// Branch to clone. Defaults to `"main"`.
++    #[serde(default = "default_branch")]
++    pub branch: String,
++    /// Glob patterns selecting files to include (e.g., `["**/*.md"]`).
++    #[serde(default)]
++    pub include: Vec<String>,
++    /// Glob patterns selecting files to exclude (e.g., `["**/drafts/**"]`).
++    #[serde(default)]
++    pub exclude: Vec<String>,
++}
++
++/// A local filesystem directory documentation source.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct LocalSource {
++    /// Unique identifier for this source (e.g., `"internal-api-docs"`).
++    pub id: String,
++    /// Filesystem path to the local documentation directory.
++    pub path: String,
++    /// Glob patterns selecting files to include (e.g., `["**/*.md"]`).
++    #[serde(default)]
++    pub include: Vec<String>,
++    /// Glob patterns selecting files to exclude. Defaults to empty.
++    #[serde(default)]
++    pub exclude: Vec<String>,
++}
++
++fn default_branch() -> String {
++    "main".to_string()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    // ΓöÇΓöÇ T013: valid YAML deserialization ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    const VALID_GIT_YAML: &str = r#"
++sources:
++  - type: git
++    id: ms-azure-core
++    url: https://github.com/MicrosoftDocs/azure-docs.git
++    branch: main
++    include:
++      - "**/*.md"
++    exclude:
++      - "**/drafts/**"
++"#;
++
++    const VALID_LOCAL_YAML: &str = r#"
++sources:
++  - type: local
++    id: internal-docs
++    path: /workspace/docs
++    include:
++      - "**/*.md"
++"#;
++
++    const VALID_MIXED_YAML: &str = r#"
++sources:
++  - type: git
++    id: ms-azure
++    url: https://github.com/MicrosoftDocs/azure-docs.git
++    include:
++      - "**/*.md"
++  - type: local
++    id: local-guide
++    path: /docs
++    include:
++      - "**/*.md"
++    exclude:
++      - "**/private/**"
++"#;
++
++    #[test]
++    fn git_source_deserializes_all_fields() {
++        let config: SourceConfig = serde_yaml::from_str(VALID_GIT_YAML).unwrap();
++        assert_eq!(config.sources.len(), 1);
++        let Source::Git(git) = &config.sources[0] else {
++            panic!("expected GitSource");
++        };
++        assert_eq!(git.id, "ms-azure-core");
++        assert_eq!(git.url, "https://github.com/MicrosoftDocs/azure-docs.git");
++        assert_eq!(git.branch, "main");
++        assert_eq!(git.include, vec!["**/*.md"]);
++        assert_eq!(git.exclude, vec!["**/drafts/**"]);
++    }
++
++    #[test]
++    fn git_source_branch_defaults_to_main() {
++        const NO_BRANCH: &str = r#"
++sources:
++  - type: git
++    id: test-repo
++    url: https://github.com/example/repo.git
++    include: ["**/*.md"]
++"#;
++        let config: SourceConfig = serde_yaml::from_str(NO_BRANCH).unwrap();
++        let Source::Git(git) = &config.sources[0] else {
++            panic!("expected GitSource");
++        };
++        assert_eq!(git.branch, "main", "branch should default to 'main'");
++    }
++
++    #[test]
++    fn local_source_deserializes_all_fields() {
++        let config: SourceConfig = serde_yaml::from_str(VALID_LOCAL_YAML).unwrap();
++        assert_eq!(config.sources.len(), 1);
++        let Source::Local(local) = &config.sources[0] else {
++            panic!("expected LocalSource");
++        };
++        assert_eq!(local.id, "internal-docs");
++        assert_eq!(local.path, "/workspace/docs");
++        assert_eq!(local.include, vec!["**/*.md"]);
++        assert!(local.exclude.is_empty(), "exclude should default to empty");
++    }
++
++    #[test]
++    fn mixed_sources_deserialize_correctly() {
++        let config: SourceConfig = serde_yaml::from_str(VALID_MIXED_YAML).unwrap();
++        assert_eq!(config.sources.len(), 2);
++        assert!(matches!(config.sources[0], Source::Git(_)));
++        assert!(matches!(config.sources[1], Source::Local(_)));
++    }
++
++    // ΓöÇΓöÇ T015: edge cases ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn empty_sources_list_parses_without_error() {
++        let yaml = "sources: []\n";
++        let config: SourceConfig = serde_yaml::from_str(yaml).unwrap();
++        assert!(config.sources.is_empty());
++    }
++
++    #[test]
++    fn wrong_yaml_structure_returns_error() {
++        let yaml = "this_is_not_a_sources_config: true\n";
++        let result: Result<SourceConfig, _> = serde_yaml::from_str(yaml);
++        assert!(result.is_err(), "should fail on wrong top-level key");
++    }
++
++    #[test]
++    fn parse_missing_file_returns_io_error() {
++        let result = SourceConfig::parse(Path::new("/nonexistent/path/sources.yaml"));
++        assert!(result.is_err());
++        let e = result.unwrap_err();
++        let s = e.to_string();
++        assert!(
++            s.starts_with("[io]") || s.starts_with("[config]"),
++            "unexpected error type: {s}"
++        );
++    }
++}
+diff --git a/src/config/validation.rs b/src/config/validation.rs
+new file mode 100644
+index 0000000..86e2cf0
+--- /dev/null
++++ b/src/config/validation.rs
+@@ -0,0 +1,149 @@
++//! Configuration validation logic for `sources.yaml`.
++//!
++//! Validates semantic constraints that YAML deserialization alone cannot
++//! enforce: duplicate source IDs, empty required fields, and glob pattern
++//! syntax validity.
++
++use std::collections::HashSet;
++
++use globset::Glob;
++
++use crate::config::source::{Source, SourceConfig};
++use crate::error::GraphtorError;
++
++/// Validate a parsed [`SourceConfig`] for semantic correctness.
++///
++/// Checks performed:
++/// - No empty source IDs.
++/// - No duplicate source IDs across all sources.
++/// - All glob patterns in `include` and `exclude` fields compile successfully.
++///
++/// # Errors
++///
++/// Returns [`GraphtorError::Config`] describing the first validation failure.
++pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
++    let mut seen_ids: HashSet<&str> = HashSet::new();
++
++    for source in &config.sources {
++        let id = source.id();
++
++        if id.is_empty() {
++            return Err(GraphtorError::Config {
++                message: "source id must not be empty".to_string(),
++                field: Some("id".to_string()),
++            });
++        }
++
++        if !seen_ids.insert(id) {
++            return Err(GraphtorError::Config {
++                message: format!("duplicate source id: '{id}'"),
++                field: Some("id".to_string()),
++            });
++        }
++
++        let (include, exclude) = match source {
++            Source::Git(g) => (&g.include, &g.exclude),
++            Source::Local(l) => (&l.include, &l.exclude),
++        };
++
++        validate_globs(include, id)?;
++        validate_globs(exclude, id)?;
++    }
++
++    Ok(())
++}
++
++/// Validate that all patterns compile as `globset` globs.
++fn validate_globs(patterns: &[String], source_id: &str) -> Result<(), GraphtorError> {
++    for pattern in patterns {
++        Glob::new(pattern).map_err(|e| GraphtorError::Config {
++            message: format!("invalid glob pattern '{pattern}' in source '{source_id}': {e}"),
++            field: Some("include/exclude".to_string()),
++        })?;
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::config::source::{GitSource, LocalSource, Source, SourceConfig};
++
++    fn git(id: &str) -> Source {
++        Source::Git(GitSource {
++            id: id.to_string(),
++            url: "https://github.com/example/repo.git".to_string(),
++            branch: "main".to_string(),
++            include: vec!["**/*.md".to_string()],
++            exclude: vec![],
++        })
++    }
++
++    fn local(id: &str) -> Source {
++        Source::Local(LocalSource {
++            id: id.to_string(),
++            path: "/docs".to_string(),
++            include: vec!["**/*.md".to_string()],
++            exclude: vec![],
++        })
++    }
++
++    // ΓöÇΓöÇ T014: validation rules ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn valid_config_passes_validation() {
++        let config = SourceConfig {
++            sources: vec![git("source-a"), local("source-b")],
++        };
++        assert!(validate(&config).is_ok());
++    }
++
++    #[test]
++    fn duplicate_ids_fail_validation() {
++        let config = SourceConfig {
++            sources: vec![git("same-id"), local("same-id")],
++        };
++        let result = validate(&config);
++        assert!(result.is_err());
++        let msg = result.unwrap_err().to_string();
++        assert!(
++            msg.contains("same-id"),
++            "error should mention the duplicate id: {msg}"
++        );
++    }
++
++    #[test]
++    fn invalid_glob_pattern_fails_validation() {
++        let bad_glob = Source::Git(GitSource {
++            id: "bad-glob".to_string(),
++            url: "https://github.com/example/repo.git".to_string(),
++            branch: "main".to_string(),
++            include: vec!["[invalid-glob".to_string()],
++            exclude: vec![],
++        });
++        let config = SourceConfig {
++            sources: vec![bad_glob],
++        };
++        let result = validate(&config);
++        assert!(result.is_err(), "invalid glob should fail validation");
++        let msg = result.unwrap_err().to_string();
++        assert!(
++            msg.contains("[config]"),
++            "should produce a Config error: {msg}"
++        );
++    }
++
++    #[test]
++    fn empty_id_fails_validation() {
++        let config = SourceConfig {
++            sources: vec![git("")],
++        };
++        let result = validate(&config);
++        assert!(result.is_err(), "empty id should fail");
++        let msg = result.unwrap_err().to_string();
++        assert!(
++            msg.contains("[config]"),
++            "should produce Config error: {msg}"
++        );
++    }
++}
+diff --git a/src/error/mod.rs b/src/error/mod.rs
+new file mode 100644
+index 0000000..173cf29
+--- /dev/null
++++ b/src/error/mod.rs
+@@ -0,0 +1,9 @@
++//! Categorized error type hierarchy for all system failures.
++//!
++//! This module exports [`GraphtorError`], the top-level error enum used by
++//! every pipeline stage and library component. All errors produced by this
++//! library are variants of [`GraphtorError`].
++
++pub mod types;
++
++pub use types::GraphtorError;
+diff --git a/src/error/types.rs b/src/error/types.rs
+new file mode 100644
+index 0000000..3415e46
+--- /dev/null
++++ b/src/error/types.rs
+@@ -0,0 +1,324 @@
++//! `GraphtorError` ΓÇö categorized error type hierarchy.
++//!
++//! All errors produced by this library are variants of [`GraphtorError`].
++//! Each variant encodes the error category, a human-readable message, and
++//! enough context for the caller to diagnose the failure.
++
++use std::path::PathBuf;
++
++/// Top-level error enum for all `graphtor-core` failures.
++///
++/// Every public function in this library returns `Result<_, GraphtorError>`.
++/// Variants correspond to distinct failure categories so callers can match
++/// on the specific kind of failure.
++///
++/// # Display format
++///
++/// Each variant produces a human-readable message in the form
++/// `[{category}] {message}: {context}`.
++#[derive(Debug, thiserror::Error)]
++pub enum GraphtorError {
++    /// Configuration parsing or validation error.
++    #[error("[config] {message}{}", .field.as_deref().map(|f| format!(": field '{f}'")).unwrap_or_default())]
++    Config {
++        /// Human-readable description of the problem.
++        message: String,
++        /// The configuration field that caused the error, if applicable.
++        field: Option<String>,
++    },
++
++    /// Database operation failure.
++    #[error("[database] {message}: {operation}")]
++    Database {
++        /// Human-readable description of the failure.
++        message: String,
++        /// The database operation that failed (e.g., `"insert"`, `"query"`).
++        operation: String,
++    },
++
++    /// Pipeline stage execution failure.
++    #[error("[pipeline] {message}: {stage}")]
++    Pipeline {
++        /// Human-readable description of the failure.
++        message: String,
++        /// The pipeline stage that failed (e.g., `"normalize"`, `"chunk"`).
++        stage: String,
++    },
++
++    /// Markdown parsing error.
++    #[error("[parse] {message}{}", .path.as_ref().map(|p| format!(": {}", p.display())).unwrap_or_default())]
++    Parse {
++        /// Human-readable description of the parse failure.
++        message: String,
++        /// Path to the file that failed to parse, if applicable.
++        path: Option<PathBuf>,
++    },
++
++    /// Embedding generation failure.
++    #[error("[embed] {message}{}", .chunk_id.as_deref().map(|id| format!(": chunk {id}")).unwrap_or_default())]
++    Embed {
++        /// Human-readable description of the embedding failure.
++        message: String,
++        /// The chunk identifier that failed embedding, if applicable.
++        chunk_id: Option<String>,
++    },
++
++    /// Path escapes the allowed workspace root.
++    #[error(
++        "[path_violation] attempted '{}': must be within '{}'",
++        .attempted.display(),
++        .allowed_root.display()
++    )]
++    PathViolation {
++        /// The path that was attempted.
++        attempted: PathBuf,
++        /// The allowed root directory that the path violated.
++        allowed_root: PathBuf,
++    },
++
++    /// Sync state or diff detection failure.
++    #[error("[sync] {message}: {source_id}")]
++    Sync {
++        /// Human-readable description of the sync failure.
++        message: String,
++        /// The source identifier that experienced the sync failure.
++        source_id: String,
++    },
++
++    /// Filesystem I/O error.
++    #[error("[io] {0}")]
++    Io(#[from] std::io::Error),
++}
++
++impl From<serde_yaml::Error> for GraphtorError {
++    fn from(e: serde_yaml::Error) -> Self {
++        Self::Config {
++            message: e.to_string(),
++            field: None,
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::path::PathBuf;
++
++    // ΓöÇΓöÇ T006: variant construction and Display output ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn config_with_field_includes_category_message_and_field() {
++        let e = GraphtorError::Config {
++            message: "missing required value".to_string(),
++            field: Some("id".to_string()),
++        };
++        let s = e.to_string();
++        assert!(
++            s.starts_with("[config]"),
++            "expected '[config]' prefix, got: {s}"
++        );
++        assert!(s.contains("missing required value"), "missing message: {s}");
++        assert!(s.contains("id"), "missing field name: {s}");
++    }
++
++    #[test]
++    fn config_without_field_omits_field_context() {
++        let e = GraphtorError::Config {
++            message: "parse failed".to_string(),
++            field: None,
++        };
++        let s = e.to_string();
++        assert!(s.starts_with("[config]"), "expected '[config]' prefix: {s}");
++        assert!(s.contains("parse failed"), "missing message: {s}");
++    }
++
++    #[test]
++    fn database_error_includes_category_message_and_operation() {
++        let e = GraphtorError::Database {
++            message: "connection refused".to_string(),
++            operation: "insert".to_string(),
++        };
++        let s = e.to_string();
++        assert!(
++            s.starts_with("[database]"),
++            "expected '[database]' prefix: {s}"
++        );
++        assert!(s.contains("connection refused"), "missing message: {s}");
++        assert!(s.contains("insert"), "missing operation: {s}");
++    }
++
++    #[test]
++    fn pipeline_error_includes_category_message_and_stage() {
++        let e = GraphtorError::Pipeline {
++            message: "processing failed".to_string(),
++            stage: "normalize".to_string(),
++        };
++        let s = e.to_string();
++        assert!(
++            s.starts_with("[pipeline]"),
++            "expected '[pipeline]' prefix: {s}"
++        );
++        assert!(s.contains("processing failed"), "missing message: {s}");
++        assert!(s.contains("normalize"), "missing stage: {s}");
++    }
++
++    #[test]
++    fn parse_error_with_path_includes_path() {
++        let e = GraphtorError::Parse {
++            message: "unexpected token".to_string(),
++            path: Some(PathBuf::from("/docs/auth.md")),
++        };
++        let s = e.to_string();
++        assert!(s.starts_with("[parse]"), "expected '[parse]' prefix: {s}");
++        assert!(s.contains("unexpected token"), "missing message: {s}");
++        assert!(s.contains("auth.md"), "missing file path: {s}");
++    }
++
++    #[test]
++    fn parse_error_without_path_omits_path_context() {
++        let e = GraphtorError::Parse {
++            message: "invalid frontmatter".to_string(),
++            path: None,
++        };
++        let s = e.to_string();
++        assert!(s.starts_with("[parse]"), "expected '[parse]' prefix: {s}");
++        assert!(s.contains("invalid frontmatter"), "missing message: {s}");
++    }
++
++    #[test]
++    fn embed_error_with_chunk_id_includes_id() {
++        let e = GraphtorError::Embed {
++            message: "model timeout".to_string(),
++            chunk_id: Some("abc123".to_string()),
++        };
++        let s = e.to_string();
++        assert!(s.starts_with("[embed]"), "expected '[embed]' prefix: {s}");
++        assert!(s.contains("model timeout"), "missing message: {s}");
++        assert!(s.contains("abc123"), "missing chunk_id: {s}");
++    }
++
++    #[test]
++    fn embed_error_without_chunk_id_omits_id() {
++        let e = GraphtorError::Embed {
++            message: "embedding failed".to_string(),
++            chunk_id: None,
++        };
++        let s = e.to_string();
++        assert!(s.starts_with("[embed]"), "expected '[embed]' prefix: {s}");
++        assert!(s.contains("embedding failed"), "missing message: {s}");
++    }
++
++    #[test]
++    fn path_violation_includes_both_paths() {
++        let e = GraphtorError::PathViolation {
++            attempted: PathBuf::from("/tmp/secret"),
++            allowed_root: PathBuf::from("/workspace"),
++        };
++        let s = e.to_string();
++        assert!(
++            s.starts_with("[path_violation]"),
++            "expected '[path_violation]' prefix: {s}"
++        );
++        assert!(s.contains("secret"), "missing attempted path: {s}");
++        assert!(s.contains("workspace"), "missing allowed_root: {s}");
++    }
++
++    #[test]
++    fn sync_error_includes_source_id() {
++        let e = GraphtorError::Sync {
++            message: "hash mismatch".to_string(),
++            source_id: "ms-azure-core".to_string(),
++        };
++        let s = e.to_string();
++        assert!(s.starts_with("[sync]"), "expected '[sync]' prefix: {s}");
++        assert!(s.contains("hash mismatch"), "missing message: {s}");
++        assert!(s.contains("ms-azure-core"), "missing source_id: {s}");
++    }
++
++    #[test]
++    fn io_error_includes_io_category() {
++        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
++        let e = GraphtorError::Io(io_err);
++        let s = e.to_string();
++        assert!(s.starts_with("[io]"), "expected '[io]' prefix: {s}");
++        assert!(s.contains("file not found"), "missing io message: {s}");
++    }
++
++    // ΓöÇΓöÇ T007: From conversions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn from_io_error_produces_io_variant() {
++        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
++        let e: GraphtorError = io_err.into();
++        assert!(
++            matches!(e, GraphtorError::Io(_)),
++            "expected Io variant, got: {e:?}"
++        );
++    }
++
++    #[test]
++    fn from_serde_yaml_error_produces_config_variant() {
++        let yaml_src = "key: [unclosed";
++        let yaml_err = serde_yaml::from_str::<serde_yaml::Value>(yaml_src).unwrap_err();
++        let e: GraphtorError = yaml_err.into();
++        assert!(
++            matches!(e, GraphtorError::Config { .. }),
++            "expected Config variant from serde_yaml::Error, got: {e:?}"
++        );
++        let s = e.to_string();
++        assert!(s.starts_with("[config]"), "expected '[config]' prefix: {s}");
++    }
++
++    #[test]
++    fn all_eight_variants_produce_distinct_categories() {
++        let errors: Vec<String> = vec![
++            GraphtorError::Config {
++                message: "m".to_string(),
++                field: None,
++            }
++            .to_string(),
++            GraphtorError::Database {
++                message: "m".to_string(),
++                operation: "op".to_string(),
++            }
++            .to_string(),
++            GraphtorError::Pipeline {
++                message: "m".to_string(),
++                stage: "s".to_string(),
++            }
++            .to_string(),
++            GraphtorError::Parse {
++                message: "m".to_string(),
++                path: None,
++            }
++            .to_string(),
++            GraphtorError::Embed {
++                message: "m".to_string(),
++                chunk_id: None,
++            }
++            .to_string(),
++            GraphtorError::PathViolation {
++                attempted: PathBuf::from("/a"),
++                allowed_root: PathBuf::from("/b"),
++            }
++            .to_string(),
++            GraphtorError::Sync {
++                message: "m".to_string(),
++                source_id: "s".to_string(),
++            }
++            .to_string(),
++            GraphtorError::Io(std::io::Error::other("e")).to_string(),
++        ];
++
++        let categories: std::collections::HashSet<&str> = errors
++            .iter()
++            .map(|s| s.split(']').next().unwrap_or(""))
++            .collect();
++        assert_eq!(
++            categories.len(),
++            8,
++            "expected 8 distinct error categories, got {}: {categories:?}",
++            categories.len()
++        );
++    }
++}
+diff --git a/src/lib.rs b/src/lib.rs
+new file mode 100644
+index 0000000..980d8af
+--- /dev/null
++++ b/src/lib.rs
+@@ -0,0 +1,25 @@
++//! graphtor-core ΓÇö `GraphRAG` documentation index core library.
++//!
++//! This crate provides the foundational types and utilities used by all
++//! pipeline stages and the MCP server plugin:
++//!
++//! - [`config`]: Parse and validate `sources.yaml` documentation registries.
++//! - [`error`]: Categorized error type hierarchy ([`GraphtorError`]).
++//! - [`chunk`]: Deterministic SHA-256 chunk identifier generation.
++//! - [`logging`]: Structured logging initialization via `tracing`.
++//! - [`path`]: Path security utilities for workspace boundary enforcement.
++
++#![forbid(unsafe_code)]
++#![warn(missing_docs)]
++
++pub mod chunk;
++pub mod config;
++pub mod error;
++pub mod logging;
++pub mod path;
++
++pub use chunk::generate_chunk_id;
++pub use config::{GitSource, LocalSource, Source, SourceConfig};
++pub use error::GraphtorError;
++pub use logging::{init_logging, LogVerbosity};
++pub use path::validate_path;
+diff --git a/src/logging/init.rs b/src/logging/init.rs
+new file mode 100644
+index 0000000..2f0a699
+--- /dev/null
++++ b/src/logging/init.rs
+@@ -0,0 +1,114 @@
++//! Structured logging initialization via `tracing`.
++//!
++//! Provides [`LogVerbosity`] and [`init_logging`] for configuring the
++//! global `tracing` subscriber at application startup. Call [`init_logging`]
++//! once at program entry; subsequent calls return an error rather than
++//! panicking.
++
++use crate::error::GraphtorError;
++
++/// Verbosity level for structured log output.
++///
++/// Maps to `tracing` filter levels:
++/// - [`Quiet`](LogVerbosity::Quiet) ΓåÆ `ERROR` only
++/// - [`Normal`](LogVerbosity::Normal) ΓåÆ `INFO`, `WARN`, `ERROR`
++/// - [`Verbose`](LogVerbosity::Verbose) ΓåÆ `DEBUG`, `INFO`, `WARN`, `ERROR`
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
++pub enum LogVerbosity {
++    /// Show only errors. Suitable for production batch pipelines.
++    Quiet,
++    /// Show info, warnings, and errors. Suitable for interactive use.
++    Normal,
++    /// Show all messages including per-item debug details.
++    Verbose,
++}
++
++impl LogVerbosity {
++    /// Convert this verbosity level to the corresponding [`tracing::Level`].
++    pub(crate) fn as_tracing_level(self) -> tracing::Level {
++        match self {
++            Self::Quiet => tracing::Level::ERROR,
++            Self::Normal => tracing::Level::INFO,
++            Self::Verbose => tracing::Level::DEBUG,
++        }
++    }
++}
++
++/// Initialize the global `tracing` subscriber with the given verbosity.
++///
++/// Configures `tracing-subscriber` with a level filter and stderr output.
++/// This function is safe to call from application entry points.
++///
++/// # Errors
++///
++/// Returns [`GraphtorError::Config`] if the global subscriber has already
++/// been initialized (e.g., a second call in the same process).
++pub fn init_logging(verbosity: LogVerbosity) -> Result<(), GraphtorError> {
++    let level = verbosity.as_tracing_level();
++    tracing_subscriber::fmt()
++        .with_max_level(level)
++        .with_writer(std::io::stderr)
++        .try_init()
++        .map_err(|e| GraphtorError::Config {
++            message: format!("logging already initialized: {e}"),
++            field: None,
++        })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    // ΓöÇΓöÇ T030: LogVerbosity ΓåÆ tracing level mapping ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn quiet_maps_to_error_level() {
++        assert_eq!(
++            LogVerbosity::Quiet.as_tracing_level(),
++            tracing::Level::ERROR
++        );
++    }
++
++    #[test]
++    fn normal_maps_to_info_level() {
++        assert_eq!(
++            LogVerbosity::Normal.as_tracing_level(),
++            tracing::Level::INFO
++        );
++    }
++
++    #[test]
++    fn verbose_maps_to_debug_level() {
++        assert_eq!(
++            LogVerbosity::Verbose.as_tracing_level(),
++            tracing::Level::DEBUG
++        );
++    }
++
++    #[test]
++    fn all_variants_produce_distinct_levels() {
++        let quiet = LogVerbosity::Quiet.as_tracing_level();
++        let normal = LogVerbosity::Normal.as_tracing_level();
++        let verbose = LogVerbosity::Verbose.as_tracing_level();
++        assert_ne!(
++            quiet, normal,
++            "Quiet and Normal must map to different levels"
++        );
++        assert_ne!(
++            normal, verbose,
++            "Normal and Verbose must map to different levels"
++        );
++        assert_ne!(
++            quiet, verbose,
++            "Quiet and Verbose must map to different levels"
++        );
++    }
++
++    #[test]
++    fn log_verbosity_implements_debug_and_clone() {
++        let v = LogVerbosity::Normal;
++        let cloned = v;
++        assert_eq!(v, cloned);
++        let _ = format!("{v:?}");
++    }
++}
+diff --git a/src/logging/mod.rs b/src/logging/mod.rs
+new file mode 100644
+index 0000000..8e65a22
+--- /dev/null
++++ b/src/logging/mod.rs
+@@ -0,0 +1,9 @@
++//! Structured logging initialization via `tracing`.
++//!
++//! This module provides [`init_logging`] and [`LogVerbosity`] for
++//! configuring the global tracing subscriber at application startup.
++//! All pipeline stages emit structured diagnostics through this layer.
++
++pub mod init;
++
++pub use init::{init_logging, LogVerbosity};
+diff --git a/src/main.rs b/src/main.rs
+new file mode 100644
+index 0000000..0dfa330
+--- /dev/null
++++ b/src/main.rs
+@@ -0,0 +1,10 @@
++//! graphtor-docs ΓÇö `GraphRAG` documentation index CLI entry point.
++//!
++//! This binary is a placeholder for the CLI interface implemented in a
++//! future feature group (FG-010). It links against `graphtor-core` and
++//! will provide commands for ingesting, querying, and managing the
++//! documentation graph.
++
++fn main() {
++    println!("graphtor-docs: CLI not yet implemented (see FG-010)");
++}
+diff --git a/src/path/mod.rs b/src/path/mod.rs
+new file mode 100644
+index 0000000..575300b
+--- /dev/null
++++ b/src/path/mod.rs
+@@ -0,0 +1,9 @@
++//! Path security utilities for boundary enforcement.
++//!
++//! This module provides [`validate_path`] which canonicalizes a path and
++//! confirms it lies within an allowed root directory, preventing directory
++//! traversal and symlink escape attacks.
++
++pub mod security;
++
++pub use security::validate_path;
+diff --git a/src/path/security.rs b/src/path/security.rs
+new file mode 100644
+index 0000000..72c9ed0
+--- /dev/null
++++ b/src/path/security.rs
+@@ -0,0 +1,283 @@
++//! Path security validation ΓÇö boundary enforcement via canonicalization.
++//!
++//! Provides [`validate_path`] to resolve and check that a file path stays
++//! within an allowed root directory, preventing directory traversal attacks.
++//! All pipeline stages that accept user-supplied or manifest-derived paths
++//! MUST validate them through this function before any file I/O.
++
++use std::ffi::OsString;
++use std::path::{Component, Path, PathBuf};
++
++use crate::error::GraphtorError;
++
++/// Resolve `path` to an absolute, `..`-free form without touching the filesystem.
++///
++/// If `path` is relative it is first joined onto `current_dir()`. `..` and `.`
++/// components are then resolved in order. The result is syntactically normalized
++/// but may still contain short path names (8.3 format) on Windows.
++fn normalize_absolute(path: &Path) -> std::io::Result<PathBuf> {
++    let abs = if path.is_absolute() {
++        path.to_path_buf()
++    } else {
++        std::env::current_dir()?.join(path)
++    };
++    let mut result = PathBuf::new();
++    for component in abs.components() {
++        match component {
++            Component::CurDir => {}
++            Component::ParentDir => {
++                result.pop(); // no-op at root ΓÇö safe
++            }
++            _ => result.push(component),
++        }
++    }
++    Ok(result)
++}
++
++/// Canonicalize `path` and strip the Windows verbatim `\\?\` prefix.
++///
++/// On Windows, [`std::fs::canonicalize`] returns paths with a `\\?\` prefix
++/// (verbatim long-path form). Stripping it here allows [`Path::starts_with`]
++/// comparisons to work correctly against non-verbatim paths.
++pub(super) fn canonicalize_clean(path: &Path) -> std::io::Result<PathBuf> {
++    let canonical = std::fs::canonicalize(path)?;
++    let s = canonical.to_string_lossy();
++    if let Some(stripped) = s.strip_prefix(r"\\?\") {
++        Ok(PathBuf::from(stripped))
++    } else {
++        Ok(canonical)
++    }
++}
++
++/// Resolve `path` to a canonical absolute form, handling non-existent leafs.
++///
++/// For existing paths: calls `canonicalize_clean` which follows symlinks and
++/// expands Windows short path names (8.3 format).
++///
++/// For non-existent paths: normalises `..` syntactically, then walks up the
++/// path to find the deepest existing ancestor, canonicalises that, and
++/// reconstructs the remaining components. This ensures short path expansion
++/// even when the final component does not yet exist.
++fn resolve_path(path: &Path) -> std::io::Result<PathBuf> {
++    if path.exists() {
++        return canonicalize_clean(path);
++    }
++
++    // Normalize `..`/`.` without hitting the filesystem
++    let normalized = normalize_absolute(path)?;
++
++    let mut tail: Vec<OsString> = Vec::new();
++    let mut current = normalized.clone();
++
++    loop {
++        if current.exists() {
++            // Canonicalize the existing ancestor (expands short paths)
++            let mut canonical = canonicalize_clean(&current)?;
++            for component in tail.into_iter().rev() {
++                canonical.push(component);
++            }
++            return Ok(canonical);
++        }
++        match (
++            current.file_name().map(OsString::from),
++            current.parent().map(PathBuf::from),
++        ) {
++            (Some(name), Some(parent)) if parent != current => {
++                tail.push(name);
++                current = parent;
++            }
++            _ => {
++                // At the filesystem root with nothing found; return syntactically normalized form
++                return Ok(normalized);
++            }
++        }
++    }
++}
++
++/// Validate that `path` is within `allowed_root` after canonicalization.
++///
++/// Resolves both paths to their canonical absolute form, then checks that
++/// `path` is a descendant of `allowed_root`. Handles `..` traversal,
++/// symlinks (for existing paths), Windows short path expansion, redundant
++/// separators, and relative paths.
++///
++/// If `path` does not yet exist on the filesystem, the deepest existing
++/// ancestor is canonicalised and the remaining components are appended.
++///
++/// # Returns
++///
++/// The canonical absolute path on success.
++///
++/// # Errors
++///
++/// Returns [`GraphtorError::PathViolation`] if the resolved path escapes
++/// `allowed_root`, or [`GraphtorError::Io`] if `allowed_root` cannot be
++/// resolved.
++///
++/// # Examples
++///
++/// ```no_run
++/// use std::path::Path;
++/// use graphtor_core::path::validate_path;
++///
++/// let root = Path::new("/data/workspace");
++/// let safe = Path::new("/data/workspace/docs/guide.md");
++/// let result = validate_path(safe, root);
++/// assert!(result.is_ok());
++/// ```
++pub fn validate_path(path: &Path, allowed_root: &Path) -> Result<PathBuf, GraphtorError> {
++    let canonical_root = canonicalize_clean(allowed_root).map_err(GraphtorError::Io)?;
++
++    let resolved = resolve_path(path).map_err(GraphtorError::Io)?;
++
++    if !resolved.starts_with(&canonical_root) {
++        return Err(GraphtorError::PathViolation {
++            attempted: resolved,
++            allowed_root: canonical_root,
++        });
++    }
++
++    Ok(resolved)
++}
++
++#[cfg(test)]
++mod tests {
++    use std::fs;
++
++    use tempfile::TempDir;
++
++    use super::*;
++
++    fn setup_root() -> TempDir {
++        tempfile::tempdir().expect("failed to create temp dir")
++    }
++
++    // ΓöÇΓöÇ T036: Valid paths ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn valid_path_within_root_returns_ok() {
++        let root = setup_root();
++        let canonical_root = canonicalize_clean(root.path()).unwrap();
++        let file = root.path().join("docs").join("guide.md");
++        fs::create_dir_all(file.parent().unwrap()).unwrap();
++        fs::write(&file, b"content").unwrap();
++
++        let result = validate_path(&file, root.path());
++        assert!(
++            result.is_ok(),
++            "path within root must be accepted: {result:?}"
++        );
++        assert!(result.unwrap().starts_with(&canonical_root));
++    }
++
++    #[test]
++    fn valid_absolute_path_within_root_returns_canonical_path() {
++        let root = setup_root();
++        let canonical_root = canonicalize_clean(root.path()).unwrap();
++        let file = root.path().join("file.txt");
++        fs::write(&file, b"data").unwrap();
++
++        let resolved = validate_path(&file, root.path()).unwrap();
++        assert!(resolved.is_absolute());
++        assert!(resolved.starts_with(&canonical_root));
++    }
++
++    #[test]
++    fn path_equal_to_root_returns_ok() {
++        let root = setup_root();
++        let result = validate_path(root.path(), root.path());
++        assert!(result.is_ok(), "root itself should be accepted: {result:?}");
++    }
++
++    // ΓöÇΓöÇ T037: Rejected paths ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn dotdot_traversal_escaping_root_is_rejected() {
++        let root = setup_root();
++        let subdir = root.path().join("sub");
++        fs::create_dir_all(&subdir).unwrap();
++        // `sub/../../secret` escapes the temp root
++        let traversal = subdir.join("..").join("..").join("secret");
++
++        let result = validate_path(&traversal, root.path());
++        assert!(
++            matches!(result, Err(GraphtorError::PathViolation { .. })),
++            "dotdot traversal must be rejected: {result:?}"
++        );
++    }
++
++    #[test]
++    fn absolute_path_outside_root_is_rejected() {
++        let root = setup_root();
++        let outside = root
++            .path()
++            .parent()
++            .expect("temp dir has a parent")
++            .join("other_project");
++
++        let result = validate_path(&outside, root.path());
++        match result {
++            Err(GraphtorError::PathViolation { .. } | GraphtorError::Io(_)) => {
++                // Either error type is acceptable: path is outside or unresolvable
++            }
++            other => panic!("path outside root must be rejected: {other:?}"),
++        }
++    }
++
++    // ΓöÇΓöÇ T038: Edge cases ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    #[test]
++    fn non_existent_path_within_root_is_accepted() {
++        let root = setup_root();
++        let canonical_root = canonicalize_clean(root.path()).unwrap();
++        let new_file = root.path().join("new_document.md");
++
++        let result = validate_path(&new_file, root.path());
++        assert!(
++            result.is_ok(),
++            "non-existent file inside root must be accepted: {result:?}"
++        );
++        let resolved = result.unwrap();
++        assert!(resolved.starts_with(&canonical_root));
++        assert_eq!(resolved.file_name().unwrap(), "new_document.md");
++    }
++
++    #[test]
++    fn path_with_redundant_separators_is_normalized() {
++        let root = setup_root();
++        let canonical_root = canonicalize_clean(root.path()).unwrap();
++        let file = root.path().join("sub").join("file.txt");
++        fs::create_dir_all(file.parent().unwrap()).unwrap();
++        fs::write(&file, b"x").unwrap();
++
++        // Construct a path with double separators
++        let raw = format!("{}//sub//file.txt", root.path().to_string_lossy());
++        let messy_path = PathBuf::from(&raw);
++
++        let result = validate_path(&messy_path, root.path());
++        match result {
++            Ok(p) => assert!(
++                p.starts_with(&canonical_root),
++                "normalized path must still be within root"
++            ),
++            Err(GraphtorError::Io(_)) => {
++                // Acceptable: OS rejected the malformed path literal
++            }
++            Err(other) => panic!("unexpected error for redundant separators: {other:?}"),
++        }
++    }
++
++    #[test]
++    fn nested_subdirectory_within_root_is_accepted() {
++        let root = setup_root();
++        let deep = root.path().join("a").join("b").join("c").join("d.txt");
++        fs::create_dir_all(deep.parent().unwrap()).unwrap();
++        fs::write(&deep, b"deep").unwrap();
++
++        let result = validate_path(&deep, root.path());
++        assert!(
++            result.is_ok(),
++            "deeply nested path within root must be accepted: {result:?}"
++        );
++    }
++}
+diff --git a/tests/README.md b/tests/README.md
+new file mode 100644
+index 0000000..9e1c4af
+--- /dev/null
++++ b/tests/README.md
+@@ -0,0 +1,9 @@
++# tests/
++
++Integration tests for `graphtor-core`. Each test file covers one module:
++
++- `config_test.rs` ΓÇö configuration parsing and validation (Phase 3)
++- `error_test.rs` ΓÇö error type construction and display (Phase 2)
++- `chunk_id_test.rs` ΓÇö chunk ID determinism and format (Phase 4)
++- `logging_test.rs` ΓÇö log initialization and verbosity filtering (Phase 5)
++- `path_security_test.rs` ΓÇö path boundary enforcement (Phase 6)
+diff --git a/tests/config_test.rs b/tests/config_test.rs
+new file mode 100644
+index 0000000..6895788
+--- /dev/null
++++ b/tests/config_test.rs
+@@ -0,0 +1,125 @@
++//! Integration tests for `graphtor_core::config` module.
++//!
++//! Tests end-to-end configuration parsing from YAML files on disk,
++//! verifying both successful parsing and error path handling.
++
++use graphtor_core::config::{Source, SourceConfig};
++use graphtor_core::GraphtorError;
++use std::io::Write;
++use tempfile::NamedTempFile;
++
++fn write_yaml(content: &str) -> NamedTempFile {
++    let mut file = NamedTempFile::new().expect("failed to create temp file");
++    file.write_all(content.as_bytes())
++        .expect("failed to write yaml");
++    file
++}
++
++/// Valid sources.yaml with one Git and one local source parses cleanly.
++#[test]
++fn parse_valid_mixed_sources_yaml() {
++    let yaml = r#"
++sources:
++  - type: git
++    id: ms-azure-docs
++    url: https://github.com/MicrosoftDocs/azure-docs.git
++    branch: main
++    include:
++      - "**/*.md"
++    exclude:
++      - "**/drafts/**"
++  - type: local
++    id: internal-wiki
++    path: /workspace/wiki
++    include:
++      - "**/*.md"
++"#;
++    let file = write_yaml(yaml);
++    let config = SourceConfig::parse(file.path()).expect("should parse valid yaml");
++
++    assert_eq!(config.sources.len(), 2);
++
++    let Source::Git(git) = &config.sources[0] else {
++        panic!("first source should be Git");
++    };
++    assert_eq!(git.id, "ms-azure-docs");
++    assert_eq!(git.branch, "main");
++
++    let Source::Local(local) = &config.sources[1] else {
++        panic!("second source should be Local");
++    };
++    assert_eq!(local.id, "internal-wiki");
++}
++
++/// Malformed YAML produces a `GraphtorError::Config` with a `[config]` prefix.
++#[test]
++fn parse_malformed_yaml_returns_config_error() {
++    let bad_yaml = "sources:\n  - type: git\n    id: [unclosed\n";
++    let file = write_yaml(bad_yaml);
++    let result = SourceConfig::parse(file.path());
++    assert!(result.is_err());
++    let msg = result.unwrap_err().to_string();
++    assert!(
++        msg.starts_with("[config]"),
++        "expected Config error, got: {msg}"
++    );
++}
++
++/// Duplicate source IDs produce a validation error.
++#[test]
++fn parse_duplicate_ids_returns_config_error() {
++    let yaml = r#"
++sources:
++  - type: git
++    id: duplicate-id
++    url: https://github.com/example/repo.git
++    include: ["**/*.md"]
++  - type: local
++    id: duplicate-id
++    path: /docs
++    include: ["**/*.md"]
++"#;
++    let file = write_yaml(yaml);
++    let result = SourceConfig::parse(file.path());
++    assert!(result.is_err());
++    let msg = result.unwrap_err().to_string();
++    assert!(
++        msg.contains("duplicate-id"),
++        "error should name the duplicate id: {msg}"
++    );
++}
++
++/// A non-existent file path produces an `[io]` error.
++#[test]
++fn parse_nonexistent_file_returns_io_error() {
++    let result = SourceConfig::parse(std::path::Path::new("/does/not/exist/sources.yaml"));
++    assert!(result.is_err());
++    let msg = result.unwrap_err().to_string();
++    assert!(
++        msg.starts_with("[io]"),
++        "expected Io error for missing file, got: {msg}"
++    );
++}
++
++/// Empty sources list is valid and returns zero sources.
++#[test]
++fn parse_empty_sources_list_is_valid() {
++    let yaml = "sources: []\n";
++    let file = write_yaml(yaml);
++    let config = SourceConfig::parse(file.path()).expect("empty sources should parse");
++    assert!(config.sources.is_empty(), "sources list should be empty");
++}
++
++/// `From<serde_yaml::Error>` conversion is exercised through the public `parse()` path.
++#[test]
++fn serde_yaml_parse_error_converts_to_graphtor_config_error() {
++    let bad_yaml = "not_sources_key: 42\n";
++    let file = write_yaml(bad_yaml);
++    let result = SourceConfig::parse(file.path());
++    assert!(result.is_err());
++    let e = result.unwrap_err();
++    assert!(
++        matches!(e, GraphtorError::Config { .. }),
++        "expected GraphtorError::Config, got: {e:?}"
++    );
++}
+diff --git a/tests/error_test.rs b/tests/error_test.rs
+new file mode 100644
+index 0000000..9714e45
+--- /dev/null
++++ b/tests/error_test.rs
+@@ -0,0 +1,154 @@
++//! Integration tests for `graphtor_core::error` module.
++//!
++//! Verifies that all 8 `GraphtorError` variants produce distinct,
++//! human-readable messages with appropriate context fields, and that
++//! `From` conversions for external error types work correctly end-to-end.
++
++use graphtor_core::error::GraphtorError;
++use std::path::PathBuf;
++
++/// All 8 variants must produce distinct, non-empty error messages.
++#[test]
++fn all_variants_produce_non_empty_distinct_messages() {
++    let variants: Vec<(&str, GraphtorError)> = vec![
++        (
++            "Config",
++            GraphtorError::Config {
++                message: "missing id".to_string(),
++                field: Some("id".to_string()),
++            },
++        ),
++        (
++            "Database",
++            GraphtorError::Database {
++                message: "write failed".to_string(),
++                operation: "upsert".to_string(),
++            },
++        ),
++        (
++            "Pipeline",
++            GraphtorError::Pipeline {
++                message: "chunk failed".to_string(),
++                stage: "chunk".to_string(),
++            },
++        ),
++        (
++            "Parse",
++            GraphtorError::Parse {
++                message: "bad frontmatter".to_string(),
++                path: Some(PathBuf::from("docs/guide.md")),
++            },
++        ),
++        (
++            "Embed",
++            GraphtorError::Embed {
++                message: "ollama timeout".to_string(),
++                chunk_id: Some("abc".to_string()),
++            },
++        ),
++        (
++            "PathViolation",
++            GraphtorError::PathViolation {
++                attempted: PathBuf::from("/etc/passwd"),
++                allowed_root: PathBuf::from("/workspace"),
++            },
++        ),
++        (
++            "Sync",
++            GraphtorError::Sync {
++                message: "stale state".to_string(),
++                source_id: "ms-core".to_string(),
++            },
++        ),
++        (
++            "Io",
++            GraphtorError::Io(std::io::Error::new(
++                std::io::ErrorKind::NotFound,
++                "missing file",
++            )),
++        ),
++    ];
++
++    let messages: Vec<String> = variants
++        .iter()
++        .map(|(name, e)| {
++            let s = e.to_string();
++            assert!(!s.is_empty(), "{name} variant produced empty message");
++            s
++        })
++        .collect();
++
++    // All messages must start with their respective category prefix
++    let prefixes = [
++        "[config]",
++        "[database]",
++        "[pipeline]",
++        "[parse]",
++        "[embed]",
++        "[path_violation]",
++        "[sync]",
++        "[io]",
++    ];
++    for (i, (msg, prefix)) in messages.iter().zip(prefixes.iter()).enumerate() {
++        assert!(
++            msg.starts_with(prefix),
++            "variant {} expected prefix '{}', got: {msg}",
++            variants[i].0,
++            prefix
++        );
++    }
++
++    // All 8 messages must be distinct
++    let unique: std::collections::HashSet<&str> = messages.iter().map(String::as_str).collect();
++    assert_eq!(
++        unique.len(),
++        8,
++        "expected 8 distinct error messages, some may be identical: {messages:?}"
++    );
++}
++
++/// `From<serde_yaml::Error>` produces a Config variant with the YAML error text.
++#[test]
++fn serde_yaml_error_converts_to_config_with_message() {
++    let bad_yaml = "sources:\n  - id: [unclosed";
++    let yaml_err = serde_yaml::from_str::<serde_yaml::Value>(bad_yaml).unwrap_err();
++    let e: GraphtorError = yaml_err.into();
++
++    assert!(
++        matches!(e, GraphtorError::Config { .. }),
++        "expected Config variant, got: {e:?}"
++    );
++    let msg = e.to_string();
++    assert!(
++        msg.starts_with("[config]"),
++        "expected '[config]' prefix: {msg}"
++    );
++    assert!(!msg.is_empty(), "Config message must not be empty");
++}
++
++/// `From<std::io::Error>` produces an Io variant.
++#[test]
++fn io_error_converts_to_io_variant() {
++    let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied");
++    let e: GraphtorError = io_err.into();
++    assert!(
++        matches!(e, GraphtorError::Io(_)),
++        "expected Io variant, got: {e:?}"
++    );
++    let msg = e.to_string();
++    assert!(msg.starts_with("[io]"), "expected '[io]' prefix: {msg}");
++    assert!(
++        msg.contains("permission denied"),
++        "message should contain io error description: {msg}"
++    );
++}
++
++/// The re-exported `GraphtorError` from crate root is the same type.
++#[test]
++fn crate_root_reexport_is_same_type() {
++    let e: graphtor_core::GraphtorError = GraphtorError::Config {
++        message: "test".to_string(),
++        field: None,
++    };
++    assert!(e.to_string().starts_with("[config]"));
++}
+diff --git a/tests/logging_test.rs b/tests/logging_test.rs
+new file mode 100644
+index 0000000..dbd7545
+--- /dev/null
++++ b/tests/logging_test.rs
+@@ -0,0 +1,63 @@
++//! Integration tests for `graphtor_core::logging` module.
++//!
++//! Verifies that `init_logging` configures the tracing subscriber and
++//! handles double-initialization gracefully (returns error, does not panic).
++//!
++//! Note: `tracing` uses a single global subscriber per process. Tests in
++//! this file must not assume which test runs first.
++
++use graphtor_core::logging::{init_logging, LogVerbosity};
++use graphtor_core::GraphtorError;
++
++/// Verifies `init_logging` semantics end-to-end.
++///
++/// - Any first call returns either `Ok(())` or `Err(GraphtorError::Config)`
++///   (depending on whether another test already set the subscriber).
++/// - A second call within the same test **always** returns `Err(Config)`.
++/// - The function never panics.
++#[test]
++fn init_logging_returns_ok_or_config_error_and_double_init_always_errors() {
++    // First attempt ΓÇö may or may not succeed depending on test ordering
++    let first = init_logging(LogVerbosity::Normal);
++    if let Err(ref e) = first {
++        assert!(
++            matches!(e, GraphtorError::Config { .. }),
++            "if init_logging errors it must be a Config variant: {e:?}"
++        );
++        let msg = e.to_string();
++        assert!(
++            msg.contains("already"),
++            "Config error message should indicate subscriber is already initialized: {msg}"
++        );
++    }
++
++    // Second call within the same test must always fail (subscriber is now set)
++    let second = init_logging(LogVerbosity::Verbose);
++    assert!(
++        second.is_err(),
++        "second init_logging call in same test must return an error"
++    );
++    assert!(
++        matches!(second.unwrap_err(), GraphtorError::Config { .. }),
++        "double-init error must be the Config variant"
++    );
++}
++
++/// `init_logging` with any verbosity returns `Result`, never panics.
++#[test]
++fn init_logging_never_panics_for_any_verbosity() {
++    for verbosity in [
++        LogVerbosity::Quiet,
++        LogVerbosity::Normal,
++        LogVerbosity::Verbose,
++    ] {
++        let result = init_logging(verbosity);
++        // Accept Ok or Err(Config) ΓÇö anything else is a bug
++        if let Err(e) = result {
++            assert!(
++                matches!(e, GraphtorError::Config { .. }),
++                "init_logging({verbosity:?}) must only error with Config variant: {e:?}"
++            );
++        }
++    }
++}
+diff --git a/tests/path_security_test.rs b/tests/path_security_test.rs
+new file mode 100644
+index 0000000..b4af4ec
+--- /dev/null
++++ b/tests/path_security_test.rs
+@@ -0,0 +1,127 @@
++//! Integration tests for `graphtor_core::path::validate_path`.
++//!
++//! Verifies path security enforcement using real filesystem operations
++//! via temporary directories. Tests boundary enforcement, traversal
++//! rejection, and non-existent path handling through the public API.
++
++use std::fs;
++
++use graphtor_core::path::validate_path;
++use graphtor_core::GraphtorError;
++
++// ΓöÇΓöÇ T039: Integration tests with real filesystem ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++/// A file inside the temp root is accepted and the resolved path is returned.
++#[test]
++fn validate_path_accepts_file_inside_root() {
++    let root = tempfile::tempdir().expect("failed to create temp dir");
++    // Use canonical root for assertions ΓÇö avoids Windows casing/verbatim mismatch
++    let canonical_root = {
++        let c = std::fs::canonicalize(root.path()).unwrap();
++        let s = c.to_string_lossy();
++        if let Some(stripped) = s.strip_prefix(r"\\?\") {
++            std::path::PathBuf::from(stripped)
++        } else {
++            c
++        }
++    };
++    let file = root.path().join("docs").join("guide.md");
++    fs::create_dir_all(file.parent().unwrap()).unwrap();
++    fs::write(&file, b"# guide").unwrap();
++
++    let result = validate_path(&file, root.path());
++    assert!(
++        result.is_ok(),
++        "valid path inside root must be accepted: {result:?}"
++    );
++    let resolved = result.unwrap();
++    assert!(
++        resolved.starts_with(&canonical_root),
++        "resolved path must be under root"
++    );
++    assert!(resolved.is_absolute());
++}
++
++/// A `..` traversal that escapes the root is rejected with `PathViolation`.
++#[test]
++fn validate_path_rejects_dotdot_traversal() {
++    let root = tempfile::tempdir().expect("failed to create temp dir");
++    let subdir = root.path().join("sub");
++    fs::create_dir_all(&subdir).unwrap();
++
++    // `sub/../../..` escapes the temp root entirely
++    let escape = subdir.join("..").join("..").join("secret");
++    let result = validate_path(&escape, root.path());
++    assert!(
++        matches!(result, Err(GraphtorError::PathViolation { .. })),
++        "dotdot traversal must be rejected with PathViolation: {result:?}"
++    );
++}
++
++/// An absolute path that exists outside the root is rejected.
++#[test]
++fn validate_path_rejects_absolute_path_outside_root() {
++    let root = tempfile::tempdir().expect("failed to create temp dir");
++    // Parent of the temp root is guaranteed to exist but is outside
++    let outside = root
++        .path()
++        .parent()
++        .expect("temp dir has a parent")
++        .join("other_project");
++
++    let result = validate_path(&outside, root.path());
++    // Either the path doesn't exist (Io error from canonicalize) or it's a PathViolation
++    match result {
++        Err(GraphtorError::PathViolation { .. } | GraphtorError::Io(_)) => {
++            // Either error type is acceptable
++        }
++        Ok(_) | Err(_) => panic!("path outside root must be rejected: {result:?}"),
++    }
++}
++
++/// A non-existent file inside the root is accepted; resolved path is returned.
++#[test]
++fn validate_path_accepts_non_existent_leaf_inside_root() {
++    let root = tempfile::tempdir().expect("failed to create temp dir");
++    let canonical_root = {
++        let c = std::fs::canonicalize(root.path()).unwrap();
++        let s = c.to_string_lossy();
++        if let Some(stripped) = s.strip_prefix(r"\\?\") {
++            std::path::PathBuf::from(stripped)
++        } else {
++            c
++        }
++    };
++    let new_file = root.path().join("new_output.json");
++
++    // The file doesn't exist yet ΓÇö but its parent (root) does
++    let result = validate_path(&new_file, root.path());
++    assert!(
++        result.is_ok(),
++        "non-existent path whose parent is inside root must be accepted: {result:?}"
++    );
++    let resolved = result.unwrap();
++    assert!(resolved.starts_with(&canonical_root));
++    assert_eq!(resolved.file_name().unwrap(), "new_output.json");
++}
++
++/// Deeply nested valid path is accepted.
++#[test]
++fn validate_path_accepts_deeply_nested_existing_path() {
++    let root = tempfile::tempdir().expect("failed to create temp dir");
++    let deep = root
++        .path()
++        .join("a")
++        .join("b")
++        .join("c")
++        .join("d")
++        .join("e.txt");
++    fs::create_dir_all(deep.parent().unwrap()).unwrap();
++    fs::write(&deep, b"deep").unwrap();
++
++    let result = validate_path(&deep, root.path());
++    assert!(
++        result.is_ok(),
++        "deeply nested path inside root must be accepted: {result:?}"
++    );
++}

@@ -1,0 +1,655 @@
+# ==============================================================================
+# MICROSOFT DOCS REPOSITORIES — GROUPED BY DOCUMENTATION AREA
+# Generated: 2026-03-08
+# Total: 703 repositories from https://github.com/MicrosoftDocs
+# ==============================================================================
+
+
+# ==============================================================================
+# GROUP 1: AZURE CORE & CLI
+# The primary Azure documentation hub plus CLI, PowerShell, and REST API
+# reference — the baseline layer any Azure user or developer needs first.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-docs.git
+https://github.com/MicrosoftDocs/azure-dev-docs.git
+https://github.com/MicrosoftDocs/azure-docs-cli.git
+https://github.com/MicrosoftDocs/azure-docs-powershell.git
+# https://github.com/MicrosoftDocs/azure-rest-api-specs.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/azure-reference-other.git
+# https://github.com/MicrosoftDocs/azure-cloud-services-files.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/SupportArticles-docs.git
+
+
+# ==============================================================================
+# GROUP 2: AZURE ARCHITECTURE & BEST PRACTICES
+# High-level guidance for designing, migrating, and operating cloud solutions —
+# used together when planning or reviewing any Azure workload design.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/architecture-center.git
+https://github.com/MicrosoftDocs/cloud-adoption-framework.git
+https://github.com/MicrosoftDocs/well-architected.git
+https://github.com/MicrosoftDocs/patterns-practices.git
+https://github.com/MicrosoftDocs/microsoft-cloud.git
+
+
+# ==============================================================================
+# GROUP 3: AZURE AI & MACHINE LEARNING
+# AI services, cognitive APIs, ML frameworks, and speech/vision services —
+# reference these together when building intelligent, AI-powered applications.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-ai-docs.git
+https://github.com/MicrosoftDocs/cognitive-toolkit-docs.git
+# https://github.com/MicrosoftDocs/CNTK.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/machine-learning-server-docs.git
+# https://github.com/MicrosoftDocs/Azure-MachineLearning-DataScience.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/tensorflow.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/tensorflowfundamentals.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pytorchfundamentals.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/ml-basics.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/ai-fundamentals.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/Speech.git
+https://github.com/MicrosoftDocs/SpeechServicePrivatePreview.git
+https://github.com/MicrosoftDocs/prose-py-api-docs.git
+https://github.com/MicrosoftDocs/microsoft-academic-services.git
+# https://github.com/MicrosoftDocs/tensorflow-fundamentals.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/windows-ai-docs.git
+https://github.com/MicrosoftDocs/semantic-kernel-docs.git
+
+
+# ==============================================================================
+# GROUP 4: AZURE COMPUTE & INFRASTRUCTURE
+# Virtual machines, containers, Kubernetes, HPC, and compute primitives —
+# use together when provisioning or managing Azure compute resources.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-compute-docs.git
+https://github.com/MicrosoftDocs/Virtualization-Documentation.git
+https://github.com/MicrosoftDocs/azure-aks-docs.git
+# https://github.com/MicrosoftDocs/hpc-docs-sdk-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/Microsoft-MPI.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 5: AZURE DATABASES & ANALYTICS
+# Managed relational, NoSQL, graph, and analytics database services —
+# reference together when designing data persistence or query strategies on Azure.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-databases-docs.git
+https://github.com/MicrosoftDocs/dataexplorer-docs.git
+# https://github.com/MicrosoftDocs/dataexplorer-docs-samples.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/data-api-builder-docs.git
+# https://github.com/MicrosoftDocs/azure-cosmos-db-graph-dotnet-getting-started.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/nosql-query-docs.git
+https://github.com/MicrosoftDocs/OData-docs.git
+# https://github.com/MicrosoftDocs/azure-digitaltwins-rest-api.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 6: AZURE STORAGE
+# Blob, table, queue, and file storage — grouped so storage patterns,
+# lifecycle management, and SDK usage can be consulted side-by-side.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-storage-typescript-docs.git
+
+
+# ==============================================================================
+# GROUP 7: AZURE NETWORKING
+# Virtual networks, load balancers, traffic management, DNS, and VPN gateways —
+# reference together for network topology, routing, and connectivity design.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/PreviewContentforNetworkWatcher.git
+
+
+# ==============================================================================
+# GROUP 8: AZURE SECURITY & COMPLIANCE
+# Threat protection, security benchmarks, information protection, and compliance
+# tooling — use together when hardening Azure workloads or meeting audit needs.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-security-docs.git
+https://github.com/MicrosoftDocs/SecurityBenchmarks.git
+https://github.com/MicrosoftDocs/defender-docs.git
+https://github.com/MicrosoftDocs/security.git
+https://github.com/MicrosoftDocs/security-services-docs.git
+https://github.com/MicrosoftDocs/ATADocs.git
+https://github.com/MicrosoftDocs/Azure-RMSDocs.git
+https://github.com/MicrosoftDocs/CloudAppSecurityDocs.git
+https://github.com/MicrosoftDocs/mip-sdk-docs.git
+# https://github.com/MicrosoftDocs/mipsdk-dotnet.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/Linux-compliance-private-preview.git
+https://github.com/MicrosoftDocs/Azure-Trusted-Launch-VMs-Linux.git
+https://github.com/MicrosoftDocs/Backup-Confidential-VMs-with-CMK.git
+# https://github.com/MicrosoftDocs/projectfreta-docs-rest-apis.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/secured-core-pc.git
+# https://github.com/MicrosoftDocs/WDAC-Toolkit.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 9: MICROSOFT IDENTITY PLATFORM
+# Authentication libraries, Entra ID (Azure AD), and identity protocols across
+# all major languages — reference together for any auth/authz implementation.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/entra-docs.git
+https://github.com/MicrosoftDocs/entra-powershell-docs.git
+# https://github.com/MicrosoftDocs/microsoft-authentication-library-javascript.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/microsoft-authentication-library-for-python.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/microsoft-authentication-library-java.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/microsoft-authentication-library-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/microsoft-authentication-library-objc.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/microsoft-authentication-library-for-go.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/MIMDocs.git
+
+
+# ==============================================================================
+# GROUP 10: AZURE DEVOPS & CI/CD
+# Pipelines, boards, repos, artifacts, and test plans — use together when
+# building or automating end-to-end software delivery on Azure DevOps.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-devops-docs.git
+https://github.com/MicrosoftDocs/azure-devops-server-docs.git
+https://github.com/MicrosoftDocs/azure-devops-docs-sdk-web.git
+https://github.com/MicrosoftDocs/azure-devops-docs-sdk-dotnet.git
+https://github.com/MicrosoftDocs/azure-devops-docs-samples.git
+https://github.com/MicrosoftDocs/vsts-rest-api-specs.git
+https://github.com/MicrosoftDocs/azure-devops-yaml-schema.git
+# https://github.com/MicrosoftDocs/azure-pipelines-canary-k8s.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/codecoverage-yaml-samples.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-dotnet-core.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-dotnet-core-docker.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-javascript.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-javascript-docker.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-java.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-java-function.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-go.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-go-docker.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-python-django.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-php.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-ruby.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-xamarin.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-xcode.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-android.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-anaconda.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-azureml.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-cpp.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-vmss.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/pipelines-multistage.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 11: AZURE MONITORING & MANAGEMENT
+# Monitor, Log Analytics, System Center, and operational management —
+# use together when setting up observability and operational runbooks.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-monitor-docs.git
+https://github.com/MicrosoftDocs/azure-management-docs.git
+# https://github.com/MicrosoftDocs/LogAnalyticsExamples.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/reliability-docs.git
+# https://github.com/MicrosoftDocs/opsmgr-docs-rest-apis.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/SystemCenterDocs.git
+
+
+# ==============================================================================
+# GROUP 12: AZURE IOT & EDGE
+# IoT Hub, IoT Edge, Azure Sphere, and digital twins — reference together
+# when designing connected device solutions or edge computing workloads.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/windows-iotcore-docs.git
+https://github.com/MicrosoftDocs/windows-iot-public.git
+# https://github.com/MicrosoftDocs/azure-iot-sdk-csharp.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/azure-iot-docs-sdk-typescript.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/azure-sphere-issues.git
+# https://github.com/MicrosoftDocs/Azure-Sphere-Developer-Learning-Path.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/licensed-hardware.git
+
+
+# ==============================================================================
+# GROUP 13: AZURE STACK
+# Azure Stack Hub and tools for hybrid cloud scenarios where workloads run
+# on-premises with Azure-consistent APIs.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-stack-docs.git
+# https://github.com/MicrosoftDocs/AzureStack-Tools.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 14: ENTERPRISE MOBILITY & ENDPOINT MANAGEMENT
+# Intune, Configuration Manager, and endpoint compliance — reference together
+# when managing and securing enterprise devices and mobile deployments.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/memdocs.git
+https://github.com/MicrosoftDocs/EMDocs.git
+https://github.com/MicrosoftDocs/SCCMdocs.git
+# https://github.com/MicrosoftDocs/sccm-docs-powershell-ref.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/fslogix-docs.git
+https://github.com/MicrosoftDocs/Intune-and-Entra-RHEL-Private-Preview.git
+
+
+# ==============================================================================
+# GROUP 15: BIZTALK, SQL SERVER & DATA PLATFORM
+# On-premises and hybrid data platform including SQL Server, BizTalk, and
+# Reporting Services — reference together for enterprise data integration work.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/sql-docs.git
+https://github.com/MicrosoftDocs/biztalk-docs.git
+https://github.com/MicrosoftDocs/Reporting-Services.git
+
+
+# ==============================================================================
+# GROUP 16: MICROSOFT 365 & OFFICE
+# Productivity applications and developer APIs covering Word, Excel, Outlook,
+# SharePoint, Exchange, and Lync/UCMA — used together for M365 app development
+# or administrative automation.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/microsoft-365-docs.git
+https://github.com/MicrosoftDocs/office-docs-powershell.git
+https://github.com/MicrosoftDocs/office-developer-client-docs.git
+https://github.com/MicrosoftDocs/office-developer-exchange-docs.git
+# https://github.com/MicrosoftDocs/office-developer-exchange-ews-proxy-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-exchange-ews-managed-api-ref-dotnet.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/office-developer-lync-evergreen-docs.git
+# https://github.com/MicrosoftDocs/office-developer-lync-client-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-lync-wfp-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-lync-persistent-chat-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-managed-sip-api-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-ucma-api-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-ucma-voice-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-o365-service-communications-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-infopath-external-automation-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-infopath-form-templates-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-project-class-web-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-excel-pia-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-office-pia-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-outlook-pia-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-word-pia-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/office-developer-sharepoint-server-2013-ref-dotnet.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/office-developer-msproject-xml-docs.git
+https://github.com/MicrosoftDocs/office-365-management-api.git
+https://github.com/MicrosoftDocs/OfficeDocs-SharePoint-PowerShell.git
+https://github.com/MicrosoftDocs/VBA-Docs.git
+https://github.com/MicrosoftDocs/microsoft-365-community.git
+# https://github.com/MicrosoftDocs/Office365DSC.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/oufr-dev-docs.git
+# https://github.com/MicrosoftDocs/groove-api-sdk-csharp.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/microsoft-community-training.git
+
+
+# ==============================================================================
+# GROUP 17: MICROSOFT TEAMS & COMMUNICATION
+# Teams platform SDK, bots, messaging extensions, and communication services —
+# reference together when developing Teams apps or communication workflows.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/msteams-docs.git
+https://github.com/MicrosoftDocs/Microsoft-teams-docs.git
+# https://github.com/MicrosoftDocs/msteam-docs-sdk-typescript.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/kaizala-docs.git
+https://github.com/MicrosoftDocs/teams-ai-library.git
+https://github.com/MicrosoftDocs/teams-sdk-typescript.git
+https://github.com/MicrosoftDocs/teams-sdk-python.git
+# https://github.com/MicrosoftDocs/Teams-Auto-Attendant-and-Call-Queue-Backup-and-Bulk-Provisioning-Tools.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 18: MICROSOFT GRAPH
+# Microsoft Graph API and PowerShell SDK for accessing M365, Azure AD, and
+# cross-service data — reference together for any Graph API integration.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/microsoft-graph-training.git
+https://github.com/MicrosoftDocs/microsoftgraph-docs-powershell.git
+
+
+# ==============================================================================
+# GROUP 19: MICROSOFT COPILOT & AI ASSISTANTS
+# Copilot for M365, Copilot plugins, connectors, and the Model Context Protocol
+# — reference together when building or extending Copilot-powered experiences.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/m365copilot-docs.git
+https://github.com/MicrosoftDocs/copilot-connectors.git
+https://github.com/MicrosoftDocs/microsoft-salescopilot-docs.git
+https://github.com/MicrosoftDocs/mcp.git
+https://github.com/MicrosoftDocs/Agent-Skills.git
+
+
+# ==============================================================================
+# GROUP 20: BOT FRAMEWORK & CONVERSATIONAL AI
+# Bot Framework SDK across .NET, TypeScript, Python, plus Adaptive Cards and
+# Composer — reference together when building chatbots or dialog systems.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/bot-docs.git
+# https://github.com/MicrosoftDocs/botbuilder-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/botbuilder-docs-sdk-typescript.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/botbuilder-docs-sdk-python.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/composer-docs.git
+https://github.com/MicrosoftDocs/CortanaSkillsKit.git
+https://github.com/MicrosoftDocs/AdaptiveCards.git
+
+
+# ==============================================================================
+# GROUP 21: GAMING, MEDIA & MIXED REALITY
+# Xbox Live, PlayFab, Azure Gaming, HoloLens/Mesh, AltspaceVR, Minecraft, and
+# PlayReady DRM — use together for game or immersive experience development.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-gaming-docs.git
+https://github.com/MicrosoftDocs/xbox-live-docs.git
+# https://github.com/MicrosoftDocs/XboxLive-API.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/PlayReady.git
+https://github.com/MicrosoftDocs/playfab-docs.git
+https://github.com/MicrosoftDocs/minecraft-creator.git
+https://github.com/MicrosoftDocs/altspace-vr.git
+https://github.com/MicrosoftDocs/mesh-docs.git
+https://github.com/MicrosoftDocs/azure-video-indexer.git
+
+
+# ==============================================================================
+# GROUP 22: WINDOWS DEVELOPMENT
+# Win32, WinRT, WinUI, WebView2, console, UWP tools, and the Windows Community
+# Toolkit — reference together when building native Windows applications.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/windows-dev-docs.git
+https://github.com/MicrosoftDocs/windows-driver-docs.git
+https://github.com/MicrosoftDocs/windows-driver-docs-ddi.git
+https://github.com/MicrosoftDocs/win32.git
+https://github.com/MicrosoftDocs/winrt-api.git
+https://github.com/MicrosoftDocs/winrt-related.git
+https://github.com/MicrosoftDocs/sdk-api.git
+https://github.com/MicrosoftDocs/winui-api.git
+https://github.com/MicrosoftDocs/winapps-winrt-api.git
+https://github.com/MicrosoftDocs/winapps-win32-api.git
+https://github.com/MicrosoftDocs/Console-Docs.git
+# https://github.com/MicrosoftDocs/windows-topic-specific-samples.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/WSL.git
+https://github.com/MicrosoftDocs/globalization.git
+https://github.com/MicrosoftDocs/sysinternals.git
+https://github.com/MicrosoftDocs/terminal.git
+https://github.com/MicrosoftDocs/msix-docs.git
+https://github.com/MicrosoftDocs/WindowsCommunityToolkitDocs.git
+https://github.com/MicrosoftDocs/CommunityToolkit.git
+# https://github.com/MicrosoftDocs/community-toolkit-api-ref-dotnet.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/webview2-win32-reference.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/webview2-winrt-reference.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/windows-devdocs-team.git
+https://github.com/MicrosoftDocs/cross-device.git
+https://github.com/MicrosoftDocs/gestures-docs.git
+https://github.com/MicrosoftDocs/MS-AppControl-AppManifests.git
+# https://github.com/MicrosoftDocs/SimpleRecorder.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 23: WINDOWS SERVER & IIS
+# Windows Server, IIS web server, and Linux-on-Azure documentation —
+# reference together for server infrastructure administration and configuration.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/windowsserverdocs.git
+https://github.com/MicrosoftDocs/iis-docs.git
+https://github.com/MicrosoftDocs/linux.git
+
+
+# ==============================================================================
+# GROUP 24: POWERSHELL
+# PowerShell language, module gallery, DSC, and scripting documentation across
+# Windows and Linux — reference together for automation and scripting tasks.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/PowerShell-Docs.git
+https://github.com/MicrosoftDocs/PowerShell-Docs-archive.git
+https://github.com/MicrosoftDocs/PowerShell-Docs-Modules.git
+https://github.com/MicrosoftDocs/PowerShell-Docs-DSC.git
+https://github.com/MicrosoftDocs/PowerShell-Docs-PSGet.git
+https://github.com/MicrosoftDocs/windows-powershell-docs.git
+https://github.com/MicrosoftDocs/PowerShell-DSC-for-Linux.git
+# https://github.com/MicrosoftDocs/powershell-sdk-samples.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/secmgmt-open-powershell-docs.git
+https://github.com/MicrosoftDocs/powerbi-docs-powershell.git
+
+
+# ==============================================================================
+# GROUP 25: VISUAL STUDIO & DEVELOPER TOOLS
+# IDE features, IntelliCode, performance tracing, package management, and dev
+# containers — reference together during the inner development loop.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/visualstudio-docs.git
+https://github.com/MicrosoftDocs/intellicode.git
+https://github.com/MicrosoftDocs/vs-tutorials.git
+# https://github.com/MicrosoftDocs/vs-tutorial-samples.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/trace-processor-docs.git
+https://github.com/MicrosoftDocs/trace-processor-reference-docs.git
+https://github.com/MicrosoftDocs/vcpkg-docs.git
+https://github.com/MicrosoftDocs/devcontainers.git
+https://github.com/MicrosoftDocs/edge-developer.git
+https://github.com/MicrosoftDocs/edge-archive.git
+https://github.com/MicrosoftDocs/edge-modules.git
+
+
+# ==============================================================================
+# GROUP 26: .NET, C++ & LANGUAGE ECOSYSTEM
+# .NET framework/runtime, C++, F#, EF Core, Aspire, and IoT libraries —
+# reference together when building or maintaining .NET applications.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/cpp-docs.git
+https://github.com/MicrosoftDocs/visualfsharpdocs.git
+https://github.com/MicrosoftDocs/dotnet-archive.git
+# https://github.com/MicrosoftDocs/dotnet-iot-assets.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/dotnet-iot-for-beginners.git
+https://github.com/MicrosoftDocs/dotnet-data-for-beginners.git
+# https://github.com/MicrosoftDocs/ef-core-for-beginners.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/dotnet-ci-demo.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/node-essentials.git
+# https://github.com/MicrosoftDocs/devrampup.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/aspire-docs-samples.git
+
+
+# ==============================================================================
+# GROUP 27: MOBILE DEVELOPMENT
+# Xamarin, .NET MAUI, App Center, and mobile Blazor — reference together when
+# building cross-platform mobile applications targeting iOS and Android.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/xamarin-docs.git
+https://github.com/MicrosoftDocs/xamarin-communitytoolkit.git
+https://github.com/MicrosoftDocs/appcenter-docs.git
+https://github.com/MicrosoftDocs/mobile-blazor-bindings.git
+https://github.com/MicrosoftDocs/CordovaDocs.git
+
+
+# ==============================================================================
+# GROUP 28: DYNAMICS 365
+# ERP, CRM, field service, finance, mixed reality, and business apps spanning
+# the full Dynamics 365 product family — reference together for Dynamics dev
+# or admin work across any of the product lines.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/dynamics-365-unified-operations-public.git
+https://github.com/MicrosoftDocs/dynamics365smb-docs.git
+https://github.com/MicrosoftDocs/dynamics365smb-devitpro-pb.git
+https://github.com/MicrosoftDocs/dynamics-365-customer-engagement.git
+https://github.com/MicrosoftDocs/dynamics-365-mixed-reality.git
+https://github.com/MicrosoftDocs/dynamics-365-ai.git
+https://github.com/MicrosoftDocs/dynamics-365-fraud-protection.git
+https://github.com/MicrosoftDocs/dynamics-365-project-operations.git
+https://github.com/MicrosoftDocs/dynamics-365-intelligent-order-management.git
+https://github.com/MicrosoftDocs/dynamics-365-supply-chain-insights.git
+https://github.com/MicrosoftDocs/dynamics-365-contact-center.git
+https://github.com/MicrosoftDocs/dynamics365-industry-solutions.git
+https://github.com/MicrosoftDocs/dynamics365-guidance.git
+https://github.com/MicrosoftDocs/dynamics365-docs-templates.git
+https://github.com/MicrosoftDocs/DynamicsAX2012-technet.git
+https://github.com/MicrosoftDocs/DynamicsAX2012-msdn.git
+https://github.com/MicrosoftDocs/nav-content.git
+https://github.com/MicrosoftDocs/navdevitpro-content-pr.git
+https://github.com/MicrosoftDocs/msftdynamicsgpdocs.git
+https://github.com/MicrosoftDocs/d365Ops-Financials.git
+https://github.com/MicrosoftDocs/customer-voice.git
+https://github.com/MicrosoftDocs/customer-insights.git
+https://github.com/MicrosoftDocs/supply-chain-center.git
+https://github.com/MicrosoftDocs/common-data-model-and-service.git
+https://github.com/MicrosoftDocs/connected-store.git
+https://github.com/MicrosoftDocs/connected-spaces.git
+https://github.com/MicrosoftDocs/D365FnOArchiveWithDataverseLongTermRetention.git
+
+
+# ==============================================================================
+# GROUP 29: POWER PLATFORM
+# Power Apps, Power Automate, Power BI, Power Pages, Power Query, and AI Builder
+# — reference together when building low-code/no-code solutions or BI reports.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/power-platform.git
+https://github.com/MicrosoftDocs/powerapps-docs.git
+https://github.com/MicrosoftDocs/power-automate-docs.git
+https://github.com/MicrosoftDocs/powerbi-docs.git
+https://github.com/MicrosoftDocs/power-pages-docs.git
+# https://github.com/MicrosoftDocs/powerapps-docs-rest-apis.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/ai-builder.git
+https://github.com/MicrosoftDocs/data-tools.git
+https://github.com/MicrosoftDocs/query-docs.git
+https://github.com/MicrosoftDocs/data-integration.git
+https://github.com/MicrosoftDocs/powerquery-docs.git
+
+
+# ==============================================================================
+# GROUP 30: MICROSOFT FABRIC & ANALYTICS
+# Microsoft Fabric, Analysis Services shared components, and data visualization
+# — reference together for building enterprise analytics and BI solutions.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/fabric-docs.git
+https://github.com/MicrosoftDocs/bi-shared-docs.git
+
+
+# ==============================================================================
+# GROUP 31: AZURE SDK LANGUAGE REFERENCES
+# Per-language SDK API references for .NET, Java, Python, JavaScript/TypeScript,
+# Go, and C++ — use the language-specific repo alongside azure-docs when
+# writing application code against Azure services.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/azure-docs-sdk-dotnet.git
+https://github.com/MicrosoftDocs/azure-docs-sdk-java.git
+https://github.com/MicrosoftDocs/azure-docs-sdk-python.git
+https://github.com/MicrosoftDocs/azure-docs-sdk-python-archive.git
+https://github.com/MicrosoftDocs/azure-docs-sdk-node.git
+https://github.com/MicrosoftDocs/azure-docs-sdk-node-archive.git
+https://github.com/MicrosoftDocs/azure-docs-sdk-go.git
+https://github.com/MicrosoftDocs/azure-docs-sdk-cpp.git
+https://github.com/MicrosoftDocs/azure-java-reference.git
+# https://github.com/MicrosoftDocs/azure-cognitive-services-js.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/python-sdk-docs-examples.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/azure-fluid-preview-pr.git  # non-doc: code/samples/tools/generated
+# https://github.com/MicrosoftDocs/azure-sdk-docs-js-mockup.git  # non-doc: code/samples/tools/generated
+
+
+# ==============================================================================
+# GROUP 32: QUANTUM COMPUTING
+# Azure Quantum service, Q# language, and quantum algorithm documentation —
+# reference together when developing quantum programs or learning the platform.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/quantum-docs.git
+https://github.com/MicrosoftDocs/quantum-docs-pr.git
+https://github.com/MicrosoftDocs/quantum-api.git
+
+
+# ==============================================================================
+# GROUP 33: BING, MAPS & ADVERTISING
+# Bing Search APIs, Bing Maps, and Microsoft Advertising (Xandr) — reference
+# together when building search, location, or programmatic advertising features.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/bing-docs.git
+https://github.com/MicrosoftDocs/bingmaps-docs.git
+https://github.com/MicrosoftDocs/Advertising-docs.git
+https://github.com/MicrosoftDocs/Advertising.git
+https://github.com/MicrosoftDocs/Xandr-docs.git
+
+
+# ==============================================================================
+# GROUP 34: PARTNER & PROGRAMS
+# Microsoft Partner Center, licensing, MPN programs, and collaboration portal
+# — reference together when building partner-integrated apps or managing
+# commercial marketplace offerings.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/partner-rest.git
+https://github.com/MicrosoftDocs/partner-center-downloads.git
+https://github.com/MicrosoftDocs/MicrosoftCollaboratePortal.git
+https://github.com/MicrosoftDocs/intelligent-asset-manager.git
+
+
+# ==============================================================================
+# GROUP 35: OPEN STANDARDS & APIS
+# OData protocol, OpenAPI specifications, and interoperability standards —
+# reference together when designing or consuming standards-based REST APIs.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/openapi-docs.git
+
+
+# ==============================================================================
+# GROUP 36: MIGRATION TOOLS
+# Database migration, app containerization, and cloud migration guidance —
+# reference together during lift-and-shift or modernization projects.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/MigrationPlaybookContent.git
+
+
+# ==============================================================================
+# GROUP 37: COMMUNITY & LEARNING
+# Developer advocacy content, community blogs, labs, and open learning
+# resources — use together for outreach, self-study, or evangelism content.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/cloud-developer-advocates.git
+https://github.com/MicrosoftDocs/microsoft-365-community.git
+https://github.com/MicrosoftDocs/community-content.git
+https://github.com/MicrosoftDocs/open_specs_blog.git
+# https://github.com/MicrosoftDocs/labs.git  # non-doc: code/samples/tools/generated
+https://github.com/MicrosoftDocs/DevOpsLearn.git
+https://github.com/MicrosoftDocs/FastTrackBlogRepo.git
+https://github.com/MicrosoftDocs/learn.git
+
+
+# ==============================================================================
+# GROUP 38: DOCUMENTATION INFRASTRUCTURE & STYLE
+# Authoring guides, style guide, templates, tooling, and contribution workflows
+# — reference together when contributing to or maintaining Microsoft docs.
+# ==============================================================================
+
+https://github.com/MicrosoftDocs/Contribute.git
+https://github.com/MicrosoftDocs/microsoft-style-guide.git
+https://github.com/MicrosoftDocs/content-templates.git
+https://github.com/MicrosoftDocs/DocsContentNav.git
+https://github.com/MicrosoftDocs/learn-template.git
+https://github.com/MicrosoftDocs/learn-scaffolding.git
+https://github.com/MicrosoftDocs/sphinx-docfx-yaml-docs.git
+https://github.com/MicrosoftDocs/rest-ref-template.git
+https://github.com/MicrosoftDocs/java-ref-template.git
+https://github.com/MicrosoftDocs/ObjectiveC-ref-template.git
+https://github.com/MicrosoftDocs/archive-template.git
+https://github.com/MicrosoftDocs/swa-template.git
+https://github.com/MicrosoftDocs/azure-docs-pr-template.git
+https://github.com/MicrosoftDocs/executable-docs.git
+https://github.com/MicrosoftDocs/typography-issues.git
+

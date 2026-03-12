@@ -1,0 +1,512 @@
+{
+  "project": "graphtor-docs",
+  "title": "Local GraphRAG MCP Plugin — Rust-Native Architecture",
+  "description": "A zero-dependency, single-binary MCP plugin written in Rust that indexes multi-source developer documentation into embedded vector (LanceDB) and graph (Kùzu) databases. Enables AI agents to perform semantic search and structural graph traversal entirely locally via the Model Context Protocol.",
+  "created": "2026-03-10",
+  "updated": "2026-03-10",
+  "architecture": {
+    "language": "Rust",
+    "vector_engine": "LanceDB (lancedb crate) — embedded columnar vector DB, zero-copy Lance format",
+    "graph_engine": "Kùzu (kuzu crate) — embedded property graph with Cypher support",
+    "embedding_model": "all-MiniLM-L6-v2 (~80MB) via Candle (candle-core, candle-transformers) — 384-dim vectors",
+    "graph_extraction": "Deterministic parsing via pulldown-cmark — no LLM required",
+    "mcp_server": "rmcp crate — async STDIO JSON-RPC transport",
+    "cli": "clap crate",
+    "git_operations": "git2 crate — native Git bindings for cloning and diff",
+    "config_format": "sources.yaml via serde_yaml",
+    "async_runtime": "tokio"
+  },
+  "prerequisites": [
+    {
+      "id": "PRE-001",
+      "name": "Constitution Amendment",
+      "description": "Update .specify/memory/constitution.md to reflect Rust-native architecture: replace Python 3.11+ with Rust, Ollama/phi-4/llama with Candle/all-MiniLM-L6-v2, LLM-based graph extraction with deterministic pulldown-cmark parsing, add sources.yaml dynamic registry, update technology stack constraints table and development workflow sections",
+      "status": "done",
+      "blocks": ["FG-001"]
+    }
+  ],
+  "feature_groups": [
+    {
+      "id": "FG-001",
+      "name": "rust-foundation",
+      "title": "Rust Foundation & Core Types",
+      "branch": "002-rust-foundation",
+      "spec_path": "specs/002-rust-foundation/",
+      "description": "Cargo workspace scaffolding, core error types, configuration structures (sources.yaml schema), logging infrastructure (tracing crate), path security utilities, and deterministic chunk_id generation. This is the foundational layer all other feature groups depend on.",
+      "status": "specified",
+      "spec_status": "complete",
+      "features": [
+        {
+          "id": "FG-001-F01",
+          "name": "Cargo workspace setup",
+          "description": "Initialize Cargo.toml workspace with library crate (graphtor-core) and binary target (graphtor-docs). Define workspace-level dependencies."
+        },
+        {
+          "id": "FG-001-F02",
+          "name": "Error type hierarchy",
+          "description": "Define GraphtorError enum with thiserror: Config, Database, Pipeline, Parse, Embed, PathViolation, Sync, Io variants. Implement From conversions for external error types."
+        },
+        {
+          "id": "FG-001-F03",
+          "name": "Configuration types",
+          "description": "serde-based structs for sources.yaml schema: SourceConfig (top-level), GitSource (url, branch, include, exclude), LocalSource (path, include). Validation with custom deserializers."
+        },
+        {
+          "id": "FG-001-F04",
+          "name": "Logging infrastructure",
+          "description": "tracing + tracing-subscriber setup. Structured logging: INFO for pipeline milestones, DEBUG for per-file processing, WARN for recoverable issues, ERROR for failures."
+        },
+        {
+          "id": "FG-001-F05",
+          "name": "Path security utilities",
+          "description": "Path resolution via std::fs::canonicalize() and validation against allowed root directories. Reject paths outside workspace with PathViolation error."
+        },
+        {
+          "id": "FG-001-F06",
+          "name": "Chunk ID generation",
+          "description": "Deterministic SHA-256 hash of (normalized_text + source_path) producing 64-char hex string chunk_id. Uses sha2 crate."
+        }
+      ]
+    },
+    {
+      "id": "FG-002",
+      "name": "source-management",
+      "title": "Source Registry & Acquisition",
+      "branch": "002-source-management",
+      "spec_path": "specs/002-source-management/",
+      "description": "sources.yaml parsing with serde_yaml, Git repository cloning via git2 crate (shallow/depth=1), local directory source scanning, and include/exclude glob pattern filtering. Manages the developer's personal documentation registry.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P1",
+      "depends_on": ["FG-001"],
+      "features": [
+        {
+          "id": "FG-002-F01",
+          "name": "sources.yaml parser",
+          "description": "Parse user-defined source registry with serde_yaml: git sources (id, url, branch, include, exclude) and local sources (id, path, include). Return typed SourceConfig."
+        },
+        {
+          "id": "FG-002-F02",
+          "name": "Git source acquisition",
+          "description": "Clone git repositories using git2 crate with shallow fetch (depth=1). Skip-if-exists logic based on local directory presence. Organize by source id."
+        },
+        {
+          "id": "FG-002-F03",
+          "name": "Local source scanner",
+          "description": "Scan local directory sources, enumerate all markdown files matching include patterns while respecting exclude patterns."
+        },
+        {
+          "id": "FG-002-F04",
+          "name": "Glob pattern filtering",
+          "description": "Apply include/exclude glob patterns using the glob or globset crate to filter acquired files down to relevant documentation."
+        },
+        {
+          "id": "FG-002-F05",
+          "name": "Source validation",
+          "description": "Validate source definitions at parse time: URL format, path existence for local sources, glob syntax validity. Report all errors before processing."
+        }
+      ]
+    },
+    {
+      "id": "FG-003",
+      "name": "markdown-parser",
+      "title": "Markdown Parsing & Chunking",
+      "branch": "003-markdown-parser",
+      "spec_path": "specs/003-markdown-parser/",
+      "description": "pulldown-cmark integration for AST-based markdown parsing. Implements semantic splitting by heading boundaries (H2/H3), deterministic link/edge extraction from hyperlinks, code block isolation into CodeSnippet nodes, YAML frontmatter stripping, and stable chunk_id generation with provenance metadata.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P1",
+      "depends_on": ["FG-001"],
+      "features": [
+        {
+          "id": "FG-003-F01",
+          "name": "pulldown-cmark AST parser",
+          "description": "Parse markdown files into pulldown-cmark event stream. Walk AST events to identify headings (Start/End Heading), links (Start Link), and code blocks (Start/End CodeBlock)."
+        },
+        {
+          "id": "FG-003-F02",
+          "name": "Semantic heading-based chunking",
+          "description": "Split documents at H2/H3 boundaries into self-contained chunks. Content before first heading becomes intro chunk. H4+ content stays in parent H2/H3 chunk."
+        },
+        {
+          "id": "FG-003-F03",
+          "name": "Link/edge extraction",
+          "description": "Extract REFERENCES edges from markdown hyperlinks during AST walk. Resolve relative paths to absolute document targets. Store as (source_chunk, target_document) pairs."
+        },
+        {
+          "id": "FG-003-F04",
+          "name": "Code block isolation",
+          "description": "Extract fenced code blocks into CodeSnippet records with language tag, code content, and parent chunk_id association."
+        },
+        {
+          "id": "FG-003-F05",
+          "name": "Chunk metadata & provenance",
+          "description": "Attach to each chunk: chunk_id (SHA-256), source_path, document_title, heading_hierarchy (parent headers), repo_id from source config."
+        },
+        {
+          "id": "FG-003-F06",
+          "name": "Frontmatter handling",
+          "description": "Detect and strip YAML frontmatter (--- delimited). Extract title and description fields as document metadata before parsing body."
+        }
+      ]
+    },
+    {
+      "id": "FG-004",
+      "name": "embedding-engine",
+      "title": "Native Embedding Engine",
+      "branch": "004-embedding-engine",
+      "spec_path": "specs/004-embedding-engine/",
+      "description": "Candle framework integration (candle-core, candle-transformers) for running all-MiniLM-L6-v2 (~80MB) natively in Rust. Produces 384-dimensional dense vectors entirely in-process with zero network overhead. Includes tokenization via tokenizers crate, mean-pooling, batch processing, and automatic model weight downloading via hf-hub.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P1",
+      "depends_on": ["FG-001"],
+      "features": [
+        {
+          "id": "FG-004-F01",
+          "name": "Candle model loader",
+          "description": "Load all-MiniLM-L6-v2 BERT model weights and config from local safetensors files using candle-transformers BertModel."
+        },
+        {
+          "id": "FG-004-F02",
+          "name": "Text tokenization",
+          "description": "Tokenize input text using the model's WordPiece tokenizer via the tokenizers crate. Handle padding, truncation, and special tokens."
+        },
+        {
+          "id": "FG-004-F03",
+          "name": "Vector generation",
+          "description": "Forward pass through BERT model producing 384-dimensional dense vectors. Apply mean pooling over token embeddings to produce sentence embedding."
+        },
+        {
+          "id": "FG-004-F04",
+          "name": "Batch embedding",
+          "description": "Process multiple text chunks in configurable batches for throughput. Manage memory by limiting concurrent embeddings."
+        },
+        {
+          "id": "FG-004-F05",
+          "name": "Model weight management",
+          "description": "Auto-download model weights on first run via hf-hub crate. Cache in platform-appropriate directory. Verify integrity via checksum."
+        }
+      ]
+    },
+    {
+      "id": "FG-005",
+      "name": "vector-store",
+      "title": "Vector Store (LanceDB)",
+      "branch": "005-vector-store",
+      "spec_path": "specs/005-vector-store/",
+      "description": "LanceDB Rust API integration for embedded columnar vector storage. Defines Arrow schema (chunk_id, repo_id, vector[384], text, path), implements chunk storage with embeddings, upsert/idempotent loading by chunk_id, approximate nearest neighbor (ANN) vector search, and repo-scoped filtering for source isolation.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P1",
+      "depends_on": ["FG-001"],
+      "features": [
+        {
+          "id": "FG-005-F01",
+          "name": "Arrow schema definition",
+          "description": "Define LanceDB table schema using arrow crate: chunk_id (Utf8, PK), repo_id (Utf8), vector (FixedSizeList[Float32, 384]), text (Utf8), path (Utf8)."
+        },
+        {
+          "id": "FG-005-F02",
+          "name": "Table lifecycle management",
+          "description": "Create new tables, open existing tables, handle schema evolution. Database directory management."
+        },
+        {
+          "id": "FG-005-F03",
+          "name": "Chunk upsert loading",
+          "description": "Insert or update embedded chunks by chunk_id. Prevent duplicates on pipeline re-runs. Batch insert for throughput."
+        },
+        {
+          "id": "FG-005-F04",
+          "name": "Vector search (ANN)",
+          "description": "Approximate nearest neighbor search using query vector. Configurable top-k results and distance metric (cosine similarity)."
+        },
+        {
+          "id": "FG-005-F05",
+          "name": "Repo-scoped filtering",
+          "description": "Pre-filter or post-filter search results by repo_id for source-specific queries. Enables tenant isolation within single database."
+        },
+        {
+          "id": "FG-005-F06",
+          "name": "Chunk deletion by path",
+          "description": "Delete all chunks matching a given file path or set of paths. Required for incremental sync re-ingestion."
+        }
+      ]
+    },
+    {
+      "id": "FG-006",
+      "name": "graph-store",
+      "title": "Graph Store (Kùzu)",
+      "branch": "006-graph-store",
+      "spec_path": "specs/006-graph-store/",
+      "description": "Kùzu embedded property graph via Rust bindings. Defines Cypher DDL for node tables (SourceRepo, Document, Chunk, CodeSnippet) and relationship tables (BELONGS_TO, CONTAINS_CHUNK, HAS_CODE, REFERENCES). Implements typed node/edge CRUD, cross-DB chunk_id correlation, and multi-hop graph traversal queries for documentation link following.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P1",
+      "depends_on": ["FG-001"],
+      "features": [
+        {
+          "id": "FG-006-F01",
+          "name": "Kùzu database lifecycle",
+          "description": "Create, open, and manage embedded Kùzu database directory. Handle first-run initialization vs. subsequent opens."
+        },
+        {
+          "id": "FG-006-F02",
+          "name": "Cypher DDL schema creation",
+          "description": "Create node tables: SourceRepo(id, url), Document(path, title, repo_id), Chunk(chunk_id, heading), CodeSnippet(snippet_id, language, code). Create rel tables: BELONGS_TO, CONTAINS_CHUNK, HAS_CODE, REFERENCES."
+        },
+        {
+          "id": "FG-006-F03",
+          "name": "Node CRUD operations",
+          "description": "Insert, upsert, and delete nodes via parameterized Cypher queries. Type-safe wrappers for each node type."
+        },
+        {
+          "id": "FG-006-F04",
+          "name": "Edge CRUD operations",
+          "description": "Create and delete relationships between nodes. Validate that both endpoints exist before edge creation."
+        },
+        {
+          "id": "FG-006-F05",
+          "name": "Graph traversal queries",
+          "description": "Multi-hop traversal: given chunk_id, follow REFERENCES edges to linked Documents, then CONTAINS_CHUNK to get linked chunks. Return structured results."
+        },
+        {
+          "id": "FG-006-F06",
+          "name": "Document deletion cascade",
+          "description": "Delete a Document node and cascade to its chunks, code snippets, and associated edges. Required for incremental re-ingestion."
+        }
+      ]
+    },
+    {
+      "id": "FG-007",
+      "name": "ingestion-pipeline",
+      "title": "Ingestion Pipeline Orchestration",
+      "branch": "007-ingestion-pipeline",
+      "spec_path": "specs/007-ingestion-pipeline/",
+      "description": "Orchestrates the full ingestion flow: acquire sources → parse markdown → generate embeddings → load into LanceDB and Kùzu. Implements batch processing with configurable parallelism, structured progress reporting, per-item error handling with continue-on-failure semantics, and idempotent re-run support via upsert patterns.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P2",
+      "depends_on": ["FG-002", "FG-003", "FG-004", "FG-005", "FG-006"],
+      "features": [
+        {
+          "id": "FG-007-F01",
+          "name": "Pipeline stage sequencing",
+          "description": "Orchestrate acquire → parse → embed → load stages in correct dependency order. Pass typed data between stages (file list → chunks → embedded chunks → DB records)."
+        },
+        {
+          "id": "FG-007-F02",
+          "name": "Batch processing with parallelism",
+          "description": "Process files in configurable batches. Optionally parallelize embedding computation across CPU cores using rayon."
+        },
+        {
+          "id": "FG-007-F03",
+          "name": "Structured progress reporting",
+          "description": "Emit structured progress: [STAGE] Stage N/4 complete: {name} — {count} items ({elapsed}). Per-file DEBUG logging."
+        },
+        {
+          "id": "FG-007-F04",
+          "name": "Per-item error resilience",
+          "description": "Catch per-file errors (parse failures, embedding errors). Log and continue. Accumulate error summary for end-of-run report."
+        },
+        {
+          "id": "FG-007-F05",
+          "name": "Idempotent execution",
+          "description": "Skip already-cloned repos (acquire), upsert chunks (load). Safe to re-run entire pipeline from start without data duplication."
+        }
+      ]
+    },
+    {
+      "id": "FG-008",
+      "name": "incremental-sync",
+      "title": "Incremental Sync & State Tracking",
+      "branch": "008-incremental-sync",
+      "spec_path": "specs/008-incremental-sync/",
+      "description": "Implements .sync_state.json persistence for tracking last-processed git commit hashes and local file modification timestamps per source. Uses git2 for in-memory tree-to-tree diff analysis. Performs surgical re-ingestion: identify changed files, delete stale data from both databases, re-parse and re-load only affected documents.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P2",
+      "depends_on": ["FG-002", "FG-005", "FG-006", "FG-007"],
+      "features": [
+        {
+          "id": "FG-008-F01",
+          "name": "Sync state persistence",
+          "description": "Manage .sync_state.json via serde_json. Store per-source: last_commit (git sources), file_mtimes map (local sources), last_sync timestamp."
+        },
+        {
+          "id": "FG-008-F02",
+          "name": "Git commit-based diff detection",
+          "description": "Use git2 to compute tree-to-tree diff between stored commit and current HEAD. Identify added, modified, and deleted .md files."
+        },
+        {
+          "id": "FG-008-F03",
+          "name": "Local file mtime change detection",
+          "description": "Compare file modification timestamps against stored sync state. Flag files with newer mtime as changed."
+        },
+        {
+          "id": "FG-008-F04",
+          "name": "Surgical database re-ingestion",
+          "description": "For changed files: delete stale chunks from LanceDB (by path), delete stale Document/Chunk/CodeSnippet nodes from Kùzu (cascade), re-parse and re-load."
+        },
+        {
+          "id": "FG-008-F05",
+          "name": "First-run full ingestion",
+          "description": "Detect absence of .sync_state.json or missing source entry. Execute full ingestion for that source, then persist initial state."
+        }
+      ]
+    },
+    {
+      "id": "FG-009",
+      "name": "mcp-server",
+      "title": "MCP Plugin Server",
+      "branch": "009-mcp-server",
+      "spec_path": "specs/009-mcp-server/",
+      "description": "Async MCP server using rmcp crate with tokio runtime over STDIO JSON-RPC transport. Exposes two core tools: search_local_docs (embed query via Candle → ANN search in LanceDB with optional repo_id filter) and traverse_doc_links (Cypher graph traversal in Kùzu following REFERENCES edges). Localhost-only binding, structured markdown responses.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P2",
+      "depends_on": ["FG-004", "FG-005", "FG-006"],
+      "features": [
+        {
+          "id": "FG-009-F01",
+          "name": "MCP server bootstrap",
+          "description": "Initialize rmcp server with tokio async runtime, register tools, bind STDIO transport for JSON-RPC communication."
+        },
+        {
+          "id": "FG-009-F02",
+          "name": "search_local_docs tool",
+          "description": "Accept query text + optional repo_id filter + top_k. Embed query via Candle model, perform ANN search in LanceDB, return top chunks as structured markdown."
+        },
+        {
+          "id": "FG-009-F03",
+          "name": "traverse_doc_links tool",
+          "description": "Accept chunk_id. Execute Cypher query in Kùzu: follow REFERENCES edges from chunk to linked documents, return linked chunks with headings and paths."
+        },
+        {
+          "id": "FG-009-F04",
+          "name": "Tool parameter validation",
+          "description": "Validate all incoming tool parameters. Return actionable JSON-RPC error responses for missing/invalid parameters."
+        },
+        {
+          "id": "FG-009-F05",
+          "name": "Structured markdown responses",
+          "description": "Format tool responses as markdown suitable for direct LLM consumption: chunk text with metadata headers, source links, relevance scores."
+        }
+      ]
+    },
+    {
+      "id": "FG-010",
+      "name": "cli-distribution",
+      "title": "CLI & Binary Distribution",
+      "branch": "010-cli-distribution",
+      "spec_path": "specs/010-cli-distribution/",
+      "description": "clap-based CLI providing sync (full pipeline), serve (MCP server), status (database stats), and init (generate template sources.yaml) commands. Includes progress bars via indicatif, structured exit codes, and cargo build configuration for producing a single zero-dependency binary.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P3",
+      "depends_on": ["FG-007", "FG-008", "FG-009"],
+      "features": [
+        {
+          "id": "FG-010-F01",
+          "name": "clap CLI framework",
+          "description": "Define top-level CLI with clap derive macros. Subcommands: sync, serve, status, init. Global flags: --verbose, --config (sources.yaml path)."
+        },
+        {
+          "id": "FG-010-F02",
+          "name": "sync command",
+          "description": "Execute full ingestion pipeline. Options: --sources (yaml path), --data-dir (database location). Orchestrate acquire → parse → embed → load with progress output."
+        },
+        {
+          "id": "FG-010-F03",
+          "name": "serve command",
+          "description": "Start MCP server on STDIO transport. Options: --data-dir (database location). Blocks until stdin closes."
+        },
+        {
+          "id": "FG-010-F04",
+          "name": "status command",
+          "description": "Report database statistics: total chunks, documents, nodes, edges, last sync time per source. Options: --data-dir, --json (machine-readable output)."
+        },
+        {
+          "id": "FG-010-F05",
+          "name": "init command",
+          "description": "Generate template sources.yaml in current directory with commented examples for git and local sources."
+        },
+        {
+          "id": "FG-010-F06",
+          "name": "Exit codes and error output",
+          "description": "Exit 0 = success, 1 = partial failures (some files failed), 2 = fatal error (stage failed). Structured error summaries to stderr."
+        }
+      ]
+    },
+    {
+      "id": "FG-011",
+      "name": "workspace-plugin-install",
+      "title": "Workspace Plugin Installation & Lifecycle",
+      "branch": "011-workspace-plugin-install",
+      "spec_path": "specs/011-workspace-plugin-install/",
+      "description": "End-to-end installation, configuration, and lifecycle management for deploying graphtor-docs as a per-project workspace plugin. The compiled binary, databases, cached clones, configuration, and all runtime artifacts live under a .graphtor/ directory at the project workspace root. This feature group covers the install command that provisions .graphtor/ with the correct directory structure and platform-appropriate binary, the init wizard that generates a starter sources.yaml tailored to the project, gitignore management to keep .graphtor/ out of version control, MCP client configuration generation for supported editors (VS Code, Cursor, GitHub Copilot CLI), health-check and self-diagnostic tooling, upgrade and uninstall workflows, and cross-platform path resolution so .graphtor/ works on Windows, macOS, and Linux. The goal is a single-command install experience: a developer runs `graphtor-docs install` from their project root and immediately has a fully provisioned local documentation plugin ready for their AI agent to use.",
+      "status": "backlog",
+      "spec_status": "pending",
+      "build_status": "pending",
+      "priority": "P2",
+      "depends_on": ["FG-001", "FG-010"],
+      "features": [
+        {
+          "id": "FG-011-F01",
+          "name": "install command & .graphtor/ scaffold",
+          "description": "New CLI subcommand `graphtor-docs install` that creates the .graphtor/ directory tree at the workspace root: .graphtor/bin/ (binary), .graphtor/data/ (LanceDB + Kùzu databases), .graphtor/cache/ (shallow git clones), .graphtor/config/ (sources.yaml, settings), .graphtor/logs/ (runtime logs). Copies or symlinks the platform-appropriate compiled binary into .graphtor/bin/. Idempotent: re-running install on an existing .graphtor/ upgrades the binary without touching data or config."
+        },
+        {
+          "id": "FG-011-F02",
+          "name": "Workspace sources.yaml initialization",
+          "description": "Interactive or flag-driven init wizard that generates .graphtor/config/sources.yaml pre-populated with context-aware defaults. Detects project type (Rust/Cargo, Node/package.json, .NET/csproj, Python/pyproject.toml) and suggests relevant Microsoft Docs source groups from the manifest. Supports --non-interactive flag for CI/scripted installs with sensible defaults."
+        },
+        {
+          "id": "FG-011-F03",
+          "name": "Gitignore management",
+          "description": "Automatically append .graphtor/ to the workspace .gitignore during install if not already present. Handles edge cases: missing .gitignore (creates one), existing entry (no-op), nested gitignore files (only modifies root). Provides --no-gitignore flag to skip. Ensures databases, caches, and binaries never leak into version control."
+        },
+        {
+          "id": "FG-011-F04",
+          "name": "MCP client configuration generation",
+          "description": "Generate editor-specific MCP client configuration files that point to the workspace-local binary. VS Code: .vscode/mcp.json with stdio transport pointing to .graphtor/bin/graphtor-docs serve. Cursor: .cursor/mcp.json equivalent. GitHub Copilot CLI: .github/copilot/mcp.json. Each config uses relative paths so the project remains portable. Supports --editor flag to target a specific editor or generates all detected configurations."
+        },
+        {
+          "id": "FG-011-F05",
+          "name": "Workspace health check & diagnostics",
+          "description": "New CLI subcommand `graphtor-docs doctor` that validates a .graphtor/ installation: verifies binary version and integrity, checks database accessibility and schema version, validates sources.yaml syntax and source reachability, confirms MCP client configs reference the correct binary path, reports disk usage per component (data, cache, logs). Outputs structured diagnostic report with pass/warn/fail per check."
+        },
+        {
+          "id": "FG-011-F06",
+          "name": "Upgrade workflow",
+          "description": "New CLI subcommand `graphtor-docs upgrade` that replaces the binary in .graphtor/bin/ with the currently running version. Performs schema migration checks: if the new binary requires a database schema change, prompts for re-index confirmation or runs automatic migration. Preserves all user configuration and cached data. Supports --force to skip confirmation prompts."
+        },
+        {
+          "id": "FG-011-F07",
+          "name": "Uninstall workflow",
+          "description": "New CLI subcommand `graphtor-docs uninstall` that cleanly removes the .graphtor/ directory and all generated MCP client configurations from the workspace. Requires explicit --confirm flag to prevent accidental data loss. Supports --keep-config to preserve sources.yaml for future reinstallation. Removes .graphtor/ entry from .gitignore if no other entries remain."
+        },
+        {
+          "id": "FG-011-F08",
+          "name": "Cross-platform path resolution",
+          "description": "Platform-aware path handling for all .graphtor/ operations. Resolves workspace root via upward directory traversal (looking for .git, Cargo.toml, package.json, or explicit --workspace-root flag). Handles Windows UNC paths, macOS case-insensitive filesystems, and Linux symlinked directories. All internal paths stored as forward-slash relative paths for portability; converted to platform-native on access."
+        },
+        {
+          "id": "FG-011-F09",
+          "name": "Workspace lock file & concurrency guard",
+          "description": "Implement .graphtor/graphtor.lock file to prevent concurrent operations (e.g., two terminals running sync simultaneously). Advisory file-based locking with PID tracking and stale-lock detection. Lock acquired during install, sync, upgrade, and uninstall commands. Provides --force-unlock recovery for crashed processes that left stale locks."
+        }
+      ]
+    }
+  ]
+}

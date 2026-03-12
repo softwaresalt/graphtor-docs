@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pr_reference generated="2026-03-12T05:59:59Z">
+  <metadata>
+    <source_branch>002-rust-foundation</source_branch>
+    <base_branch>main</base_branch>
+    <normalized_branch>002-rust-foundation</normalized_branch>
+    <note>pr-ref-gen.sh not present in repo; reference generated from git diff output</note>
+  </metadata>
+
+  <commits>
+    <commit sha="7729630" message="review: address PR findings before merge to main"/>
+    <commit sha="92498db" message="spec-002: polish and API contract validation (Phase 7, T044-T049)"/>
+    <commit sha="f7f2c98" message="spec-002: add path security module (Phase 6, T036-T043)"/>
+    <commit sha="d03d653" message="spec-002: add structured logging module (Phase 5, T030-T035)"/>
+    <commit sha="c56a556" message="chore: Phase 4 memory + checkpoint"/>
+    <commit sha="cef5cbc" message="feat(002-rust-foundation): complete phase 4 - chunk ID generation (US3)"/>
+    <commit sha="8ca48db" message="chore: Phase 3 memory + checkpoint"/>
+    <commit sha="f67a09d" message="feat(002-rust-foundation): complete phase 3 - config parsing (US1)"/>
+    <commit sha="453a602" message="chore: Phase 2 memory + checkpoint"/>
+    <commit sha="c5a27c1" message="feat(002-rust-foundation): complete phase 2 - error type hierarchy"/>
+    <commit sha="28d9f13" message="chore: add Phase 1 compact-context checkpoint"/>
+    <commit sha="f6a8039" message="chore: add Rust target/ and logs/ to .gitignore, untrack logs/"/>
+    <commit sha="e9485ad" message="feat(002-rust-foundation): complete phase 1 - setup (cargo workspace)"/>
+  </commits>
+
+  <changed_files>
+    <!-- Source (Rust) -->
+    <file path="Cargo.toml" change_type="added" new_lines="1-30"/>
+    <file path="Cargo.lock" change_type="added" new_lines="1-736"/>
+    <file path="src/lib.rs" change_type="added" new_lines="1-25"/>
+    <file path="src/main.rs" change_type="added" new_lines="1-10"/>
+    <file path="src/chunk/mod.rs" change_type="added" new_lines="1-10"/>
+    <file path="src/chunk/id.rs" change_type="added" new_lines="1-188"/>
+    <file path="src/config/mod.rs" change_type="added" new_lines="1-12"/>
+    <file path="src/config/source.rs" change_type="added" new_lines="1-235"/>
+    <file path="src/config/validation.rs" change_type="added" new_lines="1-149"/>
+    <file path="src/error/mod.rs" change_type="added" new_lines="1-9"/>
+    <file path="src/error/types.rs" change_type="added" new_lines="1-324"/>
+    <file path="src/logging/mod.rs" change_type="added" new_lines="1-9"/>
+    <file path="src/logging/init.rs" change_type="added" new_lines="1-114"/>
+    <file path="src/path/mod.rs" change_type="added" new_lines="1-9"/>
+    <file path="src/path/security.rs" change_type="added" new_lines="1-295"/>
+    <!-- Tests -->
+    <file path="tests/config_test.rs" change_type="added" new_lines="1-125"/>
+    <file path="tests/error_test.rs" change_type="added" new_lines="1-154"/>
+    <file path="tests/logging_test.rs" change_type="added" new_lines="1-63"/>
+    <file path="tests/path_security_test.rs" change_type="added" new_lines="1-118"/>
+    <!-- Specs / docs (not reviewed in depth) -->
+    <file path="specs/002-rust-foundation/spec.md" change_type="added"/>
+    <file path="specs/002-rust-foundation/plan.md" change_type="added"/>
+    <file path="specs/002-rust-foundation/tasks.md" change_type="added"/>
+    <file path="docs/adrs/0001-single-package-lib-and-bin.md" change_type="added"/>
+  </changed_files>
+</pr_reference>

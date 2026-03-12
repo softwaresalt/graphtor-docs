@@ -1,0 +1,72 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+    "chat.agent.maxRequests": 1000,
+		// Mutation commands (git commit, git push, gh) are intentionally auto-approved for
+		// AI-agent development workflows per project convention (AGENTS.md §Git Commit Conventions).
+		// Read-only commands are listed alongside them for completeness.
+		"chat.tools.terminal.autoApprove": {
+      ".specify/scripts/bash/": true,
+      ".specify/scripts/powershell/": true,
+      "/^cargo metadata --format-version 1 2>\\$null \\| python -c \"import json,sys; data=json\\.load\\(sys\\.stdin\\); pkgs=\\[p for p in data\\['packages'\\] if p\\['name'\\]=='rmcp'\\]; print\\(pkgs\\[0\\]\\['manifest_path'\\] if pkgs else 'not found'\\)\"$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/check-prerequisites\\.ps1 -Json -RequireTasks -IncludeTasks$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/check-prerequisites\\.ps1 -Json$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/setup-plan\\.ps1 -Json$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "/^pwsh -File \\.specify/scripts/powershell/update-agent-context\\.ps1 -AgentType copilot$/": {
+        "approve": true,
+        "matchCommandLine": true
+      },
+      "Clear-Host": true,
+      "ForEach-Object": true,
+      "Get-Item": true,
+      "Get-NetTCPConnection": true,
+      "Group-Object": true,
+      "New-Item": true,
+      "Out-File": true,
+      "Out-Null": true,
+      "Test-Path": true,
+      "cargo add": true,
+      "cargo audit": true,
+      "cargo build": true,
+      "cargo check": true,
+      "cargo clippy": true,
+      "cargo doc": true,
+      "cargo fmt": true,
+      "cargo home": true,
+      "cargo info": true,
+      "cargo metadata": true,
+      "cargo search": true,
+      "cargo test": true,
+      "git add": true,
+      "git commit": true,
+      "git ls-remote": true,
+      "git push": true,
+      "git restore": true,
+      "netstat": true,
+      "rustup": true,
+      "^gh(\\s[^;|&`]*)?$": {
+        "approve": true,
+        "matchCommandLine": true
+			}
+		},
+    "github.copilot.chat.advanced.workspace.codeSearchExternalIngest.enabled": true,
+    "github.copilot.chat.copilotMemory.enabled": true,
+    "powershell.cwd": "graphtor-docs"
+	}
+}
