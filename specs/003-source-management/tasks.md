@@ -176,11 +176,11 @@
 
 **Purpose**: Final integration, documentation, and quality pass
 
-- [ ] T046 [P] Run full `cargo test` suite — all existing tests (config, error, path, logging, chunk) plus all new acquire tests must pass
-- [ ] T047 [P] Run `cargo clippy -- -D warnings` and fix any lints in new code
-- [ ] T048 Verify all public functions in `src/acquire/` have doc comments with `# Errors` sections per existing code style
-- [ ] T049 Run quickstart.md validation — `cargo check`, `cargo test acquire`
-- [ ] T050 Update `src/lib.rs` module-level doc comment to include `acquire` module description
+- [x] T046 [P] Run full `cargo test` suite — all existing tests (config, error, path, logging, chunk) plus all new acquire tests must pass
+- [x] T047 [P] Run `cargo clippy -- -D warnings` and fix any lints in new code
+- [x] T048 Verify all public functions in `src/acquire/` have doc comments with `# Errors` sections per existing code style
+- [x] T049 Run quickstart.md validation — `cargo check`, `cargo test acquire`
+- [x] T050 Update `src/lib.rs` module-level doc comment to include `acquire` module description
 
 ---
 
