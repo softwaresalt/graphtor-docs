@@ -70,6 +70,8 @@ pub struct PlannedSource {
 pub struct AcquisitionPlan {
     /// Resolved data root directory (auto-created if missing).
     pub data_root: PathBuf,
+    /// Boundary root used for path security checks during execution.
+    pub allowed_root: PathBuf,
     /// Ordered list of sources with their resolved actions.
     pub sources: Vec<PlannedSource>,
     /// Number of sources that will be cloned.

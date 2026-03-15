@@ -123,15 +123,15 @@
 
 ### Tests for User Story 4
 
-- [ ] T030 [P] [US4] Write integration test for idempotent Git re-run in `tests/acquire_plan_test.rs` — acquire twice, verify second run all SkipGit (scenario S048)
-- [ ] T031 [P] [US4] Write integration test for local re-scan in `tests/acquire_plan_test.rs` — acquire twice, verify local sources re-scanned (scenario S049)
+- [x] T030 [P] [US4] Write integration test for idempotent Git re-run in `tests/acquire_plan_test.rs` — acquire twice, verify second run all SkipGit (scenario S048)
+- [x] T031 [P] [US4] Write integration test for local re-scan in `tests/acquire_plan_test.rs` — acquire twice, verify local sources re-scanned (scenario S049)
 
 ### Implementation for User Story 4
 
-- [ ] T032 [US4] Implement `plan()` in `src/acquire/plan.rs` — resolve each source to PlannedSource with action (CloneGit/SkipGit/ScanLocal), auto-create data root via `create_dir_all`, validate path security (FR-003, FR-017, FR-021)
-- [ ] T033 [US4] Implement `execute()` in `src/acquire/mod.rs` — iterate PlannedSource list, dispatch to clone/scan/skip, apply filtering, collect SourceOutcome results, produce AcquisitionResult with aggregate counts (FR-015, FR-016)
-- [ ] T034 [US4] Add summary logging at end of `execute()` — INFO with total sources, succeeded, skipped, failed, total files (FR-016, FR-018)
-- [ ] T035 [US4] Run `cargo test acquire_plan` and verify all US4 tests pass
+- [x] T032 [US4] Implement `plan()` in `src/acquire/plan.rs` — resolve each source to PlannedSource with action (CloneGit/SkipGit/ScanLocal), auto-create data root via `create_dir_all`, validate path security (FR-003, FR-017, FR-021)
+- [x] T033 [US4] Implement `execute()` in `src/acquire/mod.rs` — iterate PlannedSource list, dispatch to clone/scan/skip, apply filtering, collect SourceOutcome results, produce AcquisitionResult with aggregate counts (FR-015, FR-016)
+- [x] T034 [US4] Add summary logging at end of `execute()` — INFO with total sources, succeeded, skipped, failed, total files (FR-016, FR-018)
+- [x] T035 [US4] Run `cargo test acquire_plan` and verify all US4 tests pass
 
 **Checkpoint**: Full acquisition pipeline is idempotent and produces summary reports.
 
