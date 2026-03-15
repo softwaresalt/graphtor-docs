@@ -19,6 +19,9 @@ pub mod local;
 pub mod plan;
 pub mod result;
 
+pub use filter::filter_files;
+pub use git::clone_git_source;
+pub use local::scan_local_source;
 pub use result::{
     AcquiredSource, AcquisitionPlan, AcquisitionResult, FilteredFileSet, PlannedSource,
     SourceAction, SourceOutcome, SourceType, ValidationError, ValidationReport,

@@ -81,16 +81,16 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T019 [P] [US2] Write test for `scan_local_source()` happy path in `tests/acquire_local_test.rs` — create temp dir with nested .md files, verify all discovered (scenario S017)
-- [ ] T020 [P] [US2] Write test for deterministic sort order in `tests/acquire_local_test.rs` — scan twice, verify identical ordering (scenario S019)
-- [ ] T021 [P] [US2] Write test for non-existent directory error in `tests/acquire_local_test.rs` — scan missing dir, verify Pipeline error (scenario S020)
-- [ ] T022 [P] [US2] Write test for path security violation in `tests/acquire_local_test.rs` — source path outside allowed root, verify PathViolation error (scenario S021)
+- [x] T019 [P] [US2] Write test for `scan_local_source()` happy path in `tests/acquire_local_test.rs` — create temp dir with nested .md files, verify all discovered (scenario S017)
+- [x] T020 [P] [US2] Write test for deterministic sort order in `tests/acquire_local_test.rs` — scan twice, verify identical ordering (scenario S019)
+- [x] T021 [P] [US2] Write test for non-existent directory error in `tests/acquire_local_test.rs` — scan missing dir, verify Pipeline error (scenario S020)
+- [x] T022 [P] [US2] Write test for path security violation in `tests/acquire_local_test.rs` — source path outside allowed root, verify PathViolation error (scenario S021)
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Implement `scan_local_source()` in `src/acquire/local.rs` — use `walkdir::WalkDir` with `follow_links(false)`, collect regular files, sort paths, validate against allowed root (FR-005, FR-017)
-- [ ] T024 [US2] Add tracing instrumentation to `scan_local_source()` — INFO on scan start/complete with file count, DEBUG per-file (FR-018)
-- [ ] T025 [US2] Run `cargo test acquire_local` and verify all US2 tests pass
+- [x] T023 [US2] Implement `scan_local_source()` in `src/acquire/local.rs` — use `walkdir::WalkDir` with `follow_links(false)`, collect regular files, sort paths, validate against allowed root (FR-005, FR-017)
+- [x] T024 [US2] Add tracing instrumentation to `scan_local_source()` — INFO on scan start/complete with file count, DEBUG per-file (FR-018)
+- [x] T025 [US2] Run `cargo test acquire_local` and verify all US2 tests pass
 
 **Checkpoint**: Local scanning works independently. Can discover files recursively, handle errors, enforce path security.
 
