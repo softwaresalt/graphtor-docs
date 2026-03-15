@@ -34,6 +34,15 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
             });
         }
 
+        // Reject IDs that contain path separators or `..` — an ID like `"../other"`
+        // would cause clone targets to escape the data root (RI-007).
+        if id.contains('/') || id.contains('\\') || id.contains("..") {
+            return Err(GraphtorError::Config {
+                message: format!("source id must not contain path separators or '..': '{id}'"),
+                field: Some("id".to_string()),
+            });
+        }
+
         if !seen_ids.insert(id) {
             return Err(GraphtorError::Config {
                 message: format!("duplicate source id: '{id}'"),
@@ -144,6 +153,34 @@ mod tests {
         assert!(
             msg.contains("[config]"),
             "should produce Config error: {msg}"
+        );
+    }
+
+    #[test]
+    fn id_with_path_separator_fails_validation() {
+        let config = SourceConfig {
+            sources: vec![git("nested/id")],
+        };
+        let result = validate(&config);
+        assert!(result.is_err(), "id with path separator should fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("path separators"),
+            "error should mention path separators: {msg}"
+        );
+    }
+
+    #[test]
+    fn id_with_dotdot_fails_validation() {
+        let config = SourceConfig {
+            sources: vec![git("../escape")],
+        };
+        let result = validate(&config);
+        assert!(result.is_err(), "id with '..' should fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("path separators") || msg.contains(".."),
+            "error should mention the issue: {msg}"
         );
     }
 }

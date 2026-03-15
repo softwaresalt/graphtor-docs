@@ -48,15 +48,27 @@ pub fn clone_git_source(source: &GitSource, target_dir: &Path) -> Result<PathBuf
 
     // Attempt a shallow clone first. Fall back to a full clone when the transport
     // does not support depth (e.g., local file:// URLs in test environments).
+    // Verified against libgit2-sys v0.17.0+1.8.1: local transports reject shallow
+    // fetches with an error message containing "shallow" or "depth" in ErrorClass::Net.
+    // The fallback is scoped to file:// URLs to avoid masking real network errors.
     let clone_result = builder.clone(&source.url, target_dir).or_else(|e| {
-        if e.class() == git2::ErrorClass::Net && e.message().contains("shallow") {
+        let is_local_transport = source.url.starts_with("file://");
+        let is_shallow_rejection = e.class() == git2::ErrorClass::Net
+            && (e.message().contains("shallow") || e.message().contains("depth"));
+        if is_local_transport && is_shallow_rejection {
             warn!(
                 source_id = %source.id,
                 "shallow clone not supported by transport; falling back to full clone"
             );
             // Clean up the partial directory from the first attempt before retrying.
             if target_dir.exists() {
-                let _ = std::fs::remove_dir_all(target_dir);
+                if let Err(rm_err) = std::fs::remove_dir_all(target_dir) {
+                    warn!(
+                        source_id = %source.id,
+                        remove_error = %rm_err,
+                        "could not remove partial clone directory before fallback retry"
+                    );
+                }
             }
             let mut builder2 = git2::build::RepoBuilder::new();
             builder2.branch(&source.branch);
@@ -103,7 +115,7 @@ pub fn clone_git_source(source: &GitSource, target_dir: &Path) -> Result<PathBuf
 /// Embeds the source ID in the error message so callers can identify which
 /// source caused the failure.
 #[must_use]
-pub fn git_error_to_pipeline(e: &git2::Error, source_id: &str) -> GraphtorError {
+pub(crate) fn git_error_to_pipeline(e: &git2::Error, source_id: &str) -> GraphtorError {
     GraphtorError::Pipeline {
         message: format!("source '{}': {}", source_id, e.message()),
         stage: "acquire".to_string(),

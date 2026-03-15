@@ -290,3 +290,54 @@ fn s040_multiple_errors_collected_in_single_pass() {
         "bad-local error must be collected"
     );
 }
+
+// ── RI-008: non-**-prefix pattern regression ────────────────────────────────────
+//
+// Verifies that patterns without a leading `**` (e.g. `docs/**/*.md`) correctly
+// match files from scan_local_source() when path relativization is applied in
+// scan_and_filter(). Without the fix these patterns would never match because glob
+// patterns are compared against absolute paths.
+
+#[test]
+fn non_star_star_prefix_include_pattern_matches_subdir_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    let local_dir = root.join("source");
+    fs::create_dir_all(local_dir.join("docs")).expect("create docs dir");
+    fs::create_dir_all(local_dir.join("api")).expect("create api dir");
+    fs::write(local_dir.join("docs").join("guide.md"), "# Guide").expect("write guide.md");
+    fs::write(local_dir.join("api").join("ref.md"), "# Ref").expect("write ref.md");
+
+    let config = SourceConfig {
+        sources: vec![Source::Local(LocalSource {
+            id: "docs-only".to_string(),
+            path: local_dir.clone(),
+            include: vec!["docs/**/*.md".to_string()], // no leading **
+            exclude: vec![],
+        })],
+    };
+
+    let data_root = root.join("data");
+    let acq_plan = plan(&config, &data_root, root).expect("plan");
+    let result = execute(&acq_plan, false);
+
+    let ffs = match &result.outcomes[0] {
+        SourceOutcome::Success(ffs) => ffs,
+        other => panic!("expected Success, got: {other:?}"),
+    };
+
+    assert_eq!(
+        ffs.original_count, 2,
+        "should scan both files before filtering"
+    );
+    assert_eq!(
+        ffs.filtered_count, 1,
+        "only the docs/ file should match `docs/**/*.md`"
+    );
+    assert!(
+        ffs.files[0].to_string_lossy().contains("guide.md"),
+        "matched file should be guide.md, got: {:?}",
+        ffs.files
+    );
+}

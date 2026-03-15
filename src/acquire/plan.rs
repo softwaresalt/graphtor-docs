@@ -65,9 +65,13 @@ pub fn plan(
         "acquisition plan ready"
     );
 
+    // Canonicalize allowed_root for consistent storage alongside the canonical data_root (RI-005).
+    let canonical_allowed_root =
+        crate::path::canonicalize_clean(allowed_root).map_err(GraphtorError::Io)?;
+
     Ok(AcquisitionPlan {
         data_root: canonical_data_root,
-        allowed_root: allowed_root.to_path_buf(),
+        allowed_root: canonical_allowed_root,
         sources,
         total_clone,
         total_skip,
@@ -150,9 +154,10 @@ fn resolve_source_action(
 ) -> Result<(SourceAction, PathBuf), GraphtorError> {
     match source {
         Source::Git(git) => {
-            let target_dir = canonical_data_root.join(&git.id);
-            // Security: validate even though target may not exist yet
-            crate::path::validate_path(&target_dir, allowed_root)?;
+            // Security: validate and use the canonical form so IDs containing `..` or
+            // path separators resolve to a deterministic, auditable location (RI-002).
+            let target_dir =
+                crate::path::validate_path(&canonical_data_root.join(&git.id), allowed_root)?;
             let action = if target_dir.join(".git").exists() {
                 SourceAction::SkipGit
             } else {

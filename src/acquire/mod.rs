@@ -13,7 +13,7 @@
 //!                                                  ↳ apply_source_filter() (per acquired source)
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tracing::{error, info, warn};
 
@@ -199,18 +199,62 @@ fn execute_scan_local(planned: &PlannedSource, acq_plan: &AcquisitionPlan) -> So
 }
 
 /// Scan a local directory then apply include/exclude filtering to produce a [`FilteredFileSet`].
+///
+/// # RI-001: Path relativization
+///
+/// [`scan_local_source`] returns **absolute** canonical paths. User-supplied patterns
+/// like `docs/**/*.md` must be matched against **root-relative** paths, not absolute
+/// ones — otherwise the pattern prefix never aligns with the absolute path components.
+///
+/// This function strips the canonical source root from every discovered path before
+/// passing them to [`filter_files`], then re-maps the filtered relative paths back to
+/// their original absolute forms for the returned [`FilteredFileSet`].
 fn scan_and_filter(
     source: &LocalSource,
     acq_plan: &AcquisitionPlan,
 ) -> Result<FilteredFileSet, GraphtorError> {
     let files = scan_local_source(source, &acq_plan.allowed_root)?;
-    let ffs = apply_source_filter(&source.id, &files, &source.include, &source.exclude)?;
-    if ffs.filtered_count == 0 && ffs.original_count > 0 {
+
+    // Obtain the canonical source root so strip_prefix is reliable on all platforms.
+    let canonical_root = crate::path::validate_path(&source.path, &acq_plan.allowed_root)?;
+
+    // Build (relative, absolute) pairs — relative form is used for glob matching.
+    let pairs: Vec<(PathBuf, PathBuf)> = files
+        .into_iter()
+        .map(|abs| {
+            let rel = abs
+                .strip_prefix(&canonical_root)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|_| abs.clone());
+            (rel, abs)
+        })
+        .collect();
+
+    let original_count = pairs.len();
+    let rel_only: Vec<PathBuf> = pairs.iter().map(|(r, _)| r.clone()).collect();
+    let filtered_rel = filter_files(&rel_only, &source.include, &source.exclude)?;
+    let filtered_count = filtered_rel.len();
+
+    // Re-map filtered relative paths back to their original absolute forms.
+    let kept: std::collections::HashSet<&PathBuf> = filtered_rel.iter().collect();
+    let filtered_abs: Vec<PathBuf> = pairs
+        .into_iter()
+        .filter(|(rel, _)| kept.contains(rel))
+        .map(|(_, abs)| abs)
+        .collect();
+
+    if filtered_count == 0 && original_count > 0 {
         warn!(
             source_id = %source.id,
-            original_count = ffs.original_count,
+            original_count,
             "filtering removed all files from source"
         );
     }
-    Ok(ffs)
+
+    Ok(FilteredFileSet {
+        source_id: source.id.clone(),
+        original_count,
+        filtered_count,
+        files: filtered_abs,
+    })
 }
