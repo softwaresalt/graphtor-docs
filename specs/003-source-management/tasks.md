@@ -19,11 +19,11 @@
 
 **Purpose**: Add new dependencies and create the acquire module skeleton
 
-- [ ] T001 Add `git2 = "0.19"` and `walkdir = "2"` to `[dependencies]` in Cargo.toml
-- [ ] T002 Create module skeleton `src/acquire/mod.rs` with submodule declarations (git, local, filter, plan, result) and public re-exports
-- [ ] T003 [P] Create `src/acquire/result.rs` with all result types: SourceAction, SourceType, PlannedSource, AcquisitionPlan, AcquiredSource, FilteredFileSet, SourceOutcome, AcquisitionResult, ValidationError, ValidationReport
-- [ ] T004 [P] Register `pub mod acquire;` in `src/lib.rs` and add re-exports for public types
-- [ ] T005 Verify `cargo check` passes with the new module skeleton (all submodules can be empty stubs with `todo!()` or empty structs)
+- [x] T001 Add `git2 = "0.19"` and `walkdir = "2"` to `[dependencies]` in Cargo.toml
+- [x] T002 Create module skeleton `src/acquire/mod.rs` with submodule declarations (git, local, filter, plan, result) and public re-exports
+- [x] T003 [P] Create `src/acquire/result.rs` with all result types: SourceAction, SourceType, PlannedSource, AcquisitionPlan, AcquiredSource, FilteredFileSet, SourceOutcome, AcquisitionResult, ValidationError, ValidationReport
+- [x] T004 [P] Register `pub mod acquire;` in `src/lib.rs` and add re-exports for public types
+- [x] T005 Verify `cargo check` passes with the new module skeleton (all submodules can be empty stubs with `todo!()` or empty structs)
 
 **Checkpoint**: Module skeleton compiles. No functionality yet.
 
