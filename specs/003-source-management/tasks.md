@@ -145,16 +145,16 @@
 
 ### Tests for User Story 5
 
-- [ ] T036 [P] [US5] Write test for `validate_sources()` with all-valid config in `tests/acquire_plan_test.rs` (scenario S035)
-- [ ] T037 [P] [US5] Write test for invalid URL detection in `tests/acquire_plan_test.rs` (scenario S036)
-- [ ] T038 [P] [US5] Write test for non-existent local path detection in `tests/acquire_plan_test.rs` (scenario S038)
-- [ ] T039 [P] [US5] Write test for multiple errors collected in single pass in `tests/acquire_plan_test.rs` (scenario S040)
+- [x] T036 [P] [US5] Write test for `validate_sources()` with all-valid config in `tests/acquire_plan_test.rs` (scenario S035)
+- [x] T037 [P] [US5] Write test for invalid URL detection in `tests/acquire_plan_test.rs` (scenario S036)
+- [x] T038 [P] [US5] Write test for non-existent local path detection in `tests/acquire_plan_test.rs` (scenario S038)
+- [x] T039 [P] [US5] Write test for multiple errors collected in single pass in `tests/acquire_plan_test.rs` (scenario S040)
 
 ### Implementation for User Story 5
 
-- [ ] T040 [US5] Implement `validate_sources()` in `src/acquire/plan.rs` — check URL format (HTTPS scheme or SSH format), local path existence, glob syntax, path security; collect all errors into ValidationReport (FR-011 through FR-014, FR-017)
-- [ ] T041 [US5] Add HTTPS URL validation helper (check scheme and host presence) and SSH URL validation helper (check `git@host:path` format) in `src/acquire/plan.rs`
-- [ ] T042 [US5] Run `cargo test` for all validation tests and verify they pass
+- [x] T040 [US5] Implement `validate_sources()` in `src/acquire/plan.rs` — check URL format (HTTPS scheme or SSH format), local path existence, glob syntax, path security; collect all errors into ValidationReport (FR-011 through FR-014, FR-017)
+- [x] T041 [US5] Add HTTPS URL validation helper (check scheme and host presence) and SSH URL validation helper (check `git@host:path` format) in `src/acquire/plan.rs`
+- [x] T042 [US5] Run `cargo test` for all validation tests and verify they pass
 
 **Checkpoint**: Source validation works end-to-end. All errors collected in single pass.
 

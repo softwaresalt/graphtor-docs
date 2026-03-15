@@ -1,11 +1,13 @@
-//! Integration tests for acquisition planning and idempotent re-runs (US4).
+//! Integration tests for acquisition planning, idempotent re-runs (US4), and source validation (US5).
 //!
-//! Tests cover: idempotent Git re-run (S048) and local source re-scan (S049).
+//! Tests cover: idempotent Git re-run (S048), local source re-scan (S049),
+//! valid config (S035), invalid URL (S036), non-existent path (S038),
+//! and multiple errors collected in a single pass (S040).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use graphtor_core::acquire::{execute, plan, SourceAction, SourceOutcome};
+use graphtor_core::acquire::{execute, plan, validate_sources, SourceAction, SourceOutcome};
 use graphtor_core::config::source::{GitSource, LocalSource, Source};
 use graphtor_core::config::SourceConfig;
 
@@ -146,5 +148,109 @@ fn s049_local_source_rescanned_picks_up_new_file() {
     assert_eq!(
         files2, 3,
         "second scan should find 3 files (including c.md)"
+    );
+}
+
+// ── T036: S035 — Valid config produces empty ValidationReport ──────────────────
+
+#[test]
+fn s035_valid_config_produces_no_validation_errors() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let local_dir = root.join("docs");
+    fs::create_dir_all(&local_dir).expect("create docs dir");
+
+    let config = SourceConfig {
+        sources: vec![
+            git_source(
+                "ms-docs",
+                "https://github.com/MicrosoftDocs/azure-docs.git",
+                "main",
+            ),
+            local_source("local-docs", &local_dir),
+        ],
+    };
+
+    let report = validate_sources(&config, root);
+    assert!(report.is_valid(), "valid config must produce no errors");
+    assert_eq!(report.total_count, 2);
+    assert_eq!(report.valid_count, 2);
+    assert!(report.errors.is_empty());
+}
+
+// ── T037: S036 — Invalid URL produces validation error ────────────────────────
+
+#[test]
+fn s036_invalid_url_is_detected() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    let config = SourceConfig {
+        sources: vec![git_source("bad-url-source", "not-a-valid-url", "main")],
+    };
+
+    let report = validate_sources(&config, root);
+    assert!(!report.is_valid(), "invalid URL must produce an error");
+    assert_eq!(report.errors.len(), 1);
+    assert_eq!(report.errors[0].source_id, "bad-url-source");
+    assert_eq!(report.errors[0].field, "url");
+}
+
+// ── T038: S038 — Non-existent local path is detected ──────────────────────────
+
+#[test]
+fn s038_nonexistent_local_path_is_detected() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let missing = root.join("does-not-exist");
+
+    let config = SourceConfig {
+        sources: vec![local_source("missing-source", &missing)],
+    };
+
+    let report = validate_sources(&config, root);
+    assert!(
+        !report.is_valid(),
+        "non-existent path must produce an error"
+    );
+    assert_eq!(report.errors.len(), 1);
+    assert_eq!(report.errors[0].source_id, "missing-source");
+    assert_eq!(report.errors[0].field, "path");
+}
+
+// ── T039: S040 — Multiple errors collected in a single pass ───────────────────
+
+#[test]
+fn s040_multiple_errors_collected_in_single_pass() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let missing = root.join("also-missing");
+
+    let config = SourceConfig {
+        sources: vec![
+            git_source("bad-git", "ftp://not-valid.com/repo.git", "main"),
+            local_source("bad-local", &missing),
+        ],
+    };
+
+    let report = validate_sources(&config, root);
+    assert!(!report.is_valid());
+    assert_eq!(
+        report.total_count, 2,
+        "total_count must reflect all sources"
+    );
+    assert_eq!(
+        report.errors.len(),
+        2,
+        "both sources must produce an error (single-pass collection)"
+    );
+    let source_ids: Vec<&str> = report.errors.iter().map(|e| e.source_id.as_str()).collect();
+    assert!(
+        source_ids.contains(&"bad-git"),
+        "bad-git error must be collected"
+    );
+    assert!(
+        source_ids.contains(&"bad-local"),
+        "bad-local error must be collected"
     );
 }
