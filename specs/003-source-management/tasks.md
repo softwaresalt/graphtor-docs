@@ -35,11 +35,11 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 Write unit tests for all result types in `src/acquire/result.rs` — verify struct construction, enum variant matching, and Display/Debug formatting
-- [ ] T007 Implement all result types in `src/acquire/result.rs` per data-model.md (SourceAction, SourceType, PlannedSource, AcquisitionPlan, AcquiredSource, FilteredFileSet, SourceOutcome, AcquisitionResult, ValidationError, ValidationReport)
-- [ ] T008 Write unit tests for `filter_files()` in `src/acquire/filter.rs` covering scenarios S026–S034 (include/exclude patterns, defaults, precedence, edge cases)
-- [ ] T009 Implement `filter_files()` in `src/acquire/filter.rs` — compile include/exclude GlobSets, apply include-then-exclude logic, handle empty pattern defaults (FR-006 through FR-010)
-- [ ] T010 Verify `cargo test acquire` passes for all foundational tests
+- [x] T006 Write unit tests for all result types in `src/acquire/result.rs` — verify struct construction, enum variant matching, and Display/Debug formatting
+- [x] T007 Implement all result types in `src/acquire/result.rs` per data-model.md (SourceAction, SourceType, PlannedSource, AcquisitionPlan, AcquiredSource, FilteredFileSet, SourceOutcome, AcquisitionResult, ValidationError, ValidationReport)
+- [x] T008 Write unit tests for `filter_files()` in `src/acquire/filter.rs` covering scenarios S026–S034 (include/exclude patterns, defaults, precedence, edge cases)
+- [x] T009 Implement `filter_files()` in `src/acquire/filter.rs` — compile include/exclude GlobSets, apply include-then-exclude logic, handle empty pattern defaults (FR-006 through FR-010)
+- [x] T010 Verify `cargo test acquire` passes for all foundational tests
 
 **Checkpoint**: Foundation ready — result types and glob filtering functional. User story implementation can begin.
 
