@@ -106,10 +106,10 @@
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] Write integration test in `tests/acquire_filter_test.rs` — end-to-end: scan a local dir, then filter with include/exclude patterns, verify final file set (scenarios S026–S034)
-- [ ] T027 [US3] Integrate `filter_files()` into the acquisition pipeline — after `clone_git_source()` and `scan_local_source()`, apply filtering to produce FilteredFileSet (FR-006, FR-007, FR-008)
-- [ ] T028 [US3] Add WARN log when filtering results in empty file set (scenario S032)
-- [ ] T029 [US3] Run `cargo test acquire_filter` and verify all US3 tests pass
+- [x] T026 [US3] Write integration test in `tests/acquire_filter_test.rs` — end-to-end: scan a local dir, then filter with include/exclude patterns, verify final file set (scenarios S026–S034)
+- [x] T027 [US3] Integrate `filter_files()` into the acquisition pipeline — after `clone_git_source()` and `scan_local_source()`, apply filtering to produce FilteredFileSet (FR-006, FR-007, FR-008)
+- [x] T028 [US3] Add WARN log when filtering results in empty file set (scenario S032)
+- [x] T029 [US3] Run `cargo test acquire_filter` and verify all US3 tests pass
 
 **Checkpoint**: Full acquire → scan → filter pipeline works for both Git and local sources.
 
