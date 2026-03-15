@@ -108,7 +108,12 @@ pub struct FilteredFileSet {
     pub original_count: usize,
     /// Number of files after filtering.
     pub filtered_count: usize,
-    /// Selected file paths (relative to the source root).
+    /// Selected file paths as absolute canonical paths.
+    ///
+    /// Paths are in the same absolute form as [`crate::acquire::scan_local_source`]
+    /// produces and are suitable for direct use with `std::fs::read` and downstream
+    /// pipeline stages. The path-relativization applied during glob matching is an
+    /// internal implementation detail and does not affect the paths stored here.
     pub files: Vec<PathBuf>,
 }
 

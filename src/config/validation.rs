@@ -5,6 +5,7 @@
 //! syntax validity.
 
 use std::collections::HashSet;
+use std::path::{Component, Path};
 
 use globset::Glob;
 
@@ -34,11 +35,18 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
             });
         }
 
-        // Reject IDs that contain path separators or `..` — an ID like `"../other"`
-        // would cause clone targets to escape the data root (RI-007).
-        if id.contains('/') || id.contains('\\') || id.contains("..") {
+        // Reject IDs that contain path separators or `..` path traversal components.
+        // Uses `Path::components()` to catch `..` as a discrete `ParentDir` component,
+        // avoiding false positives on substrings like `"v1..v2"` (RI-007, CC1).
+        let has_separator = id.contains('/') || id.contains('\\');
+        let has_parent_dir = Path::new(id)
+            .components()
+            .any(|c| c == Component::ParentDir);
+        if has_separator || has_parent_dir {
             return Err(GraphtorError::Config {
-                message: format!("source id must not contain path separators or '..': '{id}'"),
+                message: format!(
+                    "source id must not contain path separators or '..' components: '{id}'"
+                ),
                 field: Some("id".to_string()),
             });
         }

@@ -26,7 +26,10 @@ pub fn plan(
 ///
 /// Processes each source in the plan. Failures in one source do not stop
 /// processing of others. Returns an aggregate result with per-source outcomes.
-pub fn execute(plan: &AcquisitionPlan) -> AcquisitionResult;
+///
+/// When `dry_run` is `true`, no filesystem or network I/O is performed.
+/// All sources are reported as [`SourceOutcome::Skipped`] with zero files.
+pub fn execute(plan: &AcquisitionPlan, dry_run: bool) -> AcquisitionResult;
 ```
 
 ### `acquire::validate_sources`

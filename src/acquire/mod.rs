@@ -43,6 +43,14 @@ pub use result::{
 /// `original_count` is set to `files.len()` before filtering; `filtered_count` reflects
 /// the number of files that survived the include/exclude pass.
 ///
+/// # Path contract
+///
+/// `files` is matched against the glob patterns as-is. For patterns without a leading `**`
+/// (e.g. `docs/**/*.md`), `files` must contain **source-root-relative** paths, not absolute
+/// ones. When `files` comes from [`scan_local_source`] (which returns absolute canonical
+/// paths), use [`execute`] instead — the internal [`scan_and_filter`] pipeline strips the
+/// source root automatically before calling [`filter_files`].
+///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] if any glob pattern is invalid.
@@ -224,8 +232,7 @@ fn scan_and_filter(
         .map(|abs| {
             let rel = abs
                 .strip_prefix(&canonical_root)
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|_| abs.clone());
+                .map_or_else(|_| abs.clone(), Path::to_path_buf);
             (rel, abs)
         })
         .collect();

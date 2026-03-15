@@ -73,8 +73,12 @@ if !report.errors.is_empty() {
 let data_root = Path::new(".graphtor-data");
 let plan = acquire::plan(&config, data_root, Path::new("/workspace"))?;
 
-// Execute
-let result = acquire::execute(&plan);
+// Dry-run: preview what would be acquired without touching the filesystem
+let preview = acquire::execute(&plan, true);
+println!("Dry-run: {} sources planned", preview.total_sources);
+
+// Execute for real
+let result = acquire::execute(&plan, false);
 println!("Sources: {} ok, {} skipped, {} failed, {} files",
     result.succeeded, result.skipped, result.failed, result.total_files);
 ```

@@ -31,11 +31,17 @@ pub fn plan(
     data_root: &Path,
     allowed_root: &Path,
 ) -> Result<AcquisitionPlan, GraphtorError> {
-    // FR-021: auto-create data root so subsequent validate_path calls resolve it
-    std::fs::create_dir_all(data_root).map_err(GraphtorError::Io)?;
+    // Validate data_root against allowed_root BEFORE any I/O. validate_path() handles
+    // non-existent paths by resolving to the deepest existing ancestor, so the security
+    // check runs without needing the directory to exist first.
+    let pre_validated = crate::path::validate_path(data_root, allowed_root)?;
 
-    // Canonicalize data_root (now guaranteed to exist)
-    let canonical_data_root = crate::path::validate_path(data_root, allowed_root)?;
+    // FR-021: create data root now that the path is confirmed within allowed_root.
+    std::fs::create_dir_all(&pre_validated).map_err(GraphtorError::Io)?;
+
+    // Re-canonicalize after creation to expand Windows 8.3 short path names.
+    let canonical_data_root =
+        crate::path::canonicalize_clean(&pre_validated).map_err(GraphtorError::Io)?;
 
     let mut sources: Vec<PlannedSource> = Vec::new();
     let mut total_clone: usize = 0;
