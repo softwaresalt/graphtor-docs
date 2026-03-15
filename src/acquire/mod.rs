@@ -68,8 +68,11 @@ pub fn apply_source_filter(
 /// Processes each source in the plan. Failures in one source do not stop
 /// processing of others. Returns an aggregate result with per-source outcomes.
 /// Emits a summary INFO log on completion (FR-016, FR-018).
+///
+/// When `dry_run` is `true`, no filesystem or network operations are performed.
+/// All sources are reported as skipped with zero files (FR-019).
 #[must_use]
-pub fn execute(acq_plan: &AcquisitionPlan) -> AcquisitionResult {
+pub fn execute(acq_plan: &AcquisitionPlan, dry_run: bool) -> AcquisitionResult {
     let mut outcomes: Vec<SourceOutcome> = Vec::new();
     let mut succeeded: usize = 0;
     let mut skipped: usize = 0;
@@ -77,7 +80,15 @@ pub fn execute(acq_plan: &AcquisitionPlan) -> AcquisitionResult {
     let mut total_files: usize = 0;
 
     for planned in &acq_plan.sources {
-        let outcome = dispatch_planned_source(planned, acq_plan);
+        let outcome = if dry_run {
+            // FR-019: dry-run — report the plan without performing any I/O
+            info!(source_id = %planned.source.id(), action = %planned.action, "dry-run: skipping");
+            SourceOutcome::Skipped {
+                source_id: planned.source.id().to_string(),
+            }
+        } else {
+            dispatch_planned_source(planned, acq_plan)
+        };
 
         match &outcome {
             SourceOutcome::Success(ffs) => {

@@ -90,7 +90,7 @@ fn s048_second_git_acquire_produces_skip_outcome() {
         SourceAction::CloneGit,
         "first run must CloneGit"
     );
-    let result1 = execute(&plan1);
+    let result1 = execute(&plan1, false);
     assert_eq!(result1.succeeded, 1, "first run: succeeded=1");
     assert_eq!(result1.skipped, 0, "first run: skipped=0");
 
@@ -101,7 +101,7 @@ fn s048_second_git_acquire_produces_skip_outcome() {
         SourceAction::SkipGit,
         "second run must SkipGit"
     );
-    let result2 = execute(&plan2);
+    let result2 = execute(&plan2, false);
     assert_eq!(result2.succeeded, 0, "second run: succeeded=0");
     assert_eq!(result2.skipped, 1, "second run: skipped=1");
     assert!(
@@ -128,7 +128,7 @@ fn s049_local_source_rescanned_picks_up_new_file() {
 
     // First run: 2 files
     let plan1 = plan(&config, &data_root, root).expect("plan1");
-    let result1 = execute(&plan1);
+    let result1 = execute(&plan1, false);
     let files1 = match &result1.outcomes[0] {
         SourceOutcome::Success(ffs) => ffs.files.len(),
         other => panic!("expected Success, got: {other:?}"),
@@ -140,7 +140,7 @@ fn s049_local_source_rescanned_picks_up_new_file() {
 
     // Second run: 3 files (re-scan picks up new file)
     let plan2 = plan(&config, &data_root, root).expect("plan2");
-    let result2 = execute(&plan2);
+    let result2 = execute(&plan2, false);
     let files2 = match &result2.outcomes[0] {
         SourceOutcome::Success(ffs) => ffs.files.len(),
         other => panic!("expected Success, got: {other:?}"),
@@ -151,7 +151,43 @@ fn s049_local_source_rescanned_picks_up_new_file() {
     );
 }
 
-// ── T036: S035 — Valid config produces empty ValidationReport ──────────────────
+// ── T043: S046 — Dry-run mode skips all I/O ───────────────────────────────────
+
+#[test]
+fn s046_dry_run_does_not_clone_or_create_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let bare_path = make_bare_repo(root);
+    let url = path_to_url(&bare_path);
+
+    let data_root = root.join("data");
+    let config = SourceConfig {
+        sources: vec![git_source("repo1", &url, "main")],
+    };
+
+    let acq_plan = plan(&config, &data_root, root).expect("plan");
+    assert_eq!(
+        acq_plan.sources[0].action,
+        SourceAction::CloneGit,
+        "plan must resolve CloneGit"
+    );
+
+    let target_dir = acq_plan.sources[0].target_dir.clone();
+
+    // Execute with dry_run=true — must NOT clone
+    let result = execute(&acq_plan, true);
+
+    assert!(
+        !target_dir.join(".git").exists(),
+        "dry_run must not create a .git directory"
+    );
+    assert_eq!(result.total_sources, 1);
+    assert_eq!(
+        result.succeeded, 0,
+        "dry_run: no sources count as succeeded"
+    );
+    assert_eq!(result.skipped, 1, "dry_run: all sources counted as skipped");
+}
 
 #[test]
 fn s035_valid_config_produces_no_validation_errors() {

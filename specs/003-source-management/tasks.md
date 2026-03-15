@@ -164,9 +164,9 @@
 
 **Goal**: Report planned actions without performing filesystem or network operations (FR-019).
 
-- [ ] T043 [P] Write test for dry-run mode in `tests/acquire_plan_test.rs` — verify no filesystem changes when dry_run=true (scenario S046)
-- [ ] T044 Implement dry-run support in `execute()` — add `dry_run: bool` parameter; when true, skip clone/scan but still plan and validate; produce AcquisitionResult with planned actions only (FR-019)
-- [ ] T045 Run `cargo test` for dry-run tests and verify they pass
+- [x] T043 [P] Write test for dry-run mode in `tests/acquire_plan_test.rs` — verify no filesystem changes when dry_run=true (scenario S046)
+- [x] T044 Implement dry-run support in `execute()` — add `dry_run: bool` parameter; when true, skip clone/scan but still plan and validate; produce AcquisitionResult with planned actions only (FR-019)
+- [x] T045 Run `cargo test` for dry-run tests and verify they pass
 
 **Checkpoint**: Dry-run mode functional. Validates and reports without side effects.
 
