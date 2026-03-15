@@ -55,17 +55,17 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T011 [P] [US1] Write test for `clone_git_source()` happy path in `tests/acquire_git_test.rs` — create a local bare repo with `git2::Repository::init_bare()`, configure as Git source, verify clone to target dir (scenario S008)
-- [ ] T012 [P] [US1] Write test for skip-if-exists in `tests/acquire_git_test.rs` — pre-create target dir with `.git`, verify clone is skipped (scenario S010)
-- [ ] T013 [P] [US1] Write test for non-existent branch error in `tests/acquire_git_test.rs` — clone with invalid branch, verify Pipeline error returned (scenario S012)
-- [ ] T014 [P] [US1] Write test for unreachable URL error in `tests/acquire_git_test.rs` — use invalid URL, verify Pipeline error returned with source ID (scenario S011)
+- [x] T011 [P] [US1] Write test for `clone_git_source()` happy path in `tests/acquire_git_test.rs` — create a local bare repo with `git2::Repository::init_bare()`, configure as Git source, verify clone to target dir (scenario S008)
+- [x] T012 [P] [US1] Write test for skip-if-exists in `tests/acquire_git_test.rs` — pre-create target dir with `.git`, verify clone is skipped (scenario S010)
+- [x] T013 [P] [US1] Write test for non-existent branch error in `tests/acquire_git_test.rs` — clone with invalid branch, verify Pipeline error returned (scenario S012)
+- [x] T014 [P] [US1] Write test for unreachable URL error in `tests/acquire_git_test.rs` — use invalid URL, verify Pipeline error returned with source ID (scenario S011)
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Implement `clone_git_source()` in `src/acquire/git.rs` — use `git2::build::RepoBuilder` with `FetchOptions` for depth=1 and single-branch fetch; handle skip-if-exists; convert git2 errors to GraphtorError::Pipeline (FR-001, FR-002, FR-003, FR-004)
-- [ ] T016 [US1] Add helper function `git_error_to_pipeline(e: git2::Error, source_id: &str) -> GraphtorError` in `src/acquire/git.rs` — map git2 errors to Pipeline variant with stage="acquire" and source ID context
-- [ ] T017 [US1] Add tracing instrumentation to `clone_git_source()` — INFO on start/complete, WARN on skip, ERROR on failure (FR-018)
-- [ ] T018 [US1] Run `cargo test acquire_git` and verify all US1 tests pass
+- [x] T015 [US1] Implement `clone_git_source()` in `src/acquire/git.rs` — use `git2::build::RepoBuilder` with `FetchOptions` for depth=1 and single-branch fetch; handle skip-if-exists; convert git2 errors to GraphtorError::Pipeline (FR-001, FR-002, FR-003, FR-004)
+- [x] T016 [US1] Add helper function `git_error_to_pipeline(e: git2::Error, source_id: &str) -> GraphtorError` in `src/acquire/git.rs` — map git2 errors to Pipeline variant with stage="acquire" and source ID context
+- [x] T017 [US1] Add tracing instrumentation to `clone_git_source()` — INFO on start/complete, WARN on skip, ERROR on failure (FR-018)
+- [x] T018 [US1] Run `cargo test acquire_git` and verify all US1 tests pass
 
 **Checkpoint**: Git clone acquisition works independently. Can clone repos, skip existing, handle errors.
 
