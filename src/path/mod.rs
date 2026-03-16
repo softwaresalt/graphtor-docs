@@ -6,4 +6,5 @@
 
 pub mod security;
 
+pub(crate) use security::canonicalize_clean;
 pub use security::validate_path;

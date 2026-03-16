@@ -39,7 +39,7 @@ fn normalize_absolute(path: &Path) -> std::io::Result<PathBuf> {
 /// On Windows, [`std::fs::canonicalize`] returns paths with a `\\?\` prefix
 /// (verbatim long-path form). Stripping it here allows [`Path::starts_with`]
 /// comparisons to work correctly against non-verbatim paths.
-pub(super) fn canonicalize_clean(path: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn canonicalize_clean(path: &Path) -> std::io::Result<PathBuf> {
     let canonical = std::fs::canonicalize(path)?;
     let s = canonical.to_string_lossy();
     if let Some(stripped) = s.strip_prefix(r"\\?\") {

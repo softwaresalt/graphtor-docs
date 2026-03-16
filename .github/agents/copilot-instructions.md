@@ -1,10 +1,10 @@
 # graphtor-docs Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-09
+Auto-generated from all feature plans. Last updated: 2026-03-14
 
 ## Active Technologies
 
-- Rust (stable, 1.75+) + thiserror, serde, serde_yaml, serde_json, sha2, tracing, tracing-subscriber, globset (002-rust-foundation)
+- Rust stable (edition 2021, MSRV 1.75) + `git2` (Git cloning), `globset` (already present — glob filtering), `walkdir` (recursive directory traversal) (003-source-management)
 
 ## Project Structure
 
@@ -19,11 +19,11 @@ cargo test; cargo clippy
 
 ## Code Style
 
-Rust (stable, 1.75+): Follow standard conventions
+Rust stable (edition 2021, MSRV 1.75): Follow standard conventions
 
 ## Recent Changes
 
-- 002-rust-foundation: Added Rust (stable, 1.75+) + thiserror, serde, serde_yaml, serde_json, sha2, tracing, tracing-subscriber, globset
+- 003-source-management: Added Rust stable (edition 2021, MSRV 1.75) + `git2` (Git cloning), `globset` (already present — glob filtering), `walkdir` (recursive directory traversal)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

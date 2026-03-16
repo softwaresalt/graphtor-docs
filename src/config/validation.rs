@@ -5,6 +5,7 @@
 //! syntax validity.
 
 use std::collections::HashSet;
+use std::path::{Component, Path};
 
 use globset::Glob;
 
@@ -30,6 +31,22 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
         if id.is_empty() {
             return Err(GraphtorError::Config {
                 message: "source id must not be empty".to_string(),
+                field: Some("id".to_string()),
+            });
+        }
+
+        // Reject IDs that contain path separators or `..` path traversal components.
+        // Uses `Path::components()` to catch `..` as a discrete `ParentDir` component,
+        // avoiding false positives on substrings like `"v1..v2"` (RI-007, CC1).
+        let has_separator = id.contains('/') || id.contains('\\');
+        let has_parent_dir = Path::new(id)
+            .components()
+            .any(|c| c == Component::ParentDir);
+        if has_separator || has_parent_dir {
+            return Err(GraphtorError::Config {
+                message: format!(
+                    "source id must not contain path separators or '..' components: '{id}'"
+                ),
                 field: Some("id".to_string()),
             });
         }
@@ -144,6 +161,34 @@ mod tests {
         assert!(
             msg.contains("[config]"),
             "should produce Config error: {msg}"
+        );
+    }
+
+    #[test]
+    fn id_with_path_separator_fails_validation() {
+        let config = SourceConfig {
+            sources: vec![git("nested/id")],
+        };
+        let result = validate(&config);
+        assert!(result.is_err(), "id with path separator should fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("path separators"),
+            "error should mention path separators: {msg}"
+        );
+    }
+
+    #[test]
+    fn id_with_dotdot_fails_validation() {
+        let config = SourceConfig {
+            sources: vec![git("../escape")],
+        };
+        let result = validate(&config);
+        assert!(result.is_err(), "id with '..' should fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("path separators") || msg.contains(".."),
+            "error should mention the issue: {msg}"
         );
     }
 }
