@@ -40,13 +40,13 @@ fn make_bare_repo(parent: &Path) -> PathBuf {
 }
 
 fn path_to_url(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    if let Some(stripped) = s.strip_prefix(r"\\?\") {
-        format!("file:///{}", stripped.replace('\\', "/"))
-    } else if s.starts_with('\\') {
-        format!("file://{}", s.replace('\\', "/"))
+    let s = path.to_string_lossy().replace('\\', "/");
+    if s.starts_with('/') {
+        // Unix absolute path: /tmp/... → file:///tmp/... (authority is empty)
+        format!("file://{s}")
     } else {
-        format!("file:///{}", s.replace('\\', "/"))
+        // Windows absolute path: C:/... → file:///C:/...
+        format!("file:///{s}")
     }
 }
 
