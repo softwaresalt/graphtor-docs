@@ -19,7 +19,14 @@
 		"tavily": {
 			"url": "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}",
 			"type": "http"
-		}
+		},
+		"github": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "GITHUB_PERSONAL_ACCESS_TOKEN=$(gh auth token) npx -y @modelcontextprotocol/server-github"
+      ]
+    }
 	},
 	"inputs": []
 }
