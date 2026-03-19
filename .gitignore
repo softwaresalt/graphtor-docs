@@ -151,6 +151,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.beads/
+.cargo-home/
+.tmp-build/
 
 # Spyder project settings
 .spyderproject

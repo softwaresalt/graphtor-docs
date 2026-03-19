@@ -1,12 +1,18 @@
 ---
 name: build-feature
+<<<<<<< Updated upstream
 description: "Usage: Build feature {spec-name} phase {phase-number}. Implements a single phase from the spec's task plan, iterating build-test cycles until the phase passes its constitution gate, then records memory, logs decisions, and commits."
 version: 1.0
+=======
+description: "Usage: Build feature {task-id} with {harness-cmd}. Implements a single Beads task by continuously looping a fast worker agent against a strict, compiling, but failing test harness until success is achieved."
+version: 3.0
+>>>>>>> Stashed changes
 maturity: stable
 input:
   properties:
     spec-name:
       type: string
+<<<<<<< Updated upstream
       description: "Directory name of the feature spec under specs/ (e.g., 001-mcp-remote-agent-server)."
     phase-number:
       type: integer
@@ -14,27 +20,50 @@ input:
   required:
     - spec-name
     - phase-number
+=======
+      description: "The unique Beads task ID."
+    harness-cmd:
+      type: string
+      description: "The cargo test command defining the strict compiler harness boundary."
+  required:
+    - task-id
+    - harness-cmd
+>>>>>>> Stashed changes
 ---
 
 # Build Feature Skill
 
+<<<<<<< Updated upstream
 Implements a single phase from a feature specification's task plan. The workflow iterates through build-test cycles until the phase satisfies its constitution gate, then records session memory, logs architectural decisions, and commits all changes.
+=======
+Implements a requested feature by continuously looping a fast worker agent against a strict, compiling, but failing test harness until success is achieved.
+>>>>>>> Stashed changes
 
-## Prerequisites
+## Execution Steps
 
+<<<<<<< Updated upstream
 * A feature spec directory exists at `specs/${input:spec-name}/` containing `plan.md`, `spec.md`, and `tasks.md`
 * The target phase exists in `tasks.md` with defined tasks
 * The project compiles before starting (`cargo check` passes)
 * The `.github/copilot-instructions.md` constitution and coding standards are accessible
+=======
+### Step 1: Context Isolation
+>>>>>>> Stashed changes
 
-## Remote Operator Integration (agent-intercom)
+1. Read the test file targeted by the `${input:harness-cmd}`. Carefully read the embedded `// GIVEN`, `// WHEN`, `// THEN` BDD comments to fully internalize the human intent behind the test.
+2. Call the `agent-engram` MCP tool (e.g., `map_code`) using the domain structs and functions found in the test. This will map the exact source files in `src/` containing the `unimplemented!()` stubs that require your attention.
+3. If `agent-engram` is unavailable, fall back to `grep_search` and `semantic_search` to locate the `unimplemented!()` stubs referenced by the test.
 
-When the agent-intercom MCP server is reachable, all file modifications and status updates route through it so the remote operator can follow progress and approve changes via Slack.
+### Step 2: Mechanical Feedback Loop (Actor-Critic)
 
-### Availability Detection
+1. Run the targeted `${input:harness-cmd}`.
+2. If it fails (exit code != 0), capture the raw `stderr` (compiler errors, type mismatches, or panic traces).
+3. Pipe the `stderr` directly back to the worker with the explicit instruction: *"Implement the underlying logic inside the `src/` stubs to make this harness pass. Replace the `unimplemented!()` macros. Do not modify the test file itself unless fixing a compilation error in the test setup."*
+4. Repeat this step iteratively until `${input:harness-cmd}` passes. **Hard limit: 5 attempts.** This strict circuit breaker prevents fast models from entering infinite hallucination loops and burning token budgets. If it fails 5 times, run `bd update ${input:task-id} --status blocked` and halt execution for human review.
 
-At the start of every phase, call `ping` with a brief status message. If the call succeeds, agent-intercom is active — follow all remote workflow rules below. If it fails or times out, fall back to direct file writes and local-only operation.
+### Step 3: Verification & State Update
 
+<<<<<<< Updated upstream
 ### Status Broadcasting
 
 Use `broadcast` (non-blocking) and `ping` (progress snapshots) throughout the phase to keep the operator informed. These calls never block the agent.
@@ -578,3 +607,8 @@ These rules are injected into each task based on its type classification in Step
 ---
 
 Proceed with the user's request by executing the Required Steps in order for the specified `spec-name` and `phase-number`.
+=======
+1. Once the isolated harness passes, verify no existing peripheral tests were broken by running `cargo test --workspace`.
+2. Commit the validated changes: `git commit -am "feat: implement passing harness for ${input:task-id}"`.
+3. Mechanically mark the task complete in Beads: `bd update ${input:task-id} --status done`.
+>>>>>>> Stashed changes
