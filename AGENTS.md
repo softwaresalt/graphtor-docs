@@ -47,15 +47,16 @@ dependencies.
 
 ### Issue Tracking
 
-This project uses **bd (beads)** for issue tracking.
-Run `bd prime` for workflow context.
+This project uses **Backlog.md** via the backlog MCP server for all task and project management.
 
-**Quick reference:**  
+**Getting started:** Read `backlog://workflow/overview` (MCP resource) or call `backlog.get_workflow_overview()` to understand the full workflow.
 
-- `bd ready` - Find unblocked work
-- `bd create "Title" --type task --priority 2` - Create issue
-- `bd close <id>` - Complete work
-- `bd dolt push` - Push changes to remote (run at session end)
+**Quick reference:**
+
+- `backlog.list_tasks()` — Find available work (filter by status)
+- `backlog.create_task()` — Create a new task
+- `backlog.update_task()` — Update task status (e.g., mark done or blocked)
+- Tasks are tracked in `backlog.md` and committed with git
 
 ### TDD Is Non-Negotiable
 
@@ -247,3 +248,32 @@ execution policy. Key rules:
 - Do NOT write tests that depend on production database paths
 - Do NOT add crate dependencies without justification
 - Do NOT shell out to system `git` — use the `git2` crate
+
+<!-- BACKLOG.MD MCP GUIDELINES START -->
+
+<CRITICAL_INSTRUCTION>
+
+## BACKLOG WORKFLOW INSTRUCTIONS
+
+This project uses Backlog.md MCP for all task and project management activities.
+
+**CRITICAL GUIDANCE**
+
+- If your client supports MCP resources, read `backlog://workflow/overview` to understand when and how to use Backlog for this project.
+- If your client only supports tools or the above request fails, call `backlog.get_workflow_overview()` tool to load the tool-oriented overview (it lists the matching guide tools).
+
+- **First time working here?** Read the overview resource IMMEDIATELY to learn the workflow
+- **Already familiar?** You should have the overview cached ("## Backlog.md Overview (MCP)")
+- **When to read it**: BEFORE creating tasks, or when you're unsure whether to track work
+
+These guides cover:
+- Decision framework for when to create tasks
+- Search-first workflow to avoid duplicates
+- Links to detailed guides for task creation, execution, and finalization
+- MCP tools reference
+
+You MUST read the overview resource to understand the complete workflow. The information is NOT summarized here.
+
+</CRITICAL_INSTRUCTION>
+
+<!-- BACKLOG.MD MCP GUIDELINES END -->

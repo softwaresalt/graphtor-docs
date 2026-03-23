@@ -7,14 +7,15 @@ Last updated: 2026-03-18
 
 ## Issue Tracking
 
-This project uses **bd (beads)** for issue tracking.
-Run `bd prime` for workflow context.
+This project uses **Backlog.md** via the backlog MCP server for all task and project management.
+
+**Getting started:** Read `backlog://workflow/overview` (MCP resource) or call `backlog.get_workflow_overview()` to understand the full workflow.
 
 **Quick reference:**
-- `bd ready` - Find unblocked work
-- `bd create "Title" --type task --priority 2` - Create issue
-- `bd close <id>` - Complete work
-- `bd dolt push` - Push changes to remote (run at session end)
+- `backlog.list_tasks()` — Find available work (filter by status)
+- `backlog.create_task()` — Create a new task
+- `backlog.update_task()` — Update task status (e.g., mark done or blocked)
+- Tasks are tracked in `backlog.md` and committed with git
 
 ## Technology Stack
 

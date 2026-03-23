@@ -4,7 +4,7 @@ name: build-feature
 description: "Usage: Build feature {spec-name} phase {phase-number}. Implements a single phase from the spec's task plan, iterating build-test cycles until the phase passes its constitution gate, then records memory, logs decisions, and commits."
 version: 1.0
 =======
-description: "Usage: Build feature {task-id} with {harness-cmd}. Implements a single Beads task by continuously looping a fast worker agent against a strict, compiling, but failing test harness until success is achieved."
+description: "Usage: Build feature {task-id} with {harness-cmd}. Implements a single backlog task by continuously looping a fast worker agent against a strict, compiling, but failing test harness until success is achieved."
 version: 3.0
 >>>>>>> Stashed changes
 maturity: stable
@@ -21,7 +21,7 @@ input:
     - spec-name
     - phase-number
 =======
-      description: "The unique Beads task ID."
+      description: "The unique backlog task ID."
     harness-cmd:
       type: string
       description: "The cargo test command defining the strict compiler harness boundary."
@@ -59,7 +59,7 @@ Implements a requested feature by continuously looping a fast worker agent again
 1. Run the targeted `${input:harness-cmd}`.
 2. If it fails (exit code != 0), capture the raw `stderr` (compiler errors, type mismatches, or panic traces).
 3. Pipe the `stderr` directly back to the worker with the explicit instruction: *"Implement the underlying logic inside the `src/` stubs to make this harness pass. Replace the `unimplemented!()` macros. Do not modify the test file itself unless fixing a compilation error in the test setup."*
-4. Repeat this step iteratively until `${input:harness-cmd}` passes. **Hard limit: 5 attempts.** This strict circuit breaker prevents fast models from entering infinite hallucination loops and burning token budgets. If it fails 5 times, run `bd update ${input:task-id} --status blocked` and halt execution for human review.
+4. Repeat this step iteratively until `${input:harness-cmd}` passes. **Hard limit: 5 attempts.** This strict circuit breaker prevents fast models from entering infinite hallucination loops and burning token budgets. If it fails 5 times, call `backlog.update_task()` to mark `${input:task-id}` as blocked and halt execution for human review.
 
 ### Step 3: Verification & State Update
 
@@ -610,5 +610,5 @@ Proceed with the user's request by executing the Required Steps in order for the
 =======
 1. Once the isolated harness passes, verify no existing peripheral tests were broken by running `cargo test --workspace`.
 2. Commit the validated changes: `git commit -am "feat: implement passing harness for ${input:task-id}"`.
-3. Mechanically mark the task complete in Beads: `bd update ${input:task-id} --status done`.
+3. Mechanically mark the task complete in the backlog: call `backlog.update_task()` to set `${input:task-id}` status to done.
 >>>>>>> Stashed changes
