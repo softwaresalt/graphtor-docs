@@ -3,7 +3,7 @@ description: Shared development guidelines for the graphtor-docs (LocalDocRAG) p
 ---
 # graphtor-docs Development Guidelines
 
-Last updated: 2026-03-18
+Last updated: 2026-04-29
 
 ## Issue Tracking
 
@@ -22,8 +22,7 @@ This project uses **Backlog.md** via the backlog MCP server for all task and pro
 | Layer | Technology | Justification |
 |---|---|---|
 | Language | Rust (stable) | Memory safety, single-binary distribution, zero runtime dependencies, native performance |
-| Vector Store | LanceDB (`lancedb` crate) | Rust-native columnar vector DB with zero-copy Arrow integration, disk-based ANN indexing |
-| Graph Store | Kùzu (`kuzu` crate) | High-performance embedded property-graph engine with Cypher support, C++ core with Rust bindings |
+| Unified Store | CozoDB (`cozo` crate, sqlite backend) | Embedded graph + vector DB with Datalog queries, HNSW ANN search, and property-graph traversal — replaces LanceDB + Kùzu with one dependency |
 | Embeddings | `all-MiniLM-L6-v2` via Candle (`candle-core`, `candle-transformers`) | ~80MB model, 384-dim vectors, pure Rust ML inference, no external runtime |
 | Graph Extraction | `pulldown-cmark` | Deterministic AST-based Markdown parsing, 100% precision edge extraction from links/headings |
 | Plugin Server | `rmcp` crate | Rust MCP SDK, async STDIO JSON-RPC transport via tokio |
@@ -43,7 +42,7 @@ This project uses **Backlog.md** via the backlog MCP server for all task and pro
 
 All components MUST run locally with zero cloud service dependencies.
 
-- Embedded databases MUST be used for storage (LanceDB for vectors, Kùzu for property graphs). No networked database servers.
+- Embedded databases MUST be used for storage (CozoDB for unified graph + vector storage). No networked database servers.
 - Embedding inference MUST use the in-process Candle framework running the all-MiniLM-L6-v2 model natively in Rust. No external model servers, no API calls to remote providers.
 - Graph extraction MUST use deterministic parsing (pulldown-cmark AST) rather than LLM inference. No LLM is required for the ingestion pipeline.
 - The MCP plugin server MUST bind to localhost only (STDIO transport).
@@ -69,7 +68,7 @@ The ingestion pipeline MUST produce deterministic, reproducible, and verifiable 
 - Every chunk MUST carry a stable `chunk_id` (SHA-256 of content + source path) that serves as the correlation key across vector and graph stores.
 - Markdown parsing uses pulldown-cmark's AST event stream to deterministically extract headings, links, and code blocks with 100% precision.
 - Normalization steps MUST be idempotent — running them twice on the same input MUST produce identical output.
-- Schema changes to LanceDB or Kùzu MUST be versioned and accompanied by a migration path or full rebuild procedure.
+- Schema changes to CozoDB MUST be versioned and accompanied by a migration path or full rebuild procedure.
 - Incremental sync MUST use git commit hashes (for Git sources) and file modification timestamps (for local sources) to identify changed files.
 
 ### IV. MCP-Native Interface
@@ -116,8 +115,13 @@ src/                      # Main application source (Rust)
   pipeline/               # Ingestion pipeline stages
   mcp/                    # MCP server and tool definitions
   db/                     # Database access layer
-    vector.rs             # LanceDB operations
-    graph.rs              # Kùzu operations (Graph Store)
+    store.rs              # CozoDB DataStore — open, schema, lifecycle
+    schema.rs             # Datalog DDL and schema versioning
+    chunks.rs             # Chunk upsert operations
+    nodes.rs              # Repo/document node CRUD
+    edges.rs              # Graph edge insertion
+    traverse.rs           # Multi-hop graph traversal
+    search.rs             # HNSW vector search
   embed/                  # Candle embedding model
   error/                  # Domain error types
 tests/
@@ -229,8 +233,8 @@ Never write production code before the corresponding test exists and has been ob
 
 ### Database Access
 
-* All LanceDB operations go through `src/db/vector.rs` — no raw LanceDB calls elsewhere
-* All Kùzu operations go through `src/db/graph.rs` — no raw Cypher queries elsewhere
+* All CozoDB operations go through `src/db/` — no raw Datalog queries outside this module
+* Sub-modules: `store.rs` (lifecycle), `schema.rs` (DDL), `chunks.rs`, `nodes.rs`, `edges.rs`, `traverse.rs`, `search.rs`
 * Both modules expose typed functions, not raw query strings
 * Test databases use temporary directories — never write to production paths
 * Schema definitions are versioned; migrations or full-rebuild procedures accompany any schema change
@@ -278,8 +282,7 @@ Never write production code before the corresponding test exists and has been ob
 
 | Concern | Approach |
 |---|---|
-| Vector storage | LanceDB (embedded) — Rust-native columnar with Arrow, zero-server |
-| Graph storage | Kùzu (embedded) — property graph with Cypher queries |
+| Unified storage | CozoDB (embedded, sqlite backend) — Datalog queries, HNSW vector search, property-graph traversal |
 | Embeddings | `all-MiniLM-L6-v2` via Candle (in-process, 384-dim vectors) |
 | Graph extraction | `pulldown-cmark` (deterministic AST-based Markdown parsing) |
 | MCP interface | `rmcp` crate — async STDIO JSON-RPC, localhost-only |
