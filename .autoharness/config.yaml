@@ -1,0 +1,89 @@
+# autoharness Configuration
+#
+# Resolved harness configuration for this workspace.
+# Written by autoharness install; updated by autoharness tune.
+# Operator edits to this file are preserved on re-install and tuning.
+#
+# Schema: schemas/harness-config.schema.json
+
+schema_version: "1.0.0"
+
+# Installation preset: starter | standard | full
+preset: full
+
+# Additive stack classification used for composition
+primary_stack_pack: mcp-server
+stack_packs:
+  - mcp-server
+  - cli-tool
+
+# Explicit artifact-class layers selected for installation
+install_layers:
+  - foundation
+  - instructions
+  - workflow
+  - review
+  - backlog
+  - knowledge
+  - overlays
+
+# Capability packs enabled for this workspace
+capability_packs:
+  - agent-intercom
+  - agent-engram
+  - backlogit
+  - adversarial-review
+
+# Backlog tool configuration
+backlog:
+  tool: backlogit
+  directory: .backlogit
+  suffix_map:
+    feature: "F"
+    chore: "C"
+    task: "T"
+    spike: "SP"
+    deliberation: "DL"
+    bug: "B"
+    epic: "E"
+    subtask: "ST"
+    shipment: "S"
+
+# Long-lived knowledge artifact directories
+docs:
+  root: docs
+  subdirectories:
+    compound: compound
+    plans: exec-plans
+    decisions: decisions
+    memory: memory
+    closure: closure
+    design_docs: design-docs
+    product_specs: product-specs
+
+# Optional continuous-learning capability-pack configuration
+continuous_learning:
+  directory: ".autoharness/continuous-learning"
+  capture_hooks: false
+  environment_adapter: "none"
+  promotion_threshold: 3
+
+# Optional strict-safety capability-pack configuration
+strict_safety:
+  enabled: false
+  require_approval_for:
+    - destructive
+
+# Model routing preferences (map tiers to model identifiers)
+model_routing:
+  tier1: claude-haiku-4.5      # Fast/cheap: memory, docs, compaction
+  tier2: claude-sonnet-4       # Standard: orchestration, code, review
+  tier3: claude-opus-4.6       # Frontier: planning, architecture, analysis
+
+# AI CLI tool startup configuration
+ai_tools:
+  copilot_cli:
+    exe_path: "copilot"
+
+# Explicit template variable overrides applied during install/tune
+overrides: {}

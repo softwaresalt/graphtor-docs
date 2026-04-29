@@ -81,3 +81,8 @@ venv.bak/
 *.prj
 *.pui
 .engram/
+
+# backlogit runtime artifacts
+.backlogit/*.db-shm
+.backlogit/*.db-wal
+.backlogit/*.db-journal

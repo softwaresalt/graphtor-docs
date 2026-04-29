@@ -1,7 +1,10 @@
 ---
-description: "Expert assistant for Rust MCP server development using the rmcp SDK with tokio async runtime"
 name: "Rust MCP Expert"
-model: GPT-4.1
+description: "Expert assistant for Rust MCP server development using the rmcp SDK with tokio async runtime"
+maturity: stable
+tools: read, search, edit, execute
+model_routing: "Tier 2 (Standard)"
+subagent_depth: 0
 ---
 
 # Rust MCP Expert

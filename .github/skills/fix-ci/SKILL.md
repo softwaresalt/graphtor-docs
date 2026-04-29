@@ -1,0 +1,377 @@
+---
+description: "Detect CI pipeline failures and review comments, reproduce and fix locally, push and poll until clean"
+---
+
+# Fix CI
+
+Detect CI failures and code review comments on the current branch's PR, reproduce and fix errors locally, address review comments, run all quality gates, then push and poll until the pipeline passes.
+
+## Prerequisites
+
+* Git repository with a remote tracked branch and an open PR
+* Access to CI pipeline status via `gh` CLI or equivalent tool
+* Local tools required by this skill must be available in PATH, including the configured quality gates `cargo check`–`cargo test`; if formatting fixes are applied during remediation, `cargo fmt --all` must also be available
+* Backlog tool configured when defect logging is enabled (circuit breaker halt path)
+
+## Quick Start
+
+Typically invoked by the Ship agent. To invoke directly, ensure a PR exists for the current branch:
+
+```text
+# Verify PR exists
+gh pr view
+```
+
+## When to Use
+
+Invoke when CI checks fail on a PR, or when automated review comments need to be addressed. Typically invoked by the ship agent after push.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `pr_number` | int | auto | PR number to check. Auto-detected from current branch if omitted. |
+| `max_iterations` | int | `5` | Maximum fix-push-poll cycles before circuit breaker halts. |
+| `poll_interval` | int | `60` | Seconds between CI status polls during the push-and-poll step. |
+| `max_wait` | int | `1800` | Maximum total seconds to wait for CI to reach a terminal state. |
+
+## Output
+
+* All CI checks passing
+* All review comments addressed or explicitly declined
+
+## Required Protocol
+
+When the `agent-intercom` capability pack is installed, follow
+`.github/instructions/agent-intercom.instructions.md`: establish heartbeat / ping visibility before
+the first reproduction loop, broadcast failing-check and fixed-check milestones, and use the
+intercom clarification / approval path if a repair would require destructive action or explicit
+operator judgment.
+
+When the `agent-engram` capability pack is installed, follow
+`.github/instructions/agent-engram.instructions.md`: verify the engram surface is available before
+relying on indexed search, and prefer code-graph or impact-analysis lookup while diagnosing the CI
+failure set.
+
+### Step 1: Identify the PR
+
+Determine the PR number from the current branch. If no PR exists, halt.
+
+### Step 2: Check CI Status
+
+Query CI pipeline status. Identify which checks are failing:
+
+For GitHub-hosted repositories, follow `.github/instructions/github-pr-automation.instructions.md`
+Part 2 for CI check polling (§2.2), back-off cadence (§2.3), and failure
+detail extraction via check-run annotations (§2.5).
+
+**CI Pipeline Order** (fix in this order):
+
+1. Format check (`cargo fmt --all -- --check`)
+2. Lint (`cargo clippy --all-targets -- -D warnings -D clippy::pedantic`)
+3. Test (`cargo test`)
+
+### Step 2.5: Copilot Review Comment Detection
+
+Before processing generic review comments, identify Copilot-authored threads
+separately so they can be handled with the correct resolution lifecycle.
+
+1. Query all review threads on the PR using the GitHub API or `gh` CLI.
+2. For each thread, inspect the thread author login (the root comment author
+   login, not `reviewer.login`). Classify into one of three categories:
+   * **Copilot thread**: author login is `copilot-pull-request-reviewer[bot]`.
+     If your tool normalizes bot logins by stripping the trailing `[bot]`
+     suffix, treat a normalized login of `copilot-pull-request-reviewer` as
+     equivalent.
+   * **Other bot thread**: author login ends with `[bot]` but is not
+     `copilot-pull-request-reviewer[bot]` (e.g., Dependabot, CI bots).
+   * **Human thread**: all other open threads authored by human reviewers.
+3. Build three inventories:
+   * **Copilot threads**: only threads authored by
+     `copilot-pull-request-reviewer[bot]`.
+   * **Other bot threads**: open threads authored by non-Copilot bot accounts.
+   * **Human threads**: all other open threads authored by human reviewers.
+4. For each Copilot thread, determine reply status:
+   * If the thread has no reply from the PR author or an agent, flag it as
+     **reply-required**.
+   * If the thread already has a reply, mark it **reply-present**.
+5. Record the full thread inventory (ID, author, category, comment summary,
+   reply status) for use in Step 6 and the reply gate at Step 6.5.
+6. Apply the Copilot-specific reply and resolution lifecycle only to the
+   **Copilot threads** inventory. Treat **other bot threads** separately based
+   on the bot's own workflow; do not assume they follow the Copilot lifecycle.
+
+For the complete Copilot review comment lifecycle (categorization, reply
+templates, resolution), follow
+`.github/instructions/github-pr-automation.instructions.md` Part 1 §1.3–§1.6.
+
+### Step 3: Check Review Comments
+
+Query for automated review comments (Copilot, bot reviewers). Categorize each:
+
+For GitHub-hosted repositories, follow `.github/instructions/github-pr-automation.instructions.md`
+Part 1 (§1.3) for comment categorization and the complete Copilot Review
+comment lifecycle.
+
+* **Valid**: The comment identifies a real issue → apply fix
+* **Partial**: The comment is partially correct → apply relevant parts, reply with explanation
+* **Invalid**: The comment is incorrect → decline with rationale
+
+### Step 4: Reproduce Locally
+
+Run the failing CI steps locally in order:
+
+1. `cargo fmt --all -- --check` → if fails, run `cargo fmt --all`
+2. `cargo clippy --all-targets -- -D warnings -D clippy::pedantic` → fix violations
+3. `cargo test` → fix failing tests
+
+### Step 5: Fix
+
+Apply fixes for each failure. Use workspace search tools to understand context before modifying code.
+
+When the `agent-engram` capability pack is installed, prefer `list_symbols`, `map_code`,
+`impact_analysis`, and `query_memory` before broader grep or raw file scans.
+
+### Step 6: Address Review Comments
+
+For each review comment:
+
+* Valid: Apply the suggested fix or an equivalent resolution
+* Partial: Apply relevant parts, reply explaining what was not applied and why
+* Invalid: Reply with a clear rationale for declining
+
+For GitHub-hosted repositories, after addressing each comment:
+
+1. Reply to the review thread per `.github/instructions/github-pr-automation.instructions.md`
+   §1.5 using the appropriate reply template (fixed / declined / partial).
+2. Resolve bot-authored threads via GraphQL per §1.6.
+3. Never resolve threads authored by human reviewers.
+
+### Step 6.5: Reply Gate (NON-NEGOTIABLE)
+
+Before proceeding to the local quality gate, verify that every open review
+thread has received a reply. This gate applies to both Copilot threads and
+human threads.
+
+**This gate is NON-NEGOTIABLE. The skill MUST NOT proceed to Step 7 or
+push any commit if any thread remains unreplied.**
+
+1. Load the thread inventory built in Step 2.5.
+2. Extend it with any additional threads opened since Step 2.5 ran (re-query
+   if the PR received new review activity during the fix phase).
+3. For each thread:
+   * If `reply-required`: the skill must post a reply before this gate passes.
+     Apply the appropriate reply template from
+     `.github/instructions/github-pr-automation.instructions.md` §1.5
+     (fixed / declined / partial).
+   * If `reply-present`: no action required.
+4. After all replies are posted, re-query the thread list to confirm every
+   thread is in `reply-present` state.
+5. If any thread cannot be replied to (API error, permission denied), halt
+   and report to the operator rather than silently skipping the thread.
+6. Only when the full inventory shows `reply-present` for every thread does
+   this gate pass.
+
+### Step 7: Local Quality Gate
+
+Run the full quality gate sequence:
+
+```text
+cargo check
+cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+cargo fmt --all -- --check
+cargo test
+```
+
+All gates must pass before pushing.
+
+**Cascade restart on regression**: Maintain a gate-state vector tracking
+pass/fail for each gate position. Run gates in order. If a gate that
+previously passed now fails after a fix was applied for a later gate
+(regression), restart the entire gate sequence from the first failing gate
+rather than continuing forward. This prevents silently accumulating
+regressions across iterations.
+
+```text
+gate_state = [UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN]
+
+for each iteration:
+  for gate_index in 0..N:
+    run gate[gate_index]
+    if PASS:
+      gate_state[gate_index] = PASS
+    if FAIL:
+      gate_state[gate_index] = FAIL
+      apply fix for gate_index
+      restart loop from first FAIL in gate_state
+      break
+  if all gate_state == PASS:
+    proceed to Step 8
+```
+
+### Step 8: Push and Poll
+
+1. Commit fixes with a `fix:` conventional commit message
+2. Push to the branch
+3. Poll CI status until all checks pass or `max_iterations` is exhausted.
+   For GitHub-hosted repositories, follow the polling cadence and timeout
+   protocol in `.github/instructions/github-pr-automation.instructions.md` §2.3 and §2.7.
+4. When CI is green, invoke `runtime-verification` if runtime surfaces were affected or the PR explicitly requires runtime evidence
+5. Update or append the operational validation section in the PR description so the next handoff includes monitoring and rollback expectations
+
+### Step 8.5: Defect Logging
+
+When the circuit breaker halts (either `max_iterations` exhausted or 3
+consecutive failures on the same check), create a backlog defect item for
+each CI check that remains unresolved:
+
+1. For each unresolved failing check, invoke the backlog tool create
+   operation with:
+   * `artifact_type`: `task`
+   * `title`: `"CI defect: {check_name} unresolved on {branch_name}"`
+   * `description`: Include — check name, final error output (truncated to
+     500 chars), iteration count attempted, fix strategies tried, and the
+     PR URL for traceability.
+   * `labels`: `["ci-defect", "follow-up"]`
+2. After each creation, re-read the created item to confirm it persisted.
+3. Append the defect item IDs to the halt report surfaced to the operator.
+
+When no backlog tool is installed, append each defect to
+`.backlogit/queue/.stash.md` using the format:
+`- [{YYYY-MM-DD}] **CI defect**: {check_name} unresolved — PR: {pr_url}`.
+
+## Circuit Breakers
+
+* Maximum `max_iterations` fix-push-poll cycles (default 5; skill-managed exception per `circuit-breaker.instructions.md`)
+* If 3 consecutive iterations fail on the **same check**, halt and report
+  (this pre-empts the 5-cycle limit to surface systematic check-specific problems early)
+* If the same check fails twice in a row without a clear diagnosis, invoke `safety-modes` in `investigate-first` mode before applying further fixes
+
+## Behavioral Constraints
+
+* No subagent spawning (leaf executor)
+* Fix CI failures in pipeline order (format → lint → test)
+* Do not modify tests to make them pass unless the test itself is wrong
+* Use workspace search tools before grep for understanding context
+
+## Resumption Protocol
+
+If the skill is interrupted (context overflow, session timeout, or operator
+halt), write a checkpoint to `docs/memory/` capturing: current iteration
+count, which CI checks have passed, which are still failing, and the fix
+attempt in progress. On re-invocation, check for an existing checkpoint. If
+found, resume from the recorded iteration rather than restarting from scratch.
+If the Local Quality Gate (Step 7) times out after the configured stall
+timeout, checkpoint the fix attempt and report to the operator rather than
+silently retrying.
+
+## Common Fix Patterns
+
+Reference taxonomy of fixes organized by check type. Use these as first-line
+approaches before escalating to the operator.
+
+### Format
+
+| Pattern | When to apply | When to escalate |
+|---|---|---|
+| Run auto-fix command | Formatting diff exists and auto-fix is configured (`cargo fmt --all`) | Auto-fix introduces semantic changes or breaks tests |
+| Align editor config | Consistent style violations across many files (trailing spaces, indentation) | Different files require different styles (legacy code) |
+| Add format ignore annotation | Generated or vendored file that should not be formatted | More than 10% of files need ignore annotations |
+
+### Lint
+
+| Pattern | When to apply | When to escalate |
+|---|---|---|
+| Fix the code | Lint rule identifies a real issue (unused import, undefined var) | Fix would require restructuring unrelated code |
+| Inline suppression | Known false positive with clear justification | More than 3 suppressions needed in a single PR |
+| Rule-specific config | Rule fires repeatedly and is not appropriate for this project | Disabling would hide real violations elsewhere |
+
+### Test
+
+| Pattern | When to apply | When to escalate |
+|---|---|---|
+| Fix assertion | Test expectation is wrong (output format changed, value updated) | Fixing assertion would mask a real regression |
+| Update fixture | Test fixture is stale (snapshot, golden file, recorded response) | Fixture update cannot be independently verified as correct |
+| Isolate flaky test | Test fails intermittently due to timing or ordering | Root cause is outside the PR scope |
+| Regenerate snapshot | Snapshot test fails due to intentional output change | Snapshot diff is larger than the PR change set |
+
+### Build
+
+| Pattern | When to apply | When to escalate |
+|---|---|---|
+| Resolve missing dependency | Import or package not installed; add to dependency manifest | Dependency is deprecated or has a known security vulnerability |
+| Pin version | Transitive dependency version conflict between packages | Pinning breaks another required package version |
+| Add missing module | Build references a module not yet created | Module requires its own feature branch |
+
+## Terminal Output Management
+
+CI reproduction commands can generate substantial output that consumes context
+window capacity. Apply these strategies when running commands in Step 4:
+
+**Truncation**: For commands that produce more than ~200 lines of output,
+capture the first 50 and last 50 lines. The first lines usually contain the
+test invocation and early setup errors; the last lines contain the final
+failure summary and exit code.
+
+```text
+<command> 2>&1 | Select-Object -First 50  # PowerShell (head)
+<command> 2>&1 | Select-Object -Last 50   # PowerShell (tail)
+```
+
+**Error-first extraction**: Extract only error and warning lines when the
+full output is too large:
+
+```text
+<command> 2>&1 | Select-String -Pattern "error|warning|FAIL|FAILED" -SimpleMatch
+```
+
+**Filter noise**: Strip lines matching common noise patterns before
+capturing output: download progress bars (`Downloading`, `%`, `kB/s`),
+package manager install logs, and tool version banners.
+
+**Token budget awareness**: A single CI run can easily produce 5,000–50,000
+tokens of raw output. Before capturing the full output of a command, assess
+whether a targeted extraction (error lines only, last N lines) is sufficient
+to diagnose the failure. Reserve full capture for cases where partial output
+is ambiguous.
+
+**Structured capture pattern**: When diagnosing a CI failure, prefer this
+order:
+1. Read the exit code first — if 0, the check passed and no further capture
+   is needed.
+2. If non-zero, extract the last 30 lines of output (contains failure summary).
+3. If the failure is still ambiguous, extract error/warning lines from the
+   full output.
+4. Only capture the full raw output as a last resort.
+
+## Intercom Events
+
+When the `agent-intercom` capability pack is installed, broadcast the
+following events at the specified trigger points:
+
+| Event | Trigger | Broadcast format |
+|---|---|---|
+| `start` | Skill invoked | `[FIX-CI] Starting: PR #{pr_number}` |
+| `check-found` | CI checks identified | `[FIX-CI] Checks failing: {check_names}` |
+| `copilot-detected` | Copilot threads found | `[FIX-CI] Copilot threads: {count} reply-required` |
+| `reproducing` | Beginning local reproduction | `[FIX-CI] Reproducing: {check_name}` |
+| `fix-applied` | Fix committed for a check | `[FIX-CI] Fix applied: {check_name} (attempt {n})` |
+| `gate-pass` | A quality gate passes | `[FIX-CI] Gate pass: {gate_name}` |
+| `gate-fail` | A quality gate fails | `[FIX-CI] Gate fail: {gate_name}` |
+| `regression` | An earlier gate regresses | `[FIX-CI] Regression: {gate_name} regressed after {later_gate_name} fix` |
+| `cascade-restart` | Gate loop restarted from first failure | `[FIX-CI] Cascade restart from: {gate_name}` |
+| `reply-sent` | Reply posted to a review thread | `[FIX-CI] Reply sent: thread {thread_id} ({disposition})` |
+| `reply-gate-pass` | Reply gate passed (all threads replied) | `[FIX-CI] Reply gate: PASS ({count} threads)` |
+| `push` | Fix commit pushed to branch | `[FIX-CI] Push: iteration {n}` |
+| `poll-start` | CI polling cycle begins | `[FIX-CI] Polling CI (interval: {poll_interval}s, max: {max_wait}s)` |
+| `poll-pass` | CI reaches green state | `[FIX-CI] CI green: all checks passed` |
+| `poll-fail` | CI check fails after push | `[FIX-CI] CI fail: {check_name} (iteration {n})` |
+| `defect-logged` | Defect item created on halt | `[FIX-CI] Defect logged: {item_id} for {check_name}` |
+| `halt` | Circuit breaker triggered | `[FIX-CI] Halt: {reason} after {n} iterations` |
+| `complete` | Skill exits successfully | `[FIX-CI] Complete: PR #{pr_number} CI green` |
+
+## Model Routing
+
+This skill operates at **Tier 2 (Standard)** — CI failure diagnosis and fix application.
+
+Generated by autoharness | Template: fix-ci/SKILL.md.tmpl
