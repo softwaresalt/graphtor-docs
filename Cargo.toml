@@ -31,6 +31,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 globset = "0.4"
 git2 = "0.19"
 walkdir = "2"
+pulldown-cmark = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

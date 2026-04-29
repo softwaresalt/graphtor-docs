@@ -8,6 +8,7 @@
 //! - [`error`]: Categorized error type hierarchy ([`GraphtorError`]).
 //! - [`chunk`]: Deterministic SHA-256 chunk identifier generation.
 //! - [`logging`]: Structured logging initialization via `tracing`.
+//! - [`parse`]: Markdown parsing pipeline — frontmatter, AST, chunking, links, code blocks.
 //! - [`path`]: Path security utilities for workspace boundary enforcement.
 
 #![forbid(unsafe_code)]
@@ -18,6 +19,7 @@ pub mod chunk;
 pub mod config;
 pub mod error;
 pub mod logging;
+pub mod parse;
 pub mod path;
 
 pub use acquire::{
