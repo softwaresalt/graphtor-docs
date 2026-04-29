@@ -21,8 +21,7 @@ use crate::parse::types::AstNode;
 /// Does not panic.
 #[must_use]
 pub fn parse_ast(markdown: &str) -> Vec<AstNode> {
-    let opts =
-        Options::ENABLE_TABLES | Options::ENABLE_FOOTNOTES | Options::ENABLE_STRIKETHROUGH;
+    let opts = Options::ENABLE_TABLES | Options::ENABLE_FOOTNOTES | Options::ENABLE_STRIKETHROUGH;
 
     let parser = Parser::new_ext(markdown, opts);
     let mut nodes = Vec::new();

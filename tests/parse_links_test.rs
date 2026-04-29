@@ -52,7 +52,7 @@ fn test_multiple_links_extracted() {
     assert!(paths.contains(&"c.md"));
 }
 
-/// An anchor-only link (`#heading`) results in empty target_path.
+/// An anchor-only link (`#heading`) results in empty `target_path`.
 #[test]
 fn test_anchor_only_link() {
     let md = "Jump to [section](#heading-name).\n";

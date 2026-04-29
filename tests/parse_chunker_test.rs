@@ -11,7 +11,10 @@ fn test_no_headings_produces_single_intro_chunk() {
     let nodes = parse_ast(md);
     let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
     assert_eq!(chunks.len(), 1);
-    assert!(chunks[0].heading_hierarchy.is_empty(), "intro chunk has no hierarchy");
+    assert!(
+        chunks[0].heading_hierarchy.is_empty(),
+        "intro chunk has no hierarchy"
+    );
     assert_eq!(chunks[0].source_path, SRC);
     assert_eq!(chunks[0].position, 0);
 }
@@ -46,7 +49,12 @@ fn test_h4_and_deeper_folded_into_parent_chunk() {
     let nodes = parse_ast(md);
     let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
     // H4 should NOT split — everything stays in one chunk.
-    assert_eq!(chunks.len(), 1, "H4 should not split: got {} chunks", chunks.len());
+    assert_eq!(
+        chunks.len(),
+        1,
+        "H4 should not split: got {} chunks",
+        chunks.len()
+    );
     assert!(chunks[0].content.contains("Deep Heading"));
     assert!(chunks[0].content.contains("Deep content"));
 }
@@ -60,7 +68,9 @@ fn test_chunks_have_stable_ids() {
     for c in &chunks {
         assert_eq!(c.chunk_id.len(), 64, "chunk_id must be 64 hex chars");
         assert!(
-            c.chunk_id.chars().all(|ch| matches!(ch, '0'..='9' | 'a'..='f')),
+            c.chunk_id
+                .chars()
+                .all(|ch| matches!(ch, '0'..='9' | 'a'..='f')),
             "chunk_id must be lowercase hex: {}",
             c.chunk_id
         );
@@ -74,7 +84,10 @@ fn test_chunk_ids_are_deterministic() {
     let nodes = parse_ast(md);
     let chunks1 = chunk(&nodes, SRC).expect("first call");
     let chunks2 = chunk(&nodes, SRC).expect("second call");
-    assert_eq!(chunks1[0].chunk_id, chunks2[0].chunk_id, "chunk_id must be deterministic");
+    assert_eq!(
+        chunks1[0].chunk_id, chunks2[0].chunk_id,
+        "chunk_id must be deterministic"
+    );
 }
 
 /// Heading hierarchy is recorded correctly on each chunk.
@@ -84,11 +97,17 @@ fn test_heading_hierarchy_populated() {
     let nodes = parse_ast(md);
     let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
     // Chunk at H2 "Section": hierarchy = [Doc, Section]
-    let section = chunks.iter().find(|c| c.content.contains("## Section")).unwrap();
+    let section = chunks
+        .iter()
+        .find(|c| c.content.contains("## Section"))
+        .unwrap();
     assert!(section.heading_hierarchy.contains(&"Doc".to_string()));
     assert!(section.heading_hierarchy.contains(&"Section".to_string()));
     // Chunk at H3 "Sub": hierarchy = [Doc, Section, Sub]
-    let sub = chunks.iter().find(|c| c.content.contains("### Sub")).unwrap();
+    let sub = chunks
+        .iter()
+        .find(|c| c.content.contains("### Sub"))
+        .unwrap();
     assert!(sub.heading_hierarchy.contains(&"Sub".to_string()));
 }
 
