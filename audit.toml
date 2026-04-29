@@ -1,0 +1,26 @@
+# cargo-audit advisory suppressions — documentation and rationale
+# https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+#
+# NOTE: cargo-audit 0.22 does not auto-discover workspace-local audit.toml for
+# suppression; the [advisories] ignore list below has no runtime effect. Suppression
+# is applied via --ignore flags in .github/workflows/ci.yml. This file is kept as
+# authoritative documentation for what is suppressed and why.
+#
+# If cargo-audit adds workspace config support in a future release, or if this project
+# migrates to cargo-deny (which does support workspace config), the section below is
+# ready to activate.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0041: lz4_flex 0.10.0 — uninitialised memory on bad decompression input
+    # Transitive: cozo 0.7.6 → swapvec 0.3.0 → lz4_flex ^0.10 (semver-locked)
+    # Cannot upgrade lz4_flex without cozo releasing swapvec 0.4+.
+    # lz4_flex used only for cozo's internal disk-swap buffers, not for user input.
+    # Backlogit stash 94D655D7 tracks the upstream upgrade.
+    "RUSTSEC-2026-0041",
+
+    # RUSTSEC-2026-0008: git2 0.19.0 — potential UB when dereferencing Buf struct
+    # Direct dependency. Upgrade path is clear once git2 0.20 releases.
+    # Backlogit stash 94D655D7 also tracks this upgrade.
+    "RUSTSEC-2026-0008",
+]

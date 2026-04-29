@@ -36,4 +36,9 @@ jobs:
       - name: audit
         run: |
           cargo install cargo-audit --locked
-          cargo audit
+          # Two advisories suppressed — see audit.toml for rationale and upgrade tracking.
+          # RUSTSEC-2026-0041: lz4_flex 0.10.0 (transitive: cozo → swapvec 0.3.0 → lz4_flex ^0.10)
+          # RUSTSEC-2026-0008: git2 0.19.0 (direct dependency; upgrade when git2 0.20 releases)
+          cargo audit \
+            --ignore RUSTSEC-2026-0041 \
+            --ignore RUSTSEC-2026-0008
