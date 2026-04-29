@@ -1,0 +1,35 @@
+//! Unified embedded database module for `LocalDocRAG`.
+//!
+//! This module exposes a single [`DataStore`] type backed by `CozoDB` (an
+//! embedded Datalog/graph/vector database). The store holds four stored
+//! relations:
+//!
+//! - `doc_sources` — registered documentation sources (Git repos, local dirs)
+//! - `doc_chunks` — parsed and normalised document chunks with metadata
+//! - `doc_edges` — directed hyperlink edges between chunks
+//! - `doc_code` — code snippets extracted from chunks
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use graphtor_core::db::DataStore;
+//!
+//! let store = DataStore::open_mem()?;
+//! store.ensure_schema()?;
+//! ```
+
+pub mod chunks;
+pub mod edges;
+pub mod nodes;
+pub mod schema;
+pub mod search;
+pub mod store;
+pub mod traverse;
+
+pub use chunks::{get_chunk, list_chunks_for_source, upsert_chunk, ChunkRecord};
+pub use edges::{list_edges_from_chunk, upsert_code_snippet, upsert_edge, CodeRecord, EdgeRecord};
+pub use nodes::{get_source, list_sources, upsert_source, SourceRecord};
+pub use schema::ensure_schema;
+pub use search::{search_by_text, search_similar, SearchResult};
+pub use store::DataStore;
+pub use traverse::{find_related_chunks, TraversalResult};

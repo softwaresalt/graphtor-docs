@@ -37,16 +37,8 @@
     },
     "tavily": {
       "type": "stdio",
-      "command": "pwsh",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "npx -y mcp-remote (\"https://mcp.tavily.com/mcp/?tavilyApiKey=\" + $env:TAVILY_API_KEY)"
-      ],
-      "env": {
-        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
-      },
-      "tools": ["*"]
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}"]
     },
     "github": {
       "type": "stdio",
