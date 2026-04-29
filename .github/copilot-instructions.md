@@ -22,7 +22,7 @@ This project uses **Backlog.md** via the backlog MCP server for all task and pro
 | Layer | Technology | Justification |
 |---|---|---|
 | Language | Rust (stable) | Memory safety, single-binary distribution, zero runtime dependencies, native performance |
-| Unified Store | CozoDB (`cozo` crate, sqlite backend) | Embedded graph + vector DB with Datalog queries, HNSW ANN search, and property-graph traversal — replaces LanceDB + Kùzu with one dependency |
+| Unified Store | CozoDB (`cozo` crate, sqlite backend) | Embedded graph + document DB with Datalog queries and property-graph traversal; HNSW vector search is planned (current search: keyword/text) |
 | Embeddings | `all-MiniLM-L6-v2` via Candle (`candle-core`, `candle-transformers`) | ~80MB model, 384-dim vectors, pure Rust ML inference, no external runtime |
 | Graph Extraction | `pulldown-cmark` | Deterministic AST-based Markdown parsing, 100% precision edge extraction from links/headings |
 | Plugin Server | `rmcp` crate | Rust MCP SDK, async STDIO JSON-RPC transport via tokio |
@@ -115,13 +115,13 @@ src/                      # Main application source (Rust)
   pipeline/               # Ingestion pipeline stages
   mcp/                    # MCP server and tool definitions
   db/                     # Database access layer
-    store.rs              # CozoDB DataStore — open, schema, lifecycle
+    store.rs              # CozoDB DataStore: open, schema, lifecycle
     schema.rs             # Datalog DDL and schema versioning
     chunks.rs             # Chunk upsert operations
     nodes.rs              # Repo/document node CRUD
     edges.rs              # Graph edge insertion
     traverse.rs           # Multi-hop graph traversal
-    search.rs             # HNSW vector search
+    search.rs             # Text/keyword search (HNSW vector search: planned)
   embed/                  # Candle embedding model
   error/                  # Domain error types
 tests/
@@ -235,7 +235,7 @@ Never write production code before the corresponding test exists and has been ob
 
 * All CozoDB operations go through `src/db/` — no raw Datalog queries outside this module
 * Sub-modules: `store.rs` (lifecycle), `schema.rs` (DDL), `chunks.rs`, `nodes.rs`, `edges.rs`, `traverse.rs`, `search.rs`
-* Both modules expose typed functions, not raw query strings
+* All sub-modules expose typed functions, not raw query strings
 * Test databases use temporary directories — never write to production paths
 * Schema definitions are versioned; migrations or full-rebuild procedures accompany any schema change
 
@@ -282,7 +282,7 @@ Never write production code before the corresponding test exists and has been ob
 
 | Concern | Approach |
 |---|---|
-| Unified storage | CozoDB (embedded, sqlite backend) — Datalog queries, HNSW vector search, property-graph traversal |
+| Unified storage | CozoDB (embedded, sqlite backend) — Datalog queries, property-graph traversal; HNSW vector search planned |
 | Embeddings | `all-MiniLM-L6-v2` via Candle (in-process, 384-dim vectors) |
 | Graph extraction | `pulldown-cmark` (deterministic AST-based Markdown parsing) |
 | MCP interface | `rmcp` crate — async STDIO JSON-RPC, localhost-only |
