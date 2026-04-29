@@ -62,6 +62,26 @@ fn test_frontmatter_title_only() {
     assert_eq!(body, "content\n");
 }
 
+/// A bare `---` with no trailing newline is treated as no frontmatter — not a
+/// panic. Previously the `trimmed == "---"` guard admitted this and then
+/// attempted an out-of-bounds slice.
+#[test]
+fn test_bare_triple_dash_without_newline_does_not_panic() {
+    let md = "---";
+    let (fm, body) = strip(md);
+    assert!(fm.is_none(), "bare --- should return no frontmatter");
+    assert_eq!(body, md);
+}
+
+/// Documents with leading blank lines before `---` are treated as having no
+/// frontmatter; frontmatter must start at byte 0.
+#[test]
+fn test_leading_newlines_before_frontmatter_returns_none() {
+    let md = "\n---\ntitle: Should Not Match\n---\nbody\n";
+    let (fm, _) = strip(md);
+    assert!(fm.is_none(), "frontmatter must start at byte 0");
+}
+
 /// Documents that don't start with `---` are not treated as having frontmatter.
 #[test]
 fn test_content_starting_with_heading_has_no_frontmatter() {

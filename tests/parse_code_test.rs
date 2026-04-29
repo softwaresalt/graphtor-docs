@@ -81,3 +81,31 @@ fn test_snippet_chunk_id_matches_input() {
         assert_eq!(s.chunk_id, CHUNK_ID);
     }
 }
+
+/// An empty fenced code block must not cause a failure — the composite ID
+/// scheme handles empty content gracefully.
+#[test]
+fn test_empty_fenced_code_block_does_not_fail() {
+    let md = "```rust\n```\n";
+    let nodes = parse_ast(md);
+    let snippets = extract(&nodes, CHUNK_ID).expect("empty code block should not fail");
+    assert_eq!(snippets.len(), 1);
+    let s = &snippets[0];
+    assert_eq!(s.content, "");
+    assert_eq!(s.language.as_deref(), Some("rust"));
+    assert_eq!(s.id.len(), 64, "id must still be a valid 64-char hex string");
+}
+
+/// Two empty code blocks with different languages produce different IDs.
+#[test]
+fn test_empty_blocks_with_different_langs_have_different_ids() {
+    let md_rs = "```rust\n```\n";
+    let md_py = "```python\n```\n";
+    let id_rs = &extract(&parse_ast(md_rs), CHUNK_ID).unwrap()[0].id;
+    let id_py = &extract(&parse_ast(md_py), CHUNK_ID).unwrap()[0].id;
+    assert_ne!(
+        id_rs,
+        id_py,
+        "different language tags must produce different IDs for empty blocks"
+    );
+}

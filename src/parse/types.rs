@@ -22,19 +22,30 @@ pub struct ParsedDocument {
     pub code_snippets: Vec<CodeSnippet>,
 }
 
-/// A self-contained content chunk split at an H2 or H3 heading boundary.
+/// A self-contained content chunk split at an H1, H2, or H3 heading boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
-    /// Stable SHA-256 identifier (`sha256(content + "|" + source_path)`).
+    /// Stable SHA-256 identifier (`sha256(content + "\0" + source_path)`).
     pub chunk_id: String,
-    /// Raw markdown content of this chunk (may include sub-headings H4+).
+    /// Normalized, reconstructed markdown content of this chunk.
+    ///
+    /// This is **not** a verbatim byte-for-byte slice of the source document.
+    /// It is rebuilt from the [`AstNode`] stream, which normalizes whitespace
+    /// and restructures inline elements. Callers must not assume source-accurate
+    /// offsets or exact original formatting. Sub-headings H4+ are included
+    /// within the enclosing H1/H2/H3 chunk.
     pub content: String,
     /// Ordered heading ancestry from H1 down to this chunk's own heading.
     /// Empty for the document intro chunk (text before the first heading).
     pub heading_hierarchy: Vec<String>,
     /// Zero-based position of this chunk within the document.
     pub position: usize,
-    /// Character offset of the chunk's first byte within the source document.
+    /// Approximate reconstructed character offset of this chunk's first byte.
+    ///
+    /// Computed from the cumulative rendered length of preceding chunks rather
+    /// than from the original source document. This is **not** a source-accurate
+    /// byte offset — callers that need exact source positions should track them
+    /// from the original pulldown-cmark event stream.
     pub char_offset: usize,
     /// Path of the source document; mirrors [`ParsedDocument::path`].
     pub source_path: String,

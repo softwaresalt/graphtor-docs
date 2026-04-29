@@ -91,15 +91,24 @@ pub fn parse_ast(markdown: &str) -> Vec<AstNode> {
 
             // ── Text content ──────────────────────────────────────────────
             Event::Text(t) | Event::Code(t) => {
-                // Route text to the innermost active context.
-                if let Some((_, ref mut text)) = link_stack {
-                    text.push_str(&t);
-                } else if let Some((_, ref mut text)) = heading_stack {
-                    text.push_str(&t);
-                } else if let Some((_, ref mut content)) = code_stack {
+                // Code blocks are exclusive — their content must not bleed
+                // into paragraph or heading accumulators.
+                if let Some((_, ref mut content)) = code_stack {
                     content.push_str(&t);
-                } else if let Some(ref mut text) = para_stack {
-                    text.push_str(&t);
+                } else {
+                    // For all other inline content, append to every currently
+                    // active enclosing container so that link anchor text,
+                    // inline code, etc. appear in the parent paragraph/heading
+                    // text as well as in the dedicated link accumulator.
+                    if let Some((_, ref mut text)) = heading_stack {
+                        text.push_str(&t);
+                    }
+                    if let Some(ref mut text) = para_stack {
+                        text.push_str(&t);
+                    }
+                    if let Some((_, ref mut text)) = link_stack {
+                        text.push_str(&t);
+                    }
                 }
             }
 

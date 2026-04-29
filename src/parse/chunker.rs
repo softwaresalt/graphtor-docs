@@ -1,5 +1,5 @@
-//! Heading-based document chunker — splits an [`AstNode`] stream at H2/H3
-//! boundaries into self-contained [`Chunk`] records.
+//! Heading-based document chunker — splits an [`AstNode`] stream at H1, H2,
+//! and H3 boundaries into self-contained [`Chunk`] records.
 //!
 //! See [`chunk`] for the public entry point.
 
@@ -10,11 +10,12 @@ use crate::parse::types::{AstNode, Chunk};
 /// Split an ordered list of [`AstNode`]s into [`Chunk`]s.
 ///
 /// Splitting rules:
-/// - Content before the first H2/H3 becomes an **intro chunk** with an empty
-///   `heading_hierarchy`.
-/// - Each H2 or H3 heading starts a new chunk. Its heading and all content
-///   until the next H2/H3 (or end of document) belong to that chunk.
-/// - H4–H6 headings and their content remain inside the enclosing H2/H3 chunk.
+/// - Content before the first H1/H2/H3 becomes an **intro chunk** with an
+///   empty `heading_hierarchy`.
+/// - Each H1, H2, or H3 heading starts a new chunk. Its heading and all
+///   content until the next H1/H2/H3 (or end of document) belong to that chunk.
+/// - H4–H6 headings and their content remain inside the enclosing H1/H2/H3
+///   chunk.
 /// - The `source_path` is attached to every chunk as provenance.
 ///
 /// # Errors

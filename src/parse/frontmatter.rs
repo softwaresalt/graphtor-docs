@@ -17,27 +17,28 @@ struct FrontmatterRaw {
 
 /// Detect and strip YAML frontmatter from `content`.
 ///
-/// Returns `(Some(frontmatter), body)` when the document starts with a `---`
-/// delimiter, otherwise `(None, content)` with the original text unchanged.
+/// Returns `(Some(frontmatter), body)` when the document starts with a `---\n`
+/// delimiter at byte 0, otherwise `(None, content)` with the original text unchanged.
 ///
-/// The frontmatter block must start on the very first line. The closing `---`
-/// may appear as `---` or `...` (YAML end-of-document marker).
+/// Frontmatter must begin at the very first byte of `content`. The closing
+/// delimiter may be `---` or `...` (YAML end-of-document marker), followed by
+/// a newline or end-of-string.
 ///
 /// # Panics
 ///
 /// Does not panic.
 #[must_use]
 pub fn strip(content: &str) -> (Option<FrontmatterData>, &str) {
-    let trimmed = content.trim_start_matches('\n');
-
-    if !trimmed.starts_with("---\n") && trimmed != "---" {
+    // Frontmatter must start at byte 0 — no leading whitespace or newlines
+    // allowed, which also avoids any offset-calculation ambiguity.
+    if !content.starts_with("---\n") {
         return (None, content);
     }
 
-    let after_open = &trimmed["---\n".len()..];
+    let after_open = &content["---\n".len()..];
 
-    // Find the closing delimiter and compute the byte offset of the body start
-    // (relative to `after_open`).
+    // Find the closing delimiter and compute the exact byte offset of the body
+    // start, both relative to `content`.
     let (close_pos, delim_end) = if let Some(p) = after_open.find("\n---\n") {
         (p, p + 5) // \n + --- + \n
     } else if let Some(p) = after_open.find("\n...\n") {
@@ -53,9 +54,8 @@ pub fn strip(content: &str) -> (Option<FrontmatterData>, &str) {
 
     let raw_yaml = &after_open[..close_pos];
 
-    // body_start is relative to the original `content` string.
-    let open_len = "---\n".len();
-    let body_start = (open_len + delim_end).min(content.len());
+    // body_start is relative to `content` (= opening "---\n" length + delim_end).
+    let body_start = ("---\n".len() + delim_end).min(content.len());
 
     let raw: FrontmatterRaw = serde_yaml::from_str(raw_yaml).unwrap_or_default();
 
