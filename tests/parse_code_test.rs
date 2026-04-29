@@ -93,7 +93,11 @@ fn test_empty_fenced_code_block_does_not_fail() {
     let s = &snippets[0];
     assert_eq!(s.content, "");
     assert_eq!(s.language.as_deref(), Some("rust"));
-    assert_eq!(s.id.len(), 64, "id must still be a valid 64-char hex string");
+    assert_eq!(
+        s.id.len(),
+        64,
+        "id must still be a valid 64-char hex string"
+    );
 }
 
 /// Two empty code blocks with different languages produce different IDs.
@@ -104,8 +108,7 @@ fn test_empty_blocks_with_different_langs_have_different_ids() {
     let id_rs = &extract(&parse_ast(md_rs), CHUNK_ID).unwrap()[0].id;
     let id_py = &extract(&parse_ast(md_py), CHUNK_ID).unwrap()[0].id;
     assert_ne!(
-        id_rs,
-        id_py,
+        id_rs, id_py,
         "different language tags must produce different IDs for empty blocks"
     );
 }
