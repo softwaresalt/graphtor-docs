@@ -1,9 +1,9 @@
 {
 	"folders": [
-		{
-			"path": "."
-		}
-	],
+    {
+      "path": "."
+    }
+  ],
 	"settings": {
     "chat.agent.maxRequests": 1000,
 		// Mutation commands (git commit, git push, gh) are intentionally auto-approved for

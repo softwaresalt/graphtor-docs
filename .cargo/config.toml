@@ -1,0 +1,8 @@
+# Workspace-level Cargo configuration.
+#
+# Sets the CMAKE environment variable so kuzu's build script can locate
+# cmake without requiring it to be on PATH. cmake is installed at the
+# path below by `winget install Kitware.CMake`.
+
+[env]
+CMAKE = "C:\\Program Files\\CMake\\bin\\cmake.exe"
