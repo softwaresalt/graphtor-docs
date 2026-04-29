@@ -2,8 +2,8 @@
 //!
 //! Provides [`generate_chunk_id`] which computes a stable, 64-character
 //! lowercase hexadecimal identifier for a documentation chunk. The
-//! identifier serves as the cross-database correlation key linking
-//! `LanceDB` vectors to Kùzu graph nodes.
+//! identifier serves as the cross-store correlation key linking
+//! vector embeddings to graph nodes in the unified store.
 
 use sha2::{Digest, Sha256};
 
