@@ -1,0 +1,16 @@
+# cargo-audit configuration
+# https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+#
+# Note: cargo-audit ignores are also passed via --ignore flags in ci.yml
+# so this file serves as documentation of known advisory suppressions.
+#
+# RUSTSEC-2026-0041: lz4_flex 0.10.0
+#   Decompressing invalid data can leak uninitialized memory.
+#   Root cause: cozo 0.7.6 → swapvec 0.3.0 → lz4_flex ^0.10 (semver-locked).
+#   Cannot resolve without cozo upgrading swapvec to 0.4+.
+#   Risk: lz4_flex used only for cozo's internal disk-swap buffers, not user input.
+#   Fix: upgrade when cozo releases a version with swapvec >= 0.4.
+#
+# RUSTSEC-2026-0008: git2 0.19.0
+#   Potential UB when dereferencing Buf struct.
+#   Fix: upgrade to git2 0.20+ when released.
