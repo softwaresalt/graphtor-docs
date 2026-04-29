@@ -4,7 +4,7 @@ description: "Expert Rust implementation agent — applies language idioms, safe
 maturity: stable
 tools: vscode, execute, read, edit, search
 model_routing: "Tier 2 (Standard)"
-subagent_depth: 0
+subagent_depth: 2
 ---
 
 # Rust Engineer

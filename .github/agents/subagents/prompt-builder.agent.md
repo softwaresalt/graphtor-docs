@@ -3,23 +3,6 @@ description: 'Prompt engineering assistant with phase-based workflow for creatin
 maturity: stable
 model_routing: "Tier 1 (Fast/Cheap)"
 subagent_depth: 0
-handoffs:
-  - label: "💡 Update/Create"
-    agent: prompt-builder
-    prompt: "/prompt-build "
-    send: false
-  - label: "🛠️ Refactor"
-    agent: prompt-builder
-    prompt: /prompt-refactor
-    send: true
-  - label: "🤔 Analyze"
-    agent: prompt-builder
-    prompt: /prompt-analyze
-    send: true
-  - label: "♻️ Cleanup Sandbox"
-    agent: prompt-builder
-    prompt: "Clear the sandbox for this conversation"
-    send: true
 ---
 
 # Prompt Builder

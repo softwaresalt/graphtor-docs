@@ -4,7 +4,7 @@ description: "Expert assistant for Rust MCP server development using the rmcp SD
 maturity: stable
 tools: read, search, edit, execute
 model_routing: "Tier 2 (Standard)"
-subagent_depth: 0
+subagent_depth: 2
 ---
 
 # Rust MCP Expert
