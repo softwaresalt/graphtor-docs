@@ -4,7 +4,8 @@
 //!
 //! 1. **Acquire** — clone Git repos or scan local directories via [`crate::acquire`].
 //! 2. **Parse** — markdown → chunks, edges, code snippets via [`crate::parse`].
-//! 3. **Embed** — compute 384-dim vectors (staged for HNSW indexing in 009-F).
+//! 3. **Embed** — compute 384-dim vectors for pipeline validation only; vectors are
+//!    **not persisted** in this release. `CozoDB` HNSW vector indexing is planned for 009-F.
 //! 4. **Load** — upsert chunks, edges, and snippets into CozoDB via [`crate::db`].
 //!
 //! Error handling follows **continue-on-failure** semantics: a file-level
@@ -26,12 +27,14 @@
 //! # }
 //! ```
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-use crate::acquire::{execute as acquire_execute, AcquisitionPlan, SourceOutcome};
+use crate::acquire::{execute as acquire_execute, AcquisitionPlan, PlannedSource, SourceOutcome};
+use crate::config::Source;
 use crate::db::chunks::upsert_chunk;
 use crate::db::edges::{upsert_code_snippet, upsert_edge};
 use crate::db::nodes::{upsert_source, SourceRecord};
@@ -116,15 +119,24 @@ pub struct PipelineResult {
 /// When `config.parallel` is `true` the embed step follows the same
 /// sequential code path until async embedding is implemented (009-F).
 /// See [`PipelineConfig::parallel`] for details.
+#[must_use = "pipeline result contains errors_encountered; inspect or explicitly ignore with `let _ = ...`"]
 pub fn run(
     plan: &AcquisitionPlan,
     store: &DataStore,
     model: Option<&EmbeddingModel>,
     config: &PipelineConfig,
 ) -> Result<PipelineResult, GraphtorError> {
+    // Guard: batch_size = 0 would cause slice::chunks(0) to panic at runtime.
+    let effective_batch_size = if config.batch_size == 0 {
+        warn!("PipelineConfig.batch_size is 0; clamped to 1");
+        1_usize
+    } else {
+        config.batch_size
+    };
+
     let run_start = Instant::now();
     info!(
-        batch_size = config.batch_size,
+        batch_size = effective_batch_size,
         parallel = config.parallel,
         "pipeline start"
     );
@@ -136,9 +148,13 @@ pub fn run(
         succeeded = acq_result.succeeded,
         failed = acq_result.failed,
         total_files = acq_result.total_files,
-        elapsed_ms = acq_start.elapsed().as_millis(),
+        elapsed_ms = u64::try_from(acq_start.elapsed().as_millis()).unwrap_or(u64::MAX),
         "acquire stage complete"
     );
+
+    // Build a source_id → PlannedSource index for metadata lookup.
+    let source_index: HashMap<&str, &PlannedSource> =
+        plan.sources.iter().map(|ps| (ps.source.id(), ps)).collect();
 
     let mut documents_processed: usize = 0;
     let mut total_chunks: usize = 0;
@@ -148,13 +164,23 @@ pub fn run(
     for outcome in &acq_result.outcomes {
         match outcome {
             SourceOutcome::Success(ffs) => {
-                // Register the source node in the database.
-                let source_rec = SourceRecord {
-                    source_id: ffs.source_id.clone(),
-                    url: ffs.source_id.clone(),
-                    kind: "local".to_string(),
-                    name: ffs.source_id.clone(),
-                    synced_at: None,
+                // Resolve actual source metadata (kind, url, name) from the plan.
+                // Falls back to source_id values when the planned source is not found
+                // (should not happen in normal operation).
+                let source_rec = if let Some(ps) = source_index.get(ffs.source_id.as_str()) {
+                    build_source_record(ps)
+                } else {
+                    warn!(
+                        source_id = %ffs.source_id,
+                        "planned source not found in index; using source_id as fallback"
+                    );
+                    SourceRecord {
+                        source_id: ffs.source_id.clone(),
+                        url: ffs.source_id.clone(),
+                        kind: "unknown".to_string(),
+                        name: ffs.source_id.clone(),
+                        synced_at: None,
+                    }
                 };
                 if let Err(e) = upsert_source(store, &source_rec) {
                     warn!(
@@ -168,7 +194,7 @@ pub fn run(
                 let mut source_docs = 0_usize;
                 let mut source_chunks = 0_usize;
 
-                for batch in ffs.files.chunks(config.batch_size) {
+                for batch in ffs.files.chunks(effective_batch_size) {
                     let (batch_docs, batch_chunks, batch_errors) =
                         process_batch(batch, &ffs.source_id, store, model, &plan.allowed_root);
                     source_docs += batch_docs;
@@ -180,7 +206,7 @@ pub fn run(
                     source_id = %ffs.source_id,
                     documents = source_docs,
                     chunks = source_chunks,
-                    elapsed_ms = stage_start.elapsed().as_millis(),
+                    elapsed_ms = u64::try_from(stage_start.elapsed().as_millis()).unwrap_or(u64::MAX),
                     "parse/embed/load stage complete"
                 );
 
@@ -204,7 +230,7 @@ pub fn run(
         documents_processed,
         total_chunks,
         error_count = errors_encountered.len(),
-        elapsed_ms = run_start.elapsed().as_millis(),
+        elapsed_ms = u64::try_from(run_start.elapsed().as_millis()).unwrap_or(u64::MAX),
         "pipeline complete"
     );
 
@@ -283,6 +309,10 @@ fn process_batch(
 
     // ── Load ───────────────────────────────────────────────────────────────
     for (path_str, doc) in &parsed {
+        if doc.chunks.is_empty() {
+            debug!(path = %path_str, "document parsed with zero chunks; skipping load");
+        }
+
         let mut file_loaded_ok = true;
 
         for chunk in &doc.chunks {
@@ -353,5 +383,28 @@ fn compute_embeddings(
                 "embedding failed; chunk text stored without vector"
             ),
         }
+    }
+}
+
+/// Build a [`SourceRecord`] with accurate metadata from a [`PlannedSource`].
+///
+/// Extracts kind, URL, and display name from the original source configuration
+/// rather than using the source identifier as a placeholder.
+fn build_source_record(ps: &PlannedSource) -> SourceRecord {
+    match &ps.source {
+        Source::Git(git) => SourceRecord {
+            source_id: git.id.clone(),
+            url: git.url.clone(),
+            kind: "git".to_string(),
+            name: git.id.clone(),
+            synced_at: None,
+        },
+        Source::Local(local) => SourceRecord {
+            source_id: local.id.clone(),
+            url: local.path.to_string_lossy().into_owned(),
+            kind: "local".to_string(),
+            name: local.id.clone(),
+            synced_at: None,
+        },
     }
 }
