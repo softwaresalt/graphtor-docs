@@ -79,13 +79,19 @@ impl DocServer {
     ///
     /// Returns [`ErrorData`] when the underlying text search fails.
     #[tool(
-        description = "Search local documentation chunks by keyword. Returns matching chunks with path, heading context, and content as structured markdown. Use source_id to restrict results to a specific documentation source."
+        description = "Search local documentation chunks by keyword or phrase. Returns matching \
+        chunks with source path, heading context, content, and a Chunk ID that can be passed to \
+        `traverse_doc_links` to explore related documentation. Use source_id to restrict results \
+        to a specific documentation source. Use this tool to find documentation related to a topic."
     )]
     fn search_local_docs(
         &self,
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<CallToolResult, ErrorData> {
         info!(query = %params.query, "search_local_docs invoked");
+        if params.query.trim().is_empty() {
+            return Err(ErrorData::invalid_params("query cannot be empty", None));
+        }
         let results = search_by_text(&self.store, &params.query).map_err(|e| into_tool_err(&e))?;
         let filtered: Vec<_> = if let Some(sid) = &params.source_id {
             results
@@ -110,13 +116,19 @@ impl DocServer {
     ///
     /// Returns [`ErrorData`] when the graph traversal fails.
     #[tool(
-        description = "Traverse the document link graph starting from a chunk ID. Follows outgoing doc_edges via BFS and returns related chunks with path and traversal depth as structured markdown."
+        description = "Traverse the document link graph starting from a chunk ID. Use this after \
+        `search_local_docs` to explore related documentation via semantic links. Requires a valid \
+        chunk ID from `search_local_docs` output. Returns all reachable chunks within max_depth \
+        hops (default 2, max 5) with their paths and traversal depths."
     )]
     fn traverse_doc_links(
         &self,
         Parameters(params): Parameters<TraverseParams>,
     ) -> Result<CallToolResult, ErrorData> {
         info!(chunk_id = %params.chunk_id, "traverse_doc_links invoked");
+        if params.chunk_id.trim().is_empty() {
+            return Err(ErrorData::invalid_params("chunk_id cannot be empty", None));
+        }
         let depth = usize::try_from(params.max_depth.unwrap_or(2).min(5)).unwrap_or(2);
         let results = find_related_chunks(&self.store, &params.chunk_id, depth)
             .map_err(|e| into_tool_err(&e))?;
@@ -144,6 +156,7 @@ impl ServerHandler for DocServer {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Convert a [`GraphtorError`] to an MCP [`ErrorData`] internal error response.
 fn into_tool_err(e: &GraphtorError) -> ErrorData {
     ErrorData::internal_error(e.to_string(), None)
 }

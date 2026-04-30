@@ -27,8 +27,9 @@ pub fn format_search_results(results: &[SearchResult]) -> String {
         };
         write!(
             out,
-            "### Result {}\n\n**Source:** `{}`{}\n\n```\n{}\n```\n\n",
+            "### Result {}\n\n**Chunk ID:** `{}`\n**Source:** `{}`{}\n\n```\n{}\n```\n\n",
             i + 1,
+            r.chunk_id,
             r.path,
             heading,
             r.content.trim(),
@@ -87,6 +88,7 @@ mod tests {
             content: "This is the content.".to_string(),
         };
         let md = format_search_results(&[result]);
+        assert!(md.contains("c1")); // chunk_id should appear in output
         assert!(md.contains("docs/api.md"));
         assert!(md.contains("API Reference"));
         assert!(md.contains("This is the content."));
