@@ -238,3 +238,5 @@
 {"seq":238,"timestamp":"2026-04-30T20:50:59.9791553Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"feature","changed_fields":["description"],"item_id":"009-F","schema_version":1}}
 {"seq":239,"timestamp":"2026-04-30T20:51:03.0919179Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["description"],"item_id":"009.002-T","schema_version":1}}
 {"seq":240,"timestamp":"2026-04-30T20:51:06.5689567Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["description"],"item_id":"009.003-T","schema_version":1}}
+{"seq":241,"timestamp":"2026-04-30T21:39:46.7755572Z","event_type":"move_shipment_status","payload":{"actor":"backlogit","artifact_type":"shipment","changed_fields":["status"],"item_id":"004-S","schema_version":1,"status_delta":{"from":"queued","to":"active"}}}
+{"seq":242,"timestamp":"2026-04-30T21:44:30.0964805Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["status"],"item_id":"008.001-T","schema_version":1}}

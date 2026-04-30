@@ -28,6 +28,8 @@ pub mod parse;
 pub mod path;
 /// End-to-end ingestion pipeline orchestrator (acquire → parse → embed → load).
 pub mod pipeline;
+/// Incremental sync state tracking and change-detection utilities.
+pub mod sync;
 
 pub use acquire::{
     AcquiredSource, AcquisitionPlan, AcquisitionResult, FilteredFileSet, PlannedSource,

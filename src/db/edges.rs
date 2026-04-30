@@ -128,6 +128,42 @@ pub fn upsert_code_snippet(store: &DataStore, snippet: &CodeSnippet) -> Result<(
     Ok(())
 }
 
+/// Delete all outgoing edges from chunks matching `src_chunk_id`.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Database`] on mutation failure.
+pub fn delete_edges_for_chunk(store: &DataStore, src_chunk_id: &str) -> Result<(), GraphtorError> {
+    let rm = r"
+        ?[src_chunk_id, target_path]
+            := *doc_edges{ src_chunk_id, target_path },
+               src_chunk_id = $src
+        :rm doc_edges { src_chunk_id, target_path }
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("src".to_string(), DataValue::Str(src_chunk_id.into()));
+    store.mutate(rm, params)?;
+    debug!(src_chunk_id, "deleted doc_edges records for chunk");
+    Ok(())
+}
+
+/// Delete all code snippets associated with `chunk_id`.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Database`] on mutation failure.
+pub fn delete_code_for_chunk(store: &DataStore, chunk_id: &str) -> Result<(), GraphtorError> {
+    let rm = r"
+        ?[snippet_id] := *doc_code{ snippet_id, chunk_id }, chunk_id = $cid
+        :rm doc_code { snippet_id }
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("cid".to_string(), DataValue::Str(chunk_id.into()));
+    store.mutate(rm, params)?;
+    debug!(chunk_id, "deleted doc_code records for chunk");
+    Ok(())
+}
+
 // ── Row decoders ─────────────────────────────────────────────────────────────
 
 fn row_to_edge(row: &[DataValue]) -> Result<EdgeRecord, GraphtorError> {
