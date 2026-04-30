@@ -26,8 +26,13 @@ pub mod search;
 pub mod store;
 pub mod traverse;
 
-pub use chunks::{get_chunk, list_chunks_for_source, upsert_chunk, ChunkRecord};
-pub use edges::{list_edges_from_chunk, upsert_code_snippet, upsert_edge, CodeRecord, EdgeRecord};
+pub use chunks::{
+    delete_chunks_by_path, get_chunk, list_chunks_for_source, upsert_chunk, ChunkRecord,
+};
+pub use edges::{
+    delete_code_for_chunk, delete_edges_for_chunk, list_edges_from_chunk, upsert_code_snippet,
+    upsert_edge, CodeRecord, EdgeRecord,
+};
 pub use nodes::{get_source, list_sources, upsert_source, SourceRecord};
 pub use schema::ensure_schema;
 pub use search::{search_by_text, search_similar, SearchResult};

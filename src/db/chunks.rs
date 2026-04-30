@@ -150,6 +150,48 @@ pub fn list_chunks_for_source(
     rows.rows.iter().map(|row| row_to_chunk(row)).collect()
 }
 
+/// Delete all chunks associated with the given source-root-relative `path`.
+///
+/// Returns the list of deleted `chunk_id` values so callers can cascade the
+/// deletion to `doc_edges` and `doc_code`.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Database`] on query or mutation failure.
+pub fn delete_chunks_by_path(store: &DataStore, path: &str) -> Result<Vec<String>, GraphtorError> {
+    // Collect chunk_ids for this path first.
+    let select = r"
+        ?[chunk_id] := *doc_chunks{ chunk_id, path }, path = $path
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), DataValue::Str(path.into()));
+    let rows = store.query(select, params)?;
+
+    let ids: Vec<String> = rows
+        .rows
+        .iter()
+        .filter_map(|row| row.first().and_then(|v| v.get_str()).map(str::to_owned))
+        .collect();
+
+    if ids.is_empty() {
+        return Ok(ids);
+    }
+
+    // Delete by primary key.
+    let rm = r"
+        ?[chunk_id] := *doc_chunks{ chunk_id, path }, path = $path
+        :rm doc_chunks { chunk_id }
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), DataValue::Str(path.into()));
+    store.mutate(rm, params)?;
+    debug!(
+        count = ids.len(),
+        path, "deleted doc_chunks records by path"
+    );
+    Ok(ids)
+}
+
 // ── Row decoders ─────────────────────────────────────────────────────────────
 
 fn row_to_chunk(row: &[DataValue]) -> Result<ChunkRecord, GraphtorError> {

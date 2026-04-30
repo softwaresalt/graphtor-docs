@@ -249,7 +249,7 @@ Never write production code before the corresponding test exists and has been ob
 ### MCP Tools
 
 * Each tool is a separate module under `src/mcp/tools/`
-* Tool definitions use `#[tool]`/`#[tool_router]` macros from `rmcp` 0.5
+* Tool definitions use `#[tool]`/`#[tool_router]` macros from `rmcp` 1.5
 * Tool names use `snake_case` with descriptive prefixes (`search_ms_docs_semantic`, `explore_concept_graph`)
 * Tool descriptions MUST be clear enough for an AI agent to select the right tool
 * All tool parameters validated via typed Rust structs with serde

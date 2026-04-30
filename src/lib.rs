@@ -24,10 +24,14 @@ pub mod db;
 pub mod embed;
 pub mod error;
 pub mod logging;
+/// MCP plugin server — exposes search and graph traversal tools via STDIO JSON-RPC.
+pub mod mcp;
 pub mod parse;
 pub mod path;
 /// End-to-end ingestion pipeline orchestrator (acquire → parse → embed → load).
 pub mod pipeline;
+/// Incremental sync state tracking and change-detection utilities.
+pub mod sync;
 
 pub use acquire::{
     AcquiredSource, AcquisitionPlan, AcquisitionResult, FilteredFileSet, PlannedSource,
@@ -39,5 +43,6 @@ pub use db::DataStore;
 pub use embed::{embed_batch, embed_text, EmbeddingModel};
 pub use error::GraphtorError;
 pub use logging::{init_logging, LogVerbosity};
+pub use mcp::DocServer;
 pub use path::validate_path;
 pub use pipeline::{FileError, PipelineConfig, PipelineResult};
