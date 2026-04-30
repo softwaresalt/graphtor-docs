@@ -40,3 +40,4 @@ pub use embed::{embed_batch, embed_text, EmbeddingModel};
 pub use error::GraphtorError;
 pub use logging::{init_logging, LogVerbosity};
 pub use path::validate_path;
+pub use pipeline::{FileError, PipelineConfig, PipelineResult};

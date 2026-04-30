@@ -65,10 +65,10 @@ fn pipeline_skips_invalid_utf8_and_processes_valid_files() {
     );
 
     let err = &result.errors_encountered[0];
+    let err_path_str = err.path.to_string_lossy();
     assert!(
-        err.path.contains("bad.md"),
-        "error path should reference bad.md, got: {}",
-        err.path
+        err_path_str.contains("bad.md"),
+        "error path should reference bad.md, got: {err_path_str}",
     );
 
     // Two valid files should be fully processed.
