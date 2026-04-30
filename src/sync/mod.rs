@@ -233,8 +233,7 @@ fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     // Format as seconds since epoch — sufficient for sync state bookkeeping.
     format!("{secs}")
 }
