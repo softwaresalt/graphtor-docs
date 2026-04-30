@@ -1,4 +1,4 @@
-# Shipment 002-S — Core Data Layer — SHIPPED
+# Shipment 002-S — Core Data Layer — FULLY CLOSED
 
 **Date:** 2026-04-29  
 **Outcome:** All features delivered, verified, and archived  
@@ -47,6 +47,17 @@ src/embed/pool.rs   — mean pooling, attention mask application
 ## Open Items (next shipment)
 
 - Verify CozoDB 0.7 HNSW API — `search.rs` may be a stub returning `GraphtorError::Database`
-- Update `.github/copilot-instructions.md` Technology Stack table (replace LanceDB/Kùzu with CozoDB)
+- ~~Update `.github/copilot-instructions.md` Technology Stack table~~ — Done (PR #6, merged `673b248`)
+- Verify CozoDB 0.7 HNSW API — `search.rs` returns stub error; needs integration test once embed+db wired end-to-end
 - MCP server layer (007-F through 011-F) — next shipment candidate
 - `DataStoreOps` trait (P2 advisory from plan-review) — optional refactor
+- Upgrade `actions/checkout@v4` to `@v5` in CI before June 2026 (Node.js 20 deprecation)
+- Upgrade `git2` when 0.20 releases (resolves RUSTSEC-2026-0008)
+- Upgrade `cozo`/`swapvec` when lz4_flex 0.11+ ships (resolves RUSTSEC-2026-0041)
+
+## Post-Merge Closure (2026-04-29)
+
+- PR #5 merged: CI audit fix (suppress RUSTSEC-2026-0041, RUSTSEC-2026-0008)
+- PR #6 merged: copilot-instructions.md updated for CozoDB tech stack
+- Local main synced to `673b248`
+- Compound learnings written: 4 docs in `docs/compound/`
