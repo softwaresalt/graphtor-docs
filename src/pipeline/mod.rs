@@ -80,9 +80,23 @@ impl Default for PipelineConfig {
 #[derive(Debug, Clone)]
 pub struct FileError {
     /// File path or source identifier that failed to process.
-    pub path: String,
+    pub path: std::path::PathBuf,
     /// Human-readable description of the failure.
     pub error: String,
+}
+
+/// Result of processing a single batch of files through parse → embed → load.
+///
+/// Named struct replacing the previous `(usize, usize, Vec<FileError>)` tuple
+/// for clarity and future extensibility.
+#[derive(Debug)]
+struct BatchResult {
+    /// Number of files successfully processed in this batch.
+    docs_processed: usize,
+    /// Number of chunks successfully loaded in this batch.
+    chunks_loaded: usize,
+    /// Per-file errors accumulated during batch processing.
+    errors: Vec<FileError>,
 }
 
 /// Summary of a completed pipeline run.
@@ -195,11 +209,11 @@ pub fn run(
                 let mut source_chunks = 0_usize;
 
                 for batch in ffs.files.chunks(effective_batch_size) {
-                    let (batch_docs, batch_chunks, batch_errors) =
+                    let result =
                         process_batch(batch, &ffs.source_id, store, model, &plan.allowed_root);
-                    source_docs += batch_docs;
-                    source_chunks += batch_chunks;
-                    errors_encountered.extend(batch_errors);
+                    source_docs += result.docs_processed;
+                    source_chunks += result.chunks_loaded;
+                    errors_encountered.extend(result.errors);
                 }
 
                 info!(
@@ -219,7 +233,7 @@ pub fn run(
             SourceOutcome::Failed { source_id, error } => {
                 warn!(source_id, error, "source acquisition failed; skipping");
                 errors_encountered.push(FileError {
-                    path: format!("source:{source_id}"),
+                    path: format!("source:{source_id}").into(),
                     error: error.clone(),
                 });
             }
@@ -243,8 +257,6 @@ pub fn run(
 
 /// Process one batch of files through parse → embed → load.
 ///
-/// Returns `(documents_ok, chunks_ok, errors)`.
-///
 /// All errors are per-file; a failure on one file does not abort other
 /// files in the same batch.
 fn process_batch(
@@ -253,7 +265,7 @@ fn process_batch(
     store: &DataStore,
     model: Option<&EmbeddingModel>,
     allowed_root: &Path,
-) -> (usize, usize, Vec<FileError>) {
+) -> BatchResult {
     let mut docs_ok = 0_usize;
     let mut chunks_ok = 0_usize;
     let mut errors: Vec<FileError> = Vec::new();
@@ -261,18 +273,18 @@ fn process_batch(
     // ── Parse ──────────────────────────────────────────────────────────────
     let mut parsed = Vec::new();
     for file in files {
-        // `file_path` is the absolute path used for filesystem I/O and log context.
+        // `file` is the absolute path used for filesystem I/O and log context.
         // `path_str` is the source-root-relative path used for chunk IDs and DB
         // provenance — it must be portable across checkout locations.
-        let file_path = file.to_string_lossy().into_owned();
-        debug!(path = %file_path, "parsing file");
+        let display_path = file.to_string_lossy();
+        debug!(path = %display_path, "parsing file");
 
         // Belt-and-suspenders path guard — acquire already validates paths,
         // but we re-check here to enforce the workspace boundary at every stage.
         if let Err(e) = validate_path(file, allowed_root) {
-            warn!(path = %file_path, error = %e, "path validation failed; skipping file");
+            warn!(path = %display_path, error = %e, "path validation failed; skipping file");
             errors.push(FileError {
-                path: file_path,
+                path: file.clone(),
                 error: e.to_string(),
             });
             continue;
@@ -283,13 +295,13 @@ fn process_batch(
             Ok(rel) => rel.to_string_lossy().into_owned(),
             Err(e) => {
                 warn!(
-                    path = %file_path,
+                    path = %display_path,
                     root = %allowed_root.to_string_lossy(),
                     error = %e,
                     "failed to derive source-relative path; skipping file"
                 );
                 errors.push(FileError {
-                    path: file_path,
+                    path: file.clone(),
                     error: format!("failed to derive source-relative path: {e}"),
                 });
                 continue;
@@ -299,9 +311,9 @@ fn process_batch(
         let content = match std::fs::read_to_string(file) {
             Ok(c) => c,
             Err(e) => {
-                warn!(path = %file_path, error = %e, "failed to read file; skipping");
+                warn!(path = %display_path, error = %e, "failed to read file; skipping");
                 errors.push(FileError {
-                    path: file_path,
+                    path: file.clone(),
                     error: e.to_string(),
                 });
                 continue;
@@ -311,9 +323,9 @@ fn process_batch(
         match parse_document(&content, &path_str) {
             Ok(doc) => parsed.push((path_str, doc)),
             Err(e) => {
-                warn!(path = %file_path, error = %e, "parse failed; skipping file");
+                warn!(path = %display_path, error = %e, "parse failed; skipping file");
                 errors.push(FileError {
-                    path: file_path,
+                    path: file.clone(),
                     error: e.to_string(),
                 });
             }
@@ -346,7 +358,7 @@ fn process_batch(
                         "chunk upsert failed; file marked with error"
                     );
                     errors.push(FileError {
-                        path: path_str.clone(),
+                        path: std::path::PathBuf::from(path_str.as_str()),
                         error: e.to_string(),
                     });
                     file_loaded_ok = false;
@@ -371,7 +383,11 @@ fn process_batch(
         }
     }
 
-    (docs_ok, chunks_ok, errors)
+    BatchResult {
+        docs_processed: docs_ok,
+        chunks_loaded: chunks_ok,
+        errors,
+    }
 }
 
 /// Compute embeddings for all chunks in each parsed document.
@@ -413,19 +429,25 @@ fn compute_embeddings(
 /// rather than using the source identifier as a placeholder.
 fn build_source_record(ps: &PlannedSource) -> SourceRecord {
     match &ps.source {
-        Source::Git(git) => SourceRecord {
-            source_id: git.id.clone(),
-            url: git.url.clone(),
-            kind: "git".to_string(),
-            name: git.id.clone(),
-            synced_at: None,
-        },
-        Source::Local(local) => SourceRecord {
-            source_id: local.id.clone(),
-            url: local.path.to_string_lossy().into_owned(),
-            kind: "local".to_string(),
-            name: local.id.clone(),
-            synced_at: None,
-        },
+        Source::Git(git) => {
+            let id = git.id.clone();
+            SourceRecord {
+                url: git.url.clone(),
+                kind: "git".to_string(),
+                name: id.clone(),
+                source_id: id,
+                synced_at: None,
+            }
+        }
+        Source::Local(local) => {
+            let id = local.id.clone();
+            SourceRecord {
+                url: local.path.to_string_lossy().into_owned(),
+                kind: "local".to_string(),
+                name: id.clone(),
+                source_id: id,
+                synced_at: None,
+            }
+        }
     }
 }
