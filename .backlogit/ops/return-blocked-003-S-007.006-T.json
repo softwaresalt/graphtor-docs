@@ -1,0 +1,43 @@
+{
+  "shipment": {
+    "id": "003-S",
+    "title": "Dependency Hygiene \u0026 Pipeline Foundation",
+    "status": "active",
+    "artifact_type": "shipment",
+    "custom_fields": {
+      "items": [
+        "007-F",
+        "007.001-T",
+        "007.002-T",
+        "007.003-T",
+        "007.004-T",
+        "007.005-T",
+        "007.006-T"
+      ]
+    },
+    "created_at": "2026-04-29T20:15:01.7230657-07:00",
+    "updated_at": "2026-04-29T22:33:31.8648761-07:00",
+    "level": 1,
+    "hierarchy_path": "003"
+  },
+  "item": {
+    "id": "007.006-T",
+    "title": "Upgrade cozo/git2 deps to clear audit advisories",
+    "status": "blocked",
+    "artifact_type": "task",
+    "parent_id": "007-F",
+    "priority": "medium",
+    "description": "Upgrade cozo/git2 dependencies to resolve RUSTSEC-2026-0041 (lz4_flex via cozo chain) and RUSTSEC-2026-0008 (git2 0.19 unsound Buf deref). Run cargo audit after upgrade to confirm clean.",
+    "custom_fields": {
+      "source_stash_id": "94D655D7",
+      "source_stash_kind": "task",
+      "source_stash_path": "stash.jsonl",
+      "source_stash_priority": "medium",
+      "source_stash_text": "Upgrade cozo/git2 deps to clear audit advisories: RUSTSEC-2026-0041 lz4_flex via cozo chain, RUSTSEC-2026-0008 git2 0.19 unsound Buf deref"
+    },
+    "created_at": "2026-04-29T20:14:53.907339-07:00",
+    "updated_at": "2026-04-29T23:56:10.3981808-07:00",
+    "level": 2,
+    "hierarchy_path": "007/007.006"
+  }
+}

@@ -83,6 +83,7 @@ venv.bak/
 .engram/
 
 # backlogit runtime artifacts
+.backlogit/backlogit.db
 .backlogit/*.db-shm
 .backlogit/*.db-wal
 .backlogit/*.db-journal
