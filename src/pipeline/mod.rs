@@ -261,26 +261,47 @@ fn process_batch(
     // ── Parse ──────────────────────────────────────────────────────────────
     let mut parsed = Vec::new();
     for file in files {
-        let path_str = file.to_string_lossy().into_owned();
-        debug!(path = %path_str, "parsing file");
+        // `file_path` is the absolute path used for filesystem I/O and log context.
+        // `path_str` is the source-root-relative path used for chunk IDs and DB
+        // provenance — it must be portable across checkout locations.
+        let file_path = file.to_string_lossy().into_owned();
+        debug!(path = %file_path, "parsing file");
 
         // Belt-and-suspenders path guard — acquire already validates paths,
         // but we re-check here to enforce the workspace boundary at every stage.
         if let Err(e) = validate_path(file, allowed_root) {
-            warn!(path = %path_str, error = %e, "path validation failed; skipping file");
+            warn!(path = %file_path, error = %e, "path validation failed; skipping file");
             errors.push(FileError {
-                path: path_str,
+                path: file_path,
                 error: e.to_string(),
             });
             continue;
         }
 
+        // Derive a source-root-relative path for stable chunk IDs.
+        let path_str = match file.strip_prefix(allowed_root) {
+            Ok(rel) => rel.to_string_lossy().into_owned(),
+            Err(e) => {
+                warn!(
+                    path = %file_path,
+                    root = %allowed_root.to_string_lossy(),
+                    error = %e,
+                    "failed to derive source-relative path; skipping file"
+                );
+                errors.push(FileError {
+                    path: file_path,
+                    error: format!("failed to derive source-relative path: {e}"),
+                });
+                continue;
+            }
+        };
+
         let content = match std::fs::read_to_string(file) {
             Ok(c) => c,
             Err(e) => {
-                warn!(path = %path_str, error = %e, "failed to read file; skipping");
+                warn!(path = %file_path, error = %e, "failed to read file; skipping");
                 errors.push(FileError {
-                    path: path_str,
+                    path: file_path,
                     error: e.to_string(),
                 });
                 continue;
@@ -290,9 +311,9 @@ fn process_batch(
         match parse_document(&content, &path_str) {
             Ok(doc) => parsed.push((path_str, doc)),
             Err(e) => {
-                warn!(path = %path_str, error = %e, "parse failed; skipping file");
+                warn!(path = %file_path, error = %e, "parse failed; skipping file");
                 errors.push(FileError {
-                    path: path_str,
+                    path: file_path,
                     error: e.to_string(),
                 });
             }

@@ -181,7 +181,7 @@ Unit 6 (dep upgrade) — independent, can be done first or in parallel
 
 | Signal | Present? | Justification |
 |---|---|---|
-| Public API, schema, or contract change | **No** | `pipeline::run()` is `pub(crate)`, no external API. DB schema unchanged. |
+| Public API, schema, or contract change | **No** | `pipeline::run()` is `pub` (integration tests require external crate access). DB schema unchanged. |
 | Security, auth, permission, or compliance | **No** | All operations are local filesystem + embedded DB. No network, no auth. |
 | Migration, backfill, destructive data/config | **No** | Pipeline creates new data via upserts. No destructive operations. |
 | External integration, operator checkpoint | **No** | No external services. No operator approval points. |

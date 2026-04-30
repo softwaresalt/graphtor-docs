@@ -75,8 +75,8 @@ fn pipeline_processes_three_docs_and_populates_db() {
 
     // Each file has 2 chunks (intro + H2 section), so 6 total minimum.
     assert!(
-        result.total_chunks >= 3,
-        "expected at least 3 chunks, got {}",
+        result.total_chunks >= 6,
+        "expected at least 6 chunks, got {}",
         result.total_chunks
     );
 
