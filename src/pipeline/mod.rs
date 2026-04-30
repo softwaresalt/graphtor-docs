@@ -79,7 +79,19 @@ impl Default for PipelineConfig {
 /// A per-file processing failure accumulated during a pipeline run.
 #[derive(Debug, Clone)]
 pub struct FileError {
-    /// File path or source identifier that failed to process.
+    /// Path associated with this failure.
+    ///
+    /// Three formats are possible depending on the failure site:
+    ///
+    /// * **Absolute file path** — for I/O errors discovered during the parse
+    ///   stage (path validation, `read_to_string`, markdown parse failure).
+    /// * **Source-root-relative path** — for database errors discovered during
+    ///   the load stage (chunk upsert failure). The base is the `allowed_root`
+    ///   passed to the pipeline.
+    /// * **Synthetic source identifier** — for source-level acquisition
+    ///   failures, formatted as `source:{source_id}`.
+    ///
+    /// Callers should inspect the path value to determine which format applies.
     pub path: std::path::PathBuf,
     /// Human-readable description of the failure.
     pub error: String,
@@ -358,7 +370,7 @@ fn process_batch(
                         "chunk upsert failed; file marked with error"
                     );
                     errors.push(FileError {
-                        path: std::path::PathBuf::from(path_str.as_str()),
+                        path: std::path::PathBuf::from(&path_str),
                         error: e.to_string(),
                     });
                     file_loaded_ok = false;
