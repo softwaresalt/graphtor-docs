@@ -11,6 +11,11 @@ merged_commit: f892973
 
 ## Change Summary
 
+> **Note:** The implementation changes described below were shipped in **PR #7**
+> (merged at `f892973`). This document (`docs/closure/`) is the post-merge closure
+> artifact for that work; the actual diff in PR #8 is limited to closure docs, compound
+> learnings, and session memory.
+
 Implemented the acquire→parse→embed→load pipeline orchestrator in `src/pipeline/mod.rs`
 (~410 lines). The orchestrator coordinates all four pipeline stages in sequence or batch mode,
 carries a stable source-relative chunk-ID strategy (SHA-256 of content + source-relative path),

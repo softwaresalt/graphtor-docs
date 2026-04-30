@@ -5,8 +5,6 @@ date: 2026-04-30
 tags: [closure, git, windows, shell-cleanup, async-processes]
 ---
 
-# Session Shell Cleanup and Branch-Fix Steps in Operational Closure
-
 ## Problem
 
 At the end of a multi-session task, git operations (especially `git checkout main`) can fail
@@ -45,8 +43,9 @@ Get-Process | Where-Object { $_.Name -match 'cargo|rustc|git' } | Select-Object 
 git branch -v
 ```
 
-Compare local branch tip SHAs against `origin/<branch>` tip from `git log --oneline -3`.
-If the local branch is **behind or ahead unexpectedly**, use `git update-ref` to align it:
+Compare local branch tip SHAs against the refreshed `origin/<branch>` tip: run `git fetch`
+first, then inspect it with `git log --oneline -3 origin/<branch>`. If the local branch is
+**behind or ahead unexpectedly**, use `git update-ref` to align it:
 
 ```powershell
 git update-ref refs/heads/main <clean-sha>
