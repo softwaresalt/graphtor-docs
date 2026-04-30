@@ -1,0 +1,1 @@
+{"id":"94D655D7","priority":"medium","kind":"task","text":"Upgrade cozo/git2 deps to clear audit advisories: RUSTSEC-2026-0041 lz4_flex via cozo chain, RUSTSEC-2026-0008 git2 0.19 unsound Buf deref","created_at":"2026-04-29T23:19:11.5926081Z","removed_at":"2026-04-30T03:14:54.0519377Z","removal_reason":"harvested","harvested_artifact_id":"007.006-T"}

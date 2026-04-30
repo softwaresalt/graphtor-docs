@@ -12,6 +12,7 @@
 //! - [`logging`]: Structured logging initialization via `tracing`.
 //! - [`parse`]: Markdown parsing pipeline — frontmatter, AST, chunking, links, code blocks.
 //! - [`path`]: Path security utilities for workspace boundary enforcement.
+//! - [`pipeline`]: End-to-end ingestion orchestrator — acquire → parse → embed → load.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -25,6 +26,8 @@ pub mod error;
 pub mod logging;
 pub mod parse;
 pub mod path;
+/// End-to-end ingestion pipeline orchestrator (acquire → parse → embed → load).
+pub mod pipeline;
 
 pub use acquire::{
     AcquiredSource, AcquisitionPlan, AcquisitionResult, FilteredFileSet, PlannedSource,
