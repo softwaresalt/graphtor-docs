@@ -19,10 +19,9 @@ use crate::DataStore;
 
 /// Remove all database records associated with `relative_path` from `CozoDB`.
 ///
-/// Deletes in dependency order:
-/// 1. Outgoing edges (`doc_edges`) for every chunk at this path.
-/// 2. Code snippets (`doc_code`) for every chunk at this path.
-/// 3. The chunks themselves (`doc_chunks`).
+/// Retrieves the chunk IDs for `relative_path`, deletes the chunks, then
+/// removes all dependent edges (`doc_edges`) and code snippets (`doc_code`)
+/// for each chunk ID.
 ///
 /// # Errors
 ///
@@ -72,7 +71,14 @@ pub fn reingest_file(
     // Derive the source-root-relative path used as the database key.
     let rel_path = safe_path
         .strip_prefix(source_root)
-        .unwrap_or(&safe_path)
+        .map_err(|_| GraphtorError::Pipeline {
+            message: format!(
+                "file '{}' is not within source root '{}'",
+                safe_path.display(),
+                source_root.display()
+            ),
+            stage: "reingest".to_owned(),
+        })?
         .to_string_lossy()
         .replace('\\', "/");
 

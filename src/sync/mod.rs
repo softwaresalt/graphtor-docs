@@ -227,13 +227,17 @@ fn build_new_state(
     }
 }
 
-/// Return the current UTC time as an ISO-8601 string using only `std`.
+/// Return the current UTC time as a Unix-epoch seconds string.
+///
+/// The returned string is used as the `last_sync` timestamp value in
+/// [`SourceSyncState`].  It is NOT ISO-8601; it is the number of seconds
+/// elapsed since the Unix epoch (1970-01-01T00:00:00Z) as a decimal string.
 fn chrono_now() -> String {
-    // Without chrono, use a best-effort RFC 3339-like format from SystemTime.
+    // Avoid pulling in the chrono crate — epoch seconds are sufficient for
+    // sync state bookkeeping (ordering, not display).
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    // Format as seconds since epoch — sufficient for sync state bookkeeping.
     format!("{secs}")
 }

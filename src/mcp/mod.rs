@@ -7,8 +7,8 @@
 //! - `traverse_doc_links` — BFS traversal of the document link graph.
 //!
 //! Start the server from a binary entry point by calling
-//! [`DocServer::new`] and then calling `.serve(rmcp::transport::stdio())`
-//! on the resulting value (requires importing [`rmcp::ServiceExt`]).
+//! [`DocServer::new`] and passing the result to [`rmcp::serve_server`]
+//! with [`rmcp::transport::stdio`] as the transport.
 
 pub mod format;
 pub mod server;

@@ -2,14 +2,14 @@
 //!
 //! Starts the MCP server over STDIO JSON-RPC transport (`localhost` only).
 //! The database path defaults to `.graphtor/graph.db` relative to the
-//! current working directory; override with the `GRAPHTOR_DB_PATH`
-//! environment variable.
+//! current working directory; override with `GRAPHTOR_DB_PATH`.
+//! The path must be within the current working directory.
 //!
 //! # Usage
 //!
 //! ```text
 //! graphtor-docs
-//! GRAPHTOR_DB_PATH=/path/to/graph.db graphtor-docs
+//! GRAPHTOR_DB_PATH=.graphtor/graph.db graphtor-docs
 //! ```
 
 use std::path::PathBuf;

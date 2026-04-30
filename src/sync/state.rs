@@ -30,7 +30,9 @@ pub struct SourceSyncState {
     /// forward-slash separators on all platforms.
     pub file_mtimes: HashMap<String, u64>,
 
-    /// ISO-8601 timestamp of the last completed sync for this source.
+    /// Unix-epoch seconds string (decimal) recording when this source was last synced.
+    ///
+    /// `None` if this source has never been synced.
     pub last_sync: Option<String>,
 }
 
