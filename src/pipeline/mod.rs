@@ -4,8 +4,8 @@
 //!
 //! 1. **Acquire** — clone Git repos or scan local directories via [`crate::acquire`].
 //! 2. **Parse** — markdown → chunks, edges, code snippets via [`crate::parse`].
-//! 3. **Embed** — compute 384-dim vectors for pipeline validation only; vectors are
-//!    **not persisted** in this release. `CozoDB` HNSW vector indexing is planned for 009-F.
+//! 3. **Embed** — compute 384-dim vectors and persist them to `doc_vectors` via
+//!    [`crate::db::vectors::upsert_vector`].
 //! 4. **Load** — upsert chunks, edges, and snippets into CozoDB via [`crate::db`].
 //!
 //! Error handling follows **continue-on-failure** semantics: a file-level
@@ -38,6 +38,7 @@ use crate::config::Source;
 use crate::db::chunks::upsert_chunk;
 use crate::db::edges::{upsert_code_snippet, upsert_edge};
 use crate::db::nodes::{upsert_source, SourceRecord};
+use crate::db::vectors::upsert_vector;
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
 use crate::parse::{parse_document, parse_pdf_document};
@@ -362,11 +363,11 @@ fn process_batch(
     }
 
     // ── Embed ──────────────────────────────────────────────────────────────
-    // Embeddings are computed for pipeline validation but are not persisted:
-    // CozoDB HNSW vector indexing is planned for 009-F. Both sequential and
-    // parallel paths call this same function until async embedding lands.
+    // Embeddings are computed and persisted to `doc_vectors` for semantic
+    // search. Failures are non-fatal: the chunk text is stored without a
+    // vector and keyword search remains available.
     if let Some(m) = model {
-        compute_embeddings(&parsed, m);
+        compute_and_store_embeddings(&parsed, m, store);
     }
 
     // ── Load ───────────────────────────────────────────────────────────────
@@ -419,34 +420,43 @@ fn process_batch(
     }
 }
 
-/// Compute embeddings for all chunks in each parsed document.
+/// Compute embeddings for all chunks and persist them to `doc_vectors`.
 ///
-/// Vectors are computed here for validation and pipeline readiness.
-/// They are **not** persisted in this feature — `CozoDB` HNSW vector
-/// indexing is planned for 009-F.
-///
-/// Both sequential and parallel pipeline paths invoke this function.
-/// True per-document parallelism requires a lock-free inference path
-/// in `EmbeddingModel` (scoped for 009-F).
-fn compute_embeddings(
+/// For each chunk, calls [`crate::embed::embed_batch`] and stores the
+/// resulting vectors via [`upsert_vector`].  Embedding or upsert failures
+/// are logged as warnings and do not abort the batch; the chunk text is
+/// retained in `doc_chunks` and keyword search remains available.
+fn compute_and_store_embeddings(
     parsed: &[(String, crate::parse::types::ParsedDocument)],
     model: &EmbeddingModel,
+    store: &DataStore,
 ) {
     for (path_str, doc) in parsed {
-        let texts: Vec<&str> = doc.chunks.iter().map(|c| c.content.as_str()).collect();
-        if texts.is_empty() {
+        if doc.chunks.is_empty() {
             continue;
         }
+        let texts: Vec<&str> = doc.chunks.iter().map(|c| c.content.as_str()).collect();
         match crate::embed::embed_batch(model, &texts) {
-            Ok(vecs) => debug!(
-                path = %path_str,
-                chunk_count = vecs.len(),
-                "embeddings computed (not stored — awaiting HNSW indexing)"
-            ),
+            Ok(vecs) => {
+                debug!(
+                    path = %path_str,
+                    chunk_count = vecs.len(),
+                    "embeddings computed; storing in doc_vectors"
+                );
+                for (chunk, vec) in doc.chunks.iter().zip(vecs.iter()) {
+                    if let Err(e) = upsert_vector(store, &chunk.chunk_id, vec) {
+                        warn!(
+                            chunk_id = %chunk.chunk_id,
+                            error = %e,
+                            "vector upsert failed; chunk stored without embedding"
+                        );
+                    }
+                }
+            }
             Err(e) => warn!(
                 path = %path_str,
                 error = %e,
-                "embedding failed; chunk text stored without vector"
+                "embedding failed; chunks stored without vectors"
             ),
         }
     }

@@ -1,11 +1,15 @@
-//! `DocServer` — rmcp MCP server with `search_local_docs` and `traverse_doc_links` tools.
+//! `DocServer` — rmcp MCP server with `search_local_docs`, `traverse_doc_links`,
+//! and `search_semantic` tools.
 //!
-//! Implements [`rmcp::ServerHandler`] and exposes two MCP tools:
+//! Implements [`rmcp::ServerHandler`] and exposes three MCP tools:
 //!
-//! - `search_local_docs` — full-text keyword search using [`crate::db::search::search_by_text`].
-//! - `traverse_doc_links` — BFS graph traversal using [`crate::db::traverse::find_related_chunks`].
+//! - `search_local_docs`  — full-text keyword search via [`crate::db::search::search_by_text`].
+//! - `traverse_doc_links` — BFS graph traversal via [`crate::db::traverse::find_related_chunks`].
+//! - `search_semantic`    — embedding-based semantic search via
+//!   [`crate::db::search::search_similar`] (requires model to be loaded).
 //!
-//! Use [`DocServer::new`] to construct a server from a [`DataStore`], then pass it to
+//! Use [`DocServer::new`] to construct a server without an embedding model, or
+//! [`DocServer::with_model`] to enable semantic search.  Pass the server to
 //! [`rmcp::serve_server`] with [`rmcp::transport::stdio`] to start the STDIO MCP server.
 
 use rmcp::{
@@ -17,7 +21,12 @@ use serde::Deserialize;
 use tracing::info;
 
 use crate::{
-    db::{search::search_by_text, traverse::find_related_chunks, DataStore},
+    db::{
+        search::{search_by_text, search_similar},
+        traverse::find_related_chunks,
+        DataStore,
+    },
+    embed::EmbeddingModel,
     error::GraphtorError,
 };
 
@@ -45,23 +54,48 @@ pub struct TraverseParams {
     pub max_depth: Option<u32>,
 }
 
+/// Parameters for the `search_semantic` MCP tool.
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct SemanticSearchParams {
+    /// Natural-language query to embed and search semantically.
+    pub query: String,
+    /// Maximum number of results to return (default: 10, max: 50).
+    pub top_k: Option<u32>,
+}
+
 // ── Server ────────────────────────────────────────────────────────────────────
 
 /// The `LocalDocRAG` MCP server.
 ///
-/// Provides `search_local_docs` and `traverse_doc_links` tools backed
-/// by an embedded [`DataStore`].  The server is [`Clone`] because
-/// [`DataStore`] wraps an [`std::sync::Arc`] internally.
+/// Provides `search_local_docs`, `traverse_doc_links`, and `search_semantic`
+/// tools backed by an embedded [`DataStore`].  The server is [`Clone`] because
+/// both [`DataStore`] and [`EmbeddingModel`] are cheap [`std::sync::Arc`]
+/// clones internally.
 #[derive(Clone)]
 pub struct DocServer {
     store: DataStore,
+    /// Embedding model for semantic search.  When `None`, `search_semantic`
+    /// returns a descriptive error rather than silently failing.
+    model: Option<EmbeddingModel>,
 }
 
 impl DocServer {
     /// Create a new [`DocServer`] backed by the given [`DataStore`].
+    ///
+    /// Semantic search (`search_semantic`) will be unavailable until a model
+    /// is supplied via [`DocServer::with_model`].
     #[must_use]
     pub fn new(store: DataStore) -> Self {
-        Self { store }
+        Self { store, model: None }
+    }
+
+    /// Create a [`DocServer`] with an embedding model for semantic search.
+    #[must_use]
+    pub fn with_model(store: DataStore, model: EmbeddingModel) -> Self {
+        Self {
+            store,
+            model: Some(model),
+        }
     }
 }
 
@@ -140,6 +174,50 @@ impl DocServer {
         let results = find_related_chunks(&self.store, &params.chunk_id, depth)
             .map_err(|e| into_tool_err(&e))?;
         let md = format_traversal_results(&params.chunk_id, &results);
+        Ok(CallToolResult::success(vec![Content::text(md)]))
+    }
+
+    /// Search local documentation by semantic similarity.
+    ///
+    /// Embeds the natural-language `query` using the loaded `all-MiniLM-L6-v2`
+    /// model and returns the `top_k` most similar stored documentation chunks
+    /// ranked by cosine similarity.  Use this tool for conceptual queries where
+    /// keyword matching is insufficient.
+    ///
+    /// Requires the embedding model to be loaded (`graphtor-docs serve`).
+    /// Returns an error when the server was started without a model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData`] when the model is unavailable or search fails.
+    #[tool(
+        description = "Search local documentation by semantic / conceptual similarity. Embeds the \
+        query using all-MiniLM-L6-v2 and returns the most similar documentation chunks by cosine \
+        similarity. Use this when keyword search (`search_local_docs`) misses conceptually related \
+        content. Requires the embedding model to be loaded. Returns top_k results (default 10, \
+        max 50)."
+    )]
+    fn search_semantic(
+        &self,
+        Parameters(params): Parameters<SemanticSearchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        info!(query = %params.query, "search_semantic invoked");
+        if params.query.trim().is_empty() {
+            return Err(ErrorData::invalid_params("query cannot be empty", None));
+        }
+        let model = self.model.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "semantic search is unavailable: the embedding model is not loaded. \
+                 Run `graphtor-docs serve` with the embedding model enabled.",
+                None,
+            )
+        })?;
+        // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        #[allow(clippy::cast_possible_truncation)]
+        let limit = params.top_k.unwrap_or(10).min(50) as usize;
+        let results = search_similar(&self.store, model, &params.query, limit)
+            .map_err(|e| into_tool_err(&e))?;
+        let md = format_search_results(&results);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
 }
@@ -274,7 +352,33 @@ mod tests {
         assert!(!path_matches_source("other/path.md", "docs"));
     }
 
-    // ── T013.001: into_tool_err dispatches based on is_client_error() ────────
+    #[test]
+    fn search_semantic_without_model_returns_error() {
+        let server = test_server(); // no model loaded
+        let params = SemanticSearchParams {
+            query: "authentication flow".to_string(),
+            top_k: Some(5),
+        };
+        let result = server.search_semantic(Parameters(params));
+        assert!(result.is_err(), "should error when no model is loaded");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("embedding model"),
+            "error should mention embedding model, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn search_semantic_empty_query_returns_invalid_params() {
+        let server = test_server();
+        let params = SemanticSearchParams {
+            query: "   ".to_string(),
+            top_k: None,
+        };
+        let result = server.search_semantic(Parameters(params));
+        assert!(result.is_err());
+    }
 
     #[test]
     fn into_tool_err_path_violation_message_contains_error_text() {

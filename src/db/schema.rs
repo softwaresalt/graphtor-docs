@@ -1,8 +1,16 @@
 //! Database schema management for the unified `CozoDB` store.
 //!
-//! Provides [`ensure_schema`], which creates the four stored relations
-//! (`doc_sources`, `doc_chunks`, `doc_edges`, `doc_code`) if they do not
-//! already exist. The operation is idempotent — safe to call on every startup.
+//! Provides [`ensure_schema`], which creates the five stored relations
+//! (`doc_sources`, `doc_chunks`, `doc_edges`, `doc_code`, `doc_vectors`) if
+//! they do not already exist. The operation is idempotent — safe to call on
+//! every startup.
+//!
+//! # Schema versions
+//!
+//! | Version | Change |
+//! |---------|--------|
+//! | 1       | Initial schema: `doc_sources`, `doc_chunks`, `doc_edges`, `doc_code` |
+//! | 2       | Added `doc_vectors` for embedding storage and semantic search |
 
 use std::collections::BTreeMap;
 
@@ -12,7 +20,7 @@ use super::store::DataStore;
 use crate::error::GraphtorError;
 
 /// The current schema version stored in `doc_schema_ver`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// Create all required stored relations and record the schema version.
 ///
@@ -47,6 +55,11 @@ pub fn ensure_schema(store: &DataStore) -> Result<(), GraphtorError> {
         store,
         "doc_code",
         ":create doc_code { snippet_id: String => chunk_id: String, language: String?, content: String }",
+    )?;
+    create_if_missing(
+        store,
+        "doc_vectors",
+        ":create doc_vectors { chunk_id: String => embedding: String }",
     )?;
 
     upsert_schema_version(store, SCHEMA_VERSION)?;
