@@ -38,13 +38,15 @@ pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, Graph
     })?;
 
     if !force && dest.exists() {
-        let src_len = exe.metadata().map_or(0, |m: std::fs::Metadata| m.len());
-        let dst_len = dest.metadata().map_or(1, |m: std::fs::Metadata| m.len());
-        if src_len == dst_len {
-            return Ok(UpgradeResult {
-                upgraded: false,
-                message: "binary is already up-to-date".to_string(),
-            });
+        let src_mtime = exe.metadata().and_then(|m| m.modified()).ok();
+        let dst_mtime = dest.metadata().and_then(|m| m.modified()).ok();
+        if let (Some(src_t), Some(dst_t)) = (src_mtime, dst_mtime) {
+            if src_t == dst_t {
+                return Ok(UpgradeResult {
+                    upgraded: false,
+                    message: "binary is already up-to-date".to_string(),
+                });
+            }
         }
     }
 
