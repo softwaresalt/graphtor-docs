@@ -56,12 +56,12 @@ pub struct Cli {
 /// Top-level subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Run the full ingestion pipeline: acquire → parse → embed → load.
+    /// Run the ingestion pipeline (incremental by default).
     ///
-    /// Reads sources from the configured `sources.yaml`, acquires each source,
-    /// parses and chunks documents, computes embeddings, and loads everything
-    /// into the `CozoDB` database. Idempotent: re-running on the same sources
-    /// is safe.
+    /// By default, detects changes since the last sync (via git diff or file
+    /// mtime) and surgically re-processes only added, modified, and deleted
+    /// files. Pass `--full` to force a complete acquire → parse → embed → load
+    /// cycle over all files regardless of change state.
     Sync(SyncArgs),
 
     /// Start the MCP STDIO server.
@@ -127,6 +127,15 @@ pub struct SyncArgs {
     /// when not specified.
     #[arg(long, value_name = "DIR")]
     pub data_root: Option<PathBuf>,
+
+    /// Run a full re-ingestion of all files instead of incremental sync.
+    ///
+    /// By default, `sync` detects changes since the last run (via git diff
+    /// or file mtime) and only re-processes modified, added, or deleted files.
+    /// Use `--full` to force a complete acquire → parse → embed → load cycle
+    /// over all files regardless of change state.
+    #[arg(long)]
+    pub full: bool,
 }
 
 /// Arguments for the `serve` subcommand.
