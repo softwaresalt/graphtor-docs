@@ -167,7 +167,7 @@ fn cmd_sync(
     if args.full {
         cmd_sync_full(&store, &plan, model.as_ref(), args)
     } else {
-        Ok(cmd_sync_incremental(cwd, &store, &plan, model.as_ref()))
+        Ok(cmd_sync_incremental(db_path, &store, &plan, model.as_ref()))
     }
 }
 
@@ -210,7 +210,7 @@ fn cmd_sync_full(
 
 /// Incremental sync: acquire new sources, then detect and re-ingest only changes.
 fn cmd_sync_incremental(
-    cwd: &std::path::Path,
+    db_path: &std::path::Path,
     store: &DataStore,
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
@@ -218,15 +218,25 @@ fn cmd_sync_incremental(
     info!(sources = plan.sources.len(), "starting incremental sync");
 
     // Execute acquisition to clone any new git repos (existing ones are skipped).
-    let _acq_result = acquire_execute(plan, false);
+    let acq_result = acquire_execute(plan, false);
+    if acq_result.failed > 0 {
+        warn!(
+            failed = acq_result.failed,
+            succeeded = acq_result.succeeded,
+            "acquisition had failures; affected sources may be skipped"
+        );
+    }
 
-    // Sync state lives alongside the database in the workspace.
-    let state_path = cwd.join(".graphtor/sync_state.json");
+    // Derive sync state path from the database location so state and DB stay colocated.
+    let state_path = db_path.parent().map_or_else(
+        || PathBuf::from("sync_state.json"),
+        |p| p.join("sync_state.json"),
+    );
 
     let mut total_files: usize = 0;
     let mut total_chunks: usize = 0;
     let mut total_deleted: usize = 0;
-    let mut total_errors: usize = 0;
+    let mut total_errors: usize = acq_result.failed;
 
     for planned in &plan.sources {
         let source_dir = &planned.target_dir;
@@ -245,7 +255,14 @@ fn cmd_sync_incremental(
             continue;
         }
 
-        match sync_source(store, &planned.source, source_dir, &state_path, cwd, model) {
+        match sync_source(
+            store,
+            &planned.source,
+            source_dir,
+            &state_path,
+            &plan.allowed_root,
+            model,
+        ) {
             Ok(result) => {
                 total_files += result.files_processed;
                 total_chunks += result.chunks_loaded;
