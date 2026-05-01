@@ -1,19 +1,19 @@
-//! Text-based search operations over stored document chunks.
+//! Text-based and semantic search operations over stored document chunks.
 //!
-//! Provides [`search_by_text`], which returns all chunks whose content
-//! contains the given query string (case-insensitive). The matching uses
-//! `CozoDB`'s built-in [`str_includes`] and [`lowercase`] string functions so
-//! the filtering happens inside the database engine.
+//! Provides:
 //!
-//! A placeholder [`search_similar`] function is provided for future
-//! embedding-based semantic search and currently returns an error indicating
-//! that the feature is not yet implemented.
+//! - [`search_by_text`] — case-insensitive keyword search via `CozoDB`'s
+//!   built-in `str_includes` / `lowercase` functions.
+//! - [`search_similar`] — embedding-based semantic search: embeds the query
+//!   with [`crate::embed::EmbeddingModel`], then delegates to
+//!   [`super::vectors::search_by_vector`] for cosine-similarity ranking.
 
 use std::collections::BTreeMap;
 
 use cozo::DataValue;
 
 use super::store::DataStore;
+use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
 
 /// A search result containing the chunk identifier and a content snippet.
@@ -51,23 +51,25 @@ pub fn search_by_text(store: &DataStore, query: &str) -> Result<Vec<SearchResult
     rows.rows.iter().map(|row| row_to_result(row)).collect()
 }
 
-/// Placeholder for embedding-based semantic similarity search.
+/// Search chunks by embedding-based semantic similarity.
 ///
-/// This feature is not yet implemented. The function always returns
-/// [`GraphtorError::Database`] with a descriptive message.
+/// Embeds `query_text` using `model`, then retrieves the `limit` most
+/// similar stored chunks via cosine similarity over `doc_vectors`.
+///
+/// Returns an empty [`Vec`] when no vectors have been stored yet.
 ///
 /// # Errors
 ///
-/// Always returns [`GraphtorError::Database`] until implemented.
+/// Returns [`GraphtorError::Embed`] if query embedding fails, or
+/// [`GraphtorError::Database`] on vector lookup failure.
 pub fn search_similar(
-    _store: &DataStore,
-    _query_text: &str,
-    _limit: usize,
+    store: &DataStore,
+    model: &EmbeddingModel,
+    query_text: &str,
+    limit: usize,
 ) -> Result<Vec<SearchResult>, GraphtorError> {
-    Err(GraphtorError::Database {
-        message: "semantic similarity search is not yet implemented".to_string(),
-        operation: "search_similar".to_string(),
-    })
+    let query_vec = crate::embed::embed_text(model, query_text)?;
+    super::vectors::search_by_vector(store, &query_vec, limit)
 }
 
 // ── Row decoders ─────────────────────────────────────────────────────────────

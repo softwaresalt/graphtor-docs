@@ -202,8 +202,29 @@ async fn cmd_serve(db_path: &std::path::Path, cwd: &std::path::Path) -> anyhow::
         .ensure_schema()
         .context("failed to ensure database schema")?;
 
+    // Optionally load the embedding model for semantic search.
+    let model: Option<EmbeddingModel> =
+        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
+            Ok(m) => {
+                info!("embedding model loaded; semantic search enabled");
+                Some(m)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "embedding model unavailable; semantic search disabled"
+                );
+                None
+            }
+        };
+
+    let server = match model {
+        Some(m) => DocServer::with_model(store, m),
+        None => DocServer::new(store),
+    };
+
     info!("starting MCP STDIO server");
-    rmcp::serve_server(DocServer::new(store), rmcp::transport::stdio())
+    rmcp::serve_server(server, rmcp::transport::stdio())
         .await
         .context("MCP server failed to start")?
         .waiting()

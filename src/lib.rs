@@ -5,7 +5,7 @@
 //!
 //! - [`acquire`]: Source acquisition — clone Git repos, scan local directories, apply glob filters.
 //! - [`config`]: Parse and validate `sources.yaml` documentation registries.
-//! - [`db`]: Unified embedded database (`CozoDB`) — chunk storage, graph edges, full-text search.
+//! - [`db`]: Unified embedded database (`CozoDB`) — chunk storage, graph edges, full-text search, vector embeddings for semantic search.
 //! - [`embed`]: Dense text embedding via `all-MiniLM-L6-v2` (Candle, in-process).
 //! - [`error`]: Categorized error type hierarchy ([`GraphtorError`]).
 //! - [`chunk`]: Deterministic SHA-256 chunk identifier generation.
