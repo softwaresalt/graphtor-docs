@@ -40,7 +40,7 @@ use crate::db::edges::{upsert_code_snippet, upsert_edge};
 use crate::db::nodes::{upsert_source, SourceRecord};
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
-use crate::parse::parse_document;
+use crate::parse::{parse_document, parse_pdf_document};
 use crate::path::validate_path;
 use crate::DataStore;
 
@@ -271,6 +271,9 @@ pub fn run(
 ///
 /// All errors are per-file; a failure on one file does not abort other
 /// files in the same batch.
+// Extension dispatch adds slightly more than 100 lines — extracting further
+// would create additional indirection without readability gain.
+#[allow(clippy::too_many_lines)]
 fn process_batch(
     files: &[std::path::PathBuf],
     source_id: &str,
@@ -320,19 +323,31 @@ fn process_batch(
             }
         };
 
-        let content = match std::fs::read_to_string(file) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(path = %display_path, error = %e, "failed to read file; skipping");
-                errors.push(FileError {
-                    path: file.clone(),
-                    error: e.to_string(),
-                });
+        // Detect extension for parse dispatch.
+        let ext = file
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let parse_result = match ext.as_str() {
+            "md" | "markdown" => std::fs::read_to_string(file)
+                .map_err(GraphtorError::Io)
+                .and_then(|content| parse_document(&content, &path_str)),
+            "pdf" => std::fs::read(file)
+                .map_err(GraphtorError::Io)
+                .and_then(|bytes| parse_pdf_document(&bytes, &path_str)),
+            _ => {
+                debug!(
+                    path = %display_path,
+                    extension = %ext,
+                    "unsupported file extension; skipping"
+                );
                 continue;
             }
         };
 
-        match parse_document(&content, &path_str) {
+        match parse_result {
             Ok(doc) => parsed.push((path_str, doc)),
             Err(e) => {
                 warn!(path = %display_path, error = %e, "parse failed; skipping file");
