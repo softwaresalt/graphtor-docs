@@ -20,9 +20,11 @@ pub mod chunker;
 pub mod code;
 pub mod frontmatter;
 pub mod links;
+pub mod pdf;
 pub mod types;
 
 pub use ast::parse_ast;
+pub use pdf::parse_pdf_document;
 pub use types::{AstNode, Chunk, CodeSnippet, FrontmatterData, ParsedDocument, Reference};
 
 use crate::error::GraphtorError;

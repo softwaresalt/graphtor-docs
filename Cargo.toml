@@ -33,6 +33,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 globset = "0.4"
 git2 = "0.19"
 walkdir = "2"
+pdf-extract = "0.10"
 pulldown-cmark = "0.12"
 cozo = { version = "0.7", default-features = false, features = ["storage-sqlite", "rayon"] }
 candle-core = { version = "0.8" }
