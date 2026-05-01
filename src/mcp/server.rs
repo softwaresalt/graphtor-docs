@@ -22,6 +22,8 @@ use tracing::info;
 
 use crate::{
     db::{
+        chunks::{get_chunk, list_chunks_by_path},
+        nodes::list_sources,
         search::{search_by_text, search_similar},
         traverse::find_related_chunks,
         DataStore,
@@ -30,7 +32,10 @@ use crate::{
     error::GraphtorError,
 };
 
-use super::format::{format_search_results, format_traversal_results};
+use super::format::{
+    format_chunk, format_db_status, format_document, format_search_results, format_sources_list,
+    format_traversal_results,
+};
 
 // ── Parameter types ───────────────────────────────────────────────────────────
 
@@ -62,6 +67,37 @@ pub struct SemanticSearchParams {
     /// Maximum number of results to return (default: 10, max: 50).
     pub top_k: Option<u32>,
 }
+
+/// Parameters for the `list_sources` MCP tool.
+///
+/// No input parameters are required.
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ListSourcesParams {}
+
+/// Parameters for the `get_chunk_by_id` MCP tool.
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct GetChunkParams {
+    /// Stable SHA-256 chunk identifier to retrieve.
+    pub chunk_id: String,
+}
+
+/// Parameters for the `get_document` MCP tool.
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct GetDocumentParams {
+    /// Source identifier to scope the document lookup.
+    ///
+    /// Pass an empty string to retrieve chunks from all sources that contain
+    /// the given `path`.
+    pub source_id: String,
+    /// Relative document path within the source (e.g. `"articles/intro.md"`).
+    pub path: String,
+}
+
+/// Parameters for the `get_status` MCP tool.
+///
+/// No input parameters are required.
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct GetStatusParams {}
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
@@ -218,6 +254,124 @@ impl DocServer {
         let results = search_similar(&self.store, model, &params.query, limit)
             .map_err(|e| into_tool_err(&e))?;
         let md = format_search_results(&results);
+        Ok(CallToolResult::success(vec![Content::text(md)]))
+    }
+
+    /// List all registered documentation sources.
+    ///
+    /// Returns the complete registry of indexed documentation sources with
+    /// their identifiers, kinds, names, and last-sync timestamps.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData`] when the database query fails.
+    #[tool(
+        description = "List all registered documentation sources. Returns source IDs, kinds \
+        (git/local), display names, and last-sync timestamps. Use this tool to discover which \
+        documentation sources are available before searching or retrieving documents."
+    )]
+    fn list_sources(
+        &self,
+        Parameters(_params): Parameters<ListSourcesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        info!("list_sources invoked");
+        let sources = list_sources(&self.store).map_err(|e| into_tool_err(&e))?;
+        let md = format_sources_list(&sources);
+        Ok(CallToolResult::success(vec![Content::text(md)]))
+    }
+
+    /// Retrieve a single documentation chunk by its stable chunk ID.
+    ///
+    /// Returns the full chunk content, heading context, source path, and
+    /// position metadata.  Use this tool when you already have a chunk ID
+    /// from a previous `search_local_docs` result and want the complete text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData`] when the chunk ID is invalid or the query fails.
+    #[tool(
+        description = "Retrieve a single documentation chunk by its stable SHA-256 chunk ID. \
+        Returns full content, source path, heading hierarchy, and position. Use this after \
+        `search_local_docs` when you need the complete text of a specific chunk. The chunk ID \
+        must be an exact match (hex string from search results)."
+    )]
+    fn get_chunk_by_id(
+        &self,
+        Parameters(params): Parameters<GetChunkParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        info!(chunk_id = %params.chunk_id, "get_chunk_by_id invoked");
+        if params.chunk_id.trim().is_empty() {
+            return Err(ErrorData::invalid_params("chunk_id cannot be empty", None));
+        }
+        let chunk = get_chunk(&self.store, &params.chunk_id).map_err(|e| into_tool_err(&e))?;
+        let md = match chunk {
+            Some(c) => format_chunk(&c),
+            None => format!("Chunk `{}` not found.", params.chunk_id),
+        };
+        Ok(CallToolResult::success(vec![Content::text(md)]))
+    }
+
+    /// Retrieve all chunks for a document path within a source.
+    ///
+    /// Returns the ordered sequence of chunks that make up the document,
+    /// sorted by reading position.  Pass `source_id` to restrict results
+    /// to a specific source; leave it empty to retrieve chunks from all
+    /// sources that contain the given path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData`] when `path` is empty or the query fails.
+    #[tool(
+        description = "Retrieve all chunks for a specific document path, assembled in reading \
+        order. Provide source_id to scope to one source, or leave it empty to retrieve across \
+        all sources. Use this to read a complete document after identifying its path via \
+        `search_local_docs`. Returns chunks sorted by position."
+    )]
+    fn get_document(
+        &self,
+        Parameters(params): Parameters<GetDocumentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        info!(source_id = %params.source_id, path = %params.path, "get_document invoked");
+        if params.path.trim().is_empty() {
+            return Err(ErrorData::invalid_params("path cannot be empty", None));
+        }
+        let all_chunks =
+            list_chunks_by_path(&self.store, &params.path).map_err(|e| into_tool_err(&e))?;
+        // Filter by source_id when one is provided and non-empty.
+        let sid = params.source_id.trim();
+        let chunks: Vec<_> = if sid.is_empty() {
+            all_chunks
+        } else {
+            all_chunks
+                .into_iter()
+                .filter(|c| c.source_id == sid)
+                .collect()
+        };
+        let md = format_document(&params.path, &chunks);
+        Ok(CallToolResult::success(vec![Content::text(md)]))
+    }
+
+    /// Return current database status.
+    ///
+    /// Returns the number of registered sources, total chunk count, and the
+    /// active schema version.  Useful for quick health checks and verifying
+    /// that the ingestion pipeline has run.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData`] when the status queries fail.
+    #[tool(
+        description = "Return current database status: registered source count, total chunk \
+        count, and schema version. Use this tool to verify the ingestion pipeline has run and \
+        to check the health of the local documentation database."
+    )]
+    fn get_status(
+        &self,
+        Parameters(_params): Parameters<GetStatusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        info!("get_status invoked");
+        let status = self.store.get_status().map_err(|e| into_tool_err(&e))?;
+        let md = format_db_status(&status);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
 }
@@ -406,5 +560,100 @@ mod tests {
             "expected conn refused in message, got: {}",
             err.message
         );
+    }
+
+    // ── list_sources ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn list_sources_returns_no_sources_message_on_empty_store() {
+        let server = test_server();
+        let result = server.list_sources(Parameters(ListSourcesParams {}));
+        assert!(result.is_ok());
+        let content = result.unwrap();
+        assert!(!content.content.is_empty());
+        // The text is embedded in the Content debug/display representation.
+        let text = format!("{:?}", content.content);
+        assert!(
+            text.contains("No documentation sources"),
+            "expected no-sources message, got: {text}"
+        );
+    }
+
+    // ── get_chunk_by_id ───────────────────────────────────────────────────────
+
+    #[test]
+    fn get_chunk_by_id_empty_chunk_id_returns_invalid_params() {
+        let server = test_server();
+        let params = GetChunkParams {
+            chunk_id: "   ".to_string(),
+        };
+        let result = server.get_chunk_by_id(Parameters(params));
+        assert!(result.is_err(), "empty chunk_id should return an error");
+    }
+
+    #[test]
+    fn get_chunk_by_id_unknown_id_returns_not_found_message() {
+        let server = test_server();
+        let params = GetChunkParams {
+            chunk_id: "deadbeef0000".to_string(),
+        };
+        let result = server.get_chunk_by_id(Parameters(params));
+        assert!(result.is_ok());
+        let content = result.unwrap();
+        assert!(!content.content.is_empty());
+        let text = format!("{:?}", content.content);
+        assert!(
+            text.contains("not found"),
+            "expected not-found message, got: {text}"
+        );
+    }
+
+    // ── get_document ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn get_document_empty_path_returns_invalid_params() {
+        let server = test_server();
+        let params = GetDocumentParams {
+            source_id: "src-001".to_string(),
+            path: "  ".to_string(),
+        };
+        let result = server.get_document(Parameters(params));
+        assert!(result.is_err(), "empty path should return an error");
+    }
+
+    #[test]
+    fn get_document_unknown_path_returns_no_chunks_message() {
+        let server = test_server();
+        let params = GetDocumentParams {
+            source_id: String::new(),
+            path: "no/such/doc.md".to_string(),
+        };
+        let result = server.get_document(Parameters(params));
+        assert!(result.is_ok());
+        let content = result.unwrap();
+        assert!(!content.content.is_empty());
+        let text = format!("{:?}", content.content);
+        assert!(
+            text.contains("No chunks found"),
+            "expected no-chunks message, got: {text}"
+        );
+    }
+
+    // ── get_status ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn get_status_returns_ok_on_empty_store() {
+        let server = test_server();
+        let result = server.get_status(Parameters(GetStatusParams {}));
+        assert!(result.is_ok(), "get_status should succeed on empty store");
+        let content = result.unwrap();
+        assert!(!content.content.is_empty());
+        let text = format!("{:?}", content.content);
+        assert!(
+            text.contains("Sources"),
+            "expected Sources in output: {text}"
+        );
+        assert!(text.contains("Chunks"), "expected Chunks in output: {text}");
+        assert!(text.contains("Schema"), "expected Schema in output: {text}");
     }
 }

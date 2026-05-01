@@ -150,6 +150,39 @@ pub fn list_chunks_for_source(
     rows.rows.iter().map(|row| row_to_chunk(row)).collect()
 }
 
+/// List all chunks associated with a given document path, ordered by position.
+///
+/// Chunks stored for the same `path` may originate from different sources.
+/// The returned slice is sorted ascending by [`ChunkRecord::position`] so
+/// callers always receive the natural reading order of the document.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Database`] on query or deserialization failure.
+pub fn list_chunks_by_path(
+    store: &DataStore,
+    path: &str,
+) -> Result<Vec<ChunkRecord>, GraphtorError> {
+    let script = r"
+        ?[chunk_id, source_id, path, title, position, char_offset, headings, content]
+            := *doc_chunks{
+                chunk_id, source_id, path, title,
+                position, char_offset, headings, content
+               },
+               path = $path
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), DataValue::Str(path.into()));
+    let rows = store.query(script, params)?;
+    let mut chunks: Vec<ChunkRecord> = rows
+        .rows
+        .iter()
+        .map(|row| row_to_chunk(row))
+        .collect::<Result<Vec<_>, _>>()?;
+    chunks.sort_by_key(|c| c.position);
+    Ok(chunks)
+}
+
 /// Delete all chunks associated with the given source-root-relative `path`.
 ///
 /// Returns the list of deleted `chunk_id` values so callers can cascade the

@@ -29,7 +29,8 @@ pub mod traverse;
 pub mod vectors;
 
 pub use chunks::{
-    delete_chunks_by_path, get_chunk, list_chunks_for_source, upsert_chunk, ChunkRecord,
+    delete_chunks_by_path, get_chunk, list_chunks_by_path, list_chunks_for_source, upsert_chunk,
+    ChunkRecord,
 };
 pub use edges::{
     delete_code_for_chunk, delete_edges_for_chunk, list_edges_from_chunk, upsert_code_snippet,
@@ -38,6 +39,6 @@ pub use edges::{
 pub use nodes::{get_source, list_sources, upsert_source, SourceRecord};
 pub use schema::ensure_schema;
 pub use search::{search_by_text, search_similar, SearchResult};
-pub use store::DataStore;
+pub use store::{DataStore, DbStatus};
 pub use traverse::{find_related_chunks, TraversalResult};
 pub use vectors::{delete_vectors_by_chunk_ids, search_by_vector, upsert_vector};
