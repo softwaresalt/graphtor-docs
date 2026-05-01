@@ -1,0 +1,21 @@
+name: Detect direct push to main
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  warn-direct-push:
+    name: Warn on direct push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for direct push
+        run: |
+          echo "::warning::Direct push to '${{ github.ref_name }}' detected."
+          echo "All changes should arrive via pull request."
+          echo "See .github/copilot-instructions.md §Branch Protection for guidance."

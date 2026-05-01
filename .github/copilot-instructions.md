@@ -286,6 +286,31 @@ Never write production code before the corresponding test exists and has been ob
 | Embeddings | `all-MiniLM-L6-v2` via Candle (in-process, 384-dim vectors) |
 | Graph extraction | `pulldown-cmark` (deterministic AST-based Markdown parsing) |
 | MCP interface | `rmcp` crate — async STDIO JSON-RPC, localhost-only |
+
+## Branch Protection
+
+**Never push directly to `main` or `master`.** All changes MUST arrive via a
+feature branch and pull request. This applies to agents, automation, and humans.
+
+### Guardrails
+
+* **Git hook** — `.githooks/pre-push` blocks direct pushes to `main`/`master`
+  at the client side. Activate with `git config core.hooksPath .githooks`.
+* **CI workflow** — `.github/workflows/detect-direct-push.yml` emits a warning
+  annotation on any direct push that reaches the remote.
+* **GitHub branch protection** — configure the following in repository settings:
+  * Require a pull request before merging (`main`/`master`)
+  * Require status checks to pass (at minimum: `build` / `test`)
+  * Do not allow force pushes
+  * Do not allow deletion
+
+### Agent Rules
+
+* NEVER run `git push origin main` or `git push origin master` directly.
+* NEVER run `git push --force` on protected branches.
+* Always create a feature branch (e.g., `feat/…`) and open a PR.
+* Branch names must be descriptive and kebab-case.
+
 ## Remote Approval Workflow for Destructive File Operations
 When the agent-intercom MCP server is running, agents may write files directly for creation and modification. The remote approval workflow is reserved for **destructive operations only** — file deletion, directory removal, or any operation that permanently removes content from the filesystem. This allows the operator to review and approve destructive changes via Slack before they execute.
 Additionally, **do not write multiple files in a single proposal.** Each destructive operation must be proposed, reviewed, and approved separately to ensure clear audit trails and granular control.
