@@ -3,6 +3,17 @@
 //! Converts typed result structs from [`crate::db::search`] and
 //! [`crate::db::traverse`] into structured markdown strings suitable
 //! for direct LLM consumption.
+//!
+//! # Placement decision (013.006-T)
+//!
+//! This module lives under `src/mcp/` because its sole current consumers are
+//! the MCP tool implementations in [`crate::mcp::server`].  The formatted
+//! types (`SearchResult`, `TraversalResult`) originate in `src/db/` and carry
+//! no MCP-protocol-specific logic, so the module *could* be promoted to
+//! `src/format.rs` if a non-MCP surface (e.g., the `status` command or a
+//! future HTTP API) needs the same output.  Until such a consumer exists,
+//! keeping the module co-located with its only caller avoids premature
+//! abstraction.
 
 use std::fmt::Write as _;
 
