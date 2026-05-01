@@ -91,6 +91,20 @@ pub enum GraphtorError {
     Io(#[from] std::io::Error),
 }
 
+impl GraphtorError {
+    /// Returns `true` when this error represents invalid client input.
+    ///
+    /// Client errors map to `invalid_params` in MCP error responses.
+    /// All other variants map to `internal_error`.
+    ///
+    /// Currently [`GraphtorError::PathViolation`] is the only client error —
+    /// it indicates the caller supplied a path that escapes the allowed root.
+    #[must_use]
+    pub fn is_client_error(&self) -> bool {
+        matches!(self, Self::PathViolation { .. })
+    }
+}
+
 impl From<serde_yaml::Error> for GraphtorError {
     fn from(e: serde_yaml::Error) -> Self {
         Self::Config {
@@ -268,6 +282,54 @@ mod tests {
         );
         let s = e.to_string();
         assert!(s.starts_with("[config]"), "expected '[config]' prefix: {s}");
+    }
+
+    // ── T013.001: is_client_error() classification ────────────────────────
+
+    #[test]
+    fn path_violation_is_client_error() {
+        let e = GraphtorError::PathViolation {
+            attempted: PathBuf::from("/tmp/evil"),
+            allowed_root: PathBuf::from("/workspace"),
+        };
+        assert!(
+            e.is_client_error(),
+            "PathViolation should be a client error"
+        );
+    }
+
+    #[test]
+    fn non_client_errors_return_false() {
+        let errors: Vec<GraphtorError> = vec![
+            GraphtorError::Config {
+                message: "m".to_string(),
+                field: None,
+            },
+            GraphtorError::Database {
+                message: "m".to_string(),
+                operation: "op".to_string(),
+            },
+            GraphtorError::Pipeline {
+                message: "m".to_string(),
+                stage: "s".to_string(),
+            },
+            GraphtorError::Parse {
+                message: "m".to_string(),
+                path: None,
+            },
+            GraphtorError::Embed {
+                message: "m".to_string(),
+                chunk_id: None,
+            },
+            GraphtorError::Sync {
+                message: "m".to_string(),
+                source_id: "s".to_string(),
+            },
+            GraphtorError::Io(std::io::Error::other("e")),
+        ];
+        for e in &errors {
+            assert!(!e.is_client_error(), "expected non-client error for: {e:?}");
+        }
     }
 
     #[test]
