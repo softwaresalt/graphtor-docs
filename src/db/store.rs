@@ -14,6 +14,20 @@ use tracing::info;
 use crate::error::GraphtorError;
 use crate::path::validate_path;
 
+/// A snapshot of the current state of the embedded database.
+///
+/// Returned by [`DataStore::get_status`] and intended for display via the
+/// `get_status` MCP tool.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbStatus {
+    /// Number of registered documentation sources in `doc_sources`.
+    pub source_count: u64,
+    /// Total number of stored document chunks in `doc_chunks`.
+    pub chunk_count: u64,
+    /// Schema version recorded in `doc_schema_ver`, or `0` if not set.
+    pub schema_version: u32,
+}
+
 /// A cloneable, thread-safe handle to the embedded [`DbInstance`].
 ///
 /// Wraps `cozo::DbInstance` in an [`Arc`] so that clones share the same
@@ -120,6 +134,53 @@ impl DataStore {
             .rows
             .iter()
             .any(|row| row.first().and_then(cozo::DataValue::get_str) == Some(name)))
+    }
+
+    /// Return a [`DbStatus`] snapshot describing the current state of the database.
+    ///
+    /// Queries `doc_sources`, `doc_chunks`, and `doc_schema_ver` to produce
+    /// counts and the active schema version.  Safe to call at any time after
+    /// [`DataStore::ensure_schema`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphtorError::Database`] if any of the status queries fail.
+    pub fn get_status(&self) -> Result<DbStatus, GraphtorError> {
+        let source_rows =
+            self.query("?[source_id] := *doc_sources{ source_id }", BTreeMap::new())?;
+        let chunk_rows = self.query("?[chunk_id] := *doc_chunks{ chunk_id }", BTreeMap::new())?;
+        let schema_version = self.read_schema_version()?;
+
+        Ok(DbStatus {
+            // usize is at most 64 bits on all Rust targets, so the cast is safe.
+            #[allow(clippy::cast_possible_truncation)]
+            source_count: source_rows.rows.len() as u64,
+            #[allow(clippy::cast_possible_truncation)]
+            chunk_count: chunk_rows.rows.len() as u64,
+            schema_version,
+        })
+    }
+
+    /// Read the schema version stored in `doc_schema_ver`.
+    ///
+    /// Returns `0` if the relation is empty (schema not yet applied).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphtorError::Database`] if the query fails.
+    fn read_schema_version(&self) -> Result<u32, GraphtorError> {
+        let rows = self.query("?[ver] := *doc_schema_ver{ ver }", BTreeMap::new())?;
+        if let Some(row) = rows.rows.into_iter().next() {
+            if let Some(v) = row.into_iter().next() {
+                if let Some(n) = v.get_int() {
+                    return u32::try_from(n).map_err(|_| GraphtorError::Database {
+                        message: format!("schema version {n} is out of u32 range"),
+                        operation: "read_schema_version".to_string(),
+                    });
+                }
+            }
+        }
+        Ok(0)
     }
 
     /// Execute a read-only `CozoScript` query.
