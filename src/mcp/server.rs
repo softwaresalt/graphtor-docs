@@ -206,8 +206,8 @@ impl DocServer {
             return Err(ErrorData::invalid_params("query cannot be empty", None));
         }
         let model = self.model.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "semantic search is unavailable: the embedding model is not loaded. \
+            ErrorData::invalid_params(
+                "semantic search is disabled: the embedding model is not loaded. \
                  Run `graphtor-docs serve` with the embedding model enabled.",
                 None,
             )

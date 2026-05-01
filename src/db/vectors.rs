@@ -157,13 +157,17 @@ pub fn search_by_vector(
 
     // Sort descending by similarity.
     scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-    scored.truncate(limit);
 
-    // Resolve chunk metadata for each top-k result.
-    let mut results = Vec::with_capacity(scored.len());
+    // Resolve chunk metadata in ranked order until `limit` valid results have
+    // been collected. This avoids under-filling the result set when some of
+    // the highest-ranked vectors are orphaned from `doc_chunks`.
+    let mut results = Vec::with_capacity(limit);
     for (chunk_id, _score) in scored {
         if let Some(sr) = fetch_chunk_as_result(store, &chunk_id)? {
             results.push(sr);
+            if results.len() == limit {
+                break;
+            }
         }
     }
 
@@ -276,8 +280,12 @@ fn l2_norm(v: &[f32]) -> f32 {
 
 /// Compute cosine similarity between `a` (with pre-computed norm `a_norm`) and `b`.
 ///
-/// Returns `0.0` when `b` is the zero vector.
+/// Returns `0.0` when `b` is the zero vector or when the vectors have
+/// different dimensions (mismatched embeddings would produce a meaningless score).
 fn cosine_similarity(a: &[f32], a_norm: f32, b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
     let b_norm = l2_norm(b);
     if b_norm == 0.0 {
         return 0.0;
@@ -323,6 +331,14 @@ mod tests {
     fn cosine_similarity_zero_b_returns_zero() {
         let a = [1.0_f32, 0.0, 0.0];
         let b = [0.0_f32, 0.0, 0.0];
+        let norm_a = l2_norm(&a);
+        assert!(cosine_similarity(&a, norm_a, &b) < f32::EPSILON);
+    }
+
+    #[test]
+    fn cosine_similarity_mismatched_dimensions_returns_zero() {
+        let a = [1.0_f32, 0.0, 0.0];
+        let b = [1.0_f32, 0.0];
         let norm_a = l2_norm(&a);
         assert!(cosine_similarity(&a, norm_a, &b) < f32::EPSILON);
     }

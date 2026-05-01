@@ -4,9 +4,11 @@
 //!
 //! 1. **Acquire** — clone Git repos or scan local directories via [`crate::acquire`].
 //! 2. **Parse** — markdown → chunks, edges, code snippets via [`crate::parse`].
-//! 3. **Embed** — compute 384-dim vectors and persist them to `doc_vectors` via
+//! 3. **Embed** — compute 384-dim vectors via [`crate::embed::embed_batch`]; vectors
+//!    are held in memory until the Load phase confirms each chunk upsert succeeded.
+//! 4. **Load** — upsert chunks into CozoDB via [`crate::db`], then persist the
+//!    corresponding vector to `doc_vectors` (only on success) via
 //!    [`crate::db::vectors::upsert_vector`].
-//! 4. **Load** — upsert chunks, edges, and snippets into CozoDB via [`crate::db`].
 //!
 //! Error handling follows **continue-on-failure** semantics: a file-level
 //! failure accumulates into [`PipelineResult::errors_encountered`] and does
@@ -363,12 +365,12 @@ fn process_batch(
     }
 
     // ── Embed ──────────────────────────────────────────────────────────────
-    // Embeddings are computed and persisted to `doc_vectors` for semantic
-    // search. Failures are non-fatal: the chunk text is stored without a
-    // vector and keyword search remains available.
-    if let Some(m) = model {
-        compute_and_store_embeddings(&parsed, m, store);
-    }
+    // Compute embeddings upfront for batch efficiency; vectors are persisted
+    // only after the corresponding `upsert_chunk` succeeds (Load phase) to
+    // prevent orphaned embeddings in `doc_vectors`.
+    let vectors: std::collections::HashMap<String, Vec<f32>> = model
+        .map(|m| compute_embeddings(&parsed, m))
+        .unwrap_or_default();
 
     // ── Load ───────────────────────────────────────────────────────────────
     for (path_str, doc) in &parsed {
@@ -380,7 +382,20 @@ fn process_batch(
 
         for chunk in &doc.chunks {
             match upsert_chunk(store, source_id, chunk) {
-                Ok(()) => chunks_ok += 1,
+                Ok(()) => {
+                    chunks_ok += 1;
+                    // Persist vector only after chunk upsert succeeds, so
+                    // `doc_vectors` never contains embeddings for absent chunks.
+                    if let Some(vec) = vectors.get(&chunk.chunk_id) {
+                        if let Err(e) = upsert_vector(store, &chunk.chunk_id, vec) {
+                            warn!(
+                                chunk_id = %chunk.chunk_id,
+                                error = %e,
+                                "vector upsert failed; chunk stored without embedding"
+                            );
+                        }
+                    }
+                }
                 Err(e) => {
                     warn!(
                         chunk_id = %chunk.chunk_id,
@@ -420,17 +435,18 @@ fn process_batch(
     }
 }
 
-/// Compute embeddings for all chunks and persist them to `doc_vectors`.
+/// Compute embeddings for all chunks in a parsed batch.
 ///
-/// For each chunk, calls [`crate::embed::embed_batch`] and stores the
-/// resulting vectors via [`upsert_vector`].  Embedding or upsert failures
-/// are logged as warnings and do not abort the batch; the chunk text is
-/// retained in `doc_chunks` and keyword search remains available.
-fn compute_and_store_embeddings(
+/// Returns a map from `chunk_id` to its 384-dimensional embedding vector.
+/// Embedding failures are logged as warnings and the affected chunks are
+/// simply absent from the returned map; keyword search remains available for
+/// them.  Callers persist the vectors only after confirming the corresponding
+/// chunk upsert succeeded, avoiding orphaned embeddings in `doc_vectors`.
+fn compute_embeddings(
     parsed: &[(String, crate::parse::types::ParsedDocument)],
     model: &EmbeddingModel,
-    store: &DataStore,
-) {
+) -> std::collections::HashMap<String, Vec<f32>> {
+    let mut map = std::collections::HashMap::new();
     for (path_str, doc) in parsed {
         if doc.chunks.is_empty() {
             continue;
@@ -441,16 +457,10 @@ fn compute_and_store_embeddings(
                 debug!(
                     path = %path_str,
                     chunk_count = vecs.len(),
-                    "embeddings computed; storing in doc_vectors"
+                    "embeddings computed"
                 );
-                for (chunk, vec) in doc.chunks.iter().zip(vecs.iter()) {
-                    if let Err(e) = upsert_vector(store, &chunk.chunk_id, vec) {
-                        warn!(
-                            chunk_id = %chunk.chunk_id,
-                            error = %e,
-                            "vector upsert failed; chunk stored without embedding"
-                        );
-                    }
+                for (chunk, vec) in doc.chunks.iter().zip(vecs.into_iter()) {
+                    map.insert(chunk.chunk_id.clone(), vec);
                 }
             }
             Err(e) => warn!(
@@ -460,6 +470,7 @@ fn compute_and_store_embeddings(
             ),
         }
     }
+    map
 }
 
 /// Build a [`SourceRecord`] with accurate metadata from a [`PlannedSource`].
