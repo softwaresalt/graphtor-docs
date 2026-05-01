@@ -40,8 +40,14 @@ pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResu
                 message: format!("failed to read workspace dir: {e}"),
                 field: None,
             })?;
-            for entry in entries.flatten() {
-                let entry: std::fs::DirEntry = entry;
+            for entry_result in entries {
+                let entry: std::fs::DirEntry = match entry_result {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "skipping unreadable entry in workspace dir");
+                        continue;
+                    }
+                };
                 let path = entry.path();
                 let name = entry.file_name();
                 if name == "config" {
