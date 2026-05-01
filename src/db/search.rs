@@ -21,6 +21,8 @@ use crate::error::GraphtorError;
 pub struct SearchResult {
     /// Stable SHA-256 chunk identifier.
     pub chunk_id: String,
+    /// Identifier of the source this chunk belongs to.
+    pub source_id: String,
     /// Relative document path within the source.
     pub path: String,
     /// Heading hierarchy of the matching chunk, ordered from H1 downward.
@@ -39,8 +41,8 @@ pub struct SearchResult {
 /// Returns [`GraphtorError::Database`] on query or deserialization failure.
 pub fn search_by_text(store: &DataStore, query: &str) -> Result<Vec<SearchResult>, GraphtorError> {
     let script = r"
-        ?[chunk_id, path, headings, content]
-            := *doc_chunks{ chunk_id, path, headings, content },
+        ?[chunk_id, source_id, path, headings, content]
+            := *doc_chunks{ chunk_id, source_id, path, headings, content },
                str_includes(lowercase(content), lowercase($query))
     ";
     let mut params = BTreeMap::new();
@@ -72,16 +74,18 @@ pub fn search_similar(
 
 fn row_to_result(row: &[DataValue]) -> Result<SearchResult, GraphtorError> {
     let chunk_id = require_str(row, 0, "chunk_id")?;
-    let path = require_str(row, 1, "path")?;
-    let headings_json = require_str(row, 2, "headings")?;
+    let source_id = require_str(row, 1, "source_id")?;
+    let path = require_str(row, 2, "path")?;
+    let headings_json = require_str(row, 3, "headings")?;
     let heading_hierarchy: Vec<String> =
         serde_json::from_str(&headings_json).map_err(|e| GraphtorError::Database {
             message: e.to_string(),
             operation: "deserialize_headings".to_string(),
         })?;
-    let content = require_str(row, 3, "content")?;
+    let content = require_str(row, 4, "content")?;
     Ok(SearchResult {
         chunk_id,
+        source_id,
         path,
         heading_hierarchy,
         content,

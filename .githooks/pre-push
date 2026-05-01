@@ -1,0 +1,23 @@
+#!/bin/sh
+# pre-push: block direct pushes to protected branches.
+#
+# Install by running:
+#   git config core.hooksPath .githooks
+#
+# Protected branches: main, master
+
+protected="main master"
+
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+  for protected_branch in $protected; do
+    if [ "$branch" = "$protected_branch" ]; then
+      echo "error: direct push to '$branch' is not permitted." >&2
+      echo "  Create a feature branch and open a pull request instead." >&2
+      echo "  See .github/copilot-instructions.md §Branch Protection." >&2
+      exit 1
+    fi
+  done
+done
+
+exit 0

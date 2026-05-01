@@ -6,6 +6,7 @@
 //! root.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use graphtor_core::GraphtorError;
@@ -118,10 +119,16 @@ pub fn remove_mcp_configs(
     for editor in targets {
         let rel_path = editor.config_path();
         let dest = project_root.join(rel_path);
-        if !dest.exists() {
-            continue;
-        }
-        let content = fs::read_to_string(&dest).unwrap_or_default();
+        let content = match fs::read_to_string(&dest) {
+            Ok(s) => s,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(GraphtorError::Config {
+                    message: format!("failed to read {rel_path}: {e}"),
+                    field: None,
+                })
+            }
+        };
         if content.contains("graphtor-docs") {
             fs::remove_file(&dest).map_err(|e| GraphtorError::Config {
                 message: format!("failed to remove {rel_path}: {e}"),

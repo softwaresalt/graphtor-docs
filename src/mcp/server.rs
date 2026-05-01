@@ -93,15 +93,20 @@ impl DocServer {
             return Err(ErrorData::invalid_params("query cannot be empty", None));
         }
         let results = search_by_text(&self.store, &params.query).map_err(|e| into_tool_err(&e))?;
-        let filtered: Vec<_> = if let Some(sid) = &params.source_id {
-            results
-                .into_iter()
-                .filter(|r| r.path.starts_with(sid.as_str()))
-                .collect()
+        // Normalize empty source_id to None (treat the same as no filter).
+        let sid_filter =
+            params
+                .source_id
+                .as_deref()
+                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+        let filtered: Vec<_> = if let Some(sid) = sid_filter {
+            results.into_iter().filter(|r| r.source_id == sid).collect()
         } else {
             results
         };
-        let limit = usize::try_from(params.top_k.unwrap_or(10).min(50)).unwrap_or(10);
+        // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        #[allow(clippy::cast_possible_truncation)]
+        let limit = params.top_k.unwrap_or(10).min(50) as usize;
         let page: Vec<_> = filtered.into_iter().take(limit).collect();
         let md = format_search_results(&page);
         Ok(CallToolResult::success(vec![Content::text(md)]))
@@ -129,7 +134,9 @@ impl DocServer {
         if params.chunk_id.trim().is_empty() {
             return Err(ErrorData::invalid_params("chunk_id cannot be empty", None));
         }
-        let depth = usize::try_from(params.max_depth.unwrap_or(2).min(5)).unwrap_or(2);
+        // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        #[allow(clippy::cast_possible_truncation)]
+        let depth = params.max_depth.unwrap_or(2).min(5) as usize;
         let results = find_related_chunks(&self.store, &params.chunk_id, depth)
             .map_err(|e| into_tool_err(&e))?;
         let md = format_traversal_results(&params.chunk_id, &results);
@@ -156,9 +163,23 @@ impl ServerHandler for DocServer {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Convert a [`GraphtorError`] to an MCP [`ErrorData`] internal error response.
+// Compile-time assertion: usize must be at least 32 bits (we do not support 16-bit targets).
+const _: () = assert!(
+    std::mem::size_of::<usize>() >= 4,
+    "usize must be at least 32 bits; 16-bit targets are not supported"
+);
+
+/// Convert a [`GraphtorError`] to an MCP [`ErrorData`] response.
+///
+/// [`GraphtorError::PathViolation`] maps to `invalid_params` because it
+/// indicates the client supplied invalid input. All other variants map to
+/// `internal_error`.
 fn into_tool_err(e: &GraphtorError) -> ErrorData {
-    ErrorData::internal_error(e.to_string(), None)
+    if e.is_client_error() {
+        ErrorData::invalid_params(e.to_string(), None)
+    } else {
+        ErrorData::internal_error(e.to_string(), None)
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -169,6 +190,18 @@ mod tests {
 
     use super::*;
     use crate::db::{schema::ensure_schema, DataStore};
+
+    /// Returns `true` when `path` belongs to the documentation source identified by `prefix`.
+    ///
+    /// Requires an exact match (`path == prefix`) or a directory-boundary prefix match
+    /// (`path` starts with `{prefix}/`). This prevents a prefix like `"docs"` from
+    /// incorrectly matching unrelated paths such as `"docs-archive/file.md"`.
+    fn path_matches_source(path: &str, prefix: &str) -> bool {
+        path == prefix
+            || path
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with('/'))
+    }
 
     fn test_server() -> DocServer {
         let store = DataStore::open_mem().expect("in-memory store");
@@ -215,5 +248,59 @@ mod tests {
         assert!(result.is_ok());
         let ct = result.unwrap();
         assert!(!ct.content.is_empty());
+    }
+
+    // ── T013.003: path_matches_source directory-boundary filter ──────────────
+
+    #[test]
+    fn path_matches_source_exact_match() {
+        assert!(path_matches_source("docs", "docs"));
+    }
+
+    #[test]
+    fn path_matches_source_subdirectory_match() {
+        assert!(path_matches_source("docs/api.md", "docs"));
+    }
+
+    #[test]
+    fn path_matches_source_rejects_false_prefix() {
+        // "docs-archive" starts with "docs" as a string but is not in the
+        // "docs" source — the directory-boundary check must reject it.
+        assert!(!path_matches_source("docs-archive/file.md", "docs"));
+    }
+
+    #[test]
+    fn path_matches_source_no_match_on_unrelated_path() {
+        assert!(!path_matches_source("other/path.md", "docs"));
+    }
+
+    // ── T013.001: into_tool_err dispatches based on is_client_error() ────────
+
+    #[test]
+    fn into_tool_err_path_violation_message_contains_error_text() {
+        let e = GraphtorError::PathViolation {
+            attempted: std::path::PathBuf::from("/evil"),
+            allowed_root: std::path::PathBuf::from("/safe"),
+        };
+        let err = into_tool_err(&e);
+        assert!(
+            err.message.contains("path_violation"),
+            "expected path_violation in message, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn into_tool_err_database_error_message_contains_error_text() {
+        let e = GraphtorError::Database {
+            message: "conn refused".to_string(),
+            operation: "query".to_string(),
+        };
+        let err = into_tool_err(&e);
+        assert!(
+            err.message.contains("conn refused"),
+            "expected conn refused in message, got: {}",
+            err.message
+        );
     }
 }

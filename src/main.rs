@@ -29,11 +29,12 @@ use std::process;
 
 use anyhow::Context as _;
 use clap::Parser as _;
+use graphtor_core::mcp::DocServer;
 use graphtor_core::{
     acquire::plan as acquire_plan,
     config::SourceConfig,
     db::{list_sources, DataStore},
-    init_logging, DocServer, EmbeddingModel, LogVerbosity, PipelineConfig,
+    init_logging, EmbeddingModel, LogVerbosity, PipelineConfig,
 };
 use tracing::{error, info, warn};
 
@@ -74,9 +75,14 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
 
     // Resolve database path: CLI flag > env var (already handled by clap env=) > default.
     let db_path: PathBuf = cli
-        .data_dir
+        .db_path
         .clone()
         .unwrap_or_else(|| cwd.join(".graphtor/graph.db"));
+
+    // Warn on deprecated --data-dir alias usage (flag form and =value form).
+    if std::env::args().any(|a| a == "--data-dir" || a.starts_with("--data-dir=")) {
+        eprintln!("warning: --data-dir is deprecated; use --db-path instead");
+    }
 
     // Extract shared fields before destructuring the command.
     let sources_path = cli.config.clone();
@@ -136,8 +142,11 @@ fn cmd_sync(
         .context("failed to ensure database schema")?;
 
     // Build acquisition plan.
-    let data_root = db_path.parent().unwrap_or(cwd);
-    let plan = acquire_plan::plan(&source_config, data_root, cwd)
+    let data_root: PathBuf = args
+        .data_root
+        .clone()
+        .unwrap_or_else(|| cwd.join(".graphtor/data"));
+    let plan = acquire_plan::plan(&source_config, &data_root, cwd)
         .context("failed to build acquisition plan")?;
 
     // Optionally load the embedding model.
@@ -275,16 +284,13 @@ fn cmd_init(cwd: &std::path::Path, args: &cli::InitArgs) -> anyhow::Result<i32> 
 // ── install ───────────────────────────────────────────────────────────────────
 
 fn cmd_install(cwd: &std::path::Path, args: &cli::InstallArgs) -> anyhow::Result<i32> {
-    // Acquire workspace lock if already installed, to prevent concurrent installs.
+    // Always create the workspace directory scaffold first so the lock path exists.
     let ws_dir = cwd.join(".graphtor");
-    let _lock = if ws_dir.exists() {
-        Some(
-            workspace::lock::WorkspaceLock::acquire(&ws_dir, false)
-                .context("workspace is locked by another process")?,
-        )
-    } else {
-        None
-    };
+    std::fs::create_dir_all(&ws_dir).context("failed to create .graphtor directory")?;
+
+    // Always acquire a lock to prevent concurrent installs.
+    let _lock = workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
+        .context("workspace is locked by another process")?;
 
     let result = workspace::install::install(cwd).context("install failed")?;
 
@@ -372,7 +378,7 @@ fn cmd_upgrade(cwd: &std::path::Path, args: &cli::UpgradeArgs) -> anyhow::Result
         }
     };
 
-    let _lock = workspace::lock::WorkspaceLock::acquire(&workspace_dir, args.force)
+    let _lock = workspace::lock::WorkspaceLock::acquire(&workspace_dir, args.force_unlock)
         .context("workspace is locked by another process")?;
 
     let result =
@@ -397,7 +403,7 @@ fn cmd_uninstall(cwd: &std::path::Path, args: &cli::UninstallArgs) -> anyhow::Re
     let ws_dir = cwd.join(".graphtor");
     let _lock = if ws_dir.exists() {
         Some(
-            workspace::lock::WorkspaceLock::acquire(&ws_dir, false)
+            workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
                 .context("workspace is locked by another process")?,
         )
     } else {

@@ -6,8 +6,18 @@
 use std::fs;
 use std::path::Path;
 
+use sha2::{Digest as _, Sha256};
+
 use crate::workspace::install::installed_binary_path;
 use graphtor_core::GraphtorError;
+
+/// Compute the SHA-256 digest of a file's contents.
+///
+/// Returns `None` when the file cannot be read.
+fn file_sha256(path: &Path) -> Option<Vec<u8>> {
+    let data = fs::read(path).ok()?;
+    Some(Sha256::digest(&data).to_vec())
+}
 
 /// Result of an upgrade operation.
 #[derive(Debug)]
@@ -22,9 +32,9 @@ pub struct UpgradeResult {
 ///
 /// Copies the running binary over `.graphtor/bin/graphtor-docs[.exe]`.
 ///
-/// When `force` is `false`, uses file size as a cheap heuristic to skip
-/// the copy if the binary appears unchanged. Pass `force = true` to
-/// always replace.
+/// When `force` is `false`, computes the SHA-256 hash of both the running
+/// and installed binaries and skips the copy when they match.  Pass
+/// `force = true` to always replace regardless of content.
 ///
 /// # Errors
 ///
@@ -38,9 +48,9 @@ pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, Graph
     })?;
 
     if !force && dest.exists() {
-        let src_len = exe.metadata().map_or(0, |m: std::fs::Metadata| m.len());
-        let dst_len = dest.metadata().map_or(1, |m: std::fs::Metadata| m.len());
-        if src_len == dst_len {
+        let src_hash = file_sha256(&exe);
+        let dst_hash = file_sha256(&dest);
+        if src_hash.is_some() && src_hash == dst_hash {
             return Ok(UpgradeResult {
                 upgraded: false,
                 message: "binary is already up-to-date".to_string(),

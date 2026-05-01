@@ -37,14 +37,17 @@ pub struct Cli {
     ///
     /// Defaults to `.graphtor/graph.db` relative to the current working
     /// directory.
+    ///
+    /// `--data-dir` is a deprecated alias for this flag; use `--db-path` instead.
     #[arg(
         short,
-        long,
+        long = "db-path",
+        alias = "data-dir",
         global = true,
         env = "GRAPHTOR_DB_PATH",
         value_name = "FILE"
     )]
-    pub data_dir: Option<PathBuf>,
+    pub db_path: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: Command,
@@ -117,6 +120,13 @@ pub struct SyncArgs {
     /// Disable the embedding step (faster; no vectors stored).
     #[arg(long)]
     pub no_embed: bool,
+
+    /// Root directory for derived data stores (graph.db, cache).
+    ///
+    /// Defaults to `.graphtor/data` relative to the current working directory
+    /// when not specified.
+    #[arg(long, value_name = "DIR")]
+    pub data_root: Option<PathBuf>,
 }
 
 /// Arguments for the `serve` subcommand.
@@ -154,6 +164,12 @@ pub struct InstallArgs {
     /// Defaults to all supported editors.
     #[arg(long, value_delimiter = ',', value_name = "EDITOR")]
     pub editor: Vec<String>,
+
+    /// Force-release the workspace lock before installing.
+    ///
+    /// Use when a previous invocation left a stale lock file.
+    #[arg(long)]
+    pub force_unlock: bool,
 }
 
 /// Arguments for the `upgrade` subcommand.
@@ -162,6 +178,12 @@ pub struct UpgradeArgs {
     /// Force upgrade even if the installed version matches.
     #[arg(long)]
     pub force: bool,
+
+    /// Force-release the workspace lock before upgrading.
+    ///
+    /// Use when a previous invocation left a stale lock file.
+    #[arg(long)]
+    pub force_unlock: bool,
 }
 
 /// Arguments for the `uninstall` subcommand.
@@ -174,4 +196,10 @@ pub struct UninstallArgs {
     /// Keep `sources.yaml` and workspace config; only remove runtime data.
     #[arg(long)]
     pub keep_config: bool,
+
+    /// Force-release the workspace lock before uninstalling.
+    ///
+    /// Use when a previous invocation left a stale lock file.
+    #[arg(long)]
+    pub force_unlock: bool,
 }

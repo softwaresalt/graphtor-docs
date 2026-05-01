@@ -8,6 +8,7 @@
 //! The lock is released automatically when [`WorkspaceLock`] is dropped.
 
 use std::fs;
+use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,7 @@ const STALE_SECS: u64 = 3600;
 ///
 /// Obtain via [`WorkspaceLock::acquire`]. The lock file is removed when
 /// this value is dropped.
+#[derive(Debug)]
 #[must_use = "lock is released on drop; assign to a binding"]
 pub struct WorkspaceLock {
     path: PathBuf,
@@ -31,10 +33,10 @@ pub struct WorkspaceLock {
 impl WorkspaceLock {
     /// Acquire the workspace lock.
     ///
-    /// Writes a lock file containing the current process PID and a Unix
-    /// timestamp. If a lock file already exists, checks whether it is
-    /// stale (older than [`STALE_SECS`]). If the lock is live, returns
-    /// [`GraphtorError::Config`] describing the conflict.
+    /// Attempts an atomic `O_CREAT | O_EXCL` open of the lock file.
+    /// If the file already exists, reads the existing lock and checks
+    /// whether it is stale (older than [`STALE_SECS`]).  If the lock is
+    /// live, returns [`GraphtorError::Config`] describing the conflict.
     ///
     /// Pass `force = true` to overwrite any existing lock unconditionally
     /// (equivalent to `--force-unlock`).
@@ -46,47 +48,147 @@ impl WorkspaceLock {
     pub fn acquire(workspace_dir: &Path, force: bool) -> Result<Self, GraphtorError> {
         let path = workspace_dir.join(LOCK_FILE);
 
-        if path.exists() && !force {
-            if let Ok(meta) = path.metadata() {
-                if let Ok(modified) = meta.modified() {
-                    let age = SystemTime::now()
-                        .duration_since(modified)
-                        .unwrap_or_default()
-                        .as_secs();
-                    if age < STALE_SECS {
-                        let existing = fs::read_to_string(&path).unwrap_or_default();
-                        let pid: Option<u32> = existing
-                            .lines()
-                            .next()
-                            .and_then(|l| l.strip_prefix("pid="))
-                            .and_then(|v| v.parse().ok());
-                        return Err(GraphtorError::Config {
-                            message: format!(
-                                "workspace is locked by process {} (lock age: {}s); \
-                                 pass `--force` to override or wait for the other process to finish",
-                                pid.map_or_else(|| "unknown".to_string(), |p| p.to_string()),
-                                age
-                            ),
-                            field: None,
-                        });
-                    }
-                }
-            }
-        }
-
         let pid = std::process::id();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         let content = format!("pid={pid}\ntimestamp={now}\n");
+
+        // Attempt atomic creation (O_CREAT | O_EXCL).
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if let Err(e) = file.write_all(content.as_bytes()) {
+                    // Write failed — drop file handle then clean up so we don't
+                    // leave a partial lock that would block future commands.
+                    drop(file);
+                    let _ = fs::remove_file(&path);
+                    return Err(GraphtorError::Config {
+                        message: format!("failed to write lock file: {e}"),
+                        field: None,
+                    });
+                }
+                return Ok(Self { path });
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // Fall through to stale/force check below.
+            }
+            Err(e) => {
+                return Err(GraphtorError::Config {
+                    message: format!("failed to create lock file: {e}"),
+                    field: None,
+                });
+            }
+        }
+
+        handle_existing_lock(path, &content, force)
+    }
+}
+
+/// Handle the case where a lock file already exists.
+///
+/// Checks for force override, races (file removed between create and here),
+/// stale locks, and live lock errors.
+fn handle_existing_lock(
+    path: std::path::PathBuf,
+    content: &str,
+    force: bool,
+) -> Result<WorkspaceLock, GraphtorError> {
+    if force {
         fs::write(&path, content).map_err(|e| GraphtorError::Config {
-            message: format!("failed to write lock file: {e}"),
+            message: format!("failed to overwrite lock file: {e}"),
             field: None,
         })?;
-
-        Ok(Self { path })
+        return Ok(WorkspaceLock { path });
     }
+
+    // Check whether the existing lock is stale.  If metadata returns
+    // NotFound the file was removed between our create_new and here
+    // (concurrent unlock) — retry create_new once to claim the lock.
+    let meta = match path.metadata() {
+        Ok(m) => m,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return retry_create_lock(&path, content);
+        }
+        Err(e) => {
+            return Err(GraphtorError::Config {
+                message: format!("failed to read lock metadata: {e}"),
+                field: None,
+            });
+        }
+    };
+
+    let stale = meta
+        .modified()
+        .ok()
+        .and_then(|modified| {
+            SystemTime::now()
+                .duration_since(modified)
+                .ok()
+                .map(|d| d.as_secs() >= STALE_SECS)
+        })
+        .unwrap_or(false);
+
+    if stale {
+        fs::write(&path, content).map_err(|e| GraphtorError::Config {
+            message: format!("failed to overwrite stale lock file: {e}"),
+            field: None,
+        })?;
+        return Ok(WorkspaceLock { path });
+    }
+
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let pid_str: String = existing
+        .lines()
+        .next()
+        .and_then(|l| l.strip_prefix("pid="))
+        .map_or_else(|| "unknown".to_string(), str::to_owned);
+    let age = meta
+        .modified()
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .map_or(0, |d| d.as_secs());
+
+    Err(GraphtorError::Config {
+        message: format!(
+            "workspace is locked by process {pid_str} (lock age: {age}s); \
+             pass `--force-unlock` to override or wait for the other process to finish"
+        ),
+        field: None,
+    })
+}
+
+/// Retry creating the lock file after a concurrent release race.
+///
+/// Called when `metadata()` returned `NotFound`, indicating another process
+/// released the lock between our `create_new` attempt and the metadata read.
+fn retry_create_lock(
+    path: &std::path::Path,
+    content: &str,
+) -> Result<WorkspaceLock, GraphtorError> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| GraphtorError::Config {
+            message: format!("failed to re-acquire lock after concurrent release: {e}"),
+            field: None,
+        })?;
+    if let Err(e) = file.write_all(content.as_bytes()) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(GraphtorError::Config {
+            message: format!("failed to write lock file on retry: {e}"),
+            field: None,
+        });
+    }
+    Ok(WorkspaceLock {
+        path: path.to_path_buf(),
+    })
 }
 
 impl Drop for WorkspaceLock {
@@ -129,5 +231,22 @@ mod tests {
         // Since we can't easily set mtime in portable std, we just verify
         // that acquire with force=true always succeeds.
         let _lock = WorkspaceLock::acquire(tmp.path(), true).expect("override stale");
+    }
+
+    #[test]
+    fn second_acquire_on_fresh_lock_fails() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Acquire first lock.
+        let _lock1 = WorkspaceLock::acquire(tmp.path(), false).expect("first acquire");
+        // Second acquire without force must fail.
+        let err = WorkspaceLock::acquire(tmp.path(), false)
+            .expect_err("second acquire should fail while first is held");
+        let GraphtorError::Config { message, .. } = err else {
+            panic!("expected Config error, got: {err:?}");
+        };
+        assert!(
+            message.contains("--force-unlock"),
+            "error should mention --force-unlock, got: {message}"
+        );
     }
 }

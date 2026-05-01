@@ -41,7 +41,11 @@ candle-transformers = { version = "0.8" }
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 hf-hub = { version = "0.3" }
 rmcp = { version = "1.5", features = ["server", "transport-io"] }
-tokio = { version = "1", features = ["full"] }
+# Minimal tokio feature set required by this crate:
+# - rt-multi-thread: multi-threaded async runtime for #[tokio::main]
+# - macros: #[tokio::main] and tokio::select! proc-macro support
+# Transport I/O features (io-std, io-util) are activated transitively by rmcp.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 schemars = "1"
 clap = { version = "4", features = ["derive", "env"] }
 indicatif = "0.17"
