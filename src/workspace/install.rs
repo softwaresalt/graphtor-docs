@@ -58,14 +58,8 @@ pub fn install(project_root: &Path) -> Result<InstallResult, GraphtorError> {
     let should_copy = if dest.exists() {
         // Use file size as a cheap heuristic; a full hash is not worth the I/O
         // cost on the install fast path.
-        let src_len = exe
-            .metadata()
-            .map(|m: std::fs::Metadata| m.len())
-            .unwrap_or(0);
-        let dst_len = dest
-            .metadata()
-            .map(|m: std::fs::Metadata| m.len())
-            .unwrap_or(1);
+        let src_len = exe.metadata().map_or(0, |m: std::fs::Metadata| m.len());
+        let dst_len = dest.metadata().map_or(1, |m: std::fs::Metadata| m.len());
         src_len != dst_len
     } else {
         true

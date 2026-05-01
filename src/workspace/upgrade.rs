@@ -38,14 +38,8 @@ pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, Graph
     })?;
 
     if !force && dest.exists() {
-        let src_len = exe
-            .metadata()
-            .map(|m: std::fs::Metadata| m.len())
-            .unwrap_or(0);
-        let dst_len = dest
-            .metadata()
-            .map(|m: std::fs::Metadata| m.len())
-            .unwrap_or(1);
+        let src_len = exe.metadata().map_or(0, |m: std::fs::Metadata| m.len());
+        let dst_len = dest.metadata().map_or(1, |m: std::fs::Metadata| m.len());
         if src_len == dst_len {
             return Ok(UpgradeResult {
                 upgraded: false,
