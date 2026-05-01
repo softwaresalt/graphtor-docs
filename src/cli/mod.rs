@@ -124,7 +124,7 @@ pub struct SyncArgs {
     /// Root directory for derived data stores (graph.db, cache).
     ///
     /// Defaults to `.graphtor/data` relative to the current working directory
-    /// when not specified and `--db-path` is not set.
+    /// when not specified.
     #[arg(long, value_name = "DIR")]
     pub data_root: Option<PathBuf>,
 }

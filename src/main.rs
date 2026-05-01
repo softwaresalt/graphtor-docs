@@ -79,8 +79,8 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
         .clone()
         .unwrap_or_else(|| cwd.join(".graphtor/graph.db"));
 
-    // Warn on deprecated --data-dir alias usage.
-    if std::env::args().any(|a| a == "--data-dir") {
+    // Warn on deprecated --data-dir alias usage (flag form and =value form).
+    if std::env::args().any(|a| a == "--data-dir" || a.starts_with("--data-dir=")) {
         eprintln!("warning: --data-dir is deprecated; use --db-path instead");
     }
 

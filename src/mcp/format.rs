@@ -94,6 +94,7 @@ mod tests {
     fn search_result_contains_path_and_content() {
         let result = SearchResult {
             chunk_id: "c1".to_string(),
+            source_id: "test-source".to_string(),
             path: "docs/api.md".to_string(),
             heading_hierarchy: vec!["API Reference".to_string()],
             content: "This is the content.".to_string(),

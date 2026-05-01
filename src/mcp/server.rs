@@ -93,11 +93,14 @@ impl DocServer {
             return Err(ErrorData::invalid_params("query cannot be empty", None));
         }
         let results = search_by_text(&self.store, &params.query).map_err(|e| into_tool_err(&e))?;
-        let filtered: Vec<_> = if let Some(sid) = &params.source_id {
-            results
-                .into_iter()
-                .filter(|r| path_matches_source(r.path.as_str(), sid.as_str()))
-                .collect()
+        // Normalize empty source_id to None (treat the same as no filter).
+        let sid_filter =
+            params
+                .source_id
+                .as_deref()
+                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+        let filtered: Vec<_> = if let Some(sid) = sid_filter {
+            results.into_iter().filter(|r| r.source_id == sid).collect()
         } else {
             results
         };
@@ -166,18 +169,6 @@ const _: () = assert!(
     "usize must be at least 32 bits; 16-bit targets are not supported"
 );
 
-/// Returns `true` when `path` belongs to the documentation source identified by `prefix`.
-///
-/// Requires an exact match (`path == prefix`) or a directory-boundary prefix match
-/// (`path` starts with `{prefix}/`). This prevents a prefix like `"docs"` from
-/// incorrectly matching unrelated paths such as `"docs-archive/file.md"`.
-fn path_matches_source(path: &str, prefix: &str) -> bool {
-    path == prefix
-        || path
-            .strip_prefix(prefix)
-            .is_some_and(|rest| rest.starts_with('/'))
-}
-
 /// Convert a [`GraphtorError`] to an MCP [`ErrorData`] response.
 ///
 /// [`GraphtorError::PathViolation`] maps to `invalid_params` because it
@@ -199,6 +190,18 @@ mod tests {
 
     use super::*;
     use crate::db::{schema::ensure_schema, DataStore};
+
+    /// Returns `true` when `path` belongs to the documentation source identified by `prefix`.
+    ///
+    /// Requires an exact match (`path == prefix`) or a directory-boundary prefix match
+    /// (`path` starts with `{prefix}/`). This prevents a prefix like `"docs"` from
+    /// incorrectly matching unrelated paths such as `"docs-archive/file.md"`.
+    fn path_matches_source(path: &str, prefix: &str) -> bool {
+        path == prefix
+            || path
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with('/'))
+    }
 
     fn test_server() -> DocServer {
         let store = DataStore::open_mem().expect("in-memory store");
