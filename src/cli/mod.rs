@@ -95,8 +95,9 @@ pub enum Command {
 
     /// Upgrade the installed graphtor-docs binary.
     ///
-    /// Replaces the binary in `.graphtor/bin/`, checks schema migrations, and
-    /// optionally triggers a re-index. Preserves config and data.
+    /// Replaces the binary in `.graphtor/bin/` with the currently running
+    /// binary. Preserves config and data. Use `--force` to replace even when
+    /// the installed binary appears up-to-date.
     Upgrade(UpgradeArgs),
 
     /// Uninstall graphtor-docs from the current workspace.

@@ -63,7 +63,7 @@ impl WorkspaceLock {
                         return Err(GraphtorError::Config {
                             message: format!(
                                 "workspace is locked by process {} (lock age: {}s); \
-                                 use `--force-unlock` to override or wait for the other process to finish",
+                                 pass `--force` to override or wait for the other process to finish",
                                 pid.map_or_else(|| "unknown".to_string(), |p| p.to_string()),
                                 age
                             ),

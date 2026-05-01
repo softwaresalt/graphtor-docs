@@ -1,8 +1,8 @@
-//! Workspace `sources.yaml` initialization wizard.
+//! Workspace `sources.yaml` initialization.
 //!
 //! Generates a template `sources.yaml` at `.graphtor/config/sources.yaml`
-//! with commented examples for Git and local sources. The init wizard
-//! supports both interactive (stdin prompt) and non-interactive (`--non-interactive`) modes.
+//! with commented examples for Git and local sources. Idempotent: will not
+//! overwrite an existing file unless `force = true` is passed.
 
 use std::fs;
 use std::path::Path;

@@ -148,8 +148,8 @@ pub fn run_doctor(workspace_dir: &Path) -> Vec<Check> {
 
     checks.push(check_sources_yaml(workspace_dir));
 
-    // Database file accessible.
-    let db_path = workspace_dir.join("data").join("graph.db");
+    // Database file accessible (default path: .graphtor/graph.db).
+    let db_path = workspace_dir.join("graph.db");
     checks.push(if db_path.exists() {
         Check {
             name: "database",
