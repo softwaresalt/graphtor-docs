@@ -2,7 +2,7 @@
 //!
 //! Provides a `clap`-based CLI with the following subcommands:
 //!
-//! - `sync`      — run the full ingestion pipeline (acquire → parse → embed → load)
+//! - `sync`      — incremental sync (default) or full pipeline (`--full`)
 //! - `serve`     — start the MCP STDIO server (`localhost` only)
 //! - `status`    — print database statistics
 //! - `init`      — generate a template `sources.yaml`
@@ -31,10 +31,12 @@ use anyhow::Context as _;
 use clap::Parser as _;
 use graphtor_core::mcp::DocServer;
 use graphtor_core::{
-    acquire::plan as acquire_plan,
+    acquire::{execute as acquire_execute, plan as acquire_plan},
     config::SourceConfig,
     db::{list_sources, DataStore},
-    init_logging, EmbeddingModel, LogVerbosity, PipelineConfig,
+    init_logging,
+    sync::sync_source,
+    EmbeddingModel, LogVerbosity, PipelineConfig,
 };
 use tracing::{error, info, warn};
 
@@ -162,22 +164,36 @@ fn cmd_sync(
         }
     };
 
+    if args.full {
+        cmd_sync_full(&store, &plan, model.as_ref(), args)
+    } else {
+        Ok(cmd_sync_incremental(cwd, &store, &plan, model.as_ref()))
+    }
+}
+
+/// Full pipeline: acquire → parse → embed → load all files unconditionally.
+fn cmd_sync_full(
+    store: &DataStore,
+    plan: &graphtor_core::acquire::AcquisitionPlan,
+    model: Option<&EmbeddingModel>,
+    args: &cli::SyncArgs,
+) -> anyhow::Result<i32> {
     let pipeline_config = PipelineConfig {
         batch_size: args.batch_size,
         parallel: false,
     };
 
     info!(
-        sources = source_config.sources.len(),
+        sources = plan.sources.len(),
         batch_size = args.batch_size,
-        "starting sync"
+        "starting full sync"
     );
 
-    let result = graphtor_core::pipeline::run(&plan, &store, model.as_ref(), &pipeline_config)
+    let result = graphtor_core::pipeline::run(plan, store, model, &pipeline_config)
         .context("pipeline execution failed")?;
 
     println!(
-        "sync complete: {} documents, {} chunks",
+        "sync complete (full): {} documents, {} chunks",
         result.documents_processed, result.total_chunks
     );
 
@@ -189,6 +205,73 @@ fn cmd_sync(
             eprintln!("  {}: {}", fe.path.display(), fe.error);
         }
         Ok(1)
+    }
+}
+
+/// Incremental sync: acquire new sources, then detect and re-ingest only changes.
+fn cmd_sync_incremental(
+    cwd: &std::path::Path,
+    store: &DataStore,
+    plan: &graphtor_core::acquire::AcquisitionPlan,
+    model: Option<&EmbeddingModel>,
+) -> i32 {
+    info!(sources = plan.sources.len(), "starting incremental sync");
+
+    // Execute acquisition to clone any new git repos (existing ones are skipped).
+    let _acq_result = acquire_execute(plan, false);
+
+    // Sync state lives alongside the database in the workspace.
+    let state_path = cwd.join(".graphtor/sync_state.json");
+
+    let mut total_files: usize = 0;
+    let mut total_chunks: usize = 0;
+    let mut total_deleted: usize = 0;
+    let mut total_errors: usize = 0;
+
+    for planned in &plan.sources {
+        let source_dir = &planned.target_dir;
+        let source_id = match &planned.source {
+            graphtor_core::Source::Git(g) => g.id.as_str(),
+            graphtor_core::Source::Local(l) => l.id.as_str(),
+        };
+
+        if !source_dir.exists() {
+            warn!(
+                source_id,
+                path = %source_dir.display(),
+                "source directory does not exist; skipping"
+            );
+            total_errors += 1;
+            continue;
+        }
+
+        match sync_source(store, &planned.source, source_dir, &state_path, cwd, model) {
+            Ok(result) => {
+                total_files += result.files_processed;
+                total_chunks += result.chunks_loaded;
+                total_deleted += result.files_deleted;
+                total_errors += result.files_errored;
+            }
+            Err(e) => {
+                warn!(
+                    source_id,
+                    error = %e,
+                    "incremental sync failed for source; continuing"
+                );
+                total_errors += 1;
+            }
+        }
+    }
+
+    println!(
+        "sync complete (incremental): {total_files} files processed, {total_chunks} chunks loaded, {total_deleted} files deleted"
+    );
+
+    if total_errors == 0 {
+        0
+    } else {
+        eprintln!("{total_errors} error(s) encountered during sync");
+        1
     }
 }
 
