@@ -79,8 +79,12 @@ fn chunk_pdf_text(text: &str, source_path: &str) -> Result<Vec<Chunk>, GraphtorE
         let page_label = format!("Page {}", page_idx + 1);
         let segments = split_long_text(trimmed);
 
-        for segment in segments {
-            let chunk_id = generate_chunk_id(&segment, source_path)?;
+        for (segment_idx, segment) in segments.into_iter().enumerate() {
+            // Include page + segment index so duplicate text across pages
+            // (common with headers/footers) produces distinct chunk IDs.
+            let chunk_id_source =
+                format!("{source_path}#page={}#segment={segment_idx}", page_idx + 1);
+            let chunk_id = generate_chunk_id(&segment, &chunk_id_source)?;
             let content_len = segment.len();
             chunks.push(Chunk {
                 chunk_id,

@@ -306,8 +306,10 @@ fn process_batch(
         }
 
         // Derive a source-root-relative path for stable chunk IDs.
+        // Normalize to forward slashes so chunk IDs and MCP path-matching are
+        // platform-independent; on Windows, strip_prefix produces backslash paths.
         let path_str = match file.strip_prefix(allowed_root) {
-            Ok(rel) => rel.to_string_lossy().into_owned(),
+            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
             Err(e) => {
                 warn!(
                     path = %display_path,
