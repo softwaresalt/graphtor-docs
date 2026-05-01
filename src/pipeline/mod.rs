@@ -459,7 +459,7 @@ fn compute_embeddings(
                     chunk_count = vecs.len(),
                     "embeddings computed"
                 );
-                for (chunk, vec) in doc.chunks.iter().zip(vecs.into_iter()) {
+                for (chunk, vec) in doc.chunks.iter().zip(vecs) {
                     map.insert(chunk.chunk_id.clone(), vec);
                 }
             }
