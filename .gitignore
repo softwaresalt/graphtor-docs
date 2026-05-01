@@ -82,6 +82,14 @@ venv.bak/
 *.pui
 .engram/
 
+# graphtor workspace runtime (databases, state, cloned data)
+.graphtor/graph.db
+.graphtor/sync_state.json
+.graphtor/data/
+.graphtor/bin/
+.graphtor/cache/
+.graphtor/logs/
+
 # backlogit runtime artifacts
 .backlogit/backlogit.db
 .backlogit/*.db-shm
