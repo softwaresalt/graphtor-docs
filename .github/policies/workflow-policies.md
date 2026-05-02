@@ -206,6 +206,69 @@ P-005 violation event.
 
 ---
 
+## P-010: Stage/Ship Boundary Enforcement (NON-NEGOTIABLE)
+
+| Field      | Value                                    |
+|------------|------------------------------------------|
+| Policy ID  | P-010                                    |
+| Applies To | `stage`, `ship`                          |
+| Gate Point | Every tool invocation and backlog mutation |
+
+**Statement**: The Stage agent and Ship agent have non-overlapping operational domains. Stage owns the stash-to-backlog pipeline (triage, deliberation, planning, review gating, harvest, shipment assembly). Ship owns the backlog-to-shipped pipeline (branch creation, build execution, code review, CI remediation, PR lifecycle, merge, post-merge closure, and archive). Neither agent may perform actions belonging to the other's domain.
+
+**Stage MUST NOT**:
+
+1. Call `backlogit_ship_shipment` — shipping is Ship's post-merge closure action
+2. Call `backlogit_archive_item` — archival is a Ship-only post-merge action
+3. Call `backlogit_delete_item` — destructive item removal requires Ship with operator approval
+4. Call `backlogit_claim_shipment` — shipment claiming is Ship's first execution step
+5. Push code to any branch (Stage does not write application code)
+6. Create or merge pull requests (PR lifecycle is Ship-only)
+7. Run `git push` in any form
+
+**Ship MUST NOT**:
+
+1. Call `backlogit_harvest_stash` — stash harvesting is Stage's decomposition action
+2. Call `backlogit_create_shipment` — shipment creation is Stage's assembly action
+3. Call `backlogit_deliberate` — deliberation routing is Stage's decision action
+4. Triage, re-prioritize, or reclassify stash entries
+
+**Handoff Protocol**: Stage's terminal action is confirming shipment readiness and reporting to the operator. The operator then orchestrates Ship (potentially with a different model or agent configuration). There is NO automatic handoff between Stage and Ship.
+
+**Precondition**: Tool lists are the primary enforcement mechanism — forbidden tools are removed from each agent's `tools:` frontmatter field. This policy provides secondary enforcement via explicit prohibition rules that agents must honor even if tool-list filtering fails.
+
+**Violation Action**: Immediate halt. Broadcast a P-005 violation event with the specific forbidden action attempted. Do not proceed. The agent must explain the violation to the operator and await guidance.
+
+---
+
+## P-011: Branch Protection for Shipping Workflows
+
+| Field      | Value                                    |
+|------------|------------------------------------------|
+| Policy ID  | P-011                                    |
+| Applies To | `ship`, all agents that create commits   |
+| Gate Point | Pre-push, pre-merge, branch creation     |
+
+**Statement**: All code changes, documentation updates, and backlog state commits MUST arrive on the default branch (`main` or `master`) exclusively via pull request merge. No agent, automation, or workflow may push directly to the default branch. Feature branches are mandatory for all committed work.
+
+**Rules**:
+
+1. **Never push directly to `main` or `master`** — all changes must arrive via PR merge
+2. **Never force-push** to any shared or protected branch
+3. **Always create a feature branch** before committing any work (Ship Step 0.5)
+4. **Branch naming**: Use `feat/{slug}`, `chore/{slug}`, `fix/{slug}`, or `docs/{slug}`
+5. **PR required before merge** — no branch may be merged without an open, reviewed PR
+6. **Operator approval required** — no PR may be merged without explicit operator approval
+7. **Ship owns the full branch lifecycle**: create branch → commit → push → open PR → CI → review → operator-approved merge
+
+**Precondition**: The repository has branch protection rules enabled on `main`/`master`. The `.githooks/pre-push` hook blocks direct pushes at the client side.
+
+**Postcondition**: Every commit on the default branch has a merge commit parent from a feature branch PR.
+
+**Violation Action**: Immediate halt. If any agent detects it is about to push directly to the default branch, it MUST stop, broadcast a P-005 violation event, and inform the operator. Under no circumstances may the push proceed.
+
+---
+
 ## Amendment Log
 
 | Version | Date         | Change           | Reason                     |
@@ -215,3 +278,5 @@ P-005 violation event.
 | 1.2.0   | 2026-04-29     | Added P-007      | Backlogit archive integrity after shipment |
 | 1.3.0   | 2026-04-29     | Added P-008      | Markdown conformance enforcement |
 | 1.4.0   | 2026-04-29     | Added P-009      | Merge-commit-only policy |
+| 1.5.0   | 2026-05-01     | Added P-010      | Stage/Ship boundary enforcement |
+| 1.6.0   | 2026-05-01     | Added P-011      | Branch protection for shipping workflows |
