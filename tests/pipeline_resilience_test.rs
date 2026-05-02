@@ -45,6 +45,7 @@ fn pipeline_skips_invalid_utf8_and_processes_valid_files() {
             path: docs_dir,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");

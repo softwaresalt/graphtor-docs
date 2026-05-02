@@ -112,6 +112,8 @@ struct BatchResult {
     chunks_loaded: usize,
     /// Per-file errors accumulated during batch processing.
     errors: Vec<FileError>,
+    /// Files skipped because their extension was not in the source's `formats` list.
+    skipped_by_format: usize,
 }
 
 /// Summary of a completed pipeline run.
@@ -121,10 +123,19 @@ pub struct PipelineResult {
     pub documents_processed: usize,
     /// Total number of chunks written to the database across all sources.
     pub total_chunks: usize,
-    /// Per-file failures collected during the run.
+    /// Per-file parse or load failures collected during the run.
     ///
-    /// Non-empty means some files were skipped; all others were processed.
+    /// Each entry represents a file that could not be processed due to a
+    /// parse or load error. Processing continues for all other files.
+    /// Format-based skips are tracked separately in [`PipelineResult::skipped_by_format`]
+    /// and are not included here.
     pub errors_encountered: Vec<FileError>,
+    /// Number of files skipped because their extension was not in the
+    /// source's `formats` allow-list.
+    ///
+    /// These are silent skips — no error is generated.  Inspect this counter
+    /// to audit format filtering behaviour.
+    pub skipped_by_format: usize,
 }
 
 /// Run the full ingestion pipeline: acquire → parse → embed → load.
@@ -149,6 +160,7 @@ pub struct PipelineResult {
 /// sequential code path until async embedding is implemented (009-F).
 /// See [`PipelineConfig::parallel`] for details.
 #[must_use = "pipeline result contains errors_encountered; inspect or explicitly ignore with `let _ = ...`"]
+#[allow(clippy::too_many_lines)] // orchestrator — extracting sub-functions would add indirection
 pub fn run(
     plan: &AcquisitionPlan,
     store: &DataStore,
@@ -188,6 +200,7 @@ pub fn run(
     let mut documents_processed: usize = 0;
     let mut total_chunks: usize = 0;
     let mut errors_encountered: Vec<FileError> = Vec::new();
+    let mut skipped_by_format: usize = 0;
 
     // ── Stages 2–4: Parse → Embed → Load (per source) ─────────────────────
     for outcome in &acq_result.outcomes {
@@ -222,12 +235,25 @@ pub fn run(
                 let stage_start = Instant::now();
                 let mut source_docs = 0_usize;
                 let mut source_chunks = 0_usize;
+                let mut source_skipped = 0_usize;
+
+                // Resolve the format allow-list once per source, outside the batch loop.
+                let source_formats: &[String] = source_index
+                    .get(ffs.source_id.as_str())
+                    .map_or(&[], |ps| ps.source.formats());
 
                 for batch in ffs.files.chunks(effective_batch_size) {
-                    let result =
-                        process_batch(batch, &ffs.source_id, store, model, &plan.allowed_root);
+                    let result = process_batch(
+                        batch,
+                        &ffs.source_id,
+                        store,
+                        model,
+                        &plan.allowed_root,
+                        source_formats,
+                    );
                     source_docs += result.docs_processed;
                     source_chunks += result.chunks_loaded;
+                    source_skipped += result.skipped_by_format;
                     errors_encountered.extend(result.errors);
                 }
 
@@ -241,6 +267,7 @@ pub fn run(
 
                 documents_processed += source_docs;
                 total_chunks += source_chunks;
+                skipped_by_format += source_skipped;
             }
             SourceOutcome::Skipped { source_id } => {
                 info!(source_id, "source skipped during acquisition");
@@ -258,6 +285,7 @@ pub fn run(
     info!(
         documents_processed,
         total_chunks,
+        skipped_by_format,
         error_count = errors_encountered.len(),
         elapsed_ms = u64::try_from(run_start.elapsed().as_millis()).unwrap_or(u64::MAX),
         "pipeline complete"
@@ -267,6 +295,7 @@ pub fn run(
         documents_processed,
         total_chunks,
         errors_encountered,
+        skipped_by_format,
     })
 }
 
@@ -283,10 +312,12 @@ fn process_batch(
     store: &DataStore,
     model: Option<&EmbeddingModel>,
     allowed_root: &Path,
+    formats: &[String],
 ) -> BatchResult {
     let mut docs_ok = 0_usize;
     let mut chunks_ok = 0_usize;
     let mut errors: Vec<FileError> = Vec::new();
+    let mut skipped_by_format = 0_usize;
 
     // ── Parse ──────────────────────────────────────────────────────────────
     let mut parsed = Vec::new();
@@ -328,12 +359,34 @@ fn process_batch(
             }
         };
 
-        // Detect extension for parse dispatch.
-        let ext = file
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
+        // Detect extension for format filtering and parse dispatch.
+        // Canonicalise `.markdown` → `md` so the default allow-list
+        // `["md", "pdf", "docx"]` correctly accepts both `.md` and `.markdown`
+        // files without requiring users to enumerate both spellings.
+        let ext = {
+            let raw = file
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if raw == "markdown" {
+                "md".to_string()
+            } else {
+                raw
+            }
+        };
+
+        // Format allow-list filtering: non-empty `formats` acts as an allow-list.
+        // Empty `formats` means "no restriction — accept all extensions".
+        if !is_format_allowed(formats, &ext) {
+            debug!(
+                path = %display_path,
+                extension = %ext,
+                "file extension not in source formats allow-list; skipping"
+            );
+            skipped_by_format += 1;
+            continue;
+        }
 
         let parse_result = match ext.as_str() {
             "md" | "markdown" => std::fs::read_to_string(file)
@@ -435,7 +488,20 @@ fn process_batch(
         docs_processed: docs_ok,
         chunks_loaded: chunks_ok,
         errors,
+        skipped_by_format,
     }
+}
+
+/// Return `true` if `ext` should be processed given `formats`.
+///
+/// An empty `formats` list means "no restriction — allow all extensions".
+/// A non-empty `formats` list acts as an allow-list: only extensions listed
+/// are accepted.  The comparison is case-insensitive.
+fn is_format_allowed(formats: &[String], ext: &str) -> bool {
+    if formats.is_empty() {
+        return true;
+    }
+    formats.iter().any(|f| f.eq_ignore_ascii_case(ext))
 }
 
 /// Compute embeddings for all chunks in a parsed batch.

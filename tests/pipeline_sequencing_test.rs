@@ -25,6 +25,7 @@ fn make_config(local_path: std::path::PathBuf) -> SourceConfig {
             path: local_path,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     }
 }

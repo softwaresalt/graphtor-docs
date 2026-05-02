@@ -72,6 +72,18 @@ impl Source {
             Self::Url(u) => &u.id,
         }
     }
+
+    /// Returns the allowed file format extensions for this source.
+    ///
+    /// An empty slice means no restriction — all pipeline-supported extensions
+    /// are processed.  A non-empty slice acts as an allow-list.
+    pub(crate) fn formats(&self) -> &[String] {
+        match self {
+            Self::Git(g) => &g.formats,
+            Self::Local(l) => &l.formats,
+            Self::Url(u) => &u.formats,
+        }
+    }
 }
 
 /// A remote Git repository documentation source.
@@ -90,6 +102,15 @@ pub struct GitSource {
     /// Glob patterns selecting files to exclude (e.g., `["**/drafts/**"]`).
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// File extension allow-list for this source (e.g., `["md", "pdf"]`).
+    ///
+    /// Only files whose extension matches one of the listed strings (case-insensitive)
+    /// are passed to the parse stage.  An empty list means no restriction — all
+    /// extensions supported by the pipeline are processed.
+    ///
+    /// Defaults to `["md", "pdf", "docx"]` when the field is absent from YAML.
+    #[serde(default = "default_formats")]
+    pub formats: Vec<String>,
 }
 
 /// A local filesystem directory documentation source.
@@ -105,10 +126,24 @@ pub struct LocalSource {
     /// Glob patterns selecting files to exclude. Defaults to empty.
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// File extension allow-list for this source (e.g., `["md", "pdf"]`).
+    ///
+    /// Only files whose extension matches one of the listed strings (case-insensitive)
+    /// are passed to the parse stage.  An empty list means no restriction — all
+    /// extensions supported by the pipeline are processed.
+    ///
+    /// Defaults to `["md", "pdf", "docx"]` when the field is absent from YAML.
+    #[serde(default = "default_formats")]
+    pub formats: Vec<String>,
 }
 
 fn default_branch() -> String {
     "main".to_string()
+}
+
+/// Default file formats processed when `formats` is absent from YAML.
+fn default_formats() -> Vec<String> {
+    vec!["md".to_string(), "pdf".to_string(), "docx".to_string()]
 }
 
 /// Maximum BFS crawl depth relative to the start URL.
@@ -160,6 +195,15 @@ pub struct UrlSource {
     /// Glob patterns selecting crawled-page file paths to exclude.
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// File extension allow-list for this source (e.g., `["md", "pdf"]`).
+    ///
+    /// Only files whose extension matches one of the listed strings (case-insensitive)
+    /// are passed to the parse stage.  An empty list means no restriction — all
+    /// extensions supported by the pipeline are processed.
+    ///
+    /// Defaults to `["md", "pdf", "docx"]` when the field is absent from YAML.
+    #[serde(default = "default_formats")]
+    pub formats: Vec<String>,
 }
 
 #[cfg(test)]
@@ -281,6 +325,90 @@ sources:
         assert!(
             s.starts_with("[io]"),
             "missing file must produce an Io error, got: {s}"
+        );
+    }
+
+    // ── T021.002: formats field ───────────────────────────────────────────
+
+    #[test]
+    fn formats_defaults_to_all_three_when_absent_from_yaml() {
+        const NO_FORMATS: &str = r#"
+sources:
+  - type: git
+    id: test-repo
+    url: https://github.com/example/repo.git
+    include: ["**/*.md"]
+"#;
+        let config: SourceConfig = serde_yaml::from_str(NO_FORMATS).unwrap();
+        let Source::Git(git) = &config.sources[0] else {
+            panic!("expected GitSource");
+        };
+        assert_eq!(
+            git.formats,
+            vec!["md", "pdf", "docx"],
+            "formats must default to all three when absent"
+        );
+    }
+
+    #[test]
+    fn formats_parsed_from_yaml() {
+        const WITH_FORMATS: &str = r"
+sources:
+  - type: local
+    id: test-local
+    path: /docs
+    formats:
+      - md
+      - pdf
+";
+        let config: SourceConfig = serde_yaml::from_str(WITH_FORMATS).unwrap();
+        let Source::Local(local) = &config.sources[0] else {
+            panic!("expected LocalSource");
+        };
+        assert_eq!(local.formats, vec!["md", "pdf"]);
+    }
+
+    #[test]
+    fn source_formats_accessor_returns_inner_slice() {
+        let src = Source::Local(LocalSource {
+            id: "t".to_string(),
+            path: PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string(), "pdf".to_string()],
+        });
+        assert_eq!(src.formats(), &["md", "pdf"]);
+    }
+
+    #[test]
+    fn git_formats_accessor_returns_inner_slice() {
+        let src = Source::Git(GitSource {
+            id: "t".to_string(),
+            url: "https://github.com/example/repo.git".to_string(),
+            branch: "main".to_string(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["docx".to_string()],
+        });
+        assert_eq!(src.formats(), &["docx"]);
+    }
+
+    #[test]
+    fn empty_formats_list_parsed_correctly() {
+        const EMPTY_FORMATS: &str = r"
+sources:
+  - type: local
+    id: empty-fmt
+    path: /docs
+    formats: []
+";
+        let config: SourceConfig = serde_yaml::from_str(EMPTY_FORMATS).unwrap();
+        let Source::Local(local) = &config.sources[0] else {
+            panic!("expected LocalSource");
+        };
+        assert!(
+            local.formats.is_empty(),
+            "empty formats list must parse as empty"
         );
     }
 }

@@ -12,6 +12,14 @@ use globset::Glob;
 use crate::config::source::{Source, SourceConfig};
 use crate::error::GraphtorError;
 
+/// Extension strings accepted by the ingestion pipeline.
+///
+/// `"markdown"` is included as an alias for `"md"` because the pipeline
+/// canonicalises the `.markdown` file extension to `"md"` at runtime.
+/// Validation accepts both spellings so that user config is consistent with
+/// what the pipeline actually processes.
+const VALID_FORMATS: &[&str] = &["md", "pdf", "docx", "markdown"];
+
 /// Validate a parsed [`SourceConfig`] for semantic correctness.
 ///
 /// Checks performed:
@@ -83,8 +91,31 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
 
         validate_globs(include, id)?;
         validate_globs(exclude, id)?;
+        validate_formats(source.formats(), id)?;
     }
 
+    Ok(())
+}
+
+/// Validate that all strings in `formats` are recognized pipeline extensions.
+///
+/// Comparison is case-insensitive: `"MD"`, `"Pdf"`, and `"DOCX"` are all
+/// accepted.  This matches the pipeline's runtime behaviour, which lower-cases
+/// file extensions before applying the allow-list.
+fn validate_formats(formats: &[String], source_id: &str) -> Result<(), GraphtorError> {
+    for fmt in formats {
+        let normalised = fmt.to_ascii_lowercase();
+        if !VALID_FORMATS.contains(&normalised.as_str()) {
+            return Err(GraphtorError::Config {
+                message: format!(
+                    "source '{source_id}' has invalid format '{fmt}'; \
+                     valid formats are: {}",
+                    VALID_FORMATS.join(", ")
+                ),
+                field: Some("formats".to_string()),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -111,6 +142,7 @@ mod tests {
             branch: "main".to_string(),
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
+            formats: vec![],
         })
     }
 
@@ -120,6 +152,7 @@ mod tests {
             path: std::path::PathBuf::from("/docs"),
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
+            formats: vec![],
         })
     }
 
@@ -155,6 +188,7 @@ mod tests {
             branch: "main".to_string(),
             include: vec!["[invalid-glob".to_string()],
             exclude: vec![],
+            formats: vec![],
         });
         let config = SourceConfig {
             sources: vec![bad_glob],
@@ -207,6 +241,87 @@ mod tests {
         assert!(
             msg.contains("path separators") || msg.contains(".."),
             "error should mention the issue: {msg}"
+        );
+    }
+
+    // ── T021.003: format validation ───────────────────────────────────────
+
+    #[test]
+    fn valid_formats_pass_validation() {
+        let src = Source::Local(LocalSource {
+            id: "valid-fmt".to_string(),
+            path: std::path::PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string(), "pdf".to_string(), "docx".to_string()],
+        });
+        let config = SourceConfig { sources: vec![src] };
+        assert!(
+            validate(&config).is_ok(),
+            "valid formats must pass validation"
+        );
+    }
+
+    #[test]
+    fn empty_formats_list_passes_validation() {
+        let src = Source::Local(LocalSource {
+            id: "empty-fmt".to_string(),
+            path: std::path::PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+        });
+        let config = SourceConfig { sources: vec![src] };
+        assert!(
+            validate(&config).is_ok(),
+            "empty formats list must pass validation"
+        );
+    }
+
+    #[test]
+    fn unknown_format_fails_validation() {
+        let src = Source::Local(LocalSource {
+            id: "bad-fmt-source".to_string(),
+            path: std::path::PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["txt".to_string()],
+        });
+        let config = SourceConfig { sources: vec![src] };
+        let result = validate(&config);
+        assert!(result.is_err(), "unknown format must fail validation");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("[config]"),
+            "must produce a Config error: {msg}"
+        );
+        assert!(
+            msg.contains("txt"),
+            "error must mention the invalid format: {msg}"
+        );
+        assert!(
+            msg.contains("formats"),
+            "error must reference the formats field: {msg}"
+        );
+    }
+
+    #[test]
+    fn mixed_valid_invalid_formats_fails_on_first_invalid() {
+        let src = Source::Git(GitSource {
+            id: "mixed-fmt".to_string(),
+            url: "https://github.com/example/repo.git".to_string(),
+            branch: "main".to_string(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string(), "zip".to_string()],
+        });
+        let config = SourceConfig { sources: vec![src] };
+        let result = validate(&config);
+        assert!(result.is_err(), "invalid format in list must fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("zip"),
+            "error must identify the bad format: {msg}"
         );
     }
 }

@@ -38,6 +38,7 @@ fn pipeline_run_twice_does_not_double_chunk_count() {
             path: docs_dir,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
 
@@ -99,6 +100,7 @@ fn chunk_ids_are_deterministic_across_runs() {
             path: docs_dir,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
     let pipeline_config = PipelineConfig::default();
