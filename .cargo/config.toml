@@ -6,3 +6,9 @@
 
 [env]
 CMAKE = "C:\\Program Files\\CMake\\bin\\cmake.exe"
+
+# Use mold on Linux (CI) to avoid linker OOM on large debug binaries.
+# mold is significantly faster and more memory-efficient than the system
+# linker (ld) when linking binaries with many crates.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
