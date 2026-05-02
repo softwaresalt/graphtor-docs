@@ -148,6 +148,13 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
                         message: format!("url must use https:// or http://: '{}'", url_src.url),
                     });
                 }
+                if url_src.max_pages == 0 {
+                    errors.push(crate::acquire::result::ValidationError {
+                        source_id: url_src.id.clone(),
+                        field: "max_pages".to_string(),
+                        message: "max_pages must be greater than 0".to_string(),
+                    });
+                }
                 // FR-014: glob patterns
                 validate_globs(&url_src.id, "include", &url_src.include, &mut errors);
                 validate_globs(&url_src.id, "exclude", &url_src.exclude, &mut errors);

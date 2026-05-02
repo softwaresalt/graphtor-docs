@@ -8,7 +8,7 @@
 //!
 //! # Limitations
 //!
-//! - Tables and inline images are skipped (plain-text extraction only).
+//! - Inline images are skipped; table text is extracted and appended to the current section.
 //! - `references` and `code_snippets` are always empty — DOCX rendering does
 //!   not preserve hyperlink or code-block structure deterministically.
 
@@ -61,25 +61,35 @@ fn chunk_docx(
     let mut current_text = String::new();
 
     for child in &document.children {
-        let docx_rs::DocumentChild::Paragraph(para) = child else {
-            continue;
-        };
+        match child {
+            docx_rs::DocumentChild::Paragraph(para) => {
+                let text = extract_para_text(para);
+                let heading_level = style_to_heading_level(para);
 
-        let text = extract_para_text(para);
-        let heading_level = style_to_heading_level(para);
-
-        if let Some(level) = heading_level {
-            // Flush current section before starting new heading.
-            if !current_text.trim().is_empty() {
-                sections.push((current_headings.clone(), current_text.trim().to_string()));
+                if let Some(level) = heading_level {
+                    // Flush current section before starting new heading.
+                    if !current_text.trim().is_empty() {
+                        sections.push((current_headings.clone(), current_text.trim().to_string()));
+                    }
+                    current_headings = update_heading_hierarchy(&current_headings, &text, level);
+                    current_text = String::new();
+                } else if !text.is_empty() {
+                    if !current_text.is_empty() {
+                        current_text.push('\n');
+                    }
+                    current_text.push_str(&text);
+                }
             }
-            current_headings = update_heading_hierarchy(&current_headings, &text, level);
-            current_text = String::new();
-        } else if !text.is_empty() {
-            if !current_text.is_empty() {
-                current_text.push('\n');
+            docx_rs::DocumentChild::Table(table) => {
+                let text = extract_table_text(table);
+                if !text.is_empty() {
+                    if !current_text.is_empty() {
+                        current_text.push('\n');
+                    }
+                    current_text.push_str(&text);
+                }
             }
-            current_text.push_str(&text);
+            _ => {}
         }
     }
 
@@ -90,13 +100,14 @@ fn chunk_docx(
 
     // Convert sections to Chunks.
     let mut chunks = Vec::new();
+    let mut running_char_offset: usize = 0;
     for (position, (headings, content)) in sections.into_iter().enumerate() {
         if content.is_empty() {
             continue;
         }
-        let chunk_id = generate_chunk_id(&content, source_path)?;
-        let content_len = content.len();
-        let char_offset: usize = chunks.iter().map(|c: &Chunk| c.content.len()).sum();
+        let chunk_id = generate_chunk_id(&format!("{position}\0{content}"), source_path)?;
+        let char_offset = running_char_offset;
+        running_char_offset += content.len();
         chunks.push(Chunk {
             chunk_id,
             content,
@@ -105,7 +116,6 @@ fn chunk_docx(
             char_offset,
             source_path: source_path.to_string(),
         });
-        let _ = content_len;
     }
 
     Ok(chunks)
@@ -125,6 +135,35 @@ fn extract_para_text(para: &docx_rs::Paragraph) -> String {
         }
     }
     text
+}
+
+/// Extract plain text from a DOCX table by iterating rows, cells, and paragraphs.
+///
+/// Cell paragraphs are joined with a single space; rows are joined with a newline.
+fn extract_table_text(table: &docx_rs::Table) -> String {
+    let mut rows: Vec<String> = Vec::new();
+    for row in &table.rows {
+        let docx_rs::TableChild::TableRow(table_row) = row;
+        let mut cell_texts: Vec<String> = Vec::new();
+        for cell in &table_row.cells {
+            let docx_rs::TableRowChild::TableCell(table_cell) = cell;
+            let mut cell_text = String::new();
+            for cell_child in &table_cell.children {
+                if let docx_rs::TableCellContent::Paragraph(para) = cell_child {
+                    let para_text = extract_para_text(para);
+                    if !para_text.is_empty() {
+                        if !cell_text.is_empty() {
+                            cell_text.push(' ');
+                        }
+                        cell_text.push_str(&para_text);
+                    }
+                }
+            }
+            cell_texts.push(cell_text);
+        }
+        rows.push(cell_texts.join(" | "));
+    }
+    rows.join("\n")
 }
 
 /// Map a DOCX paragraph style name to a heading level (1–3), or `None` for body text.

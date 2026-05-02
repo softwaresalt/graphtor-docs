@@ -71,6 +71,12 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
                         field: Some("url".to_string()),
                     });
                 }
+                if u.max_pages == 0 {
+                    return Err(GraphtorError::Config {
+                        message: format!("url source '{}' max_pages must be greater than 0", u.id),
+                        field: Some("max_pages".to_string()),
+                    });
+                }
                 (&u.include, &u.exclude)
             }
         };

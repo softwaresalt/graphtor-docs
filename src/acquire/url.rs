@@ -103,14 +103,18 @@ pub fn crawl_url_source(
             }
         };
 
-        // Write to disk
+        // Write to disk — skip if content is unchanged to avoid spurious mtime bumps.
         let file_path = url_to_file_path(target_dir, &url);
-        if let Err(e) = std::fs::write(&file_path, markdown.as_bytes()) {
-            warn!(%url, err = %e, "failed to write Markdown file; skipping");
-            continue;
+        let existing = std::fs::read(&file_path).unwrap_or_default();
+        if existing == markdown.as_bytes() {
+            debug!(%url, path = %file_path.display(), "content unchanged; skipping write");
+        } else {
+            if let Err(e) = std::fs::write(&file_path, markdown.as_bytes()) {
+                warn!(%url, err = %e, "failed to write Markdown file; skipping");
+                continue;
+            }
+            info!(%url, path = %file_path.display(), "crawled page");
         }
-
-        info!(%url, path = %file_path.display(), "crawled page");
         written.push(file_path);
 
         // Enqueue links for next depth
@@ -216,8 +220,17 @@ fn extract_origin(url: &str) -> String {
 }
 
 /// Return `true` if `url` belongs to the same registered domain as `origin`.
+///
+/// Compares origin prefixes at a path-component boundary so that
+/// `https://example.com.evil.com/` does not match `https://example.com`.
 fn same_domain(url: &str, origin: &str) -> bool {
-    url.starts_with(origin)
+    if !url.starts_with(origin) {
+        return false;
+    }
+    // The character immediately after the origin prefix must be absent (exact
+    // match), '/' (path continues), or '?' (query follows) to be the same domain.
+    let remainder = &url[origin.len()..];
+    remainder.is_empty() || remainder.starts_with('/') || remainder.starts_with('?')
 }
 
 /// Remove a `#fragment` from a URL string.
