@@ -70,6 +70,19 @@ venv.bak/
 # Ruff stuff:
 .ruff_cache/
 
+# engram plugin (workspace-local state)
+.engram/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.txt
+logs/
+temp/
+tmp/
+*.txt
+
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data

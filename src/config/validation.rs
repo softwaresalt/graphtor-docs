@@ -61,6 +61,18 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
         let (include, exclude) = match source {
             Source::Git(g) => (&g.include, &g.exclude),
             Source::Local(l) => (&l.include, &l.exclude),
+            Source::Url(u) => {
+                if !u.url.starts_with("https://") && !u.url.starts_with("http://") {
+                    return Err(GraphtorError::Config {
+                        message: format!(
+                            "url source '{}' url must use https:// or http://: '{}'",
+                            u.id, u.url
+                        ),
+                        field: Some("url".to_string()),
+                    });
+                }
+                (&u.include, &u.exclude)
+            }
         };
 
         validate_globs(include, id)?;

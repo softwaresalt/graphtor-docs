@@ -243,6 +243,7 @@ fn cmd_sync_incremental(
         let source_id = match &planned.source {
             graphtor_core::Source::Git(g) => g.id.as_str(),
             graphtor_core::Source::Local(l) => l.id.as_str(),
+            graphtor_core::Source::Url(u) => u.id.as_str(),
         };
 
         if !source_dir.exists() {

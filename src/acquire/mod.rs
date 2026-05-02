@@ -1,15 +1,16 @@
-//! Source acquisition module — clone Git repositories and scan local directories.
+//! Source acquisition module — clone Git repositories, scan local directories, and crawl URLs.
 //!
 //! This module orchestrates the full source acquisition pipeline:
-//! planning what to acquire, executing clones and scans, applying glob filtering,
+//! planning what to acquire, executing clones, scans, and URL crawls, applying glob filtering,
 //! and collecting results into an [`AcquisitionResult`].
 //!
 //! # Pipeline stages
 //!
 //! ```text
 //! SourceConfig → plan() → AcquisitionPlan → execute() → AcquisitionResult
-//!                                                  ↳ clone_git_source()  (per Git source)
-//!                                                  ↳ scan_local_source() (per local source)
+//!                                                  ↳ clone_git_source()   (per Git source)
+//!                                                  ↳ scan_local_source()  (per local source)
+//!                                                  ↳ crawl_url_source()   (per URL source)
 //!                                                  ↳ apply_source_filter() (per acquired source)
 //! ```
 
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{error, info, warn};
 
-use crate::config::source::{LocalSource, Source};
+use crate::config::source::{LocalSource, Source, UrlSource};
 use crate::error::GraphtorError;
 
 pub mod filter;
@@ -25,6 +26,7 @@ pub mod git;
 pub mod local;
 pub mod plan;
 pub mod result;
+pub mod url;
 
 pub use filter::filter_files;
 pub use git::clone_git_source;
@@ -34,6 +36,7 @@ pub use result::{
     AcquiredSource, AcquisitionPlan, AcquisitionResult, FilteredFileSet, PlannedSource,
     SourceAction, SourceOutcome, SourceType, ValidationError, ValidationReport,
 };
+pub use url::crawl_url_source;
 
 /// Apply include/exclude glob patterns to a file list and wrap the result in a [`FilteredFileSet`].
 ///
@@ -145,6 +148,7 @@ fn dispatch_planned_source(planned: &PlannedSource, acq_plan: &AcquisitionPlan) 
         }
         SourceAction::CloneGit => execute_clone_git(planned, acq_plan),
         SourceAction::ScanLocal => execute_scan_local(planned, acq_plan),
+        SourceAction::CrawlUrl => execute_crawl_url(planned, acq_plan),
     }
 }
 
@@ -204,6 +208,54 @@ fn execute_scan_local(planned: &PlannedSource, acq_plan: &AcquisitionPlan) -> So
             error: e.to_string(),
         },
     }
+}
+
+/// Crawl a URL source and apply glob filtering to the downloaded Markdown pages.
+fn execute_crawl_url(planned: &PlannedSource, acq_plan: &AcquisitionPlan) -> SourceOutcome {
+    let Source::Url(url_src) = &planned.source else {
+        return SourceOutcome::Failed {
+            source_id: planned.source.id().to_string(),
+            error: "internal: CrawlUrl action on non-url source".to_string(),
+        };
+    };
+
+    match do_crawl_url(url_src, planned, acq_plan) {
+        Ok(ffs) => SourceOutcome::Success(ffs),
+        Err(e) => SourceOutcome::Failed {
+            source_id: url_src.id.clone(),
+            error: e.to_string(),
+        },
+    }
+}
+
+/// Inner fallible body for [`execute_crawl_url`].
+fn do_crawl_url(
+    url_src: &UrlSource,
+    planned: &PlannedSource,
+    _acq_plan: &AcquisitionPlan,
+) -> Result<FilteredFileSet, GraphtorError> {
+    let crawled_files = crawl_url_source(url_src, &planned.target_dir)?;
+
+    let original_count = crawled_files.len();
+
+    // Re-use apply_source_filter: absolute paths from the crawler are matched against
+    // include/exclude patterns the same way local-source files are.
+    let ffs = apply_source_filter(
+        &url_src.id,
+        &crawled_files,
+        &url_src.include,
+        &url_src.exclude,
+    )?;
+
+    if ffs.filtered_count == 0 && original_count > 0 {
+        warn!(
+            source_id = %url_src.id,
+            original_count,
+            "url crawl filtering removed all files from source"
+        );
+    }
+
+    Ok(ffs)
 }
 
 /// Scan a local directory then apply include/exclude filtering to produce a [`FilteredFileSet`].

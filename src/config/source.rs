@@ -49,9 +49,9 @@ impl SourceConfig {
     }
 }
 
-/// A documentation source — either a remote Git repository or a local directory.
+/// A documentation source — a remote Git repository, local directory, or web URL.
 ///
-/// Discriminated in YAML by the `type` field (`git` or `local`).
+/// Discriminated in YAML by the `type` field (`git`, `local`, or `url`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Source {
@@ -59,6 +59,8 @@ pub enum Source {
     Git(GitSource),
     /// A local filesystem directory to index.
     Local(LocalSource),
+    /// A web URL to crawl and index.
+    Url(UrlSource),
 }
 
 impl Source {
@@ -67,6 +69,7 @@ impl Source {
         match self {
             Self::Git(g) => &g.id,
             Self::Local(l) => &l.id,
+            Self::Url(u) => &u.id,
         }
     }
 }
@@ -106,6 +109,57 @@ pub struct LocalSource {
 
 fn default_branch() -> String {
     "main".to_string()
+}
+
+/// Maximum BFS crawl depth relative to the start URL.
+fn default_max_depth() -> u32 {
+    3
+}
+
+/// Maximum number of pages to crawl.
+fn default_max_pages() -> usize {
+    100
+}
+
+/// Whether to restrict the crawl to the start URL's registered domain.
+fn default_domain_lock() -> bool {
+    true
+}
+
+/// Minimum milliseconds to wait between consecutive HTTP requests.
+fn default_rate_limit_ms() -> u64 {
+    500
+}
+
+/// A web URL documentation source crawled via HTTP.
+///
+/// The crawler performs a BFS traversal starting from `url`, converts each
+/// HTML page to Markdown via `htmd`, and writes the results to a local cache
+/// directory for subsequent pipeline stages.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UrlSource {
+    /// Unique identifier for this source (e.g., `"ms-learn-dotnet"`).
+    pub id: String,
+    /// Start URL for the crawl (must use `https://` or `http://`).
+    pub url: String,
+    /// Maximum BFS depth relative to `url`. Defaults to `3`.
+    #[serde(default = "default_max_depth")]
+    pub max_depth: u32,
+    /// Maximum number of pages to crawl. Defaults to `100`.
+    #[serde(default = "default_max_pages")]
+    pub max_pages: usize,
+    /// When `true`, the crawler stays within `url`'s domain. Defaults to `true`.
+    #[serde(default = "default_domain_lock")]
+    pub domain_lock: bool,
+    /// Minimum wait between HTTP requests in milliseconds. Defaults to `500`.
+    #[serde(default = "default_rate_limit_ms")]
+    pub rate_limit_ms: u64,
+    /// Glob patterns selecting crawled-page file paths to include.
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// Glob patterns selecting crawled-page file paths to exclude.
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 #[cfg(test)]
