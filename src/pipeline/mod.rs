@@ -123,9 +123,12 @@ pub struct PipelineResult {
     pub documents_processed: usize,
     /// Total number of chunks written to the database across all sources.
     pub total_chunks: usize,
-    /// Per-file failures collected during the run.
+    /// Per-file parse or load failures collected during the run.
     ///
-    /// Non-empty means some files were skipped; all others were processed.
+    /// Each entry represents a file that could not be processed due to a
+    /// parse or load error. Processing continues for all other files.
+    /// Format-based skips are tracked separately in [`PipelineResult::skipped_by_format`]
+    /// and are not included here.
     pub errors_encountered: Vec<FileError>,
     /// Number of files skipped because their extension was not in the
     /// source's `formats` allow-list.
@@ -357,11 +360,21 @@ fn process_batch(
         };
 
         // Detect extension for format filtering and parse dispatch.
-        let ext = file
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
+        // Canonicalise `.markdown` → `md` so the default allow-list
+        // `["md", "pdf", "docx"]` correctly accepts both `.md` and `.markdown`
+        // files without requiring users to enumerate both spellings.
+        let ext = {
+            let raw = file
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if raw == "markdown" {
+                "md".to_string()
+            } else {
+                raw
+            }
+        };
 
         // Format allow-list filtering: non-empty `formats` acts as an allow-list.
         // Empty `formats` means "no restriction — accept all extensions".

@@ -13,7 +13,12 @@ use crate::config::source::{Source, SourceConfig};
 use crate::error::GraphtorError;
 
 /// Extension strings accepted by the ingestion pipeline.
-const VALID_FORMATS: &[&str] = &["md", "pdf", "docx"];
+///
+/// `"markdown"` is included as an alias for `"md"` because the pipeline
+/// canonicalises the `.markdown` file extension to `"md"` at runtime.
+/// Validation accepts both spellings so that user config is consistent with
+/// what the pipeline actually processes.
+const VALID_FORMATS: &[&str] = &["md", "pdf", "docx", "markdown"];
 
 /// Validate a parsed [`SourceConfig`] for semantic correctness.
 ///
@@ -93,9 +98,14 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
 }
 
 /// Validate that all strings in `formats` are recognized pipeline extensions.
+///
+/// Comparison is case-insensitive: `"MD"`, `"Pdf"`, and `"DOCX"` are all
+/// accepted.  This matches the pipeline's runtime behaviour, which lower-cases
+/// file extensions before applying the allow-list.
 fn validate_formats(formats: &[String], source_id: &str) -> Result<(), GraphtorError> {
     for fmt in formats {
-        if !VALID_FORMATS.contains(&fmt.as_str()) {
+        let normalised = fmt.to_ascii_lowercase();
+        if !VALID_FORMATS.contains(&normalised.as_str()) {
             return Err(GraphtorError::Config {
                 message: format!(
                     "source '{source_id}' has invalid format '{fmt}'; \

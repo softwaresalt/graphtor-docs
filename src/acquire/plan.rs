@@ -265,15 +265,18 @@ fn validate_globs(
 }
 
 /// Collect [`ValidationError`]s for any format strings that are not in the
-/// supported extension list (`md`, `pdf`, `docx`).
+/// supported extension list (`md`, `pdf`, `docx`, `markdown`).
+///
+/// Comparison is case-insensitive to match the pipeline's runtime behaviour.
 fn validate_format_list(
     source_id: &str,
     formats: &[String],
     errors: &mut Vec<crate::acquire::result::ValidationError>,
 ) {
-    const VALID: &[&str] = &["md", "pdf", "docx"];
+    const VALID: &[&str] = &["md", "pdf", "docx", "markdown"];
     for fmt in formats {
-        if !VALID.contains(&fmt.as_str()) {
+        let normalised = fmt.to_ascii_lowercase();
+        if !VALID.contains(&normalised.as_str()) {
             errors.push(crate::acquire::result::ValidationError {
                 source_id: source_id.to_string(),
                 field: "formats".to_string(),
