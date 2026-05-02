@@ -43,7 +43,7 @@ use crate::db::nodes::{upsert_source, SourceRecord};
 use crate::db::vectors::upsert_vector;
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
-use crate::parse::{parse_document, parse_pdf_document};
+use crate::parse::{parse_document, parse_docx_document, parse_pdf_document};
 use crate::path::validate_path;
 use crate::DataStore;
 
@@ -342,6 +342,9 @@ fn process_batch(
             "pdf" => std::fs::read(file)
                 .map_err(GraphtorError::Io)
                 .and_then(|bytes| parse_pdf_document(&bytes, &path_str)),
+            "docx" => std::fs::read(file)
+                .map_err(GraphtorError::Io)
+                .and_then(|bytes| parse_docx_document(&bytes, &path_str)),
             _ => {
                 debug!(
                     path = %display_path,
@@ -494,6 +497,16 @@ fn build_source_record(ps: &PlannedSource) -> SourceRecord {
             SourceRecord {
                 url: local.path.to_string_lossy().into_owned(),
                 kind: "local".to_string(),
+                name: id.clone(),
+                source_id: id,
+                synced_at: None,
+            }
+        }
+        Source::Url(url_src) => {
+            let id = url_src.id.clone();
+            SourceRecord {
+                url: url_src.url.clone(),
+                kind: "url".to_string(),
                 name: id.clone(),
                 source_id: id,
                 synced_at: None,

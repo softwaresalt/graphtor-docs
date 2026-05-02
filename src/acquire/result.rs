@@ -18,6 +18,8 @@ pub enum SourceAction {
     SkipGit,
     /// Local source needs to be recursively scanned.
     ScanLocal,
+    /// URL source needs to be crawled via HTTP and converted to Markdown.
+    CrawlUrl,
 }
 
 impl std::fmt::Display for SourceAction {
@@ -26,6 +28,7 @@ impl std::fmt::Display for SourceAction {
             Self::CloneGit => f.write_str("CloneGit"),
             Self::SkipGit => f.write_str("SkipGit"),
             Self::ScanLocal => f.write_str("ScanLocal"),
+            Self::CrawlUrl => f.write_str("CrawlUrl"),
         }
     }
 }
@@ -37,6 +40,8 @@ pub enum SourceType {
     Git,
     /// Scanned from a local filesystem directory.
     Local,
+    /// Crawled from a web URL.
+    Url,
 }
 
 impl std::fmt::Display for SourceType {
@@ -44,6 +49,7 @@ impl std::fmt::Display for SourceType {
         match self {
             Self::Git => f.write_str("Git"),
             Self::Local => f.write_str("Local"),
+            Self::Url => f.write_str("Url"),
         }
     }
 }
@@ -80,6 +86,8 @@ pub struct AcquisitionPlan {
     pub total_skip: usize,
     /// Number of local sources that will be scanned.
     pub total_scan: usize,
+    /// Number of URL sources that will be crawled.
+    pub total_crawl: usize,
 }
 
 /// A single source after successful acquisition.
@@ -216,6 +224,11 @@ mod tests {
     // ── SourceAction display and equality ────────────────────────────────
 
     #[test]
+    fn source_action_crawl_url_display() {
+        assert_eq!(SourceAction::CrawlUrl.to_string(), "CrawlUrl");
+    }
+
+    #[test]
     fn source_action_clone_git_display() {
         assert_eq!(SourceAction::CloneGit.to_string(), "CloneGit");
     }
@@ -237,6 +250,11 @@ mod tests {
     }
 
     // ── SourceType display and equality ──────────────────────────────────
+
+    #[test]
+    fn source_type_url_display() {
+        assert_eq!(SourceType::Url.to_string(), "Url");
+    }
 
     #[test]
     fn source_type_git_display() {

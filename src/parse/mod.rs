@@ -18,12 +18,14 @@
 pub mod ast;
 pub mod chunker;
 pub mod code;
+pub mod docx;
 pub mod frontmatter;
 pub mod links;
 pub mod pdf;
 pub mod types;
 
 pub use ast::parse_ast;
+pub use docx::parse_docx_document;
 pub use pdf::parse_pdf_document;
 pub use types::{AstNode, Chunk, CodeSnippet, FrontmatterData, ParsedDocument, Reference};
 

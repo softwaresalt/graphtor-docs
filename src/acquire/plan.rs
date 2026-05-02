@@ -47,6 +47,7 @@ pub fn plan(
     let mut total_clone: usize = 0;
     let mut total_skip: usize = 0;
     let mut total_scan: usize = 0;
+    let mut total_crawl: usize = 0;
 
     for source in &config.sources {
         let (action, target_dir) =
@@ -55,6 +56,7 @@ pub fn plan(
             SourceAction::CloneGit => total_clone += 1,
             SourceAction::SkipGit => total_skip += 1,
             SourceAction::ScanLocal => total_scan += 1,
+            SourceAction::CrawlUrl => total_crawl += 1,
         }
         sources.push(PlannedSource {
             source: source.clone(),
@@ -67,6 +69,7 @@ pub fn plan(
         total_clone,
         total_skip,
         total_scan,
+        total_crawl,
         data_root = %canonical_data_root.display(),
         "acquisition plan ready"
     );
@@ -82,6 +85,7 @@ pub fn plan(
         total_clone,
         total_skip,
         total_scan,
+        total_crawl,
     })
 }
 
@@ -135,6 +139,26 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
                 validate_globs(&local.id, "include", &local.include, &mut errors);
                 validate_globs(&local.id, "exclude", &local.exclude, &mut errors);
             }
+            Source::Url(url_src) => {
+                // URL must use https:// or http://
+                if !url_src.url.starts_with("https://") && !url_src.url.starts_with("http://") {
+                    errors.push(crate::acquire::result::ValidationError {
+                        source_id: url_src.id.clone(),
+                        field: "url".to_string(),
+                        message: format!("url must use https:// or http://: '{}'", url_src.url),
+                    });
+                }
+                if url_src.max_pages == 0 {
+                    errors.push(crate::acquire::result::ValidationError {
+                        source_id: url_src.id.clone(),
+                        field: "max_pages".to_string(),
+                        message: "max_pages must be greater than 0".to_string(),
+                    });
+                }
+                // FR-014: glob patterns
+                validate_globs(&url_src.id, "include", &url_src.include, &mut errors);
+                validate_globs(&url_src.id, "exclude", &url_src.exclude, &mut errors);
+            }
         }
     }
 
@@ -174,6 +198,11 @@ fn resolve_source_action(
         Source::Local(local) => {
             let canonical_local = crate::path::validate_path(&local.path, allowed_root)?;
             Ok((SourceAction::ScanLocal, canonical_local))
+        }
+        Source::Url(url_src) => {
+            let target_dir =
+                crate::path::validate_path(&canonical_data_root.join(&url_src.id), allowed_root)?;
+            Ok((SourceAction::CrawlUrl, target_dir))
         }
     }
 }

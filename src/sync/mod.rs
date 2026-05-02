@@ -75,6 +75,7 @@ pub fn sync_source(
     let (source_kind, source_url, source_name) = match source {
         Source::Git(g) => ("git", g.url.as_str(), g.id.as_str()),
         Source::Local(l) => ("local", l.path.to_str().unwrap_or(""), l.id.as_str()),
+        Source::Url(u) => ("url", u.url.as_str(), u.id.as_str()),
     };
 
     info!(source_id, source_kind, "starting sync cycle");
@@ -100,6 +101,14 @@ pub fn sync_source(
             compute_git_diff(source_dir, last_commit)?
         }
         Source::Local(_) => {
+            let stored_mtimes = stored
+                .as_ref()
+                .map(|s| &s.file_mtimes)
+                .map_or_else(Default::default, Clone::clone);
+            compute_mtime_diff(source_dir, &stored_mtimes)?
+        }
+        Source::Url(_) => {
+            // URL sources: treat all crawled files as mtime-tracked, same as local.
             let stored_mtimes = stored
                 .as_ref()
                 .map(|s| &s.file_mtimes)
@@ -217,6 +226,15 @@ fn build_new_state(
         }
         Source::Local(_) => {
             // Scan current mtimes to record the new baseline.
+            let file_mtimes = scan_mtimes(source_dir).unwrap_or_default();
+            SourceSyncState {
+                last_commit: None,
+                file_mtimes,
+                last_sync: Some(now),
+            }
+        }
+        Source::Url(_) => {
+            // URL sources: track by mtime, same as local sources.
             let file_mtimes = scan_mtimes(source_dir).unwrap_or_default();
             SourceSyncState {
                 last_commit: None,

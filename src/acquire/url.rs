@@ -1,0 +1,463 @@
+//! URL source acquisition via BFS HTTP crawling.
+//!
+//! Entry point: [`crawl_url_source`]. Fetches pages starting at the configured
+//! URL, converts HTML to Markdown via [`htmd`], and writes each page as a
+//! `{hash}.md` file under `target_dir`. Returns the list of written file paths
+//! for downstream pipeline stages.
+//!
+//! # Behaviour
+//!
+//! - BFS traversal bounded by `max_depth` and `max_pages`.
+//! - When `domain_lock` is `true` (default), only links whose registered domain
+//!   matches the start URL are followed.
+//! - `robots.txt` is fetched once from the start-URL origin and honoured for
+//!   every subsequent request.
+//! - Per-page HTTP failures are logged as warnings; crawling continues.
+//! - A minimum `rate_limit_ms` delay is inserted between consecutive requests.
+
+use std::collections::{HashSet, VecDeque};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use sha2::{Digest, Sha256};
+use tracing::{debug, info, warn};
+
+use crate::config::source::UrlSource;
+use crate::error::GraphtorError;
+
+// ── Public entry point ────────────────────────────────────────────────────────
+
+/// Crawl a [`UrlSource`] starting at `source.url` and write converted Markdown
+/// files to `target_dir`.
+///
+/// Returns an ordered list of the Markdown file paths written.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError`] only for fatal pre-crawl failures such as:
+/// - failing to create `target_dir`
+/// - failing to build the HTTP client
+///
+/// Per-page HTTP errors are logged as warnings and the page is skipped.
+pub fn crawl_url_source(
+    source: &UrlSource,
+    target_dir: &Path,
+) -> Result<Vec<PathBuf>, GraphtorError> {
+    std::fs::create_dir_all(target_dir).map_err(GraphtorError::Io)?;
+
+    let client = build_client(source.rate_limit_ms)?;
+    let robots = fetch_robots_txt(&client, &source.url);
+    let origin = extract_origin(&source.url);
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+    let mut written: Vec<PathBuf> = Vec::new();
+
+    queue.push_back((normalise_url(&source.url), 0));
+
+    while let Some((url, depth)) = queue.pop_front() {
+        if visited.contains(&url) {
+            continue;
+        }
+        if written.len() >= source.max_pages {
+            debug!(
+                limit = source.max_pages,
+                "page limit reached; stopping crawl"
+            );
+            break;
+        }
+        if depth > source.max_depth {
+            continue;
+        }
+
+        // Honour robots.txt
+        if let Some(ref robot) = robots {
+            if !robot.allowed(&url) {
+                debug!(%url, "robots.txt disallows; skipping");
+                visited.insert(url);
+                continue;
+            }
+        }
+
+        visited.insert(url.clone());
+
+        // Rate-limit delay
+        if !written.is_empty() {
+            std::thread::sleep(Duration::from_millis(source.rate_limit_ms));
+        }
+
+        // Fetch and convert
+        let html = match fetch_html(&client, &url) {
+            Ok(h) => h,
+            Err(e) => {
+                warn!(%url, err = %e, "failed to fetch page; skipping");
+                continue;
+            }
+        };
+
+        let markdown = match htmd::convert(&html) {
+            Ok(md) => md,
+            Err(e) => {
+                warn!(%url, err = %e, "failed to convert HTML to Markdown; skipping");
+                continue;
+            }
+        };
+
+        // Write to disk — skip if content is unchanged to avoid spurious mtime bumps.
+        let file_path = url_to_file_path(target_dir, &url);
+        let existing = std::fs::read(&file_path).unwrap_or_default();
+        if existing == markdown.as_bytes() {
+            debug!(%url, path = %file_path.display(), "content unchanged; skipping write");
+        } else {
+            if let Err(e) = std::fs::write(&file_path, markdown.as_bytes()) {
+                warn!(%url, err = %e, "failed to write Markdown file; skipping");
+                continue;
+            }
+            info!(%url, path = %file_path.display(), "crawled page");
+        }
+        written.push(file_path);
+
+        // Enqueue links for next depth
+        if depth < source.max_depth {
+            for link in extract_links(&html, &url) {
+                let normalised = normalise_url(&link);
+                if visited.contains(&normalised) {
+                    continue;
+                }
+                if source.domain_lock && !same_domain(&normalised, &origin) {
+                    continue;
+                }
+                queue.push_back((normalised, depth + 1));
+            }
+        }
+    }
+
+    info!(
+        source_id = %source.id,
+        pages = written.len(),
+        "url crawl complete"
+    );
+    Ok(written)
+}
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+/// Build a `reqwest` blocking HTTP client with the given user-agent and timeouts.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Config`] if the client cannot be constructed.
+fn build_client(rate_limit_ms: u64) -> Result<reqwest::blocking::Client, GraphtorError> {
+    // Page-level timeout: 30 s; connection timeout: 10 s. rate_limit_ms controls
+    // inter-request pacing, not the per-request I/O deadline.
+    let _ = rate_limit_ms;
+    reqwest::blocking::Client::builder()
+        .user_agent("graphtor-docs/1.0 (documentation crawler)")
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| GraphtorError::Config {
+            message: format!("failed to build HTTP client: {e}"),
+            field: None,
+        })
+}
+
+/// Fetch the HTML body of `url`, returning `Err` on any HTTP or I/O failure.
+fn fetch_html(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    response
+        .text()
+        .map_err(|e| format!("failed to read response body: {e}"))
+}
+
+/// Fetch and parse `robots.txt` from `start_url`'s origin.
+///
+/// Returns `None` if the fetch or parse fails (allow-all semantics).
+fn fetch_robots_txt(
+    client: &reqwest::blocking::Client,
+    start_url: &str,
+) -> Option<texting_robots::Robot> {
+    let origin = extract_origin(start_url);
+    let robots_url = format!("{origin}/robots.txt");
+
+    let bytes = client
+        .get(&robots_url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .ok()?
+        .bytes()
+        .ok()?;
+
+    texting_robots::Robot::new("graphtor-docs", &bytes).ok()
+}
+
+/// Extract the `scheme://host[:port]` portion of a URL.
+///
+/// Falls back to the full URL if no `://` separator is found.
+fn extract_origin(url: &str) -> String {
+    if let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    {
+        let scheme = if url.starts_with("https://") {
+            "https"
+        } else {
+            "http"
+        };
+        let host = rest.split('/').next().unwrap_or(rest);
+        format!("{scheme}://{host}")
+    } else {
+        url.split('/').take(3).collect::<Vec<_>>().join("/")
+    }
+}
+
+/// Return `true` if `url` belongs to the same registered domain as `origin`.
+///
+/// Compares origin prefixes at a path-component boundary so that
+/// `https://example.com.evil.com/` does not match `https://example.com`.
+fn same_domain(url: &str, origin: &str) -> bool {
+    if !url.starts_with(origin) {
+        return false;
+    }
+    // The character immediately after the origin prefix must be absent (exact
+    // match), '/' (path continues), or '?' (query follows) to be the same domain.
+    let remainder = &url[origin.len()..];
+    remainder.is_empty() || remainder.starts_with('/') || remainder.starts_with('?')
+}
+
+/// Remove a `#fragment` from a URL string.
+fn strip_fragment(url: &str) -> &str {
+    url.split_once('#').map_or(url, |(before, _)| before)
+}
+
+/// Extract all valid absolute and relative `<a href>` links from `html`,
+/// resolving them against `base_url`.
+fn extract_links(html: &str, base_url: &str) -> Vec<String> {
+    let document = scraper::Html::parse_document(html);
+    let Ok(selector) = scraper::Selector::parse("a[href]") else {
+        warn!("failed to compile link CSS selector; no links extracted");
+        return Vec::new();
+    };
+
+    let mut links = Vec::new();
+    for element in document.select(&selector) {
+        let Some(href) = element.value().attr("href") else {
+            continue;
+        };
+
+        // Skip non-navigable hrefs
+        if href.starts_with('#') || href.starts_with("javascript:") || href.starts_with("mailto:") {
+            continue;
+        }
+
+        if let Some(resolved) = resolve_link(href, base_url) {
+            let clean = strip_fragment(&resolved).to_string();
+            if !clean.is_empty() {
+                links.push(clean);
+            }
+        }
+    }
+
+    links
+}
+
+/// Resolve `href` against `base_url` into an absolute URL.
+///
+/// Returns `None` if resolution is not possible.
+fn resolve_link(href: &str, base_url: &str) -> Option<String> {
+    if href.starts_with("https://") || href.starts_with("http://") {
+        return Some(href.to_string());
+    }
+
+    let base_origin = extract_origin(base_url);
+
+    if href.starts_with('/') {
+        return Some(format!("{base_origin}{href}"));
+    }
+
+    // Relative path: join against base_url's directory
+    let base_dir = if base_url.ends_with('/') {
+        base_url.to_string()
+    } else {
+        let last_slash = base_url.rfind('/')?;
+        base_url[..=last_slash].to_string()
+    };
+
+    Some(format!("{base_dir}{href}"))
+}
+
+/// Normalise a URL for deduplication: strip trailing slash (except bare origin).
+fn normalise_url(url: &str) -> String {
+    let stripped = url.trim_end_matches('/');
+    if stripped.is_empty() {
+        url.to_string()
+    } else {
+        stripped.to_string()
+    }
+}
+
+/// Compute the output file path for a crawled URL.
+///
+/// Uses the first 16 hex characters of the SHA-256 of the URL as the file name
+/// to avoid filesystem path issues with arbitrary URL structures.
+fn url_to_file_path(target_dir: &Path, url: &str) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(url.as_bytes());
+    let hash = hasher.finalize();
+    let hex: String = hash.iter().take(8).fold(String::new(), |mut s, b| {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{b:02x}");
+        s
+    });
+    target_dir.join(format!("{hex}.md"))
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_origin_https() {
+        assert_eq!(
+            extract_origin("https://learn.microsoft.com/en-us/dotnet/"),
+            "https://learn.microsoft.com"
+        );
+    }
+
+    #[test]
+    fn extract_origin_http_with_path() {
+        assert_eq!(
+            extract_origin("http://example.com/foo/bar"),
+            "http://example.com"
+        );
+    }
+
+    #[test]
+    fn strip_fragment_removes_hash() {
+        assert_eq!(
+            strip_fragment("https://example.com/page#section"),
+            "https://example.com/page"
+        );
+    }
+
+    #[test]
+    fn strip_fragment_no_fragment_unchanged() {
+        assert_eq!(
+            strip_fragment("https://example.com/page"),
+            "https://example.com/page"
+        );
+    }
+
+    #[test]
+    fn normalise_url_strips_trailing_slash() {
+        assert_eq!(
+            normalise_url("https://example.com/foo/"),
+            "https://example.com/foo"
+        );
+    }
+
+    #[test]
+    fn normalise_url_no_trailing_slash_unchanged() {
+        assert_eq!(
+            normalise_url("https://example.com/foo"),
+            "https://example.com/foo"
+        );
+    }
+
+    #[test]
+    fn same_domain_true_for_same_origin() {
+        assert!(same_domain(
+            "https://learn.microsoft.com/en-us/dotnet",
+            "https://learn.microsoft.com"
+        ));
+    }
+
+    #[test]
+    fn same_domain_false_for_different_origin() {
+        assert!(!same_domain(
+            "https://other.example.com/page",
+            "https://learn.microsoft.com"
+        ));
+    }
+
+    #[test]
+    fn url_to_file_path_produces_md_file() {
+        let path = url_to_file_path(Path::new("/data"), "https://example.com/page");
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.ends_with(".md"), "expected .md extension, got {name}");
+        assert_eq!(
+            name.len(),
+            19,
+            "expected 16 hex chars + .md (19 chars), got {name}"
+        );
+    }
+
+    #[test]
+    fn url_to_file_path_deterministic() {
+        let a = url_to_file_path(Path::new("/data"), "https://example.com/page");
+        let b = url_to_file_path(Path::new("/data"), "https://example.com/page");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn url_to_file_path_distinct_for_different_urls() {
+        let a = url_to_file_path(Path::new("/data"), "https://example.com/page1");
+        let b = url_to_file_path(Path::new("/data"), "https://example.com/page2");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn resolve_link_absolute_passthrough() {
+        let result = resolve_link("https://other.com/page", "https://base.com/dir/");
+        assert_eq!(result, Some("https://other.com/page".to_string()));
+    }
+
+    #[test]
+    fn resolve_link_absolute_path() {
+        let result = resolve_link("/docs/overview", "https://example.com/some/path");
+        assert_eq!(
+            result,
+            Some("https://example.com/docs/overview".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_link_relative_path() {
+        let result = resolve_link("next.html", "https://example.com/docs/index.html");
+        assert_eq!(
+            result,
+            Some("https://example.com/docs/next.html".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_links_skips_fragment_only() {
+        let html = r##"<a href="#section">Section</a>"##;
+        let links = extract_links(html, "https://example.com/page");
+        assert!(links.is_empty(), "fragment-only links should be skipped");
+    }
+
+    #[test]
+    fn extract_links_skips_mailto() {
+        let html = r#"<a href="mailto:info@example.com">Contact</a>"#;
+        let links = extract_links(html, "https://example.com/page");
+        assert!(links.is_empty(), "mailto links should be skipped");
+    }
+
+    #[test]
+    fn extract_links_returns_absolute_href() {
+        let html = r#"<a href="https://example.com/about">About</a>"#;
+        let links = extract_links(html, "https://example.com/home");
+        assert_eq!(links, vec!["https://example.com/about".to_string()]);
+    }
+}
