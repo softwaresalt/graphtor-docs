@@ -122,12 +122,27 @@ For each task in the shipment/feature:
 
 ### Step 5: Post-Merge Closure
 
-After user-approved merge:
+After user-approved merge (P-011 requires explicit operator approval):
 
-1. Close the shipment via `backlogit_ship_shipment` if applicable.
+1. Close the shipment via `backlogit_ship_shipment` — this is the ONLY context
+   in which this tool may be called (per P-010). A PR must have been merged first.
 2. Write compound learnings for hard-won solutions.
 3. Update documentation if templates changed significantly.
 4. Write session memory to `docs/memory/`.
+
+## Forbidden Actions (NON-NEGOTIABLE — per P-010 and P-011)
+
+Ship MUST NOT perform any of the following:
+
+1. **MUST NOT call `backlogit_harvest_stash`** — stash harvesting is Stage-only.
+2. **MUST NOT call `backlogit_create_shipment`** — shipment creation is Stage-only.
+3. **MUST NOT call `backlogit_deliberate`** — deliberation routing is Stage-only.
+4. **MUST NOT push directly to `main` or `master`** — all changes go through
+   feature branches and PRs (P-011).
+5. **MUST NOT force-push** to any branch.
+6. **MUST NOT merge without operator approval** — wait for explicit confirmation.
+7. **MUST NOT call `backlogit_ship_shipment` before PR merge** — this tool is
+   ONLY valid in Step 5 (post-merge closure) after operator-approved merge.
 
 ## Stop Conditions
 

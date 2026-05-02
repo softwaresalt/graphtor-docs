@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "installed_at": "2026-04-29T00:35:00-07:00",
-  "tuned_at": null,
+  "tuned_at": "2026-05-01T21:48:00-07:00",
   "autoharness_version": "1.3.4",
   "autoharness_home": "C:\\Users\\derek.williams\\AppData\\Roaming\\uv\\tools\\autoharness\\Lib\\site-packages\\autoharness\\data",
   "profile_hash": "3e295dceec3e923526177992ffa2cd92f95854a9b840f5bba3047ea4f2f86cae",
@@ -105,7 +105,22 @@
     "DOCS_MEMORY": "docs/memory",
     "DOCS_CLOSURE": "docs/closure"
   },
-  "tuning_history": [],
+  "tuning_history": [
+    {
+      "tuned_at": "2026-05-01T21:48:00-07:00",
+      "trigger": "Workflow violation — Stage agent called backlogit_ship_shipment and bypassed PR workflow",
+      "changes": [
+        "Removed backlogit_ship_shipment, backlogit_archive_item, backlogit_delete_item, backlogit_claim_shipment from Stage agent tool list",
+        "Added Forbidden Actions section to Stage agent with 7 NON-NEGOTIABLE rules",
+        "Added Forbidden Actions section to Ship agent with 7 NON-NEGOTIABLE rules",
+        "Added P-010: Stage/Ship Boundary Enforcement policy",
+        "Added P-011: Branch Protection for Shipping Workflows policy",
+        "Updated Ship Step 5 to explicitly require PR merge before ship_shipment"
+      ],
+      "policies_added": ["P-010", "P-011"],
+      "evidence": "Agent called backlogit_ship_shipment during Stage operation without PR, violating branch protection and Stage/Ship boundary"
+    }
+  ],
   "vscode_settings": {
     "applied": false,
     "user_settings_path": null,
