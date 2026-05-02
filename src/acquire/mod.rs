@@ -174,6 +174,7 @@ fn execute_clone_git(planned: &PlannedSource, acq_plan: &AcquisitionPlan) -> Sou
         path: planned.target_dir.clone(),
         include: git.include.clone(),
         exclude: git.exclude.clone(),
+        formats: git.formats.clone(),
     };
 
     match scan_and_filter(&scan_source, acq_plan) {
@@ -199,6 +200,7 @@ fn execute_scan_local(planned: &PlannedSource, acq_plan: &AcquisitionPlan) -> So
         path: planned.target_dir.clone(),
         include: local.include.clone(),
         exclude: local.exclude.clone(),
+        formats: local.formats.clone(),
     };
 
     match scan_and_filter(&scan_source, acq_plan) {

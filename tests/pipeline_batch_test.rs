@@ -42,6 +42,7 @@ fn batch_size_two_processes_all_five_files() {
             path: docs_dir,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");
@@ -86,6 +87,7 @@ fn parallel_true_produces_same_result_as_sequential() {
             path: docs_dir.clone(),
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
 

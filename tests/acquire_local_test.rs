@@ -17,6 +17,7 @@ fn make_local_source(id: &str, path: impl Into<PathBuf>) -> LocalSource {
         path: path.into(),
         include: vec![],
         exclude: vec![],
+        formats: vec![],
     }
 }
 

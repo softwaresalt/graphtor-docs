@@ -44,6 +44,7 @@ fn pipeline_pdf_invalid_bytes_counted_as_error() {
             path: docs_dir,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");
@@ -78,6 +79,7 @@ fn pipeline_unknown_extension_skipped_silently() {
             path: docs_dir,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");
@@ -117,6 +119,7 @@ fn pipeline_mixed_batch_md_processed_invalid_pdf_errored() {
             path: docs_dir,
             include: vec![],
             exclude: vec![],
+            formats: vec![],
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");

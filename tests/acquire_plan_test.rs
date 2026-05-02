@@ -57,6 +57,7 @@ fn git_source(id: &str, url: &str, branch: &str) -> Source {
         branch: branch.to_string(),
         include: vec![],
         exclude: vec![],
+        formats: vec![],
     })
 }
 
@@ -66,6 +67,7 @@ fn local_source(id: &str, path: impl Into<PathBuf>) -> Source {
         path: path.into(),
         include: vec![],
         exclude: vec![],
+        formats: vec![],
     })
 }
 
@@ -315,6 +317,7 @@ fn non_star_star_prefix_include_pattern_matches_subdir_files() {
             path: local_dir.clone(),
             include: vec!["docs/**/*.md".to_string()], // no leading **
             exclude: vec![],
+            formats: vec![],
         })],
     };
 

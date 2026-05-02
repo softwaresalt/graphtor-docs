@@ -16,6 +16,7 @@ fn make_git_source(id: &str, url: &str, branch: &str) -> GitSource {
         branch: branch.to_owned(),
         include: vec![],
         exclude: vec![],
+        formats: vec![],
     }
 }
 

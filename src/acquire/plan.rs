@@ -116,6 +116,8 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
                 // FR-014: glob patterns
                 validate_globs(&git.id, "include", &git.include, &mut errors);
                 validate_globs(&git.id, "exclude", &git.exclude, &mut errors);
+                // FR-021.002: format allow-list
+                validate_format_list(&git.id, &git.formats, &mut errors);
             }
             Source::Local(local) => {
                 if local.path.exists() {
@@ -138,6 +140,8 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
                 // FR-014: glob patterns
                 validate_globs(&local.id, "include", &local.include, &mut errors);
                 validate_globs(&local.id, "exclude", &local.exclude, &mut errors);
+                // FR-021.002: format allow-list
+                validate_format_list(&local.id, &local.formats, &mut errors);
             }
             Source::Url(url_src) => {
                 // URL must use https:// or http://
@@ -158,6 +162,8 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
                 // FR-014: glob patterns
                 validate_globs(&url_src.id, "include", &url_src.include, &mut errors);
                 validate_globs(&url_src.id, "exclude", &url_src.exclude, &mut errors);
+                // FR-021.002: format allow-list
+                validate_format_list(&url_src.id, &url_src.formats, &mut errors);
             }
         }
     }
@@ -253,6 +259,28 @@ fn validate_globs(
                 source_id: source_id.to_string(),
                 field: field.to_string(),
                 message: format!("invalid glob pattern: '{pattern}'"),
+            });
+        }
+    }
+}
+
+/// Collect [`ValidationError`]s for any format strings that are not in the
+/// supported extension list (`md`, `pdf`, `docx`).
+fn validate_format_list(
+    source_id: &str,
+    formats: &[String],
+    errors: &mut Vec<crate::acquire::result::ValidationError>,
+) {
+    const VALID: &[&str] = &["md", "pdf", "docx"];
+    for fmt in formats {
+        if !VALID.contains(&fmt.as_str()) {
+            errors.push(crate::acquire::result::ValidationError {
+                source_id: source_id.to_string(),
+                field: "formats".to_string(),
+                message: format!(
+                    "invalid format '{fmt}'; valid formats are: {}",
+                    VALID.join(", ")
+                ),
             });
         }
     }
