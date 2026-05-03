@@ -14,7 +14,9 @@
 //!
 //! ## Chunk ID Format
 //!
-//! Section-based: `{source_path}#section={N}#segment={M}`.
+//! - Section-based (heading-aware path): `{source_path}#section={N}#segment={M}`
+//! - Page-based (uniform-font fallback): `{source_path}#page={N}#segment={M}`
+//!
 //! Previously ingested PDFs must be re-synced (`graphtor sync --force`) to
 //! rebuild chunk IDs.
 //!
@@ -93,6 +95,10 @@ impl FontSizeHistogram {
     ///
     /// Maps similar sizes (e.g. 9.8pt and 10.2pt) into the same bucket.
     /// The key is `(quantized × 10) as u16` to avoid floating-point map keys.
+    ///
+    /// Font sizes above ~6553pt are clamped to `u16::MAX` — this distorts the
+    /// histogram for unusually large fonts, but practical PDFs never exceed
+    /// ~200pt so the clamp is safe in production.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn quantize(font_size: f64) -> u16 {
         let quantized = (font_size * 2.0).round() / 2.0;
@@ -624,6 +630,10 @@ fn extract_title_from_pages(pages: &[String], source_path: &str) -> Option<Strin
 /// [`MAX_CHUNK_CHARS`].
 ///
 /// Short segments are returned unchanged in a single-element `Vec`.
+///
+/// If a single paragraph itself exceeds [`MAX_CHUNK_CHARS`] (no `\n\n`
+/// separators available), the paragraph is split at word boundaries so no
+/// output segment exceeds the limit.
 fn split_long_text(text: &str) -> Vec<String> {
     if text.len() <= MAX_CHUNK_CHARS {
         return vec![text.to_string()];
@@ -633,17 +643,26 @@ fn split_long_text(text: &str) -> Vec<String> {
     let mut current = String::new();
 
     for para in text.split("\n\n") {
-        if current.is_empty() {
-            current.push_str(para);
-        } else if current.len() + 2 + para.len() > MAX_CHUNK_CHARS {
-            let trimmed = current.trim().to_string();
-            if !trimmed.is_empty() {
-                segments.push(trimmed);
-            }
-            current = para.to_string();
+        // If the paragraph itself exceeds the limit, split it at word boundaries.
+        let para_pieces: Vec<&str> = if para.len() > MAX_CHUNK_CHARS {
+            split_at_word_boundaries(para)
         } else {
-            current.push_str("\n\n");
-            current.push_str(para);
+            vec![para]
+        };
+
+        for piece in para_pieces {
+            if current.is_empty() {
+                current.push_str(piece);
+            } else if current.len() + 2 + piece.len() > MAX_CHUNK_CHARS {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    segments.push(trimmed);
+                }
+                current = piece.to_string();
+            } else {
+                current.push_str("\n\n");
+                current.push_str(piece);
+            }
         }
     }
 
@@ -659,12 +678,37 @@ fn split_long_text(text: &str) -> Vec<String> {
     }
 }
 
+/// Split `text` at word boundaries so each piece is at most [`MAX_CHUNK_CHARS`]
+/// characters long.
+///
+/// Used as a fallback inside [`split_long_text`] when a single paragraph has no
+/// `\n\n` separators but exceeds the chunk size limit.
+fn split_at_word_boundaries(text: &str) -> Vec<&str> {
+    let mut pieces: Vec<&str> = Vec::new();
+    let mut start = 0;
+
+    while start < text.len() {
+        let end = start + MAX_CHUNK_CHARS;
+        if end >= text.len() {
+            pieces.push(&text[start..]);
+            break;
+        }
+        // Walk back from `end` to the last space to avoid splitting mid-word.
+        let split_pos = text[start..end]
+            .rfind(' ')
+            .map_or(end, |pos| start + pos + 1); // +1: skip the space itself
+        pieces.push(text[start..split_pos].trim_end());
+        start = split_pos;
+    }
+    pieces
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_heading_hierarchy, chunk_pdf_pages, extract_title_from_pages,
-        extract_title_from_sections, sections_to_chunks, split_long_text, FontSizeHistogram,
-        HeadingAwareOutput, PdfSection, MAX_CHUNK_CHARS,
+        extract_title_from_sections, sections_to_chunks, split_at_word_boundaries, split_long_text,
+        FontSizeHistogram, HeadingAwareOutput, PdfSection, MAX_CHUNK_CHARS,
     };
     // Import the OutputDev trait so method calls resolve on concrete types.
     use pdf_extract::OutputDev as _;
@@ -1175,5 +1219,53 @@ mod tests {
             segs.len() >= 2,
             "long text must be split into at least 2 segments"
         );
+    }
+
+    #[test]
+    fn split_long_text_single_paragraph_no_newlines_is_split() {
+        // A single paragraph with no \n\n that exceeds MAX_CHUNK_CHARS.
+        // Words are space-separated so word-boundary splitting can trigger.
+        let words: Vec<String> = (0..400).map(|i| format!("word{i}")).collect();
+        let input = words.join(" ");
+        assert!(
+            input.len() > MAX_CHUNK_CHARS,
+            "input must exceed MAX_CHUNK_CHARS for this test to be meaningful"
+        );
+        let segs = split_long_text(&input);
+        assert!(
+            segs.len() >= 2,
+            "single oversized paragraph must be split into multiple segments"
+        );
+        for seg in &segs {
+            assert!(
+                seg.len() <= MAX_CHUNK_CHARS,
+                "every segment must be within MAX_CHUNK_CHARS, got {}",
+                seg.len()
+            );
+        }
+    }
+
+    #[test]
+    fn split_at_word_boundaries_produces_bounded_pieces() {
+        let words: Vec<String> = (0..300).map(|i| format!("word{i}")).collect();
+        let input = words.join(" ");
+        assert!(input.len() > MAX_CHUNK_CHARS);
+        let pieces = split_at_word_boundaries(&input);
+        assert!(pieces.len() >= 2, "must split into multiple pieces");
+        for piece in &pieces {
+            assert!(
+                piece.len() <= MAX_CHUNK_CHARS,
+                "piece length {} exceeds MAX_CHUNK_CHARS",
+                piece.len()
+            );
+        }
+    }
+
+    #[test]
+    fn quantize_large_font_clamped_to_u16_max() {
+        // Font sizes far above any real PDF (> ~6553pt) clamp to u16::MAX.
+        // Verify the function doesn't panic and returns a valid key.
+        let key = FontSizeHistogram::quantize(10_000.0);
+        assert_eq!(key, u16::MAX, "extreme font size must clamp to u16::MAX");
     }
 }
