@@ -169,10 +169,7 @@ fn fetch_html(agent: &ureq::Agent, url: &str) -> Result<String, String> {
 /// Fetch and parse `robots.txt` from `start_url`'s origin.
 ///
 /// Returns `None` if the fetch or parse fails (allow-all semantics).
-fn fetch_robots_txt(
-    agent: &ureq::Agent,
-    start_url: &str,
-) -> Option<texting_robots::Robot> {
+fn fetch_robots_txt(agent: &ureq::Agent, start_url: &str) -> Option<texting_robots::Robot> {
     use std::io::Read as _;
     let origin = extract_origin(start_url);
     let robots_url = format!("{origin}/robots.txt");
