@@ -9,7 +9,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let file_size = fs::metadata(pdf_path).map(|m| m.len()).unwrap_or(0);
+    let file_size = fs::metadata(pdf_path).map_or(0, |m| m.len());
 
     println!("Testing PDF parsing: {pdf_path}");
     println!("File size: {} MB\n", file_size / (1024 * 1024));
