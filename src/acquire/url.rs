@@ -34,9 +34,8 @@ use crate::error::GraphtorError;
 ///
 /// # Errors
 ///
-/// Returns [`GraphtorError`] only for fatal pre-crawl failures such as:
-/// - failing to create `target_dir`
-/// - failing to build the HTTP client
+/// Returns [`GraphtorError`] only when `target_dir` cannot be created.
+/// HTTP client construction is now infallible (see [`build_client`]).
 ///
 /// Per-page HTTP errors are logged as warnings and the page is skipped.
 pub fn crawl_url_source(
@@ -45,8 +44,8 @@ pub fn crawl_url_source(
 ) -> Result<Vec<PathBuf>, GraphtorError> {
     std::fs::create_dir_all(target_dir).map_err(GraphtorError::Io)?;
 
-    let client = build_client(source.rate_limit_ms)?;
-    let robots = fetch_robots_txt(&client, &source.url);
+    let client = build_client(source.rate_limit_ms);
+    let robots = fetch_robots_txt(&source.url);
     let origin = extract_origin(&source.url);
 
     let mut visited: HashSet<String> = HashSet::new();
@@ -142,59 +141,50 @@ pub fn crawl_url_source(
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-/// Build a `reqwest` blocking HTTP client with the given user-agent and timeouts.
+/// Build a `ureq` HTTP agent with appropriate timeouts and user-agent.
 ///
-/// # Errors
-///
-/// Returns [`GraphtorError::Config`] if the client cannot be constructed.
-fn build_client(rate_limit_ms: u64) -> Result<reqwest::blocking::Client, GraphtorError> {
-    // Page-level timeout: 30 s; connection timeout: 10 s. rate_limit_ms controls
-    // inter-request pacing, not the per-request I/O deadline.
-    let _ = rate_limit_ms;
-    reqwest::blocking::Client::builder()
-        .user_agent("graphtor-docs/1.0 (documentation crawler)")
+/// `ureq` is a pure-sync HTTP client with no internal tokio dependency,
+/// which avoids the "nested runtime" panic when called from within a
+/// `#[tokio::main]` context.
+fn build_client(_rate_limit_ms: u64) -> ureq::Agent {
+    ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
-        .connect_timeout(Duration::from_secs(10))
+        .user_agent("graphtor-docs/1.0 (documentation crawler)")
         .build()
-        .map_err(|e| GraphtorError::Config {
-            message: format!("failed to build HTTP client: {e}"),
-            field: None,
-        })
 }
 
 /// Fetch the HTML body of `url`, returning `Err` on any HTTP or I/O failure.
-fn fetch_html(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
-    let response = client
+fn fetch_html(agent: &ureq::Agent, url: &str) -> Result<String, String> {
+    let response = agent
         .get(url)
-        .send()
+        .call()
         .map_err(|e| format!("request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
-    }
-
     response
-        .text()
+        .into_string()
         .map_err(|e| format!("failed to read response body: {e}"))
 }
 
 /// Fetch and parse `robots.txt` from `start_url`'s origin.
 ///
+/// Uses a short 5 s timeout so that a slow or hung origin does not block the
+/// entire crawl (the main crawl agent uses a 30 s timeout, which is too long
+/// for a preflight fetch).
+///
 /// Returns `None` if the fetch or parse fails (allow-all semantics).
-fn fetch_robots_txt(
-    client: &reqwest::blocking::Client,
-    start_url: &str,
-) -> Option<texting_robots::Robot> {
+fn fetch_robots_txt(start_url: &str) -> Option<texting_robots::Robot> {
+    use std::io::Read as _;
+    // Build a dedicated short-timeout agent for this single preflight request.
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .user_agent("graphtor-docs/1.0 (documentation crawler)")
+        .build();
     let origin = extract_origin(start_url);
     let robots_url = format!("{origin}/robots.txt");
 
-    let bytes = client
-        .get(&robots_url)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .ok()?
-        .bytes()
-        .ok()?;
+    let response = agent.get(&robots_url).call().ok()?;
+    let mut bytes = Vec::new();
+    response.into_reader().read_to_end(&mut bytes).ok()?;
 
     texting_robots::Robot::new("graphtor-docs", &bytes).ok()
 }
