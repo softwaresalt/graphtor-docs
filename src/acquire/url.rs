@@ -45,7 +45,7 @@ pub fn crawl_url_source(
 ) -> Result<Vec<PathBuf>, GraphtorError> {
     std::fs::create_dir_all(target_dir).map_err(GraphtorError::Io)?;
 
-    let client = build_client(source.rate_limit_ms)?;
+    let client = build_client(source.rate_limit_ms);
     let robots = fetch_robots_txt(&client, &source.url);
     let origin = extract_origin(&source.url);
 
@@ -147,11 +147,11 @@ pub fn crawl_url_source(
 /// `ureq` is a pure-sync HTTP client with no internal tokio dependency,
 /// which avoids the "nested runtime" panic when called from within a
 /// `#[tokio::main]` context.
-fn build_client(_rate_limit_ms: u64) -> Result<ureq::Agent, GraphtorError> {
-    Ok(ureq::AgentBuilder::new()
+fn build_client(_rate_limit_ms: u64) -> ureq::Agent {
+    ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
         .user_agent("graphtor-docs/1.0 (documentation crawler)")
-        .build())
+        .build()
 }
 
 /// Fetch the HTML body of `url`, returning `Err` on any HTTP or I/O failure.
