@@ -3,7 +3,7 @@
 //! Covers the tokio nested-runtime panic that occurred when `reqwest::blocking`
 //! was used inside a `#[tokio::main]` context, and basic crawl behaviour.
 
-use graphtor_core::{acquire::url::crawl_url_source, config::UrlSource};
+use graphtor_core::{acquire::url::crawl_url_source, config::source::UrlSource};
 
 /// Build a minimal [`UrlSource`] pointing at `url`.
 fn make_url_source(id: &str, url: &str) -> UrlSource {
@@ -33,41 +33,41 @@ fn make_url_source(id: &str, url: &str) -> UrlSource {
 /// longer occur.
 #[tokio::test]
 async fn crawl_url_source_does_not_panic_inside_tokio_runtime() {
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use tokio::net::TcpListener;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test listener");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
     let port = listener.local_addr().expect("get local addr").port();
 
-    // Spawn a minimal HTTP server that handles robots.txt (404) and one HTML page.
-    tokio::spawn(async move {
+    // Spawn a minimal HTTP/1.0 server using std::net (no tokio "net" feature needed).
+    // Handles robots.txt (404) and one HTML page, then exits.
+    thread::spawn(move || {
+        // HTTP/1.0 without Content-Length: body ends at connection close.
         let html = concat!(
-            "HTTP/1.1 200 OK\r\n",
+            "HTTP/1.0 200 OK\r\n",
             "Content-Type: text/html\r\n",
-            "Content-Length: 27\r\n",
             "\r\n",
             "<html><body>test</body></html>",
         );
-        let not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+        let not_found = "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n";
 
         // Handle up to 3 connections: robots.txt probe + main page + any retry.
         for _ in 0..3_u8 {
-            let Ok((mut stream, _)) = listener.accept().await else {
+            let Ok((mut stream, _)) = listener.accept() else {
                 break;
             };
             let mut buf = vec![0u8; 512];
-            let Ok(n) = stream.read(&mut buf).await else {
+            let Ok(n) = stream.read(&mut buf) else {
                 break;
             };
             let req = String::from_utf8_lossy(&buf[..n]);
             let resp = if req.contains("robots.txt") {
-                not_found.as_bytes()
+                not_found
             } else {
-                html.as_bytes()
+                html
             };
-            let _ = stream.write_all(resp).await;
+            let _ = stream.write_all(resp.as_bytes());
         }
     });
 
@@ -77,7 +77,7 @@ async fn crawl_url_source_does_not_panic_inside_tokio_runtime() {
     // If this panics the test fails; that is the regression signal.
     let result = crawl_url_source(&source, target.path());
 
-    // A successful crawl writes at least one markdown file.
+    // The crawl must succeed without panicking — per-page failures are warnings.
     assert!(
         result.is_ok(),
         "crawl_url_source must not return Err inside a tokio runtime: {result:?}"
