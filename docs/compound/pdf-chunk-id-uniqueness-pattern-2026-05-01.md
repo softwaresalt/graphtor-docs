@@ -32,11 +32,21 @@ The `chunk_id_source` is only used as a uniqueness discriminator for the SHA-256
 `Chunk.source_path` remains the plain `source_path` (without the `#page=…` suffix) so downstream
 path matching is unaffected.
 
-## Why This Matters
+## Chunk ID Discriminator Formats
 
-- `generate_chunk_id` is `SHA-256(content + source_path)` — identical inputs → identical IDs
-- CozoDB upsert (`:put`) on a collision silently overwrites the row; no error is raised
-- Lost chunks break search recall and MCP tool results without any visible signal
+| Source format | Chunk ID source format | Path |
+|---|---|---|
+| PDF section-based (heading-aware) | `{source_path}#section={N}#segment={M}` | two-pass main path |
+| PDF page-based (uniform-font fallback) | `{source_path}#page={N}#segment={M}` | fallback path |
+| HTML, Markdown, etc. | format depends on parser | — |
+
+The `chunk_id_source` is only used as a uniqueness discriminator for the SHA-256 hash; the stored
+`Chunk.source_path` remains the plain `source_path` so downstream path matching is unaffected.
+
+### Breaking Change: Re-sync Required
+
+PDFs ingested with the old `#page=` discriminator must be re-synced: `graphtor sync --force`.
+The new section-based IDs are not backward-compatible with page-based IDs.
 
 ## Evidence
 
