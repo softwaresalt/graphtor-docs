@@ -46,7 +46,7 @@ pub fn crawl_url_source(
     std::fs::create_dir_all(target_dir).map_err(GraphtorError::Io)?;
 
     let client = build_client(source.rate_limit_ms);
-    let robots = fetch_robots_txt(&client, &source.url);
+    let robots = fetch_robots_txt(&source.url);
     let origin = extract_origin(&source.url);
 
     let mut visited: HashSet<String> = HashSet::new();
@@ -168,9 +168,18 @@ fn fetch_html(agent: &ureq::Agent, url: &str) -> Result<String, String> {
 
 /// Fetch and parse `robots.txt` from `start_url`'s origin.
 ///
+/// Uses a short 5 s timeout so that a slow or hung origin does not block the
+/// entire crawl (the main crawl agent uses a 30 s timeout, which is too long
+/// for a preflight fetch).
+///
 /// Returns `None` if the fetch or parse fails (allow-all semantics).
-fn fetch_robots_txt(agent: &ureq::Agent, start_url: &str) -> Option<texting_robots::Robot> {
+fn fetch_robots_txt(start_url: &str) -> Option<texting_robots::Robot> {
     use std::io::Read as _;
+    // Build a dedicated short-timeout agent for this single preflight request.
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .user_agent("graphtor-docs/1.0 (documentation crawler)")
+        .build();
     let origin = extract_origin(start_url);
     let robots_url = format!("{origin}/robots.txt");
 
