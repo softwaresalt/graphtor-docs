@@ -40,17 +40,20 @@ async fn crawl_url_source_does_not_panic_inside_tokio_runtime() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
     let port = listener.local_addr().expect("get local addr").port();
 
-    // Spawn a minimal HTTP/1.0 server using std::net (no tokio "net" feature needed).
-    // Handles robots.txt (404) and one HTML page, then exits.
+    // Spawn a minimal HTTP/1.1 server using std::net (no tokio "net" feature needed).
+    // Uses Content-Length + Connection: close so ureq knows exactly when to stop reading.
     thread::spawn(move || {
-        // HTTP/1.0 without Content-Length: body ends at connection close.
+        // 30 bytes: <html><body>test</body></html>
         let html = concat!(
-            "HTTP/1.0 200 OK\r\n",
-            "Content-Type: text/html\r\n",
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: text/html; charset=utf-8\r\n",
+            "Content-Length: 30\r\n",
+            "Connection: close\r\n",
             "\r\n",
             "<html><body>test</body></html>",
         );
-        let not_found = "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+        let not_found =
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
         // Handle up to 3 connections: robots.txt probe + main page + any retry.
         for _ in 0..3_u8 {
