@@ -4,6 +4,11 @@
 //! global `tracing` subscriber at application startup. Call [`init_logging`]
 //! once at program entry; subsequent calls return an error rather than
 //! panicking.
+//!
+//! The subscriber uses [`tracing_subscriber::EnvFilter`] so the `RUST_LOG`
+//! environment variable can override the compiled-in verbosity.  The default
+//! filter also silences noisy `pdf_extract` glyph-level messages that are not
+//! actionable for users.
 
 use crate::error::GraphtorError;
 
@@ -32,21 +37,41 @@ impl LogVerbosity {
             Self::Verbose => tracing::Level::DEBUG,
         }
     }
+
+    /// Build the `EnvFilter` directive string for this verbosity.
+    ///
+    /// The string suppresses noisy `pdf_extract` glyph messages by clamping
+    /// that crate to `WARN` regardless of the global verbosity level.
+    fn filter_string(self) -> String {
+        let level = self.as_tracing_level();
+        format!("{level},pdf_extract=warn")
+    }
 }
 
 /// Initialize the global `tracing` subscriber with the given verbosity.
 ///
-/// Configures `tracing-subscriber` with a level filter and stderr output.
+/// Configures `tracing-subscriber` with an [`tracing_subscriber::EnvFilter`]
+/// and stderr output.  The `RUST_LOG` environment variable overrides the
+/// compiled-in verbosity when set.  `pdf_extract` messages below `WARN` are
+/// suppressed by default to reduce glyph-level noise.
+///
 /// This function is safe to call from application entry points.
 ///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] if the global subscriber has already
-/// been initialized (e.g., a second call in the same process).
+/// been initialized (e.g., a second call in the same process), or if the
+/// `RUST_LOG` value contains an invalid directive.
 pub fn init_logging(verbosity: LogVerbosity) -> Result<(), GraphtorError> {
-    let level = verbosity.as_tracing_level();
+    let default_filter = verbosity.filter_string();
+    let filter_str = std::env::var("RUST_LOG").unwrap_or(default_filter);
+    let filter =
+        tracing_subscriber::EnvFilter::try_new(&filter_str).map_err(|e| GraphtorError::Config {
+            message: format!("invalid log filter directive: {e}"),
+            field: None,
+        })?;
     tracing_subscriber::fmt()
-        .with_max_level(level)
+        .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .try_init()
         .map_err(|e| GraphtorError::Config {
@@ -110,5 +135,57 @@ mod tests {
         let cloned = v;
         assert_eq!(v, cloned);
         let _ = format!("{v:?}");
+    }
+
+    // ── T031: EnvFilter migration ─────────────────────────────────────────
+
+    #[test]
+    fn filter_string_contains_pdf_extract_suppression() {
+        for verbosity in [
+            LogVerbosity::Quiet,
+            LogVerbosity::Normal,
+            LogVerbosity::Verbose,
+        ] {
+            let s = verbosity.filter_string();
+            assert!(
+                s.contains("pdf_extract=warn"),
+                "filter_string for {verbosity:?} must suppress pdf_extract below WARN: got {s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_string_starts_with_level() {
+        let s = LogVerbosity::Normal.filter_string();
+        assert!(
+            s.starts_with("INFO"),
+            "Normal filter string must start with INFO: got {s:?}"
+        );
+        let s = LogVerbosity::Quiet.filter_string();
+        assert!(
+            s.starts_with("ERROR"),
+            "Quiet filter string must start with ERROR: got {s:?}"
+        );
+        let s = LogVerbosity::Verbose.filter_string();
+        assert!(
+            s.starts_with("DEBUG"),
+            "Verbose filter string must start with DEBUG: got {s:?}"
+        );
+    }
+
+    #[test]
+    fn filter_string_parses_as_valid_env_filter() {
+        for verbosity in [
+            LogVerbosity::Quiet,
+            LogVerbosity::Normal,
+            LogVerbosity::Verbose,
+        ] {
+            let s = verbosity.filter_string();
+            let result = tracing_subscriber::EnvFilter::try_new(&s);
+            assert!(
+                result.is_ok(),
+                "filter_string for {verbosity:?} must be a valid EnvFilter directive: got {s:?}"
+            );
+        }
     }
 }

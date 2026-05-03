@@ -40,6 +40,21 @@ const H1_RATIO: f64 = 1.6;
 /// Minimum rendered-font-size ratio above body size to classify a line as H2.
 const H2_RATIO: f64 = 1.3;
 
+/// Maximum number of pages sampled by [`FontSizeHistogram`] in Pass 1.
+///
+/// Body font size is reliably determined from the first few pages of most
+/// documents.  Capping the scan at 30 pages avoids an O(n) Pass 1 cost on
+/// large PDFs while keeping histogram accuracy for typical technical documents.
+const HISTOGRAM_SAMPLE_PAGES: u32 = 30;
+
+/// File-size threshold (bytes) above which the two-pass histogram approach is
+/// skipped in favour of direct per-page extraction via [`PageTextAccumulator`].
+///
+/// PDFs larger than 20 MiB are routed directly through
+/// [`PageTextAccumulator`].  The incremental quality gain from heading
+/// detection does not justify the O(n) histogram scan on very large files.
+const LARGE_PDF_THRESHOLD: usize = 20 * 1_024 * 1_024;
+
 // ── rendered-font-size helper ─────────────────────────────────────────────────
 
 /// Compute the rendered font size from a text-rendering matrix `trm`.
@@ -81,6 +96,11 @@ fn rendered_size(trm: &pdf_extract::Transform, font_size: f64) -> f64 {
 struct FontSizeHistogram {
     /// Histogram: key = `(quantized_size × 10) as u16`, value = character count.
     counts: HashMap<u16, usize>,
+    /// Number of pages seen (incremented in `begin_page`).
+    ///
+    /// When `pages_seen > HISTOGRAM_SAMPLE_PAGES`, `output_character` becomes
+    /// a no-op so the scan stops accumulating after the first 30 pages.
+    pages_seen: u32,
 }
 
 impl FontSizeHistogram {
@@ -88,6 +108,7 @@ impl FontSizeHistogram {
     fn new() -> Self {
         Self {
             counts: HashMap::new(),
+            pages_seen: 0,
         }
     }
 
@@ -125,6 +146,7 @@ impl pdf_extract::OutputDev for FontSizeHistogram {
         _media_box: &pdf_extract::MediaBox,
         _art_box: Option<(f64, f64, f64, f64)>,
     ) -> Result<(), pdf_extract::OutputError> {
+        self.pages_seen = self.pages_seen.saturating_add(1);
         Ok(())
     }
 
@@ -140,6 +162,10 @@ impl pdf_extract::OutputDev for FontSizeHistogram {
         font_size: f64,
         char: &str,
     ) -> Result<(), pdf_extract::OutputError> {
+        // Stop accumulating once we have sampled enough pages.
+        if self.pages_seen > HISTOGRAM_SAMPLE_PAGES {
+            return Ok(());
+        }
         let size = rendered_size(trm, font_size);
         let key = Self::quantize(size);
         // Count Unicode scalar values (not bytes) to weight the histogram fairly.
@@ -157,6 +183,91 @@ impl pdf_extract::OutputDev for FontSizeHistogram {
     }
 
     fn end_line(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+}
+
+// ── Unit 4: PageTextAccumulator ───────────────────────────────────────────────
+
+/// [`pdf_extract::OutputDev`] that accumulates rendered text into one
+/// `String` per page.
+///
+/// Used in the uniform-typography fallback and the large-file fast path to
+/// reuse the already-loaded [`pdf_extract::Document`] rather than re-parsing
+/// raw bytes via [`pdf_extract::extract_text_from_mem_by_pages`].
+struct PageTextAccumulator {
+    /// Accumulated text for all pages in document order.
+    pages: Vec<String>,
+    /// Text buffer for the page currently being processed.
+    current_page: String,
+    /// `true` when positioned at the first character of a new word.
+    at_word_start: bool,
+}
+
+impl PageTextAccumulator {
+    /// Create an empty accumulator.
+    fn new() -> Self {
+        Self {
+            pages: Vec::new(),
+            current_page: String::new(),
+            at_word_start: false,
+        }
+    }
+
+    /// Consume the accumulator and return the collected per-page strings.
+    fn finish(self) -> Vec<String> {
+        self.pages
+    }
+}
+
+impl pdf_extract::OutputDev for PageTextAccumulator {
+    fn begin_page(
+        &mut self,
+        _page_num: u32,
+        _media_box: &pdf_extract::MediaBox,
+        _art_box: Option<(f64, f64, f64, f64)>,
+    ) -> Result<(), pdf_extract::OutputError> {
+        self.current_page.clear();
+        self.at_word_start = false;
+        Ok(())
+    }
+
+    fn end_page(&mut self) -> Result<(), pdf_extract::OutputError> {
+        self.pages.push(std::mem::take(&mut self.current_page));
+        Ok(())
+    }
+
+    fn output_character(
+        &mut self,
+        _trm: &pdf_extract::Transform,
+        _width: f64,
+        _spacing: f64,
+        _font_size: f64,
+        char: &str,
+    ) -> Result<(), pdf_extract::OutputError> {
+        if self.at_word_start {
+            if !self.current_page.is_empty() && !self.current_page.ends_with('\n') {
+                self.current_page.push(' ');
+            }
+            self.at_word_start = false;
+        }
+        self.current_page.push_str(char);
+        Ok(())
+    }
+
+    fn begin_word(&mut self) -> Result<(), pdf_extract::OutputError> {
+        self.at_word_start = true;
+        Ok(())
+    }
+
+    fn end_word(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+
+    fn end_line(&mut self) -> Result<(), pdf_extract::OutputError> {
+        if !self.current_page.is_empty() && !self.current_page.ends_with('\n') {
+            self.current_page.push('\n');
+        }
         Ok(())
     }
 }
@@ -483,85 +594,147 @@ fn extract_title_from_sections(sections: &[PdfSection], source_path: &str) -> Op
         })
 }
 
+// ── PdfExtractBackend ─────────────────────────────────────────────────────────
+
+/// Backend that encapsulates the [`pdf_extract`] two-pass extraction pipeline.
+///
+/// Acts as a concrete type boundary between the public [`parse_pdf_document`]
+/// function and the internal extraction logic.  Future alternative backends
+/// (e.g. `PdfiumBackend`) can be introduced without changing the public API.
+pub(crate) struct PdfExtractBackend;
+
+impl PdfExtractBackend {
+    /// Parse raw PDF bytes using the two-pass `pdf-extract` pipeline.
+    ///
+    /// ## Large-File Fast Path
+    ///
+    /// When `bytes.len() >= LARGE_PDF_THRESHOLD` (20 MiB), the histogram pass
+    /// is skipped and the document goes directly through
+    /// [`PageTextAccumulator`] for per-page chunking.
+    ///
+    /// ## Two-Pass Architecture
+    ///
+    /// **Pass 1 — Font-size histogram**: [`FontSizeHistogram`] scans the first
+    /// [`HISTOGRAM_SAMPLE_PAGES`] pages (30) to determine the dominant body
+    /// font size. No text is accumulated.
+    ///
+    /// **Pass 2 — Heading-aware extraction**: [`HeadingAwareOutput`] processes
+    /// all pages with the known body font size and emits [`PdfSection`]s.
+    ///
+    /// **Fallback**: When `distinct_sizes ≤ 1` (uniform font size or empty
+    /// document), falls back to [`PageTextAccumulator`]-based per-page
+    /// chunking with `["Page N"]` hierarchy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphtorError::Parse`] if `pdf-extract` cannot decode the
+    /// bytes as a valid PDF, or if chunk ID generation fails.
+    pub(crate) fn parse(bytes: &[u8], source_path: &str) -> Result<ParsedDocument, GraphtorError> {
+        // Load the PDF document once — reused for all passes.
+        let doc = pdf_extract::Document::load_mem(bytes).map_err(|e| GraphtorError::Parse {
+            message: format!("pdf load failed: {e}"),
+            path: Some(source_path.into()),
+        })?;
+
+        // Large-file fast path: skip histogram for files >= LARGE_PDF_THRESHOLD.
+        if bytes.len() >= LARGE_PDF_THRESHOLD {
+            return Self::extract_by_pages(&doc, source_path);
+        }
+
+        // Pass 1: build font-size histogram (first HISTOGRAM_SAMPLE_PAGES pages only).
+        let mut histogram = FontSizeHistogram::new();
+        pdf_extract::output_doc(&doc, &mut histogram).map_err(|e| GraphtorError::Parse {
+            message: format!("pdf font-size scan failed: {e}"),
+            path: Some(source_path.into()),
+        })?;
+
+        let body_font_size = histogram.body_font_size();
+        let distinct_sizes = histogram.counts.len();
+
+        let (chunks, title) = if distinct_sizes <= 1 {
+            // Uniform or empty document — fall back to per-page chunking.
+            let mut acc = PageTextAccumulator::new();
+            pdf_extract::output_doc(&doc, &mut acc).map_err(|e| GraphtorError::Parse {
+                message: format!("pdf per-page extraction failed: {e}"),
+                path: Some(source_path.into()),
+            })?;
+            let pages = acc.finish();
+            let title = extract_title_from_pages(&pages, source_path);
+            let chunks = chunk_pdf_pages(&pages, source_path)?;
+            (chunks, title)
+        } else {
+            // Pass 2: heading-aware extraction with the known body font size.
+            let mut heading_output = HeadingAwareOutput::new(body_font_size);
+            pdf_extract::output_doc(&doc, &mut heading_output).map_err(|e| {
+                GraphtorError::Parse {
+                    message: format!("pdf heading-aware extraction failed: {e}"),
+                    path: Some(source_path.into()),
+                }
+            })?;
+            let sections = heading_output.finish();
+            let title = extract_title_from_sections(&sections, source_path);
+            let chunks = sections_to_chunks(sections, source_path)?;
+            (chunks, title)
+        };
+
+        Ok(ParsedDocument {
+            path: source_path.to_string(),
+            title,
+            frontmatter: None,
+            chunks,
+            references: Vec::new(),
+            code_snippets: Vec::new(),
+        })
+    }
+
+    /// Run [`PageTextAccumulator`] over `doc` and convert pages to chunks.
+    fn extract_by_pages(
+        doc: &pdf_extract::Document,
+        source_path: &str,
+    ) -> Result<ParsedDocument, GraphtorError> {
+        let mut acc = PageTextAccumulator::new();
+        pdf_extract::output_doc(doc, &mut acc).map_err(|e| GraphtorError::Parse {
+            message: format!("pdf per-page extraction failed: {e}"),
+            path: Some(source_path.into()),
+        })?;
+        let pages = acc.finish();
+        let title = extract_title_from_pages(&pages, source_path);
+        let chunks = chunk_pdf_pages(&pages, source_path)?;
+        Ok(ParsedDocument {
+            path: source_path.to_string(),
+            title,
+            frontmatter: None,
+            chunks,
+            references: Vec::new(),
+            code_snippets: Vec::new(),
+        })
+    }
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 /// Parse raw PDF bytes into a fully assembled [`ParsedDocument`].
 ///
-/// ## Two-Pass Architecture
-///
-/// **Pass 1 — Font-size histogram**: [`FontSizeHistogram`] scans all pages via
-/// [`pdf_extract::output_doc`] to determine the dominant body font size.
-/// No text is accumulated in this pass.
-///
-/// **Pass 2 — Heading-aware extraction**: [`HeadingAwareOutput`] processes all
-/// pages with the known body font size. Lines whose dominant font size exceeds
-/// the body size by [`H1_RATIO`] (≥ 1.6×) or [`H2_RATIO`] (≥ 1.3×) open
-/// new sections.
-///
-/// **Fallback**: When `distinct_sizes ≤ 1` (uniform font size or empty document),
-/// the pipeline falls back to [`chunk_pdf_pages`] with `["Page N"]` hierarchy.
+/// Delegates to [`PdfExtractBackend`].  See [`PdfExtractBackend::parse`] for
+/// the full two-pass architecture and large-file fast-path documentation.
 ///
 /// ## Chunk ID Format
 ///
-/// Section-based: `{source_path}#section={N}#segment={M}`.
-/// Re-sync previously ingested PDFs with `graphtor sync --force`.
+/// - Section-based (heading-aware path): `{source_path}#section={N}#segment={M}`
+/// - Page-based (uniform-font fallback): `{source_path}#page={N}#segment={M}`
 ///
-/// ## Errors
+/// Previously ingested PDFs must be re-synced (`graphtor sync --force`) to
+/// rebuild chunk IDs.
 ///
-/// Returns [`GraphtorError::Parse`] if `pdf-extract` cannot decode the bytes
-/// as a valid PDF, or if chunk ID generation fails.
+/// # Errors
+///
+/// Returns [`GraphtorError::Parse`] if the bytes are not a valid PDF or if
+/// chunk ID generation fails.
 pub fn parse_pdf_document(
     bytes: &[u8],
     source_path: &str,
 ) -> Result<ParsedDocument, GraphtorError> {
-    // Load the PDF document once — reused for both passes.
-    let doc = pdf_extract::Document::load_mem(bytes).map_err(|e| GraphtorError::Parse {
-        message: format!("pdf load failed: {e}"),
-        path: Some(source_path.into()),
-    })?;
-
-    // Pass 1: build font-size histogram.
-    let mut histogram = FontSizeHistogram::new();
-    pdf_extract::output_doc(&doc, &mut histogram).map_err(|e| GraphtorError::Parse {
-        message: format!("pdf font-size scan failed: {e}"),
-        path: Some(source_path.into()),
-    })?;
-
-    let body_font_size = histogram.body_font_size();
-    let distinct_sizes = histogram.counts.len();
-
-    let (chunks, title) = if distinct_sizes <= 1 {
-        // Uniform or empty document — fall back to per-page chunking.
-        let pages = pdf_extract::extract_text_from_mem_by_pages(bytes).map_err(|e| {
-            GraphtorError::Parse {
-                message: format!("pdf per-page extraction failed: {e}"),
-                path: Some(source_path.into()),
-            }
-        })?;
-        let title = extract_title_from_pages(&pages, source_path);
-        let chunks = chunk_pdf_pages(&pages, source_path)?;
-        (chunks, title)
-    } else {
-        // Pass 2: heading-aware extraction with the known body font size.
-        let mut heading_output = HeadingAwareOutput::new(body_font_size);
-        pdf_extract::output_doc(&doc, &mut heading_output).map_err(|e| GraphtorError::Parse {
-            message: format!("pdf heading-aware extraction failed: {e}"),
-            path: Some(source_path.into()),
-        })?;
-        let sections = heading_output.finish();
-        let title = extract_title_from_sections(&sections, source_path);
-        let chunks = sections_to_chunks(sections, source_path)?;
-        (chunks, title)
-    };
-
-    Ok(ParsedDocument {
-        path: source_path.to_string(),
-        title,
-        frontmatter: None,
-        chunks,
-        references: Vec::new(),
-        code_snippets: Vec::new(),
-    })
+    PdfExtractBackend::parse(bytes, source_path)
 }
 
 // ── Unit 1: per-page chunking (fallback path) ─────────────────────────────────
@@ -723,7 +896,8 @@ mod tests {
     use super::{
         build_heading_hierarchy, chunk_pdf_pages, extract_title_from_pages,
         extract_title_from_sections, sections_to_chunks, split_at_word_boundaries, split_long_text,
-        FontSizeHistogram, HeadingAwareOutput, PdfSection, MAX_CHUNK_CHARS,
+        FontSizeHistogram, HeadingAwareOutput, PageTextAccumulator, PdfExtractBackend, PdfSection,
+        HISTOGRAM_SAMPLE_PAGES, LARGE_PDF_THRESHOLD, MAX_CHUNK_CHARS,
     };
     // Import the OutputDev trait so method calls resolve on concrete types.
     use pdf_extract::OutputDev as _;
@@ -1302,5 +1476,166 @@ mod tests {
         for piece in &pieces {
             assert!(std::str::from_utf8(piece.as_bytes()).is_ok());
         }
+    }
+
+    // ── Unit 4: PageTextAccumulator ───────────────────────────────────────────
+
+    #[test]
+    fn page_text_accumulator_empty_produces_empty_pages() {
+        let acc = PageTextAccumulator::new();
+        let pages = acc.finish();
+        assert!(
+            pages.is_empty(),
+            "new accumulator must produce no pages before any output"
+        );
+    }
+
+    #[test]
+    fn page_text_accumulator_single_page_with_text() {
+        let mb = default_media_box();
+        let mut acc = PageTextAccumulator::new();
+        acc.begin_page(1, &mb, None).expect("begin_page ok");
+        acc.begin_word().expect("begin_word ok");
+        acc.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 10.0, "H")
+            .expect("output_character ok");
+        acc.output_character(&make_trm(1.0, 0.1, 700.0), 0.1, 0.0, 10.0, "i")
+            .expect("output_character ok");
+        acc.end_page().expect("end_page ok");
+
+        let pages = acc.finish();
+        assert_eq!(pages.len(), 1, "one end_page must produce one page");
+        assert!(
+            pages[0].contains("Hi"),
+            "accumulated characters must appear in page text"
+        );
+    }
+
+    #[test]
+    fn page_text_accumulator_word_separator_inserted() {
+        let mb = default_media_box();
+        let mut acc = PageTextAccumulator::new();
+        acc.begin_page(1, &mb, None).expect("ok");
+        // First word
+        acc.begin_word().expect("ok");
+        acc.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 10.0, "A")
+            .expect("ok");
+        acc.end_word().expect("ok");
+        // Second word — begin_word fires before characters
+        acc.begin_word().expect("ok");
+        acc.output_character(&make_trm(1.0, 1.0, 700.0), 0.1, 0.0, 10.0, "B")
+            .expect("ok");
+        acc.end_page().expect("ok");
+
+        let pages = acc.finish();
+        assert_eq!(pages.len(), 1);
+        assert!(
+            pages[0].contains("A B"),
+            "word separator must be inserted between words: got {:?}",
+            pages[0]
+        );
+    }
+
+    #[test]
+    fn page_text_accumulator_newline_at_end_line() {
+        let mb = default_media_box();
+        let mut acc = PageTextAccumulator::new();
+        acc.begin_page(1, &mb, None).expect("ok");
+        acc.begin_word().expect("ok");
+        acc.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 10.0, "X")
+            .expect("ok");
+        acc.end_line().expect("ok");
+        acc.end_page().expect("ok");
+
+        let pages = acc.finish();
+        assert_eq!(pages.len(), 1);
+        assert!(
+            pages[0].contains('\n'),
+            "end_line must produce a newline character"
+        );
+    }
+
+    #[test]
+    fn page_text_accumulator_two_pages() {
+        let mb = default_media_box();
+        let mut acc = PageTextAccumulator::new();
+        // Page 1
+        acc.begin_page(1, &mb, None).expect("ok");
+        acc.begin_word().expect("ok");
+        acc.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 10.0, "P")
+            .expect("ok");
+        acc.end_page().expect("ok");
+        // Page 2
+        acc.begin_page(2, &mb, None).expect("ok");
+        acc.begin_word().expect("ok");
+        acc.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 10.0, "Q")
+            .expect("ok");
+        acc.end_page().expect("ok");
+
+        let pages = acc.finish();
+        assert_eq!(pages.len(), 2, "two end_page calls must produce two pages");
+        assert!(pages[0].contains('P'));
+        assert!(pages[1].contains('Q'));
+    }
+
+    // ── HISTOGRAM_SAMPLE_PAGES constant ──────────────────────────────────────
+
+    #[test]
+    fn histogram_sample_pages_constant_is_30() {
+        assert_eq!(
+            HISTOGRAM_SAMPLE_PAGES, 30,
+            "HISTOGRAM_SAMPLE_PAGES must be 30"
+        );
+    }
+
+    #[test]
+    fn histogram_stops_counting_after_sample_limit() {
+        let mut hist = FontSizeHistogram::new();
+        let mb = default_media_box();
+        let trm = make_trm(1.0, 0.0, 0.0);
+
+        // Emit one character on each of the first 30 pages — all should count.
+        for page in 1..=HISTOGRAM_SAMPLE_PAGES {
+            hist.begin_page(page, &mb, None).expect("begin_page ok");
+            hist.output_character(&trm, 0.1, 0.0, 10.0, "x")
+                .expect("ok");
+        }
+        let count_at_30 = hist.counts.values().sum::<usize>();
+
+        // Emit characters on page 31 — should NOT count.
+        hist.begin_page(HISTOGRAM_SAMPLE_PAGES + 1, &mb, None)
+            .expect("begin_page ok");
+        for _ in 0..10 {
+            hist.output_character(&trm, 0.1, 0.0, 10.0, "z")
+                .expect("ok");
+        }
+        let count_after_limit = hist.counts.values().sum::<usize>();
+
+        assert_eq!(
+            count_at_30, count_after_limit,
+            "characters on pages beyond HISTOGRAM_SAMPLE_PAGES must not be counted"
+        );
+    }
+
+    // ── LARGE_PDF_THRESHOLD constant ─────────────────────────────────────────
+
+    #[test]
+    fn large_pdf_threshold_is_20_mib() {
+        assert_eq!(
+            LARGE_PDF_THRESHOLD,
+            20 * 1_024 * 1_024,
+            "LARGE_PDF_THRESHOLD must be exactly 20 MiB"
+        );
+    }
+
+    // ── PdfExtractBackend ─────────────────────────────────────────────────────
+
+    #[test]
+    fn pdf_extract_backend_returns_error_on_empty_bytes() {
+        // Empty bytes are not a valid PDF — parse must return an error, not panic.
+        let result = PdfExtractBackend::parse(&[], "empty.pdf");
+        assert!(
+            result.is_err(),
+            "PdfExtractBackend::parse must fail on empty bytes"
+        );
     }
 }
