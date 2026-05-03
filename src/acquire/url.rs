@@ -34,9 +34,8 @@ use crate::error::GraphtorError;
 ///
 /// # Errors
 ///
-/// Returns [`GraphtorError`] only for fatal pre-crawl failures such as:
-/// - failing to create `target_dir`
-/// - failing to build the HTTP client
+/// Returns [`GraphtorError`] only when `target_dir` cannot be created.
+/// HTTP client construction is now infallible (see [`build_client`]).
 ///
 /// Per-page HTTP errors are logged as warnings and the page is skipped.
 pub fn crawl_url_source(
