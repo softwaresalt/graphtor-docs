@@ -108,3 +108,6 @@ tmp/
 .backlogit/*.db-shm
 .backlogit/*.db-wal
 .backlogit/*.db-journal
+
+# graphtor-docs — managed by graphtor-docs install
+.graphtor/
