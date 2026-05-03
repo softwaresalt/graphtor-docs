@@ -681,6 +681,9 @@ fn split_long_text(text: &str) -> Vec<String> {
 /// Split `text` at word boundaries so each piece is at most [`MAX_CHUNK_CHARS`]
 /// characters long.
 ///
+/// Uses character-count boundaries (via `char_indices`) to avoid slicing
+/// mid-UTF-8 code point — safe for non-ASCII text including CJK and emoji.
+///
 /// Used as a fallback inside [`split_long_text`] when a single paragraph has no
 /// `\n\n` separators but exceeds the chunk size limit.
 fn split_at_word_boundaries(text: &str) -> Vec<&str> {
@@ -688,17 +691,29 @@ fn split_at_word_boundaries(text: &str) -> Vec<&str> {
     let mut start = 0;
 
     while start < text.len() {
-        let end = start + MAX_CHUNK_CHARS;
-        if end >= text.len() {
-            pieces.push(&text[start..]);
+        let remaining = &text[start..];
+        if remaining.len() <= MAX_CHUNK_CHARS {
+            pieces.push(remaining);
             break;
         }
-        // Walk back from `end` to the last space to avoid splitting mid-word.
-        let split_pos = text[start..end]
+        // Advance exactly MAX_CHUNK_CHARS *characters* (not bytes) to guarantee
+        // the cut falls on a valid UTF-8 char boundary.
+        let end_byte = match remaining.char_indices().nth(MAX_CHUNK_CHARS) {
+            Some((idx, _)) => idx,
+            None => remaining.len(),
+        };
+        // Walk back to the last space within the char-bounded slice.
+        let split_byte = remaining[..end_byte]
             .rfind(' ')
-            .map_or(end, |pos| start + pos + 1); // +1: skip the space itself
-        pieces.push(text[start..split_pos].trim_end());
-        start = split_pos;
+            .map_or(end_byte, |pos| pos + 1); // +1: skip the space itself
+                                              // Guard against zero advance (e.g. space at position 0).
+        let advance = if split_byte == 0 {
+            end_byte.max(1)
+        } else {
+            split_byte
+        };
+        pieces.push(remaining[..advance].trim_end());
+        start += advance;
     }
     pieces
 }
@@ -1267,5 +1282,25 @@ mod tests {
         // Verify the function doesn't panic and returns a valid key.
         let key = FontSizeHistogram::quantize(10_000.0);
         assert_eq!(key, u16::MAX, "extreme font size must clamp to u16::MAX");
+    }
+
+    #[test]
+    fn split_at_word_boundaries_handles_unicode_without_panic() {
+        // Each Chinese character is 3 UTF-8 bytes; slicing at a raw byte
+        // offset of MAX_CHUNK_CHARS would land mid-codepoint for some offsets.
+        // The char-count-based implementation must not panic.
+        let cjk_char = '中'; // 3 bytes in UTF-8
+        let long_cjk: String = std::iter::repeat(cjk_char)
+            .take(MAX_CHUNK_CHARS + 50)
+            .collect();
+        let pieces = split_at_word_boundaries(&long_cjk);
+        assert!(
+            !pieces.is_empty(),
+            "unicode text must produce at least one piece"
+        );
+        // Verify every piece is valid UTF-8 (i.e., no mid-codepoint slice).
+        for piece in &pieces {
+            assert!(std::str::from_utf8(piece.as_bytes()).is_ok());
+        }
     }
 }
