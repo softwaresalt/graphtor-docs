@@ -52,8 +52,7 @@ async fn crawl_url_source_does_not_panic_inside_tokio_runtime() {
             "\r\n",
             "<html><body>test</body></html>",
         );
-        let not_found =
-            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
         // Handle up to 3 connections: robots.txt probe + main page + any retry.
         for _ in 0..3_u8 {
