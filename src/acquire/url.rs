@@ -142,39 +142,27 @@ pub fn crawl_url_source(
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-/// Build a `reqwest` blocking HTTP client with the given user-agent and timeouts.
+/// Build a `ureq` HTTP agent with appropriate timeouts and user-agent.
 ///
-/// # Errors
-///
-/// Returns [`GraphtorError::Config`] if the client cannot be constructed.
-fn build_client(rate_limit_ms: u64) -> Result<reqwest::blocking::Client, GraphtorError> {
-    // Page-level timeout: 30 s; connection timeout: 10 s. rate_limit_ms controls
-    // inter-request pacing, not the per-request I/O deadline.
-    let _ = rate_limit_ms;
-    reqwest::blocking::Client::builder()
-        .user_agent("graphtor-docs/1.0 (documentation crawler)")
+/// `ureq` is a pure-sync HTTP client with no internal tokio dependency,
+/// which avoids the "nested runtime" panic when called from within a
+/// `#[tokio::main]` context.
+fn build_client(_rate_limit_ms: u64) -> Result<ureq::Agent, GraphtorError> {
+    Ok(ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| GraphtorError::Config {
-            message: format!("failed to build HTTP client: {e}"),
-            field: None,
-        })
+        .user_agent("graphtor-docs/1.0 (documentation crawler)")
+        .build())
 }
 
 /// Fetch the HTML body of `url`, returning `Err` on any HTTP or I/O failure.
-fn fetch_html(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
-    let response = client
+fn fetch_html(agent: &ureq::Agent, url: &str) -> Result<String, String> {
+    let response = agent
         .get(url)
-        .send()
+        .call()
         .map_err(|e| format!("request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
-    }
-
     response
-        .text()
+        .into_string()
         .map_err(|e| format!("failed to read response body: {e}"))
 }
 
@@ -182,19 +170,16 @@ fn fetch_html(client: &reqwest::blocking::Client, url: &str) -> Result<String, S
 ///
 /// Returns `None` if the fetch or parse fails (allow-all semantics).
 fn fetch_robots_txt(
-    client: &reqwest::blocking::Client,
+    agent: &ureq::Agent,
     start_url: &str,
 ) -> Option<texting_robots::Robot> {
+    use std::io::Read as _;
     let origin = extract_origin(start_url);
     let robots_url = format!("{origin}/robots.txt");
 
-    let bytes = client
-        .get(&robots_url)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .ok()?
-        .bytes()
-        .ok()?;
+    let response = agent.get(&robots_url).call().ok()?;
+    let mut bytes = Vec::new();
+    response.into_reader().read_to_end(&mut bytes).ok()?;
 
     texting_robots::Robot::new("graphtor-docs", &bytes).ok()
 }
