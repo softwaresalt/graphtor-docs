@@ -25,9 +25,13 @@ fn main() {
                 println!("Parse time: {:.2} seconds", elapsed.as_secs_f64());
                 println!("Total chunks: {}", doc.chunks.len());
                 println!("Title: {:?}", doc.title);
-                #[allow(clippy::cast_precision_loss)]
-                let avg_ms = (elapsed.as_secs_f64() * 1000.0) / doc.chunks.len() as f64;
-                println!("\nAverage time per chunk: {avg_ms:.4} ms");
+                if doc.chunks.is_empty() {
+                    println!("\nNo chunks produced.");
+                } else {
+                    #[allow(clippy::cast_precision_loss)]
+                    let avg_ms = (elapsed.as_secs_f64() * 1000.0) / doc.chunks.len() as f64;
+                    println!("\nAverage time per chunk: {avg_ms:.4} ms");
+                }
             }
             Err(e) => eprintln!("Parse error: {e}"),
         }

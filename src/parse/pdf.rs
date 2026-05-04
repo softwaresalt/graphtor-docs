@@ -2,8 +2,9 @@
 //!
 //! Uses a two-pass [`pdf_extract::OutputDev`]-based architecture:
 //!
-//! 1. **Pass 1 — [`FontSizeHistogram`]**: Scans all pages to determine the
-//!    dominant body font size without accumulating text.
+//! 1. **Pass 1 — [`FontSizeHistogram`]**: Scans the first
+//!    [`HISTOGRAM_SAMPLE_PAGES`] pages to determine the dominant body font
+//!    size without accumulating text.
 //! 2. **Pass 2 — [`HeadingAwareOutput`]**: Extracts text and detects heading
 //!    boundaries via font-size thresholds relative to the body size.
 //!    Emits [`PdfSection`]s which are converted to [`Chunk`]s.
@@ -268,6 +269,85 @@ impl pdf_extract::OutputDev for PageTextAccumulator {
         if !self.current_page.is_empty() && !self.current_page.ends_with('\n') {
             self.current_page.push('\n');
         }
+        Ok(())
+    }
+}
+
+// ── Unit 5: HeadingFontDetector ───────────────────────────────────────────────
+
+/// Third-pass [`pdf_extract::OutputDev`] that detects whether any character
+/// in the scanned pages has a rendered font size qualifying as a heading.
+///
+/// Short-circuits after the first qualifying character so the scan terminates
+/// as early as possible. Used to resolve the "uniform-sample false-positive":
+/// when [`HISTOGRAM_SAMPLE_PAGES`] are all single-font but later pages contain
+/// heading-sized text, [`PdfExtractBackend::parse`] uses this detector before
+/// deciding to fall back to per-page chunking.
+struct HeadingFontDetector {
+    /// Minimum rendered font size (in points) to classify a character as a
+    /// heading. Typically `body_font_size * H2_RATIO`.
+    threshold: f64,
+    /// Set to `true` the first time a character with rendered size ≥
+    /// `threshold` is observed.
+    found: bool,
+}
+
+impl HeadingFontDetector {
+    /// Create a new detector that flags characters at or above `threshold`
+    /// points as heading-sized.
+    fn new(threshold: f64) -> Self {
+        Self {
+            threshold,
+            found: false,
+        }
+    }
+
+    /// Return `true` if any heading-sized character was observed.
+    fn found_heading(&self) -> bool {
+        self.found
+    }
+}
+
+impl pdf_extract::OutputDev for HeadingFontDetector {
+    fn begin_page(
+        &mut self,
+        _page_num: u32,
+        _media_box: &pdf_extract::MediaBox,
+        _art_box: Option<(f64, f64, f64, f64)>,
+    ) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+
+    fn end_page(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+
+    fn output_character(
+        &mut self,
+        trm: &pdf_extract::Transform,
+        _width: f64,
+        _spacing: f64,
+        font_size: f64,
+        _char: &str,
+    ) -> Result<(), pdf_extract::OutputError> {
+        if !self.found {
+            let size = rendered_size(trm, font_size);
+            if size >= self.threshold {
+                self.found = true;
+            }
+        }
+        Ok(())
+    }
+
+    fn begin_word(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+
+    fn end_word(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+
+    fn end_line(&mut self) -> Result<(), pdf_extract::OutputError> {
         Ok(())
     }
 }
@@ -622,8 +702,11 @@ impl PdfExtractBackend {
     /// all pages with the known body font size and emits [`PdfSection`]s.
     ///
     /// **Fallback**: When `distinct_sizes ≤ 1` (uniform font size or empty
-    /// document), falls back to [`PageTextAccumulator`]-based per-page
-    /// chunking with `["Page N"]` hierarchy.
+    /// document), the pipeline checks pages beyond the sample window using
+    /// [`HeadingFontDetector`]. If heading-sized characters are found, the
+    /// heading-aware pass runs normally. Otherwise, falls back to
+    /// [`PageTextAccumulator`]-based per-page chunking with `["Page N"]`
+    /// hierarchy.
     ///
     /// # Errors
     ///
@@ -642,16 +725,44 @@ impl PdfExtractBackend {
         }
 
         // Pass 1: build font-size histogram (first HISTOGRAM_SAMPLE_PAGES pages only).
+        let page_count = u32::try_from(doc.get_pages().len()).unwrap_or(u32::MAX);
+        let sample_end = page_count.min(HISTOGRAM_SAMPLE_PAGES);
         let mut histogram = FontSizeHistogram::new();
-        pdf_extract::output_doc(&doc, &mut histogram).map_err(|e| GraphtorError::Parse {
-            message: format!("pdf font-size scan failed: {e}"),
-            path: Some(source_path.into()),
-        })?;
+        for page_num in 1..=sample_end {
+            pdf_extract::output_doc_page(&doc, &mut histogram, page_num).map_err(|e| {
+                GraphtorError::Parse {
+                    message: format!("pdf font-size scan failed: {e}"),
+                    path: Some(source_path.into()),
+                }
+            })?;
+        }
 
         let body_font_size = histogram.body_font_size();
         let distinct_sizes = histogram.counts.len();
 
-        let (chunks, title) = if distinct_sizes <= 1 {
+        // Resolve the "uniform-sample" false-positive: when the first
+        // HISTOGRAM_SAMPLE_PAGES pages all share one font size but later pages
+        // contain heading-sized text, we must not fall back to per-page chunking.
+        let really_uniform = if distinct_sizes <= 1 && page_count > HISTOGRAM_SAMPLE_PAGES {
+            let h2_threshold = body_font_size * H2_RATIO;
+            let mut detector = HeadingFontDetector::new(h2_threshold);
+            for page_num in (sample_end + 1)..=page_count {
+                pdf_extract::output_doc_page(&doc, &mut detector, page_num).map_err(|e| {
+                    GraphtorError::Parse {
+                        message: format!("pdf heading-font scan failed: {e}"),
+                        path: Some(source_path.into()),
+                    }
+                })?;
+                if detector.found_heading() {
+                    break;
+                }
+            }
+            !detector.found_heading()
+        } else {
+            distinct_sizes <= 1
+        };
+
+        let (chunks, title) = if really_uniform {
             // Uniform or empty document — fall back to per-page chunking.
             let mut acc = PageTextAccumulator::new();
             pdf_extract::output_doc(&doc, &mut acc).map_err(|e| GraphtorError::Parse {
@@ -896,8 +1007,9 @@ mod tests {
     use super::{
         build_heading_hierarchy, chunk_pdf_pages, extract_title_from_pages,
         extract_title_from_sections, sections_to_chunks, split_at_word_boundaries, split_long_text,
-        FontSizeHistogram, HeadingAwareOutput, PageTextAccumulator, PdfExtractBackend, PdfSection,
-        HISTOGRAM_SAMPLE_PAGES, LARGE_PDF_THRESHOLD, MAX_CHUNK_CHARS,
+        FontSizeHistogram, HeadingAwareOutput, HeadingFontDetector, PageTextAccumulator,
+        PdfExtractBackend, PdfSection, H2_RATIO, HISTOGRAM_SAMPLE_PAGES, LARGE_PDF_THRESHOLD,
+        MAX_CHUNK_CHARS,
     };
     // Import the OutputDev trait so method calls resolve on concrete types.
     use pdf_extract::OutputDev as _;
@@ -1613,6 +1725,70 @@ mod tests {
         assert_eq!(
             count_at_30, count_after_limit,
             "characters on pages beyond HISTOGRAM_SAMPLE_PAGES must not be counted"
+        );
+    }
+
+    #[test]
+    fn page_text_accumulator_preserves_page_count() {
+        let mb = default_media_box();
+        let mut acc = PageTextAccumulator::new();
+        let n: u32 = 5;
+        for page_num in 1..=n {
+            acc.begin_page(page_num, &mb, None).expect("begin_page ok");
+            acc.begin_word().expect("ok");
+            acc.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 10.0, "X")
+                .expect("ok");
+            acc.end_page().expect("end_page ok");
+        }
+        let pages = acc.finish();
+        assert_eq!(
+            pages.len(),
+            n as usize,
+            "finish() must return exactly one entry per end_page call"
+        );
+    }
+
+    // ── Unit 5: HeadingFontDetector ───────────────────────────────────────────
+
+    #[test]
+    fn heading_font_detector_new_has_not_found() {
+        let det = HeadingFontDetector::new(12.0);
+        assert!(
+            !det.found_heading(),
+            "fresh HeadingFontDetector must not report found_heading"
+        );
+    }
+
+    #[test]
+    fn heading_font_detector_detects_heading_sized_character() {
+        let mb = default_media_box();
+        // H2 threshold at body_font_size 10pt: 10.0 * H2_RATIO = 13.0
+        let threshold = 10.0 * H2_RATIO;
+        let mut det = HeadingFontDetector::new(threshold);
+        det.begin_page(1, &mb, None).expect("begin_page ok");
+        // 14pt rendered size (scale 1.0 × 14pt) ≥ 13pt threshold
+        det.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 14.0, "H")
+            .expect("output_character ok");
+        det.end_page().expect("end_page ok");
+        assert!(
+            det.found_heading(),
+            "detector must report found_heading after a qualifying character"
+        );
+    }
+
+    #[test]
+    fn heading_font_detector_ignores_body_sized_characters() {
+        let mb = default_media_box();
+        let threshold = 10.0 * H2_RATIO;
+        let mut det = HeadingFontDetector::new(threshold);
+        det.begin_page(1, &mb, None).expect("begin_page ok");
+        // 10pt rendered size < 13pt threshold → must not set found
+        det.output_character(&make_trm(1.0, 0.0, 700.0), 0.1, 0.0, 10.0, "x")
+            .expect("output_character ok");
+        det.end_page().expect("end_page ok");
+        assert!(
+            !det.found_heading(),
+            "detector must not report found_heading for body-sized characters"
         );
     }
 

@@ -41,10 +41,10 @@ impl LogVerbosity {
     /// Build the `EnvFilter` directive string for this verbosity.
     ///
     /// The string suppresses noisy `pdf_extract` glyph messages by clamping
-    /// that crate to `WARN` regardless of the global verbosity level.
+    /// that crate to `ERROR` regardless of the global verbosity level.
     fn filter_string(self) -> String {
         let level = self.as_tracing_level();
-        format!("{level},pdf_extract=warn")
+        format!("{level},pdf_extract=error")
     }
 }
 
@@ -52,7 +52,7 @@ impl LogVerbosity {
 ///
 /// Configures `tracing-subscriber` with an [`tracing_subscriber::EnvFilter`]
 /// and stderr output.  The `RUST_LOG` environment variable overrides the
-/// compiled-in verbosity when set.  `pdf_extract` messages below `WARN` are
+/// compiled-in verbosity when set.  `pdf_extract` messages below `ERROR` are
 /// suppressed by default to reduce glyph-level noise.
 ///
 /// This function is safe to call from application entry points.
@@ -148,8 +148,8 @@ mod tests {
         ] {
             let s = verbosity.filter_string();
             assert!(
-                s.contains("pdf_extract=warn"),
-                "filter_string for {verbosity:?} must suppress pdf_extract below WARN: got {s:?}"
+                s.contains("pdf_extract=error"),
+                "filter_string for {verbosity:?} must suppress pdf_extract below ERROR: got {s:?}"
             );
         }
     }
