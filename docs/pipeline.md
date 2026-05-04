@@ -1,4 +1,7 @@
-# Pipeline, Schema, and Embeddings Reference
+---
+title: Pipeline, Schema, and Embeddings Reference
+description: "Four-stage ingestion pipeline (Acquire → Parse → Embed → Load), CozoDB schema, embedding model details, and Datalog query examples"
+---
 
 graphtor-docs processes documentation through four sequential pipeline stages:
 **Acquire → Parse → Embed → Load**. Each stage has a defined input contract,
@@ -13,8 +16,8 @@ sources.yaml
 ┌─────────────────────────────────────────────────┐
 │ 1. Acquire                                      │
 │ Input:  source definitions (git/local/url)       │
-│ Output: files on disk in .graphtor/data/{id}/    │
-│ Idempotent: yes — skips existing clones          │
+│ Output: files on disk (.graphtor/data/ or local) │
+│ Idempotent: yes — skips existing git/url clones  │
 └───────────────────────┬─────────────────────────┘
                         │ files on disk
                         ▼
@@ -53,8 +56,9 @@ files under `.graphtor/data/{source_id}/`.
 
 Uses the `git2` crate to perform a shallow clone (`--depth 1`):
 
-- If the repository directory already exists, acquisition is **skipped**
-  (cloning is not re-run; incremental sync handles updates via git diff)
+- If the repository directory already exists, acquisition is **skipped** —
+  the local clone is not re-fetched. To pick up new upstream commits, pull
+  the repository manually before running `sync`.
 - Clone path: `.graphtor/data/{source_id}/`
 - Only the configured `branch` is fetched
 
@@ -109,17 +113,21 @@ Two-pass extraction using `pdf-extract`:
 
 ### DOCX (`.docx`)
 
-Planned — not yet implemented. DOCX files are silently skipped.
+Implemented using a ZIP/XML parser (`docx` crate). DOCX files are parsed by
+extracting paragraph text from `word/document.xml` within the ZIP archive and
+chunking the result using the same heading-boundary strategy as Markdown.
 
 ### Chunk ID Derivation
 
 Every chunk is assigned a stable **chunk ID**:
 
 ```
-chunk_id = SHA-256(content + forward_slash_normalized_path)
+chunk_id = SHA-256(content + "\0" + forward_slash_normalized_path)
 ```
 
 - `content` is the raw text content of the chunk (after heading extraction)
+- `"\0"` is a NUL byte separator that prevents collisions between content and
+  path components
 - `path` is the source-relative file path with **forward-slash separators**
   on all platforms (including Windows)
 - The SHA-256 hex string is the chunk ID stored in `doc_chunks` and used as
@@ -240,7 +248,7 @@ Stores every indexed text chunk.
 
 | Column | Type | Description |
 |---|---|---|
-| `chunk_id` | String (PK) | SHA-256 of `content + path` |
+| `chunk_id` | String (PK) | SHA-256 of `content + "\0" + path` |
 | `source_id` | String | Foreign reference to `doc_sources.source_id` |
 | `path` | String | Source-relative file path (forward-slash, e.g., `articles/intro.md`) |
 | `title` | String? | Chunk heading text; `null` for document-level pre-heading content |
@@ -268,7 +276,7 @@ Document link graph — edges between source chunks and target paths.
 | `src_chunk_id` | String (PK) | Source chunk containing the link |
 | `target_path` | String (PK) | Target document path (relative or absolute URL) |
 | `link_text` | String | Display text of the link |
-| `anchor` | String? | Fragment identifier (e.g., `#section-name`); `null` if absent |
+| `anchor` | String? | Fragment identifier without the leading `#` (e.g., `section-name`); `null` if absent |
 
 ---
 

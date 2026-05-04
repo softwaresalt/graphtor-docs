@@ -1,4 +1,7 @@
-# Incremental Sync Design
+---
+title: Incremental Sync Design
+description: "How graphtor-docs detects changed files and re-ingests only what has changed, including sync state format and change-detection strategies"
+---
 
 graphtor-docs avoids re-indexing unchanged documentation on every sync. This
 document describes how the incremental sync engine detects changed files and
@@ -9,12 +12,12 @@ re-ingests only what has changed.
 Per-source tracking data is persisted in a JSON file:
 
 ```
-.graphtor/cache/sync_state.json
+.graphtor/sync_state.json
 ```
 
 This path is resolved relative to the **current working directory** when
-`graphtor-docs sync` is run (specifically, relative to the parent directory
-of `--db-path`, which defaults to `.graphtor/`).
+`graphtor-docs sync` is run (specifically, in the same directory as
+`--db-path`, which defaults to `.graphtor/graph.db`).
 
 The file is created on the first successful sync and updated after each
 subsequent sync. If the file is missing, the engine treats every file as new
@@ -79,6 +82,15 @@ On each incremental sync:
 
 This strategy is exact: only files that changed in git history are processed.
 
+> **Note:** Acquisition skips repositories that are already cloned (FR-003
+> idempotency). The `sync` command does **not** fetch or pull the remote.
+> To pick up new upstream commits, pull the repository manually before running
+> `sync`:
+> ```sh
+> git -C .graphtor/data/{source_id} pull
+> graphtor-docs sync
+> ```
+
 ### Local Sources
 
 **Strategy:** compare current file `mtime` values against the stored mtime map.
@@ -103,7 +115,7 @@ URL sources do not have a reliable change-detection mechanism (HTTP ETags and
 `Last-Modified` headers are not universally supported). On each sync, the full
 BFS crawl runs within the `max_pages` limit. Previously indexed chunks for
 pages that no longer appear in the crawl are **not** automatically deleted —
-run `sync --full` to force a clean rebuild.
+to remove stale chunks, delete the database and run a fresh sync.
 
 ---
 
@@ -172,6 +184,15 @@ run `sync --full` after removing the old source from `sources.yaml`.
 
 ### Concurrent Sync Runs
 
-A workspace lock (`.graphtor/.lock`) is acquired at the start of `sync`.
-Concurrent invocations will fail with "workspace is locked by another process".
-Use `--force-unlock` to break a stale lock left by a crashed process.
+A workspace lock (`.graphtor/graphtor.lock`) is acquired at the start of
+`sync`. Concurrent invocations will fail with "workspace is locked by another
+process". If a previous process crashed and left a stale lock, delete the lock
+file manually:
+
+```sh
+# Linux / macOS
+rm .graphtor/graphtor.lock
+
+# Windows
+del .graphtor\graphtor.lock
+```

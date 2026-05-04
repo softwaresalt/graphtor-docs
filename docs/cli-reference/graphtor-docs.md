@@ -1,4 +1,7 @@
-# graphtor-docs CLI Reference
+---
+title: graphtor-docs CLI Reference
+description: "Complete reference for all graphtor-docs subcommands, global flags, and exit codes"
+---
 
 ```
 graphtor-docs [GLOBAL FLAGS] <SUBCOMMAND> [SUBCOMMAND FLAGS]
@@ -180,10 +183,12 @@ Creates the `.graphtor/` workspace directory scaffold:
 ```
 .graphtor/
   bin/        ← installed binary copy
-  data/       ← acquired source files
-  cache/      ← sync state and model cache
+  data/       ← acquired source files (git clones and url crawl cache)
+  cache/      ← model cache (HuggingFace)
   config/     ← sources.yaml
   logs/       ← transient log files
+  graph.db    ← CozoDB SQLite database
+  sync_state.json ← incremental sync tracking (git SHA-1 + file mtimes)
 ```
 
 Also:

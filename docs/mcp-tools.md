@@ -1,4 +1,7 @@
-# MCP Tool Reference
+---
+title: MCP Tool Reference
+description: "Complete reference for all 7 MCP tools exposed by graphtor-docs — parameters, examples, and usage patterns"
+---
 
 graphtor-docs exposes 7 tools via the [Model Context Protocol (MCP)][mcp].
 The server runs as a local STDIO process and is available only to MCP clients
@@ -14,8 +17,8 @@ on the same machine (localhost only).
 graphtor-docs install
 ```
 
-This generates MCP client config files for detected editors. You can also
-write the config manually (see below).
+This generates MCP client config files for all supported editors (`vscode`,
+`cursor`, `copilot`). Use `--editor` to target specific editors only.
 
 ### 2. Configure your MCP client
 

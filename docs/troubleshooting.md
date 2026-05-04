@@ -1,4 +1,7 @@
-# Troubleshooting Guide
+---
+title: Troubleshooting Guide
+description: "Common graphtor-docs setup and runtime problems — symptoms, root causes, and resolutions"
+---
 
 This guide covers the most common problems encountered when setting up and
 using graphtor-docs.
@@ -102,20 +105,40 @@ a previously crashed `sync` or `serve` run left a WAL lock), or the file
 permissions are wrong.
 
 **Resolution:**
-1. Check for stale lock files:
+1. Check for stale SQLite WAL lock files:
+
+   **Linux / macOS:**
    ```sh
    ls .graphtor/graph.db-*    # Look for -shm or -wal files
    ```
+   **Windows (PowerShell):**
+   ```powershell
+   Get-Item .graphtor\graph.db-* -ErrorAction SilentlyContinue
+   ```
 2. If a previous process crashed and left WAL files, it is safe to delete them
    **when no other process is using the database**:
+
+   **Linux / macOS:**
    ```sh
    # Only if you are certain no graphtor-docs process is running
-   del .graphtor\graph.db-shm  # Windows
-   del .graphtor\graph.db-wal  # Windows
+   rm .graphtor/graph.db-shm .graphtor/graph.db-wal
+   ```
+   **Windows (PowerShell):**
+   ```powershell
+   # Only if you are certain no graphtor-docs process is running
+   Remove-Item .graphtor\graph.db-shm, .graphtor\graph.db-wal
    ```
 3. Check permissions: the user running `graphtor-docs` must have read/write
    access to `.graphtor/`
-4. If the workspace lock is stale: `graphtor-docs sync --force-unlock`
+4. If a stale workspace lock (`graphtor.lock`) is blocking startup:
+   ```sh
+   rm .graphtor/graphtor.lock   # Linux / macOS
+   ```
+   ```powershell
+   Remove-Item .graphtor\graphtor.lock   # Windows
+   ```
+   The `--force-unlock` flag on `install`, `upgrade`, and `uninstall`
+   auto-removes the lock before those operations run.
 
 ---
 

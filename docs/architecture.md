@@ -1,4 +1,7 @@
-# Architecture Overview
+---
+title: Architecture Overview
+description: "Component map, data flow, technology stack, storage layout, and chunk identity for graphtor-docs"
+---
 
 graphtor-docs is a local-first documentation RAG system. All computation
 runs in-process. No cloud services, no networked databases, no external
@@ -44,7 +47,7 @@ sources.yaml
 ┌──────────────────────────────────────────────────────┐
 │ Acquire                                              │
 │  Git  → git2 shallow clone → .graphtor/data/{id}/   │
-│  Local → directory scan   → .graphtor/data/{id}/    │
+│  Local → directory scan   → (in-place; no copy)     │
 │  URL  → ureq BFS crawl    → .graphtor/data/{id}/    │
 └──────────────────────┬───────────────────────────────┘
                        │ files on disk
@@ -53,7 +56,7 @@ sources.yaml
 │ Parse                                                │
 │  .md   → pulldown-cmark AST → chunks + edges        │
 │  .pdf  → pdf-extract / PDFium → chunks               │
-│  .docx → (planned)                                   │
+│  .docx → docx parser → chunks                        │
 │  Output: ParsedDocument { chunks, edges }            │
 └──────────────────────┬───────────────────────────────┘
                        │ ParsedDocument
@@ -91,7 +94,7 @@ sources.yaml
 
 | Concern | Technology | Notes |
 |---|---|---|
-| Language | Rust (stable, 1.85+, edition 2024) | `#![forbid(unsafe_code)]` enforced |
+| Language | Rust (stable, 1.75+, edition 2021) | `#![forbid(unsafe_code)]` enforced |
 | Unified store | CozoDB (`cozo` crate, SQLite backend) | Embedded; Datalog queries; property-graph traversal |
 | Embeddings | `all-MiniLM-L6-v2` via Candle | ~80 MB model; 384-dim; pure Rust inference |
 | Graph extraction | `pulldown-cmark` | AST-based; deterministic; 100% precision |
@@ -112,18 +115,19 @@ sources.yaml
   config/
     sources.yaml            ← documentation source registry
   data/
-    {source_id}/            ← acquired files (git clones, local copies, crawl cache)
-  cache/
-    .sync_state.json        ← incremental sync state (git SHA-1 + file mtimes)
+    {source_id}/            ← acquired files (git clones and url crawl cache)
+  cache/                    ← model cache (HuggingFace)
   logs/                     ← transient output files
   graph.db                  ← CozoDB SQLite database
+  sync_state.json           ← incremental sync state (git SHA-1 + file mtimes)
 ```
 
 ## Chunk Identity
 
-Every chunk has a stable **chunk ID** — the SHA-256 hash of its content
-concatenated with its source-relative path (using forward-slash separators on
-all platforms). This ID is the correlation key across `doc_chunks`,
+Every chunk has a stable **chunk ID** — the SHA-256 hash of its content,
+a NUL byte separator (`\0`), and its source-relative path (using
+forward-slash separators on all platforms). This ID is the correlation key
+across `doc_chunks`,
 `doc_vectors`, and `doc_edges`. Upserts by chunk ID are safe to re-run: the
 same input always produces the same ID and the same stored record.
 

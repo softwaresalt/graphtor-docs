@@ -1,4 +1,7 @@
-# Configuration Guide
+---
+title: Configuration Guide
+description: "Complete sources.yaml reference for Git, local, and URL source types — all fields, defaults, and annotated examples"
+---
 
 graphtor-docs is configured via a single YAML file, `sources.yaml`, which
 defines the documentation sources to acquire, index, and serve.
@@ -125,9 +128,9 @@ case-insensitively.
 
 | Value | Parser used |
 |---|---|
-| `md` | `pulldown-cmark` (Markdown AST) |
+| `md` or `markdown` | `pulldown-cmark` (Markdown AST) |
 | `pdf` | `pdf-extract` (with optional PDFium backend for files ≥ 20 MiB) |
-| `docx` | (planned) |
+| `docx` | ZIP/XML docx parser |
 
 **Empty list** means no restriction — all extensions supported by the pipeline
 are processed.

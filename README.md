@@ -1,4 +1,7 @@
-# graphtor-docs
+---
+title: graphtor-docs
+description: "Local-first documentation RAG — indexes your docs into an embedded graph+vector store and serves them to AI agents via MCP"
+---
 
 **graphtor-docs** is a local-first documentation RAG system that indexes
 your documentation sources into an embedded graph+vector store and serves
@@ -26,7 +29,7 @@ No cloud services. No external databases. One binary.
 ### 1. Install
 
 ```sh
-# Build from source (Rust 1.85+ required)
+# Build from source (Rust 1.75+ required)
 cargo build --release
 
 # Install into your workspace (.graphtor/bin/)

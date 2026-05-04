@@ -1,4 +1,7 @@
-# Developer Guide
+---
+title: Developer Guide
+description: "Build instructions, quality gates, module map, coding conventions, and contribution workflow for graphtor-docs"
+---
 
 This guide covers everything needed to build graphtor-docs from source, run
 the quality gates, understand the codebase layout, and extend the system.
@@ -9,7 +12,7 @@ the quality gates, understand the codebase layout, and extend the system.
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Rust toolchain | 1.85+ (stable) | Install via [rustup](https://rustup.rs/) |
+| Rust toolchain | 1.75+ (stable) | Install via [rustup](https://rustup.rs/) |
 | Git | any recent | For cloning and the `git2` system library |
 
 On Linux/macOS, the `git2` crate links against `libgit2`. Install system
