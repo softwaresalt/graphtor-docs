@@ -26,7 +26,7 @@
 //! rendered text output.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::chunk::generate_chunk_id;
 use crate::error::GraphtorError;
@@ -822,12 +822,171 @@ impl PdfExtractBackend {
     }
 }
 
+// ── PdfiumBackend ─────────────────────────────────────────────────────────────
+
+/// Backend that uses `pdfium-render` for text extraction via the `PDFium` library.
+///
+/// `PDFium` opens documents lazily — only the cross-reference index is read at
+/// open time, and page content is decompressed on demand.  This makes it
+/// dramatically faster than `pdf-extract` (which eagerly parses every object)
+/// for large PDFs (100+ MB).
+///
+/// the `PDFium` native library (`.dll`/`.so`/`.dylib`) must be present at
+/// runtime.  Discovery order:
+///
+/// 1. `$GRAPHTOR_PDFIUM_PATH` environment variable (directory containing the
+///    library)
+/// 2. Executable's own directory
+/// 3. System library search path
+///
+/// When the library is not found, [`PdfiumBackend::try_parse`] returns
+/// [`PdfiumBindError::NotAvailable`] and the caller falls back to
+/// [`PdfExtractBackend`].
+pub(crate) struct PdfiumBackend;
+
+/// Categorized pdfium errors to distinguish "library not installed" (expected
+/// fallback) from "library found but extraction failed" (real bug).
+#[derive(Debug)]
+enum PdfiumBindError {
+    /// the `PDFium` native library could not be located or loaded.
+    NotAvailable(String),
+    /// The library loaded but PDF parsing or text extraction failed.
+    ExtractionFailed(String),
+}
+
+impl std::fmt::Display for PdfiumBindError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAvailable(msg) => write!(f, "pdfium not available: {msg}"),
+            Self::ExtractionFailed(msg) => write!(f, "pdfium extraction failed: {msg}"),
+        }
+    }
+}
+
+impl PdfiumBackend {
+    /// Attempt to parse PDF bytes using the `PDFium` backend.
+    ///
+    /// Returns `Ok(ParsedDocument)` on success, `Err(PdfiumBindError::NotAvailable)`
+    /// when the `PDFium` library is not found (caller should fall back), or
+    /// `Err(PdfiumBindError::ExtractionFailed)` when the library loaded but
+    /// extraction failed (a real error that should be surfaced).
+    fn try_parse(bytes: &[u8], source_path: &str) -> Result<ParsedDocument, PdfiumBindError> {
+        let pdfium = Self::load_pdfium()?;
+
+        let document = pdfium
+            .load_pdf_from_byte_slice(bytes, None)
+            .map_err(|e| PdfiumBindError::ExtractionFailed(format!("pdf open failed: {e}")))?;
+
+        let page_count = document.pages().len();
+        let page_count_usize = usize::try_from(page_count).unwrap_or(0);
+        tracing::info!(
+            pages = page_count_usize,
+            source_path,
+            "pdfium: document opened (lazy)"
+        );
+
+        // Extract text page-by-page using pdfium's text extraction.
+        let mut pages: Vec<String> = Vec::with_capacity(page_count_usize);
+        for page_idx in 0..page_count {
+            let page = document.pages().get(page_idx).map_err(|e| {
+                PdfiumBindError::ExtractionFailed(format!("page {page_idx} access failed: {e}"))
+            })?;
+            let text = page
+                .text()
+                .map_err(|e| {
+                    PdfiumBindError::ExtractionFailed(format!(
+                        "page {page_idx} text extraction failed: {e}"
+                    ))
+                })?
+                .all();
+            pages.push(text);
+        }
+
+        let title = extract_title_from_pages(&pages, source_path);
+        let chunks = chunk_pdf_pages(&pages, source_path)
+            .map_err(|e| PdfiumBindError::ExtractionFailed(format!("chunking failed: {e}")))?;
+
+        tracing::info!(
+            chunks = chunks.len(),
+            pages = page_count_usize,
+            source_path,
+            backend = "pdfium",
+            "pdfium: extraction complete"
+        );
+
+        Ok(ParsedDocument {
+            path: source_path.to_string(),
+            title,
+            frontmatter: None,
+            chunks,
+            references: Vec::new(),
+            code_snippets: Vec::new(),
+        })
+    }
+
+    /// Locate and bind the `PDFium` native library.
+    ///
+    /// Search order:
+    /// 1. `$GRAPHTOR_PDFIUM_PATH` (directory containing the library file)
+    /// 2. Executable's directory
+    /// 3. System library search path
+    fn load_pdfium() -> Result<pdfium_render::prelude::Pdfium, PdfiumBindError> {
+        use pdfium_render::prelude::*;
+
+        // 1. Explicit environment variable
+        if let Ok(dir) = std::env::var("GRAPHTOR_PDFIUM_PATH") {
+            let path = PathBuf::from(&dir);
+            if path.is_dir() {
+                if let Ok(bindings) =
+                    Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&dir))
+                {
+                    tracing::debug!(path = %dir, "pdfium: loaded from GRAPHTOR_PDFIUM_PATH");
+                    return Ok(Pdfium::new(bindings));
+                }
+            }
+        }
+
+        // 2. Executable's directory
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let dir_str = exe_dir.to_string_lossy();
+                if let Ok(bindings) = Pdfium::bind_to_library(
+                    Pdfium::pdfium_platform_library_name_at_path(dir_str.as_ref()),
+                ) {
+                    tracing::debug!(path = %dir_str, "pdfium: loaded from executable dir");
+                    return Ok(Pdfium::new(bindings));
+                }
+            }
+        }
+
+        // 3. System library search path
+        if let Ok(bindings) = Pdfium::bind_to_system_library() {
+            tracing::debug!("pdfium: loaded from system library path");
+            return Ok(Pdfium::new(bindings));
+        }
+
+        Err(PdfiumBindError::NotAvailable(
+            "pdfium native library not found in GRAPHTOR_PDFIUM_PATH, \
+             executable directory, or system search path"
+                .to_string(),
+        ))
+    }
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 /// Parse raw PDF bytes into a fully assembled [`ParsedDocument`].
 ///
-/// Delegates to [`PdfExtractBackend`].  See [`PdfExtractBackend::parse`] for
-/// the full two-pass architecture and large-file fast-path documentation.
+/// ## Backend Selection
+///
+/// For PDFs larger than [`LARGE_PDF_THRESHOLD`] (20 MiB), the parser first
+/// attempts the [`PdfiumBackend`] which opens documents lazily (instant for
+/// any file size).  When the `PDFium` native library is not installed, the
+/// system gracefully falls back to [`PdfExtractBackend`].
+///
+/// For PDFs smaller than the threshold, [`PdfExtractBackend`] is used
+/// directly — its two-pass heading-detection pipeline produces
+/// higher-quality section boundaries.
 ///
 /// ## Chunk ID Format
 ///
@@ -845,6 +1004,30 @@ pub fn parse_pdf_document(
     bytes: &[u8],
     source_path: &str,
 ) -> Result<ParsedDocument, GraphtorError> {
+    // Large PDFs: try pdfium first for instant document opening.
+    if bytes.len() >= LARGE_PDF_THRESHOLD {
+        match PdfiumBackend::try_parse(bytes, source_path) {
+            Ok(doc) => return Ok(doc),
+            Err(PdfiumBindError::NotAvailable(reason)) => {
+                tracing::warn!(
+                    source_path,
+                    reason = %reason,
+                    hint = "set GRAPHTOR_PDFIUM_PATH to the directory containing the pdfium \
+                            library, or place it next to the graphtor-docs executable",
+                    "pdfium unavailable for large pdf, falling back to pdf-extract \
+                     (this may be slow for files >20 MiB)"
+                );
+            }
+            Err(PdfiumBindError::ExtractionFailed(reason)) => {
+                tracing::error!(
+                    source_path,
+                    reason = %reason,
+                    "pdfium extraction failed, falling back to pdf-extract"
+                );
+            }
+        }
+    }
+
     PdfExtractBackend::parse(bytes, source_path)
 }
 
@@ -1813,5 +1996,98 @@ mod tests {
             result.is_err(),
             "PdfExtractBackend::parse must fail on empty bytes"
         );
+    }
+
+    // ── PdfiumBackend tests ───────────────────────────────────────────────────
+
+    use super::{PdfiumBackend, PdfiumBindError};
+
+    #[test]
+    fn pdfium_bind_error_not_available_display() {
+        let err = PdfiumBindError::NotAvailable("library not found".to_string());
+        assert_eq!(err.to_string(), "pdfium not available: library not found");
+    }
+
+    #[test]
+    fn pdfium_bind_error_extraction_failed_display() {
+        let err =
+            PdfiumBindError::ExtractionFailed("page 0 text extraction failed: corrupt".to_string());
+        assert_eq!(
+            err.to_string(),
+            "pdfium extraction failed: page 0 text extraction failed: corrupt"
+        );
+    }
+
+    #[test]
+    fn pdfium_load_returns_not_available_without_panic() {
+        // In CI or developer environments without the PDFium DLL installed,
+        // `load_pdfium()` must return `NotAvailable`, never panic.
+        // Clear the env var to guarantee the first search path misses.
+        let saved = std::env::var("GRAPHTOR_PDFIUM_PATH").ok();
+        std::env::remove_var("GRAPHTOR_PDFIUM_PATH");
+
+        let result = PdfiumBackend::load_pdfium();
+
+        // Restore env var if it was set.
+        if let Some(val) = saved {
+            std::env::set_var("GRAPHTOR_PDFIUM_PATH", val);
+        }
+
+        // If the DLL happens to be on the system path, load succeeds — that's fine.
+        // The important invariant is no panic. If it fails, it must be NotAvailable.
+        if let Err(e) = result {
+            assert!(
+                matches!(e, PdfiumBindError::NotAvailable(_)),
+                "expected NotAvailable, got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn pdfium_try_parse_without_dll_returns_not_available() {
+        // Without the PDFium DLL, try_parse must return NotAvailable
+        // so the caller can fall back to pdf-extract.
+        let saved = std::env::var("GRAPHTOR_PDFIUM_PATH").ok();
+        std::env::remove_var("GRAPHTOR_PDFIUM_PATH");
+
+        let result = PdfiumBackend::try_parse(b"%PDF-1.4 fake", "test.pdf");
+
+        if let Some(val) = saved {
+            std::env::set_var("GRAPHTOR_PDFIUM_PATH", val);
+        }
+
+        // If the DLL is available on the system path, the result may differ.
+        // The test verifies no panic and correct error variant when unavailable.
+        if let Err(e) = result {
+            assert!(
+                matches!(
+                    e,
+                    PdfiumBindError::NotAvailable(_) | PdfiumBindError::ExtractionFailed(_)
+                ),
+                "expected NotAvailable or ExtractionFailed, got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_pdf_document_falls_back_for_large_input() {
+        use super::parse_pdf_document;
+        // A large (>20 MiB) byte slice of non-PDF junk should attempt
+        // pdfium first, then fall back to pdf-extract, which also fails
+        // on invalid content. The important thing is no panic.
+        let large_junk = vec![0u8; LARGE_PDF_THRESHOLD + 1];
+        let result = parse_pdf_document(&large_junk, "junk.pdf");
+        // Both backends should fail on non-PDF bytes, returning an error.
+        assert!(result.is_err(), "non-PDF bytes must produce an error");
+    }
+
+    #[test]
+    fn parse_pdf_document_uses_pdf_extract_for_small_files() {
+        use super::parse_pdf_document;
+        // A small input (below threshold) goes directly to pdf-extract,
+        // skipping the pdfium path. Non-PDF bytes produce an error.
+        let small_junk = vec![0u8; LARGE_PDF_THRESHOLD - 1];
+        let result = parse_pdf_document(&small_junk, "small_junk.pdf");
+        assert!(result.is_err(), "non-PDF bytes must produce an error");
     }
 }

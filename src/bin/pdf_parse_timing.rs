@@ -2,10 +2,16 @@ use std::fs;
 use std::time::Instant;
 
 fn main() {
-    let pdf_path = "./tmp/azure-cosmos-db.pdf";
+    let args: Vec<String> = std::env::args().collect();
+    let pdf_path = if args.len() > 1 {
+        args[1].as_str()
+    } else {
+        "./tmp/azure-cosmos-db.pdf"
+    };
 
     if !std::path::Path::new(pdf_path).exists() {
         eprintln!("PDF not found: {pdf_path}");
+        eprintln!("Usage: pdf_parse_timing [path/to/file.pdf]");
         std::process::exit(1);
     }
 

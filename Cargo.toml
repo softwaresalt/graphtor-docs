@@ -34,6 +34,11 @@ globset = "0.4"
 git2 = "0.19"
 walkdir = "2"
 pdf-extract = "0.10"
+# Enable rayon for lopdf (pdf-extract's backend) to parallelize PDF object
+# loading.  pdf-extract pins lopdf with default-features = false which
+# disables rayon; adding the same version here with the rayon feature lets
+# Cargo's feature-unification activate parallel loading globally.
+lopdf = { version = "0.38", default-features = false, features = ["rayon"] }
 pulldown-cmark = "0.12"
 cozo = { version = "0.7", default-features = false, features = ["storage-sqlite", "rayon"] }
 candle-core = { version = "0.8" }
@@ -55,8 +60,20 @@ htmd = "0.5"
 scraper = "0.22"
 texting_robots = "0.2"
 docx-rs = "0.4"
+# PDFium-based PDF backend for large files.  pdfium-render wraps the PDFium
+# C library via dynamic loading (no native compile-time deps).  The DLL is
+# located at runtime — when absent, the system falls back to pdf-extract.
+pdfium-render = { version = "0.9", default-features = false, features = ["thread_safe", "pdfium_latest"] }
 
 [dev-dependencies]
 tempfile = "3"
 git2 = "0.19"
 candle-core = { version = "0.8" }
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
