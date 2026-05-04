@@ -47,6 +47,10 @@ fn main() {
     );
 
     // Phase 3: Extract first 10 pages one-by-one to measure per-page cost
+    if page_count == 0 {
+        println!("\n[3] No pages found — skipping per-page timing.");
+        return;
+    }
     let sample_pages = 10.min(page_count as u32);
     println!("\n[3] Per-page extraction timing (first {sample_pages} pages):");
 

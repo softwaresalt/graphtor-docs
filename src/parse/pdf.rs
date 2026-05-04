@@ -869,7 +869,10 @@ impl PdfiumBackend {
     /// Returns `Ok(ParsedDocument)` on success, `Err(PdfiumBindError::NotAvailable)`
     /// when the `PDFium` library is not found (caller should fall back), or
     /// `Err(PdfiumBindError::ExtractionFailed)` when the library loaded but
-    /// extraction failed (a real error that should be surfaced).
+    /// extraction failed.  The caller (`parse_pdf_document`) logs and falls
+    /// back to `PdfExtractBackend` on either error variant — `ExtractionFailed`
+    /// is logged at error level to surface potential issues while still
+    /// providing a best-effort result.
     fn try_parse(bytes: &[u8], source_path: &str) -> Result<ParsedDocument, PdfiumBindError> {
         let pdfium = Self::load_pdfium()?;
 
@@ -2022,16 +2025,9 @@ mod tests {
     fn pdfium_load_returns_not_available_without_panic() {
         // In CI or developer environments without the PDFium DLL installed,
         // `load_pdfium()` must return `NotAvailable`, never panic.
-        // Clear the env var to guarantee the first search path misses.
-        let saved = std::env::var("GRAPHTOR_PDFIUM_PATH").ok();
-        std::env::remove_var("GRAPHTOR_PDFIUM_PATH");
-
+        // We do NOT mutate env vars here to avoid parallel test interference.
+        // The test validates the no-panic invariant regardless of DLL presence.
         let result = PdfiumBackend::load_pdfium();
-
-        // Restore env var if it was set.
-        if let Some(val) = saved {
-            std::env::set_var("GRAPHTOR_PDFIUM_PATH", val);
-        }
 
         // If the DLL happens to be on the system path, load succeeds — that's fine.
         // The important invariant is no panic. If it fails, it must be NotAvailable.
@@ -2045,16 +2041,11 @@ mod tests {
 
     #[test]
     fn pdfium_try_parse_without_dll_returns_not_available() {
-        // Without the PDFium DLL, try_parse must return NotAvailable
-        // so the caller can fall back to pdf-extract.
-        let saved = std::env::var("GRAPHTOR_PDFIUM_PATH").ok();
-        std::env::remove_var("GRAPHTOR_PDFIUM_PATH");
-
+        // Validates that try_parse returns the correct error variant
+        // without panicking. We do NOT mutate env vars to avoid parallel
+        // test interference — the test handles both DLL-present and
+        // DLL-absent scenarios gracefully.
         let result = PdfiumBackend::try_parse(b"%PDF-1.4 fake", "test.pdf");
-
-        if let Some(val) = saved {
-            std::env::set_var("GRAPHTOR_PDFIUM_PATH", val);
-        }
 
         // If the DLL is available on the system path, the result may differ.
         // The test verifies no panic and correct error variant when unavailable.

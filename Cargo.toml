@@ -34,10 +34,12 @@ globset = "0.4"
 git2 = "0.19"
 walkdir = "2"
 pdf-extract = "0.10"
-# Enable rayon for lopdf (pdf-extract's backend) to parallelize PDF object
-# loading.  pdf-extract pins lopdf with default-features = false which
-# disables rayon; adding the same version here with the rayon feature lets
-# Cargo's feature-unification activate parallel loading globally.
+# Enable rayon for lopdf (pdf-extract's backend) to parallelize per-page object
+# decompression.  Note: this does NOT help the serial xref index parsing
+# (the bottleneck for very large PDFs — see pdfium dual backend for that).
+# pdf-extract pins lopdf with default-features = false which disables rayon;
+# adding the same version here with the rayon feature lets Cargo's
+# feature-unification activate parallel decompression globally.
 lopdf = { version = "0.38", default-features = false, features = ["rayon"] }
 pulldown-cmark = "0.12"
 cozo = { version = "0.7", default-features = false, features = ["storage-sqlite", "rayon"] }
@@ -69,11 +71,3 @@ pdfium-render = { version = "0.9", default-features = false, features = ["thread
 tempfile = "3"
 git2 = "0.19"
 candle-core = { version = "0.8" }
-
-[profile.release]
-opt-level = 3
-debug = false
-strip = "symbols"
-lto = "thin"
-codegen-units = 1
-panic = "abort"
