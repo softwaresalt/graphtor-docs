@@ -1,5 +1,6 @@
 ---
 title: "Switch PDF Pass 2 from output_doc to output_doc_page Loop for Page-Boundary State"
+description: "Pattern for using output_doc_page in a per-page loop instead of output_doc to preserve heading state across PDF page boundaries in PdfExtractBackend"
 date: 2026-05-05
 tags: [rust, pdf, pdf_extract, heading-detection, architecture]
 ---

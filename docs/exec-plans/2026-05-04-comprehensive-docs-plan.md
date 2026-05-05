@@ -1,3 +1,9 @@
+---
+title: "Implementation Plan: Comprehensive graphtor-docs Documentation"
+description: "Plan for authoring 8 documentation units covering README, architecture, developer guide, CLI reference, pipeline, sync, MCP tools, and troubleshooting"
+date: 2026-05-04
+---
+
 # Implementation Plan: Comprehensive graphtor-docs Documentation
 
 **Date**: 2026-05-04  
