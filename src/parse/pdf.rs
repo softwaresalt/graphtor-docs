@@ -770,7 +770,7 @@ impl PdfExtractBackend {
             for page_num in 1..=page_count {
                 pdf_extract::output_doc_page(&doc, &mut acc, page_num).map_err(|e| {
                     GraphtorError::Parse {
-                        message: format!("pdf per-page extraction failed: {e}"),
+                        message: format!("pdf per-page extraction failed at page {page_num}: {e}"),
                         path: Some(source_path.into()),
                     }
                 })?;
@@ -786,7 +786,9 @@ impl PdfExtractBackend {
             for page_num in 1..=page_count {
                 pdf_extract::output_doc_page(&doc, &mut heading_output, page_num).map_err(|e| {
                     GraphtorError::Parse {
-                        message: format!("pdf heading-aware extraction failed: {e}"),
+                        message: format!(
+                            "pdf heading-aware extraction failed at page {page_num}: {e}"
+                        ),
                         path: Some(source_path.into()),
                     }
                 })?;

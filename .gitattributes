@@ -1,0 +1,2 @@
+# Binary file declarations — prevent git line-ending conversion
+tests/fixtures/*.pdf binary
