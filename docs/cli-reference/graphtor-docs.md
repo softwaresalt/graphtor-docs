@@ -3,7 +3,7 @@ title: graphtor-docs CLI Reference
 description: "Complete reference for all graphtor-docs subcommands, global flags, and exit codes"
 ---
 
-```
+```text
 graphtor-docs [GLOBAL FLAGS] <SUBCOMMAND> [SUBCOMMAND FLAGS]
 ```
 
@@ -36,7 +36,7 @@ These flags are accepted by every subcommand.
 
 Run the ingestion pipeline.
 
-```
+```text
 graphtor-docs sync [FLAGS]
 ```
 
@@ -75,7 +75,7 @@ graphtor-docs --verbose sync
 
 Start the MCP STDIO server.
 
-```
+```text
 graphtor-docs serve
 ```
 
@@ -109,7 +109,7 @@ graphtor-docs --db-path /data/myproject.db serve
 
 Print database statistics.
 
-```
+```text
 graphtor-docs status [FLAGS]
 ```
 
@@ -123,7 +123,7 @@ with code `0`.
 
 **Example output (text):**
 
-```
+```text
 database: .graphtor/graph.db
 sources:  2
   [git]   azure-docs — https://github.com/MicrosoftDocs/azure-docs.git (last sync: 2026-05-01T10:30:00Z)
@@ -153,7 +153,7 @@ sources:  2
 
 Generate a template `sources.yaml`.
 
-```
+```text
 graphtor-docs init [FLAGS]
 ```
 
@@ -174,17 +174,17 @@ sources, then run `graphtor-docs sync`.
 
 Install graphtor-docs into the current workspace.
 
-```
+```text
 graphtor-docs install [FLAGS]
 ```
 
 Creates the `.graphtor/` workspace directory scaffold:
 
-```
+```text
 .graphtor/
   bin/        ← installed binary copy
   data/       ← acquired source files (git clones and url crawl cache)
-  cache/      ← model cache (HuggingFace)
+  cache/      ← directory scaffold only; HuggingFace model cache is at ~/.cache/huggingface/hub/
   config/     ← sources.yaml
   logs/       ← transient log files
   graph.db    ← CozoDB SQLite database
@@ -209,7 +209,7 @@ Also:
 
 Diagnose workspace health.
 
-```
+```text
 graphtor-docs doctor
 ```
 
@@ -224,7 +224,7 @@ Runs a series of health checks and prints a pass/warn/fail report:
 | Disk usage | `.graphtor/` total disk usage |
 
 Output format:
-```
+```text
 [✓] binary: graphtor-docs v0.1.0
 [✓] database: .graphtor/graph.db (accessible)
 [!] sources.yaml: duplicate source ID "azure-docs"
@@ -239,7 +239,7 @@ Exit codes: `0` if all checks pass or warn; `2` if any check fails.
 
 Upgrade the installed graphtor-docs binary.
 
-```
+```text
 graphtor-docs upgrade [FLAGS]
 ```
 
@@ -257,7 +257,7 @@ Preserves all configuration and data.
 
 Remove graphtor-docs from the current workspace.
 
-```
+```text
 graphtor-docs uninstall --confirm [FLAGS]
 ```
 

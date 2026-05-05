@@ -99,7 +99,7 @@ cargo test 2>&1 | tee logs/test-results.txt
 
 ## Workspace Layout
 
-```
+```text
 src/
   main.rs                 ← binary entry point; 8 CLI subcommands
   lib.rs                  ← library crate root (graphtor-core)

@@ -9,7 +9,7 @@ output contract, and idempotency guarantee.
 
 ## Stage Overview
 
-```
+```text
 sources.yaml
      │
      ▼
@@ -92,8 +92,9 @@ Uses `pulldown-cmark`'s AST event stream:
 
 1. **Frontmatter stripping** — YAML frontmatter (between `---` delimiters) is
    detected and removed before chunking
-2. **Heading-based chunking** — the document is split at each heading boundary
-   (`#`, `##`, `###`, etc.); each heading + its content forms one chunk
+2. **Heading-based chunking** — the document is split at H1, H2, and H3 heading
+   boundaries (`#`, `##`, `###`); H4–H6 headings are kept inside the enclosing
+   chunk and do not start a new chunk
 3. **Link extraction** — `[text](url)` links become `doc_edges` with
    `(src_chunk_id, target_path, link_text, anchor)`
 4. **Code block extraction** — fenced code blocks become `doc_code` entries
@@ -121,7 +122,7 @@ chunking the result using the same heading-boundary strategy as Markdown.
 
 Every chunk is assigned a stable **chunk ID**:
 
-```
+```text
 chunk_id = SHA-256(content + "\0" + forward_slash_normalized_path)
 ```
 
@@ -174,7 +175,8 @@ graphtor-docs sync --no-embed
 
 When embeddings are skipped:
 - No vectors are stored in `doc_vectors`
-- `search_semantic` in the MCP server will return an error (model not loaded)
+- `search_semantic` in the MCP server returns empty results (no vectors stored;
+  the model may still be loaded — it just has nothing to search)
 - All other tools (`search_local_docs`, `traverse_doc_links`, etc.) work normally
 - Sync is significantly faster — useful for text-only indexing
 

@@ -11,7 +11,7 @@ re-ingests only what has changed.
 
 Per-source tracking data is persisted in a JSON file:
 
-```
+```text
 .graphtor/sync_state.json
 ```
 
@@ -184,15 +184,13 @@ run `sync --full` after removing the old source from `sources.yaml`.
 
 ### Concurrent Sync Runs
 
-A workspace lock (`.graphtor/graphtor.lock`) is acquired at the start of
-`sync`. Concurrent invocations will fail with "workspace is locked by another
-process". If a previous process crashed and left a stale lock, delete the lock
-file manually:
+The `sync` command does not currently acquire a workspace lock. Running two
+`sync` processes simultaneously against the same workspace is not recommended:
+concurrent writes to CozoDB may produce partial or inconsistent state.
 
-```sh
-# Linux / macOS
-rm .graphtor/graphtor.lock
+If you need to guard against concurrent runs in CI or scheduled scripts, use an
+external lock (e.g., `flock` on Linux, a named mutex, or a CI job concurrency
+group) rather than relying on `graphtor-docs` itself.
 
-# Windows
-del .graphtor\graphtor.lock
-```
+> **Note:** The workspace lock (`.graphtor/graphtor.lock`) is only acquired by
+> `install`, `upgrade`, and `uninstall`. It is **not** acquired by `sync`.

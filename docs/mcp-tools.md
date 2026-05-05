@@ -89,7 +89,7 @@ literal text that should appear in the documentation.
 heading hierarchy, and content excerpt.
 
 **Example:**
-```
+```text
 search_local_docs(
   query = "incremental sync git diff",
   source_id = "azure-docs",
@@ -122,7 +122,7 @@ this tool returns a descriptive error. Use `search_local_docs` as a fallback.
 cosine similarity. Format matches `search_local_docs` output.
 
 **Example:**
-```
+```text
 search_semantic(
   query = "how does the pipeline handle large files",
   top_k = 10
@@ -153,7 +153,7 @@ this tool to discover related documentation reachable via hyperlinks.
 traversal depth from the starting chunk.
 
 **Example:**
-```
+```text
 traverse_doc_links(
   chunk_id = "a3f7b2c9d4e1f0a8...",
   max_depth = 3
@@ -175,7 +175,7 @@ that sync has run; check last-sync timestamps.
 display name, and last-sync timestamp.
 
 **Example:**
-```
+```text
 list_sources()
 ```
 
@@ -198,7 +198,7 @@ the full chunk content without repeating a search query.
 position, and text. Returns a "not found" message if the chunk ID is unknown.
 
 **Example:**
-```
+```text
 get_chunk_by_id(
   chunk_id = "a3f7b2c9d4e1f0a8b5c2d6e3f7a0b1c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0"
 )
@@ -224,7 +224,7 @@ want to read the full document rather than individual search result snippets.
 formatted as Markdown.
 
 **Example:**
-```
+```text
 get_document(
   source_id = "azure-docs",
   path = "articles/app-service/overview.md"
@@ -246,7 +246,7 @@ and chunks are indexed; perform a quick health check.
 and active schema version.
 
 **Example:**
-```
+```text
 get_status()
 ```
 
@@ -256,7 +256,7 @@ get_status()
 
 ### Pattern 1: Targeted lookup
 
-```
+```text
 list_sources()
   → identify source_id
 
@@ -269,7 +269,7 @@ get_chunk_by_id(chunk_id="...")
 
 ### Pattern 2: Topic exploration with traversal
 
-```
+```text
 search_local_docs(query="authentication flow")
   → find a high-relevance chunk_id
 
@@ -282,7 +282,7 @@ get_document(source_id="...", path="articles/auth/overview.md")
 
 ### Pattern 3: Conceptual search when keywords miss
 
-```
+```text
 search_semantic(query="error recovery when network is unavailable")
   → results ranked by semantic similarity
 

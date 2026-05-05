@@ -28,7 +28,7 @@ graphtor-docs --verbose sync
 ### `sources.yaml not found`
 
 **Symptom:**
-```
+```text
 error: sources.yaml not found at .graphtor/config/sources.yaml;
        run `graphtor-docs init` first
 ```
@@ -81,9 +81,18 @@ available.
    for your platform
 2. Place it in the same directory as the `graphtor-docs` binary, **or** set
    the environment variable:
+
+   **Linux / macOS:**
    ```sh
-   export GRAPHTOR_PDFIUM_PATH=/path/to/libpdfium.so  # Linux
-   set GRAPHTOR_PDFIUM_PATH=C:\libs\pdfium.dll         # Windows
+   export GRAPHTOR_PDFIUM_PATH=/path/to/libpdfium.so
+   ```
+   **Windows (PowerShell):**
+   ```powershell
+   $env:GRAPHTOR_PDFIUM_PATH = 'C:\libs\pdfium.dll'
+   ```
+   **Windows (cmd):**
+   ```cmd
+   set GRAPHTOR_PDFIUM_PATH=C:\libs\pdfium.dll
    ```
 3. Re-run sync: `graphtor-docs sync --full`
 
@@ -95,7 +104,7 @@ quality but functional.
 ### `database unavailable` or WAL lock error
 
 **Symptom:**
-```
+```text
 error: failed to open database at .graphtor/graph.db
 ```
 Or sync hangs indefinitely accessing the database.
@@ -145,7 +154,7 @@ permissions are wrong.
 ### Git clone failures
 
 **Symptom:**
-```
+```text
 acquisition had failures; affected sources may be skipped
 ```
 Or authentication errors during clone.
@@ -154,11 +163,16 @@ Or authentication errors during clone.
 not available, or firewall/proxy blocking git traffic.
 
 **Resolution:**
-- **HTTPS sources:** ensure git credential helper is configured, or use a
-  personal access token embedded in the URL:
+- **HTTPS sources:** configure a [git credential helper](https://git-scm.com/docs/gitcredentials)
+  so that git can authenticate without embedding credentials in URLs:
   ```sh
-  https://token@github.com/org/repo.git
+  git config --global credential.helper store   # Linux/macOS (stores in ~/.git-credentials)
   ```
+  ```powershell
+  git config --global credential.helper wincred  # Windows Credential Manager
+  ```
+  For CI environments, use the `GIT_ASKPASS` or `GH_TOKEN` / `GITHUB_TOKEN`
+  environment variables instead of embedding tokens in clone URLs.
 - **SSH sources:** ensure `ssh-agent` is running and has your key loaded:
   ```sh
   eval $(ssh-agent)
@@ -270,7 +284,7 @@ output.
 ### `doctor` reports schema mismatch
 
 **Symptom:**
-```
+```text
 [✗] database: schema version mismatch (expected 2, found 1)
 ```
 

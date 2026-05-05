@@ -19,7 +19,7 @@ model servers. The entire system compiles to a single Rust binary.
 
 ## Component Map
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  CLI (graphtor-docs binary)                                     │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌─────────────────┐   │
@@ -40,7 +40,7 @@ model servers. The entire system compiles to a single Rust binary.
 
 ## Data Flow
 
-```
+```text
 sources.yaml
     │
     ▼
@@ -109,14 +109,14 @@ sources.yaml
 
 ## Storage Layout
 
-```
+```text
 .graphtor/                  ← workspace root (relative to cwd)
   bin/                      ← installed binary
   config/
     sources.yaml            ← documentation source registry
   data/
     {source_id}/            ← acquired files (git clones and url crawl cache)
-  cache/                    ← model cache (HuggingFace)
+  cache/                    ← HuggingFace model cache (see ~/.cache/huggingface/hub/)
   logs/                     ← transient output files
   graph.db                  ← CozoDB SQLite database
   sync_state.json           ← incremental sync state (git SHA-1 + file mtimes)
@@ -136,7 +136,7 @@ same input always produces the same ID and the same stored record.
 The sync engine tracks change at the source level:
 
 - **Git sources**: compares HEAD commit SHA-1 to the `last_commit` stored in
-  `.sync_state.json`; re-ingests only files that appear in the diff
+  `sync_state.json`; re-ingests only files that appear in the diff
 - **Local sources**: compares current file `mtime` to the stored mtime map;
   re-ingests only modified or new files
 - **URL sources**: always re-crawls (no stable diff signal); `max_pages`
