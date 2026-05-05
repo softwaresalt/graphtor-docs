@@ -76,11 +76,14 @@ On each incremental sync:
    changed files
 6. Re-ingest `A` (added) and `M` (modified) files through the full
    parse → embed → load pipeline
-7. Delete `doc_chunks`, `doc_edges`, `doc_code`, and `doc_vectors` entries for
-   `D` (deleted) files
+7. Delete `doc_chunks`, `doc_edges`, and `doc_code` entries for
+   `D` (deleted) files (`doc_vectors` is **not** removed; run `sync --full`
+   to purge stale vectors for deleted files)
 8. Update `last_commit` to the current HEAD SHA-1
 
-This strategy is exact: only files that changed in git history are processed.
+This strategy is exact: only `.md` files that changed in git history are
+processed. Non-Markdown files (`.pdf`, `.docx`, etc.) are not tracked by the
+incremental engine; run `sync --full` to pick up non-Markdown content.
 
 > **Note:** Acquisition skips repositories that are already cloned (FR-003
 > idempotency). The `sync` command does **not** fetch or pull the remote.
@@ -97,7 +100,7 @@ This strategy is exact: only files that changed in git history are processed.
 
 On each incremental sync:
 
-1. Walk the source directory and collect current `mtime` for each file
+1. Walk the source directory and collect current `mtime` for each `.md` file
 2. Compare against the `file_mtimes` map in the sync state
 3. A file is considered **changed** if:
    - Its path is not in `file_mtimes` (new file), or
@@ -107,15 +110,23 @@ On each incremental sync:
 5. Re-ingest changed files; delete chunks for deleted files
 6. Update the `file_mtimes` map with current values
 
+> **Note:** Only `.md` files are tracked by the mtime scanner. Non-Markdown
+> files (`.pdf`, `.docx`, etc.) are ignored during incremental sync; use
+> `sync --full` to process them.
+
 ### URL Sources
 
-**Strategy:** always re-crawl (no stable diff signal).
+**Strategy:** re-crawl on every sync; only re-ingest pages whose cached `.md`
+file changed.
 
-URL sources do not have a reliable change-detection mechanism (HTTP ETags and
-`Last-Modified` headers are not universally supported). On each sync, the full
-BFS crawl runs within the `max_pages` limit. Previously indexed chunks for
-pages that no longer appear in the crawl are **not** automatically deleted —
-to remove stale chunks, delete the database and run a fresh sync.
+HTTP ETags and `Last-Modified` headers are not universally supported, so the
+BFS crawl runs on each sync within the `max_pages` limit. Each page is saved
+as a `{hash}.md` file in the local source directory. The write is skipped when
+the HTML-to-Markdown content is unchanged (preserving the mtime), so mtime
+comparison then identifies only the pages that truly changed. Previously
+indexed chunks for pages that no longer appear in the crawl are **not**
+automatically deleted — to remove stale chunks, delete the database and run a
+fresh sync.
 
 ---
 
@@ -123,9 +134,12 @@ to remove stale chunks, delete the database and run a fresh sync.
 
 When files are identified as changed, the `reingest` stage:
 
-1. **Deletes** all existing `doc_chunks`, `doc_edges`, `doc_code`, and
-   `doc_vectors` rows for the changed file path within the source
-2. **Re-runs** the full parse → embed → load pipeline on the new file content
+1. **Deletes** all existing `doc_chunks`, `doc_edges`, and `doc_code` rows for
+   the changed file path within the source (`doc_vectors` is **not** deleted or
+   updated during incremental sync; use `sync --full` to rebuild vectors)
+2. **Re-runs** the parse → load pipeline on the new file content (embeddings
+   are computed when a model is loaded but are not persisted to `doc_vectors`
+   during incremental reingest)
 3. Because chunk IDs are deterministic (SHA-256 of content + path), unchanged
    chunks within a changed file are re-inserted with the same ID — CozoDB
    upserts are idempotent

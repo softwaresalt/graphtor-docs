@@ -169,10 +169,15 @@ List all registered documentation sources.
 **When to use:** discover which sources are indexed before searching; verify
 that sync has run; check last-sync timestamps.
 
+> **Note:** `synced_at` is not currently populated by the pipeline, so the
+> timestamp column will show `never` for all sources. Use
+> `sync_state.json` → `last_sync` (Unix epoch) to inspect per-source sync
+> history in the meantime.
+
 **Parameters:** none
 
 **Response:** Markdown table with source ID, kind (`git`/`local`/`url`),
-display name, and last-sync timestamp.
+display name, and last-sync timestamp (`never` until a future release).
 
 **Example:**
 ```text

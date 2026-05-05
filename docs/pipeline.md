@@ -231,7 +231,7 @@ Registry of indexed documentation sources.
 | `url` | String | Clone URL, filesystem path, or start URL |
 | `kind` | String | `"git"`, `"local"`, or `"url"` |
 | `name` | String | Display name (same as `source_id` by default) |
-| `synced_at` | String? | ISO-8601 timestamp of last successful sync; `null` if never synced |
+| `synced_at` | String? | ISO-8601 timestamp of last successful sync; currently not populated by the pipeline (always `null`); reserved for a future release |
 
 ---
 

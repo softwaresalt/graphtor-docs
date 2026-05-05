@@ -21,7 +21,7 @@ These flags are accepted by every subcommand.
 
 | Flag | Short | Env var | Default | Description |
 |---|---|---|---|---|
-| `--verbose` | `-v` | — | off | Enable verbose logging (sets `RUST_LOG=debug`) |
+| `--verbose` | `-v` | — | off | Enable debug-level logging |
 | `--config <FILE>` | `-c` | `GRAPHTOR_SOURCES` | `.graphtor/config/sources.yaml` | Path to `sources.yaml` |
 | `--db-path <FILE>` | `-d` | `GRAPHTOR_DB_PATH` | `.graphtor/graph.db` | Path to CozoDB database |
 
@@ -47,7 +47,7 @@ force a complete acquire → parse → embed → load cycle.
 | Flag | Default | Description |
 |---|---|---|
 | `--full` | off | Force full re-ingestion of all files; ignores sync state |
-| `--no-embed` | off | Skip the embedding step (faster; no vectors stored; `search_semantic` unavailable) |
+| `--no-embed` | off | Skip the embedding step (faster; no vectors stored; `search_semantic` returns empty results) |
 | `--batch-size <N>` | `20` | Number of files to process per parse/embed/load cycle |
 | `--data-root <DIR>` | `.graphtor/data` | Root directory for acquired source files |
 
@@ -126,9 +126,13 @@ with code `0`.
 ```text
 database: .graphtor/graph.db
 sources:  2
-  [git]   azure-docs — https://github.com/MicrosoftDocs/azure-docs.git (last sync: 2026-05-01T10:30:00Z)
-  [local] team-runbooks — ./runbooks (last sync: 2026-05-02T08:00:00Z)
+  [git]   azure-docs — https://github.com/MicrosoftDocs/azure-docs.git (last sync: never)
+  [local] team-runbooks — ./runbooks (last sync: never)
 ```
+
+> **Note:** `last sync` shows `never` until a future release populates `synced_at`
+> in the pipeline. Use `sync_state.json` to inspect `last_sync` (Unix epoch) for
+> each source in the meantime.
 
 **Example output (`--json`):**
 
@@ -141,7 +145,7 @@ sources:  2
       "name": "azure-docs",
       "kind": "git",
       "url": "https://github.com/MicrosoftDocs/azure-docs.git",
-      "synced_at": "2026-05-01T10:30:00Z"
+      "synced_at": null
     }
   ]
 }
