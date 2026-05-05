@@ -41,9 +41,9 @@ pub trait OutputDev {
     // stroke/fill have default no-op impls
 }
 
-// Process all pages (used for both passes)
+// Process all pages — NOTE: not used in current implementation (see below)
 pdf_extract::output_doc(&doc, &mut my_output_dev)?;
-// Single page
+// Single page — used for both passes in current implementation (output_doc_page loop)
 pdf_extract::output_doc_page(&doc, &mut my_output_dev, page_num)?;
 
 // Load document (via lopdf re-export — `pub use lopdf::*`)
