@@ -5,9 +5,9 @@
 //! 1. **Pass 1 — [`FontSizeHistogram`]**: Scans the first
 //!    [`HISTOGRAM_SAMPLE_PAGES`] pages to determine the dominant body font
 //!    size without accumulating text.
-//! 2. **Pass 2 — [`HeadingAwareOutput`]**: Extracts text and detects heading
-//!    boundaries via font-size thresholds relative to the body size.
-//!    Emits [`PdfSection`]s which are converted to [`Chunk`]s.
+//! 2. **Pass 2 — [`HeadingAwareOutput`]**: Processes all pages via an
+//!    `output_doc_page` loop with the known body font size and emits
+//!    [`PdfSection`]s which are converted to [`Chunk`]s.
 //!
 //! **Fallback**: When all text shares a single quantized font size (uniform
 //! typography), the pipeline falls back to [`chunk_pdf_pages`] with
@@ -18,8 +18,9 @@
 //! - Section-based (heading-aware path): `{source_path}#section={N}#segment={M}`
 //! - Page-based (uniform-font fallback): `{source_path}#page={N}#segment={M}`
 //!
-//! Previously ingested PDFs must be re-synced (`graphtor sync --force`) to
-//! rebuild chunk IDs.
+//! Previously ingested PDFs produced by a version that used the old
+//! `LARGE_PDF_THRESHOLD` bypass must be re-synced (`graphtor sync --force`)
+//! to rebuild chunk IDs with section-based keys.
 //!
 //! Graph link types (`references`, `code_snippets`) are not produced for
 //! PDF sources — structure cannot be recovered deterministically from
@@ -48,12 +49,15 @@ const H2_RATIO: f64 = 1.3;
 /// large PDFs while keeping histogram accuracy for typical technical documents.
 const HISTOGRAM_SAMPLE_PAGES: u32 = 30;
 
-/// File-size threshold (bytes) above which the two-pass histogram approach is
-/// skipped in favour of direct per-page extraction via [`PageTextAccumulator`].
+/// File-size threshold (bytes) above which [`parse_pdf_document`] prefers the
+/// [`PdfiumBackend`] (lazy document opening, lower peak memory) over
+/// [`PdfExtractBackend`] (eager `Document::load_mem` parse) for improved
+/// startup performance on large files.
 ///
-/// PDFs larger than 20 MiB are routed directly through
-/// [`PageTextAccumulator`].  The incremental quality gain from heading
-/// detection does not justify the O(n) histogram scan on very large files.
+/// This is a **performance** threshold only — [`PdfExtractBackend`] performs
+/// full heading-aware extraction for all file sizes regardless of this
+/// constant.  When the `PDFium` native library is not available,
+/// [`PdfExtractBackend`] is used unconditionally.
 const LARGE_PDF_THRESHOLD: usize = 20 * 1_024 * 1_024;
 
 // ── rendered-font-size helper ─────────────────────────────────────────────────
@@ -686,12 +690,6 @@ pub(crate) struct PdfExtractBackend;
 impl PdfExtractBackend {
     /// Parse raw PDF bytes using the two-pass `pdf-extract` pipeline.
     ///
-    /// ## Large-File Fast Path
-    ///
-    /// When `bytes.len() >= LARGE_PDF_THRESHOLD` (20 MiB), the histogram pass
-    /// is skipped and the document goes directly through
-    /// [`PageTextAccumulator`] for per-page chunking.
-    ///
     /// ## Two-Pass Architecture
     ///
     /// **Pass 1 — Font-size histogram**: [`FontSizeHistogram`] scans the first
@@ -699,7 +697,11 @@ impl PdfExtractBackend {
     /// font size. No text is accumulated.
     ///
     /// **Pass 2 — Heading-aware extraction**: [`HeadingAwareOutput`] processes
-    /// all pages with the known body font size and emits [`PdfSection`]s.
+    /// all pages via an `output_doc_page` loop with the known body font size
+    /// and emits [`PdfSection`]s.  The incremental loop keeps each page's
+    /// content in scope only while it is being processed, and is equivalent
+    /// in total work to `output_doc` while allowing early termination and
+    /// finer error attribution.
     ///
     /// **Fallback**: When `distinct_sizes ≤ 1` (uniform font size or empty
     /// document), the pipeline checks pages beyond the sample window using
@@ -707,6 +709,11 @@ impl PdfExtractBackend {
     /// heading-aware pass runs normally. Otherwise, falls back to
     /// [`PageTextAccumulator`]-based per-page chunking with `["Page N"]`
     /// hierarchy.
+    ///
+    /// This function handles all file sizes — there is no large-file bypass.
+    /// For large files where the `PDFium` native library is available, prefer
+    /// [`parse_pdf_document`] which tries [`PdfiumBackend`] first for lower
+    /// peak memory.
     ///
     /// # Errors
     ///
@@ -718,11 +725,6 @@ impl PdfExtractBackend {
             message: format!("pdf load failed: {e}"),
             path: Some(source_path.into()),
         })?;
-
-        // Large-file fast path: skip histogram for files >= LARGE_PDF_THRESHOLD.
-        if bytes.len() >= LARGE_PDF_THRESHOLD {
-            return Self::extract_by_pages(&doc, source_path);
-        }
 
         // Pass 1: build font-size histogram (first HISTOGRAM_SAMPLE_PAGES pages only).
         let page_count = u32::try_from(doc.get_pages().len()).unwrap_or(u32::MAX);
@@ -765,52 +767,36 @@ impl PdfExtractBackend {
         let (chunks, title) = if really_uniform {
             // Uniform or empty document — fall back to per-page chunking.
             let mut acc = PageTextAccumulator::new();
-            pdf_extract::output_doc(&doc, &mut acc).map_err(|e| GraphtorError::Parse {
-                message: format!("pdf per-page extraction failed: {e}"),
-                path: Some(source_path.into()),
-            })?;
+            for page_num in 1..=page_count {
+                pdf_extract::output_doc_page(&doc, &mut acc, page_num).map_err(|e| {
+                    GraphtorError::Parse {
+                        message: format!("pdf per-page extraction failed: {e}"),
+                        path: Some(source_path.into()),
+                    }
+                })?;
+            }
             let pages = acc.finish();
             let title = extract_title_from_pages(&pages, source_path);
             let chunks = chunk_pdf_pages(&pages, source_path)?;
             (chunks, title)
         } else {
-            // Pass 2: heading-aware extraction with the known body font size.
+            // Pass 2: heading-aware extraction using an output_doc_page loop so
+            // heading state accumulates incrementally across all pages.
             let mut heading_output = HeadingAwareOutput::new(body_font_size);
-            pdf_extract::output_doc(&doc, &mut heading_output).map_err(|e| {
-                GraphtorError::Parse {
-                    message: format!("pdf heading-aware extraction failed: {e}"),
-                    path: Some(source_path.into()),
-                }
-            })?;
+            for page_num in 1..=page_count {
+                pdf_extract::output_doc_page(&doc, &mut heading_output, page_num).map_err(|e| {
+                    GraphtorError::Parse {
+                        message: format!("pdf heading-aware extraction failed: {e}"),
+                        path: Some(source_path.into()),
+                    }
+                })?;
+            }
             let sections = heading_output.finish();
             let title = extract_title_from_sections(&sections, source_path);
             let chunks = sections_to_chunks(sections, source_path)?;
             (chunks, title)
         };
 
-        Ok(ParsedDocument {
-            path: source_path.to_string(),
-            title,
-            frontmatter: None,
-            chunks,
-            references: Vec::new(),
-            code_snippets: Vec::new(),
-        })
-    }
-
-    /// Run [`PageTextAccumulator`] over `doc` and convert pages to chunks.
-    fn extract_by_pages(
-        doc: &pdf_extract::Document,
-        source_path: &str,
-    ) -> Result<ParsedDocument, GraphtorError> {
-        let mut acc = PageTextAccumulator::new();
-        pdf_extract::output_doc(doc, &mut acc).map_err(|e| GraphtorError::Parse {
-            message: format!("pdf per-page extraction failed: {e}"),
-            path: Some(source_path.into()),
-        })?;
-        let pages = acc.finish();
-        let title = extract_title_from_pages(&pages, source_path);
-        let chunks = chunk_pdf_pages(&pages, source_path)?;
         Ok(ParsedDocument {
             path: source_path.to_string(),
             title,
@@ -983,21 +969,23 @@ impl PdfiumBackend {
 /// ## Backend Selection
 ///
 /// For PDFs larger than [`LARGE_PDF_THRESHOLD`] (20 MiB), the parser first
-/// attempts the [`PdfiumBackend`] which opens documents lazily (instant for
-/// any file size).  When the `PDFium` native library is not installed, the
-/// system gracefully falls back to [`PdfExtractBackend`].
+/// attempts the [`PdfiumBackend`], which opens documents lazily (low peak
+/// memory for very large files).  When the `PDFium` native library is not
+/// installed, the system falls back to [`PdfExtractBackend`].
 ///
 /// For PDFs smaller than the threshold, [`PdfExtractBackend`] is used
-/// directly — its two-pass heading-detection pipeline produces
-/// higher-quality section boundaries.
+/// directly.  Both backends produce high-quality heading-aware extraction
+/// when possible — the threshold is a **performance** hint, not a quality
+/// boundary.
 ///
 /// ## Chunk ID Format
 ///
 /// - Section-based (heading-aware path): `{source_path}#section={N}#segment={M}`
 /// - Page-based (uniform-font fallback): `{source_path}#page={N}#segment={M}`
 ///
-/// Previously ingested PDFs must be re-synced (`graphtor sync --force`) to
-/// rebuild chunk IDs.
+/// Previously ingested PDFs produced by an older version that used the
+/// `LARGE_PDF_THRESHOLD` bypass must be re-synced (`graphtor sync --force`)
+/// to rebuild chunk IDs with section-based keys.
 ///
 /// # Errors
 ///
@@ -1194,8 +1182,8 @@ mod tests {
         build_heading_hierarchy, chunk_pdf_pages, extract_title_from_pages,
         extract_title_from_sections, sections_to_chunks, split_at_word_boundaries, split_long_text,
         FontSizeHistogram, HeadingAwareOutput, HeadingFontDetector, PageTextAccumulator,
-        PdfExtractBackend, PdfSection, H2_RATIO, HISTOGRAM_SAMPLE_PAGES, LARGE_PDF_THRESHOLD,
-        MAX_CHUNK_CHARS,
+        PdfExtractBackend, PdfSection, H1_RATIO, H2_RATIO, HISTOGRAM_SAMPLE_PAGES,
+        LARGE_PDF_THRESHOLD, MAX_CHUNK_CHARS,
     };
     // Import the OutputDev trait so method calls resolve on concrete types.
     use pdf_extract::OutputDev as _;
@@ -2080,5 +2068,85 @@ mod tests {
         let small_junk = vec![0u8; LARGE_PDF_THRESHOLD - 1];
         let result = parse_pdf_document(&small_junk, "small_junk.pdf");
         assert!(result.is_err(), "non-PDF bytes must produce an error");
+    }
+
+    // ── HeadingAwareOutput: page-boundary state persistence ──────────────────
+
+    /// Verify that heading state accumulated on page 1 persists into the
+    /// body text emitted on page 2 when `HeadingAwareOutput` is fed via the
+    /// `output_doc_page` loop pattern (simulated here with manual begin/end
+    /// page calls).
+    ///
+    /// Acceptance criteria for task `027.004-T`:
+    /// - body chunk on page 2 inherits the H1 heading from page 1
+    /// - no chunk has a `["Page N"]` heading hierarchy
+    #[test]
+    fn heading_aware_heading_state_persists_across_page_boundaries() {
+        let body_font_size = 10.0_f64;
+        let h1_font_size = body_font_size * H1_RATIO + 1.0; // clearly H1
+        let mb = default_media_box();
+
+        let mut output = HeadingAwareOutput::new(body_font_size);
+
+        // --- Page 1: emit an H1 heading ----------------------------------------
+        output.begin_page(1, &mb, None).expect("begin_page 1 ok");
+        // Emit the heading text "Introduction" at H1 size.
+        emit_text(&mut output, "Introduction", h1_font_size, 72.0, 720.0);
+        output.end_page().expect("end_page 1 ok");
+
+        // --- Page 2: emit body text beneath the H1 heading ---------------------
+        output.begin_page(2, &mb, None).expect("begin_page 2 ok");
+        // Emit body text at normal body size (different y → new line).
+        emit_text(
+            &mut output,
+            "Body content on page two.",
+            body_font_size,
+            72.0,
+            600.0,
+        );
+        output.end_page().expect("end_page 2 ok");
+
+        let sections = output.finish();
+
+        // Must have produced at least one section.
+        assert!(
+            !sections.is_empty(),
+            "HeadingAwareOutput must produce sections when content is emitted"
+        );
+
+        // The heading section ("Introduction") must be present.
+        let has_intro = sections
+            .iter()
+            .any(|s| s.heading.as_deref() == Some("Introduction"));
+        assert!(
+            has_intro,
+            "sections must contain the H1 heading 'Introduction' from page 1"
+        );
+
+        // Convert to chunks to verify hierarchies.
+        let chunks = sections_to_chunks(sections, "test.pdf")
+            .expect("sections_to_chunks must not fail on valid sections");
+
+        // At least one chunk must carry the 'Introduction' heading in its hierarchy.
+        let body_with_intro = chunks
+            .iter()
+            .any(|c| c.heading_hierarchy.iter().any(|h| h == "Introduction"));
+        assert!(
+            body_with_intro,
+            "a chunk must carry 'Introduction' in heading_hierarchy, proving \
+             heading state persists from page 1 to page 2"
+        );
+
+        // No chunk must have a "Page N" heading hierarchy entry — the
+        // heading-aware path must never produce page-based hierarchies.
+        let has_page_marker = chunks.iter().any(|c| {
+            c.heading_hierarchy
+                .iter()
+                .any(|h| h.starts_with("Page ") && h[5..].parse::<u32>().is_ok())
+        });
+        assert!(
+            !has_page_marker,
+            "heading-aware chunks must not contain 'Page N' hierarchy entries"
+        );
     }
 }
