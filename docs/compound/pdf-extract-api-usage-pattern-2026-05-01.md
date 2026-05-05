@@ -9,7 +9,7 @@ title: "pdf-extract 0.10: API Usage and Two-Pass Heading-Aware Parsing Pattern"
 
 ## API Overview
 
-### Legacy: extract_text_from_mem (still works, now used only for uniform-font fallback)
+### Legacy: extract_text_from_mem (not used in current implementation)
 
 ```rust
 // Single string with \x0c form-feed page delimiters
@@ -17,7 +17,7 @@ let text = pdf_extract::extract_text_from_mem(bytes)?;
 for (page_idx, page_text) in text.split('\x0c').enumerate() { /* ... */ }
 ```
 
-### Per-page API (Unit 1 / fallback path)
+### Legacy per-page API: extract_text_from_mem_by_pages (not used in current implementation)
 
 ```rust
 // Returns Vec<String> — one String per page, no form-feed delimiters
