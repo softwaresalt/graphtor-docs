@@ -73,11 +73,15 @@ fn rendered_size(trm: &pdf_extract::Transform, font_size: f64) -> f64 {
 **Pass 1 — `FontSizeHistogram`**: count chars by quantized font size → modal size = body size.
 Quantize to nearest 0.5pt: `key = (round(size × 2) / 2 × 10) as u16`.
 
-**Pass 2 — `HeadingAwareOutput`**: emit text with y-change line detection; classify lines as
-H1 (≥ `body × 1.6`), H2 (≥ `body × 1.3`), or body. Produces `Vec<PdfSection>`.
+**Pass 2 — `HeadingAwareOutput`**: processes all pages via `output_doc_page` loop (not
+`output_doc`); emit text with y-change line detection; classify lines as H1 (≥ `body × 1.6`),
+H2 (≥ `body × 1.3`), or body. Produces `Vec<PdfSection>`. The incremental loop preserves
+heading state across page boundaries and allows per-page error attribution.
 
-**Fallback**: if `distinct_sizes ≤ 1` (uniform font), use `extract_text_from_mem_by_pages`
-and chunk by page with `["Page N"]` hierarchy.
+**Fallback**: if `distinct_sizes ≤ 1` (uniform font), use `PageTextAccumulator` (an `OutputDev`
+implementation) via `output_doc_page` loop and chunk by page with `["Page N"]` hierarchy.
+(Note: an earlier version used `extract_text_from_mem_by_pages`; the current implementation
+uses the `OutputDev` interface throughout for consistency.)
 
 ## Error Conditions
 
