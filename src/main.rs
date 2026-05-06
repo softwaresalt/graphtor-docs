@@ -923,10 +923,23 @@ fn cmd_manifest(fmt: OutputFormat) -> i32 {
     let tools = graphtor_core::mcp::list_mcp_tools();
 
     if fmt == OutputFormat::Json {
-        let tool_values: Vec<serde_json::Value> = tools
-            .iter()
-            .map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null))
-            .collect();
+        let mut tool_values: Vec<serde_json::Value> = Vec::with_capacity(tools.len());
+        for t in &tools {
+            match serde_json::to_value(t) {
+                Ok(v) => tool_values.push(v),
+                Err(e) => {
+                    println!(
+                        "{}",
+                        cli::jsonrpc::wrap_error(
+                            cli::jsonrpc::SERVER_ERROR,
+                            format!("failed to serialize tool '{}': {e}", t.name),
+                            None,
+                        )
+                    );
+                    return 1;
+                }
+            }
+        }
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({ "tools": tool_values }))

@@ -1,10 +1,8 @@
 //! MCP plugin server for `LocalDocRAG`.
 //!
 //! Exposes [`DocServer`] over the Model Context Protocol via STDIO
-//! JSON-RPC transport.  The server provides two tools:
-//!
-//! - `search_local_docs`  — keyword search over indexed documentation chunks.
-//! - `traverse_doc_links` — BFS traversal of the document link graph.
+//! JSON-RPC transport.  Use [`crate::mcp::list_mcp_tools`] to retrieve
+//! the full list of tools advertised by the server at runtime.
 //!
 //! Start the server from a binary entry point by calling
 //! [`DocServer::new`] and passing the result to [`rmcp::serve_server`]

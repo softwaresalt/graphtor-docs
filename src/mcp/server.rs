@@ -536,8 +536,10 @@ impl DocServer {
     ///
     /// Constructs the tool router and extracts the [`rmcp::model::Tool`]
     /// attribute for every registered tool.  The returned list is sorted
-    /// by name for deterministic output and exactly mirrors the tools
-    /// returned by the server's `tools/list` MCP response.
+    /// by name for deterministic, reproducible output.  Note that the
+    /// live `tools/list` MCP response is unordered (`HashMap` iteration
+    /// order), so the manifest mirrors the *set* of tools but not
+    /// necessarily their order in a live server response.
     pub(crate) fn list_tools() -> Vec<rmcp::model::Tool> {
         let mut tools: Vec<rmcp::model::Tool> = Self::tool_router()
             .map

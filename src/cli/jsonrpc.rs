@@ -62,7 +62,10 @@ pub struct JsonRpcErrorObject {
 /// should not happen for well-formed `Serialize` types), returns a fallback
 /// JSON-RPC error envelope string.
 pub fn wrap_success(result: impl Serialize) -> String {
-    let value = serde_json::to_value(&result).unwrap_or(Value::Null);
+    let value = match serde_json::to_value(&result) {
+        Ok(v) => v,
+        Err(e) => return wrap_error(-32_603, format!("serialization error: {e}"), None),
+    };
     let response = JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         id: None,
