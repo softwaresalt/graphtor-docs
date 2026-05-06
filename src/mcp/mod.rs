@@ -13,4 +13,4 @@
 pub mod format;
 pub mod server;
 
-pub use server::DocServer;
+pub use server::{DocServer, SyncStatus};
