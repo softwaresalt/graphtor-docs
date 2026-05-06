@@ -152,6 +152,64 @@ pub fn format_document(path: &str, chunks: &[ChunkRecord]) -> String {
     out
 }
 
+/// Format composite research results as markdown for LLM consumption.
+///
+/// Combines an initial set of search results (from keyword or semantic search)
+/// with related chunks discovered via BFS graph traversal.  The related section
+/// is unified and deduplicated across all seeds before formatting — each chunk
+/// appears at most once.
+///
+/// Returns a two-section markdown document: `### Search Results` listing the
+/// initial matches, and `### Related Context` listing the BFS-discovered chunks.
+#[must_use]
+pub fn format_research_results(
+    query: &str,
+    initial: &[SearchResult],
+    related: &[TraversalResult],
+) -> String {
+    let mut out = format!("## Research: {query}\n\n");
+
+    out.push_str("### Search Results\n\n");
+    if initial.is_empty() {
+        out.push_str("No results found.\n\n");
+    } else {
+        for (i, r) in initial.iter().enumerate() {
+            let heading = if r.heading_hierarchy.is_empty() {
+                String::new()
+            } else {
+                format!("\n**Headings:** {}", r.heading_hierarchy.join(" › "))
+            };
+            write!(
+                out,
+                "#### Result {}\n\n**Chunk ID:** `{}`\n**Source:** `{}`{}\n\n```\n{}\n```\n\n",
+                i + 1,
+                r.chunk_id,
+                r.path,
+                heading,
+                r.content.trim(),
+            )
+            .expect("write to String is infallible");
+        }
+    }
+
+    if !related.is_empty() {
+        out.push_str("### Related Context\n\n");
+        for tr in related {
+            writeln!(
+                out,
+                "- **Depth {depth}** — `{path}` (chunk ID: `{chunk_id}`)",
+                depth = tr.depth,
+                path = tr.path,
+                chunk_id = tr.chunk_id,
+            )
+            .expect("write to String is infallible");
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
 /// Format a [`DbStatus`] snapshot as markdown for LLM consumption.
 ///
 /// Produces a concise status report with source count, chunk count, and
@@ -333,6 +391,60 @@ mod tests {
         assert!(md.contains('2')); // chunk count
         assert!(md.contains("First chunk."));
         assert!(md.contains("Second chunk."));
+    }
+
+    // ── format_research_results ───────────────────────────────────────────────
+
+    #[test]
+    fn format_research_results_empty_initial_shows_no_results() {
+        let md = format_research_results("error handling", &[], &[]);
+        assert!(
+            md.contains("error handling"),
+            "query should appear in output"
+        );
+        assert!(
+            md.contains("No results found"),
+            "should indicate no results"
+        );
+    }
+
+    #[test]
+    fn format_research_results_includes_chunk_id_and_path() {
+        let initial = SearchResult {
+            chunk_id: "abc123".to_string(),
+            source_id: "src-1".to_string(),
+            path: "docs/errors.md".to_string(),
+            heading_hierarchy: vec!["Error Handling".to_string()],
+            content: "Handle errors gracefully.".to_string(),
+        };
+        let md = format_research_results("errors", &[initial], &[]);
+        assert!(md.contains("errors"), "query should appear in heading");
+        assert!(md.contains("abc123"), "chunk id should appear");
+        assert!(md.contains("docs/errors.md"), "path should appear");
+        assert!(
+            md.contains("Error Handling"),
+            "heading hierarchy should appear"
+        );
+        assert!(
+            md.contains("Handle errors gracefully."),
+            "content should appear"
+        );
+    }
+
+    #[test]
+    fn format_research_results_includes_related_context() {
+        let related = TraversalResult {
+            chunk_id: "rel001".to_string(),
+            path: "docs/related.md".to_string(),
+            depth: 1,
+        };
+        let md = format_research_results("topic", &[], &[related]);
+        assert!(md.contains("rel001"), "related chunk id should appear");
+        assert!(md.contains("docs/related.md"), "related path should appear");
+        assert!(
+            md.contains("Depth 1") || md.contains("depth 1") || md.contains('1'),
+            "depth should appear"
+        );
     }
 
     // ── format_db_status ─────────────────────────────────────────────────────

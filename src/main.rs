@@ -26,17 +26,18 @@ mod workspace;
 
 use std::path::PathBuf;
 use std::process;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
 use clap::Parser as _;
-use graphtor_core::mcp::DocServer;
+use graphtor_core::mcp::{DocServer, SyncStatus};
 use graphtor_core::{
     acquire::{execute as acquire_execute, plan as acquire_plan},
     config::SourceConfig,
     db::{list_sources, DataStore},
     init_logging,
     sync::sync_source,
-    EmbeddingModel, LogVerbosity, PipelineConfig,
+    EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
 use tracing::{error, info, warn};
 
@@ -92,8 +93,8 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
     let _ = verbose; // available for future use
 
     match cli.command {
-        Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path, &args),
-        Command::Serve(_) => cmd_serve(&db_path, &cwd).await,
+        Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path.as_deref(), &args),
+        Command::Serve(_) => cmd_serve(&db_path, &cwd, sources_path.as_deref()).await,
         Command::Status(args) => cmd_status(&db_path, &cwd, &args),
         Command::Init(args) => cmd_init(&cwd, &args),
         Command::Install(args) => cmd_install(&cwd, &args),
@@ -105,33 +106,86 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
 
 // ── sync ──────────────────────────────────────────────────────────────────────
 
+/// Build a [`SourceConfig`] that indexes all `.md` files in `cwd`.
+///
+/// Used when no `sources.yaml` is found and no explicit `--config` was
+/// passed — the workspace root is treated as an implicit local source named
+/// `"workspace"`.  Standard tooling directories (`.graphtor`, `.git`, `target`)
+/// are excluded automatically.
+fn build_workspace_source_config(cwd: &std::path::Path) -> SourceConfig {
+    SourceConfig {
+        sources: vec![Source::Local(LocalSource {
+            id: "workspace".to_string(),
+            path: cwd.to_path_buf(),
+            include: Vec::new(),
+            exclude: vec![
+                ".graphtor/**".to_string(),
+                ".git/**".to_string(),
+                "target/**".to_string(),
+            ],
+            formats: vec!["md".to_string()],
+        })],
+    }
+}
+
+/// Resolve a [`SourceConfig`] from an optional config-file override or auto-discovery.
+///
+/// Resolution order:
+/// 1. `config_override` is `Some` and the file exists → load and parse it.
+/// 2. `config_override` is `Some` and the file **does not** exist → return `Ok(None)`
+///    so the caller can surface an appropriate error.
+/// 3. `config_override` is `None` and the default path exists → load it.
+/// 4. `config_override` is `None` and the default path is missing → auto-discover
+///    the workspace (`build_workspace_source_config`).
+///
+/// Returns `Err` only when a file exists but cannot be read or parsed (always fatal).
+fn load_source_config(
+    cwd: &std::path::Path,
+    config_override: Option<&std::path::Path>,
+) -> anyhow::Result<Option<SourceConfig>> {
+    let default_path = cwd.join(".graphtor/config/sources.yaml");
+    let path = config_override.map_or(default_path.as_path(), |p| p);
+
+    if path.exists() {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let cfg: SourceConfig = serde_yaml::from_str(&content)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        Ok(Some(cfg))
+    } else if config_override.is_some() {
+        // Explicit override provided but missing — caller decides how to handle.
+        Ok(None)
+    } else {
+        // Default path missing: fall back to workspace auto-discovery.
+        info!("no sources.yaml found; using workspace auto-discovery (indexing .md files)");
+        eprintln!(
+            "info: no sources.yaml found — indexing .md files in the current directory. \
+             Run `graphtor-docs init` to create a sources.yaml."
+        );
+        Ok(Some(build_workspace_source_config(cwd)))
+    }
+}
+
 fn cmd_sync(
     cwd: &std::path::Path,
     db_path: &std::path::Path,
-    config_override: Option<PathBuf>,
+    config_override: Option<&std::path::Path>,
     args: &cli::SyncArgs,
 ) -> anyhow::Result<i32> {
-    // Resolve sources.yaml path.
-    let sources_path = config_override.unwrap_or_else(|| cwd.join(".graphtor/config/sources.yaml"));
-
-    if !sources_path.exists() {
-        eprintln!(
-            "error: sources.yaml not found at {}; run `graphtor-docs init` first",
-            sources_path.display()
-        );
+    // Resolve source config: explicit override → default path → workspace auto-discovery.
+    let source_config: SourceConfig = if let Some(cfg) = load_source_config(cwd, config_override)? {
+        cfg
+    } else {
+        // Only reachable when config_override is Some but the file does not exist.
+        let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
+        eprintln!("error: sources.yaml not found at {}", path.display());
         return Ok(2);
-    }
-
-    let config_content = std::fs::read_to_string(&sources_path)
-        .with_context(|| format!("failed to read {}", sources_path.display()))?;
-    let source_config: SourceConfig = serde_yaml::from_str(&config_content)
-        .with_context(|| format!("failed to parse {}", sources_path.display()))?;
+    };
 
     if source_config.sources.is_empty() {
         warn!("sources.yaml contains no sources; nothing to sync");
         println!(
-            "No sources configured. Add sources to {} and re-run.",
-            sources_path.display()
+            "No sources configured. Add documentation sources and re-run `graphtor-docs sync`."
         );
         return Ok(0);
     }
@@ -295,7 +349,107 @@ fn cmd_sync_incremental(
 
 // ── serve ─────────────────────────────────────────────────────────────────────
 
-async fn cmd_serve(db_path: &std::path::Path, cwd: &std::path::Path) -> anyhow::Result<i32> {
+/// Spawn a background incremental sync task and return the shared status handle.
+///
+/// Mirrors the `cmd_sync_incremental` flow exactly: acquire → sync per source →
+/// aggregate errors.  The returned `Arc<Mutex<SyncStatus>>` is shared with the
+/// `DocServer` so `get_status` can reflect the live sync state.
+fn spawn_background_sync(
+    source_config: SourceConfig,
+    db_path_owned: PathBuf,
+    cwd_owned: PathBuf,
+    store_bg: DataStore,
+    model_bg: Option<EmbeddingModel>,
+) -> Arc<Mutex<SyncStatus>> {
+    let sync_status: Arc<Mutex<SyncStatus>> = Arc::default();
+    let sync_status_bg = Arc::clone(&sync_status);
+
+    tokio::spawn(async move {
+        {
+            let mut guard = sync_status_bg
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *guard = SyncStatus::Syncing;
+        }
+
+        let result = tokio::task::spawn_blocking(move || {
+            let data_root = cwd_owned.join(".graphtor/data");
+            let plan = acquire_plan::plan(&source_config, &data_root, &cwd_owned)
+                .context("background sync: failed to build acquisition plan")?;
+
+            // Clone any new git repos; local and URL sources skip acquisition.
+            let acq_result = acquire_execute(&plan, false);
+            let mut errors = acq_result.failed;
+            if errors > 0 {
+                warn!(failed = errors, "background sync: acquisition had failures");
+            }
+
+            let state_path = db_path_owned.parent().map_or_else(
+                || PathBuf::from("sync_state.json"),
+                |p| p.join("sync_state.json"),
+            );
+
+            let mut files: usize = 0;
+            let mut chunks: usize = 0;
+
+            for planned in &plan.sources {
+                let source_dir = &planned.target_dir;
+                if !source_dir.exists() {
+                    warn!(
+                        path = %source_dir.display(),
+                        "background sync: source directory missing; skipping"
+                    );
+                    errors += 1;
+                    continue;
+                }
+                match sync_source(
+                    &store_bg,
+                    &planned.source,
+                    source_dir,
+                    &state_path,
+                    &plan.allowed_root,
+                    model_bg.as_ref(),
+                ) {
+                    Ok(r) => {
+                        files += r.files_processed;
+                        chunks += r.chunks_loaded;
+                        errors += r.files_errored;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "background sync: source failed");
+                        errors += 1;
+                    }
+                }
+            }
+
+            Ok::<(usize, usize, usize), anyhow::Error>((files, chunks, errors))
+        })
+        .await;
+
+        let new_status = match result {
+            Ok(Ok((f, c, 0))) => SyncStatus::Done {
+                files: f,
+                chunks: c,
+            },
+            Ok(Ok((_, _, e))) => SyncStatus::Error(format!("{e} source(s) had errors")),
+            Ok(Err(e)) => SyncStatus::Error(e.to_string()),
+            Err(e) => SyncStatus::Error(format!("task panicked: {e}")),
+        };
+
+        let mut guard = sync_status_bg
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = new_status;
+    });
+
+    sync_status
+}
+
+async fn cmd_serve(
+    db_path: &std::path::Path,
+    cwd: &std::path::Path,
+    config_override: Option<&std::path::Path>,
+) -> anyhow::Result<i32> {
     info!(db_path = %db_path.display(), "opening database");
     let store = DataStore::open_sqlite(db_path, cwd)
         .with_context(|| format!("failed to open database at {}", db_path.display()))?;
@@ -319,10 +473,38 @@ async fn cmd_serve(db_path: &std::path::Path, cwd: &std::path::Path) -> anyhow::
             }
         };
 
+    // Resolve source config (same auto-discovery logic as cmd_sync) and spawn
+    // a background incremental sync task if a config is available.
+    let sync_status = match load_source_config(cwd, config_override) {
+        Ok(Some(source_config)) if !source_config.sources.is_empty() => {
+            info!("background sync task spawned");
+            spawn_background_sync(
+                source_config,
+                db_path.to_path_buf(),
+                cwd.to_path_buf(),
+                store.clone(),
+                model.clone(),
+            )
+        }
+        Ok(Some(_)) => {
+            info!("source config has no sources; background sync skipped");
+            Arc::default()
+        }
+        Ok(None) => {
+            warn!("config file not found; background sync disabled");
+            Arc::default()
+        }
+        Err(e) => {
+            warn!(error = %e, "failed to load source config; background sync disabled");
+            Arc::default()
+        }
+    };
+
     let server = match model {
         Some(m) => DocServer::with_model(store, m),
         None => DocServer::new(store),
     };
+    let server = server.with_sync_status(sync_status);
 
     info!("starting MCP STDIO server");
     rmcp::serve_server(server, rmcp::transport::stdio())
@@ -540,4 +722,58 @@ fn cmd_uninstall(cwd: &std::path::Path, args: &cli::UninstallArgs) -> anyhow::Re
     }
     println!("uninstall complete");
     Ok(0)
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_workspace_source_config_produces_local_source() {
+        let cwd = std::path::Path::new("/tmp/test-workspace");
+        let cfg = build_workspace_source_config(cwd);
+        assert_eq!(cfg.sources.len(), 1, "should produce exactly one source");
+        let source = &cfg.sources[0];
+        assert!(
+            matches!(source, Source::Local(_)),
+            "source should be a local source"
+        );
+        if let Source::Local(local) = source {
+            assert_eq!(local.id, "workspace");
+            assert_eq!(local.formats, vec!["md"]);
+            assert!(
+                local.exclude.iter().any(|e| e.contains(".graphtor")),
+                "should exclude .graphtor/**"
+            );
+            assert!(
+                local.exclude.iter().any(|e| e.contains(".git")),
+                "should exclude .git/**"
+            );
+        }
+    }
+
+    #[test]
+    fn load_source_config_returns_auto_discovery_when_default_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cwd = tmp.path();
+        // No sources.yaml in tmp directory — should auto-discover.
+        let result = load_source_config(cwd, None).expect("load_source_config should succeed");
+        let cfg = result.expect("should return Some config for auto-discovery");
+        assert_eq!(cfg.sources.len(), 1, "auto-discovery returns one source");
+        assert!(matches!(cfg.sources[0], Source::Local(_)));
+    }
+
+    #[test]
+    fn load_source_config_returns_none_for_explicit_missing_override() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing = tmp.path().join("nonexistent.yaml");
+        let result = load_source_config(tmp.path(), Some(&missing))
+            .expect("should not error for missing override");
+        assert!(
+            result.is_none(),
+            "should return None when explicit override is missing"
+        );
+    }
 }

@@ -1,16 +1,26 @@
 //! `DocServer` — rmcp MCP server with `search_local_docs`, `traverse_doc_links`,
-//! and `search_semantic` tools.
+//! `search_semantic`, `research_topic`, and supporting tools.
 //!
-//! Implements [`rmcp::ServerHandler`] and exposes three MCP tools:
+//! Implements [`rmcp::ServerHandler`] and exposes MCP tools:
 //!
 //! - `search_local_docs`  — full-text keyword search via [`crate::db::search::search_by_text`].
 //! - `traverse_doc_links` — BFS graph traversal via [`crate::db::traverse::find_related_chunks`].
 //! - `search_semantic`    — embedding-based semantic search via
 //!   [`crate::db::search::search_similar`] (requires model to be loaded).
+//! - `research_topic`     — composite search + graph traversal for in-depth topic research.
+//! - `list_sources`       — enumerate registered documentation sources.
+//! - `get_chunk_by_id`    — retrieve a single chunk by its stable SHA-256 ID.
+//! - `get_document`       — retrieve all chunks for a document path.
+//! - `get_status`         — report database and background sync status.
 //!
 //! Use [`DocServer::new`] to construct a server without an embedding model, or
-//! [`DocServer::with_model`] to enable semantic search.  Pass the server to
-//! [`rmcp::serve_server`] with [`rmcp::transport::stdio`] to start the STDIO MCP server.
+//! [`DocServer::with_model`] to enable semantic search.  To enable background sync
+//! status reporting, use [`DocServer::with_sync_status`] after construction.
+//! Pass the server to [`rmcp::serve_server`] with [`rmcp::transport::stdio`] to
+//! start the STDIO MCP server.
+
+use std::fmt::Write as _;
+use std::sync::{Arc, Mutex};
 
 use rmcp::{
     handler::server::wrapper::Parameters,
@@ -33,9 +43,33 @@ use crate::{
 };
 
 use super::format::{
-    format_chunk, format_db_status, format_document, format_search_results, format_sources_list,
-    format_traversal_results,
+    format_chunk, format_db_status, format_document, format_research_results,
+    format_search_results, format_sources_list, format_traversal_results,
 };
+
+// ── Sync status ───────────────────────────────────────────────────────────────
+
+/// Background sync status reported by the `get_status` MCP tool.
+///
+/// Updated atomically by the `serve` command's background sync task and
+/// read by the `get_status` tool.  Shared via `Arc<Mutex<SyncStatus>>`.
+#[derive(Debug, Default)]
+pub enum SyncStatus {
+    /// No background sync has been attempted (default state).
+    #[default]
+    Idle,
+    /// Background sync is currently running.
+    Syncing,
+    /// Background sync completed successfully.
+    Done {
+        /// Number of source files processed.
+        files: usize,
+        /// Number of chunks loaded into the store.
+        chunks: usize,
+    },
+    /// Background sync completed with errors.
+    Error(String),
+}
 
 // ── Parameter types ───────────────────────────────────────────────────────────
 
@@ -99,30 +133,55 @@ pub struct GetDocumentParams {
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct GetStatusParams {}
 
+/// Parameters for the `research_topic` MCP tool.
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ResearchTopicParams {
+    /// Natural-language or keyword query for the research topic.
+    pub query: String,
+    /// Maximum number of initial search results to retrieve (default: 5, max: 20).
+    ///
+    /// At most `min(top_k, 3)` of the top results are used as seeds for graph traversal.
+    pub top_k: Option<u32>,
+    /// BFS traversal depth from each seed chunk (default: 1, max: 3).
+    pub max_depth: Option<u32>,
+}
+
 // ── Server ────────────────────────────────────────────────────────────────────
 
 /// The `LocalDocRAG` MCP server.
 ///
-/// Provides `search_local_docs`, `traverse_doc_links`, and `search_semantic`
-/// tools backed by an embedded [`DataStore`].  The server is [`Clone`] because
-/// both [`DataStore`] and [`EmbeddingModel`] are cheap [`std::sync::Arc`]
-/// clones internally.
+/// Provides `search_local_docs`, `traverse_doc_links`, `search_semantic`,
+/// `research_topic`, and supporting tools backed by an embedded [`DataStore`].
+/// The server is [`Clone`] because both [`DataStore`] and [`EmbeddingModel`] are
+/// cheap [`std::sync::Arc`] clones internally.
+///
+/// Use [`DocServer::new`] to construct without embeddings, [`DocServer::with_model`]
+/// to add semantic search, and [`DocServer::with_sync_status`] to wire in background
+/// sync status reporting from the `serve` command.
 #[derive(Clone)]
 pub struct DocServer {
     store: DataStore,
     /// Embedding model for semantic search.  When `None`, `search_semantic`
     /// returns a descriptive error rather than silently failing.
     model: Option<EmbeddingModel>,
+    /// Shared background sync status updated by the `serve` command's sync task.
+    sync_status: Arc<Mutex<SyncStatus>>,
 }
 
 impl DocServer {
     /// Create a new [`DocServer`] backed by the given [`DataStore`].
     ///
     /// Semantic search (`search_semantic`) will be unavailable until a model
-    /// is supplied via [`DocServer::with_model`].
+    /// is supplied via [`DocServer::with_model`].  Background sync status
+    /// defaults to [`SyncStatus::Idle`]; supply a shared status handle via
+    /// [`DocServer::with_sync_status`] to enable runtime reporting.
     #[must_use]
     pub fn new(store: DataStore) -> Self {
-        Self { store, model: None }
+        Self {
+            store,
+            model: None,
+            sync_status: Arc::default(),
+        }
     }
 
     /// Create a [`DocServer`] with an embedding model for semantic search.
@@ -131,7 +190,18 @@ impl DocServer {
         Self {
             store,
             model: Some(model),
+            sync_status: Arc::default(),
         }
+    }
+
+    /// Attach a shared background sync status handle.
+    ///
+    /// Pass the same `Arc<Mutex<SyncStatus>>` that the background sync task
+    /// writes to.  `get_status` will reflect the current sync state.
+    #[must_use]
+    pub fn with_sync_status(mut self, status: Arc<Mutex<SyncStatus>>) -> Self {
+        self.sync_status = status;
+        self
     }
 }
 
@@ -351,19 +421,85 @@ impl DocServer {
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
 
-    /// Return current database status.
+    /// Perform composite research on a topic.
     ///
-    /// Returns the number of registered sources, total chunk count, and the
-    /// active schema version.  Useful for quick health checks and verifying
-    /// that the ingestion pipeline has run.
+    /// Combines initial keyword or semantic search with BFS graph traversal
+    /// from the top seed results.  Returns matching chunks plus related chunks
+    /// discovered via document link edges, deduplicated across all seeds.
+    ///
+    /// When the embedding model is loaded, uses semantic (ranked) search for
+    /// initial results; otherwise falls back to unranked keyword search.
+    /// At most `min(top_k, 3)` of the top results seed the graph traversal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData`] when `query` is empty or any search/traversal fails.
+    #[tool(
+        description = "Perform in-depth research on a topic: searches documentation by keyword \
+        or semantic similarity, then traverses the document graph from the top results to surface \
+        related context. Returns initial search hits plus BFS-discovered related chunks, all \
+        deduplicated. Use this tool for comprehensive topic research when you want both direct \
+        matches and linked documentation. top_k controls initial search breadth (default 5, max \
+        20); max_depth controls graph traversal depth (default 1, max 3)."
+    )]
+    fn research_topic(
+        &self,
+        Parameters(params): Parameters<ResearchTopicParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        info!(query = %params.query, "research_topic invoked");
+        if params.query.trim().is_empty() {
+            return Err(ErrorData::invalid_params("query cannot be empty", None));
+        }
+
+        // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        #[allow(clippy::cast_possible_truncation)]
+        let search_k = params.top_k.unwrap_or(5).min(20) as usize;
+        let seed_k = search_k.min(3);
+        #[allow(clippy::cast_possible_truncation)]
+        let depth = params.max_depth.unwrap_or(1).min(3) as usize;
+
+        // Prefer semantic (ranked) search when the embedding model is available;
+        // fall back to unranked text search so seed selection is deterministic.
+        let initial: Vec<crate::db::search::SearchResult> = if let Some(model) = &self.model {
+            search_similar(&self.store, model, &params.query, search_k)
+                .map_err(|e| into_tool_err(&e))?
+        } else {
+            let all = search_by_text(&self.store, &params.query).map_err(|e| into_tool_err(&e))?;
+            all.into_iter().take(search_k).collect()
+        };
+
+        // Traverse from the top seeds; deduplicate globally across all seeds.
+        let mut seen_ids: std::collections::HashSet<String> =
+            initial.iter().map(|r| r.chunk_id.clone()).collect();
+        let mut related: Vec<crate::db::traverse::TraversalResult> = Vec::new();
+
+        for seed in initial.iter().take(seed_k) {
+            let traversal = find_related_chunks(&self.store, &seed.chunk_id, depth)
+                .map_err(|e| into_tool_err(&e))?;
+            for tr in traversal {
+                if seen_ids.insert(tr.chunk_id.clone()) {
+                    related.push(tr);
+                }
+            }
+        }
+
+        let md = format_research_results(&params.query, &initial, &related);
+        Ok(CallToolResult::success(vec![Content::text(md)]))
+    }
+
+    /// Return current database and sync status.
+    ///
+    /// Returns the number of registered sources, total chunk count, active schema
+    /// version, and the current background sync state.  Useful for quick health
+    /// checks and verifying that the ingestion pipeline has run.
     ///
     /// # Errors
     ///
     /// Returns [`ErrorData`] when the status queries fail.
     #[tool(
         description = "Return current database status: registered source count, total chunk \
-        count, and schema version. Use this tool to verify the ingestion pipeline has run and \
-        to check the health of the local documentation database."
+        count, schema version, and background sync state. Use this tool to verify the ingestion \
+        pipeline has run and to check the health of the local documentation database."
     )]
     fn get_status(
         &self,
@@ -371,7 +507,24 @@ impl DocServer {
     ) -> Result<CallToolResult, ErrorData> {
         info!("get_status invoked");
         let status = self.store.get_status().map_err(|e| into_tool_err(&e))?;
-        let md = format_db_status(&status);
+        let mut md = format_db_status(&status);
+
+        let sync_str = {
+            let guard = self
+                .sync_status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match &*guard {
+                SyncStatus::Idle => "idle".to_string(),
+                SyncStatus::Syncing => "syncing (background)".to_string(),
+                SyncStatus::Done { files, chunks } => {
+                    format!("done ({files} files, {chunks} chunks)")
+                }
+                SyncStatus::Error(msg) => format!("error: {msg}"),
+            }
+        };
+        writeln!(md, "- **Auto-sync:** {sync_str}").expect("write to String is infallible");
+
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
 }
@@ -655,5 +808,96 @@ mod tests {
         );
         assert!(text.contains("Chunks"), "expected Chunks in output: {text}");
         assert!(text.contains("Schema"), "expected Schema in output: {text}");
+    }
+
+    // ── SyncStatus ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn sync_status_default_is_idle() {
+        let status: SyncStatus = SyncStatus::default();
+        assert!(matches!(status, SyncStatus::Idle));
+    }
+
+    #[test]
+    fn get_status_includes_auto_sync_field() {
+        let server = test_server();
+        let result = server.get_status(Parameters(GetStatusParams {})).unwrap();
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("Auto-sync"),
+            "expected Auto-sync field in status output, got: {text}"
+        );
+    }
+
+    #[test]
+    fn with_sync_status_done_appears_in_get_status() {
+        use std::sync::{Arc, Mutex};
+        let store = DataStore::open_mem().expect("in-memory store");
+        ensure_schema(&store).expect("schema");
+        let status_arc: Arc<Mutex<SyncStatus>> = Arc::new(Mutex::new(SyncStatus::Done {
+            files: 10,
+            chunks: 42,
+        }));
+        let server = DocServer::new(store).with_sync_status(Arc::clone(&status_arc));
+        let result = server.get_status(Parameters(GetStatusParams {})).unwrap();
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("10") && text.contains("42"),
+            "expected file and chunk counts in status output, got: {text}"
+        );
+    }
+
+    // ── research_topic ────────────────────────────────────────────────────────
+
+    #[test]
+    fn research_topic_empty_query_returns_error() {
+        let server = test_server();
+        let params = ResearchTopicParams {
+            query: "   ".to_string(),
+            top_k: None,
+            max_depth: None,
+        };
+        let result = server.research_topic(Parameters(params));
+        assert!(result.is_err(), "empty query should return an error");
+    }
+
+    #[test]
+    fn research_topic_returns_ok_on_empty_store() {
+        let server = test_server();
+        let params = ResearchTopicParams {
+            query: "authentication".to_string(),
+            top_k: Some(3),
+            max_depth: Some(1),
+        };
+        let result = server.research_topic(Parameters(params));
+        assert!(
+            result.is_ok(),
+            "research_topic should succeed on empty store"
+        );
+        let text = format!("{:?}", result.unwrap().content);
+        assert!(
+            text.contains("Research"),
+            "expected Research heading in output: {text}"
+        );
+        assert!(
+            text.contains("authentication"),
+            "query should appear in output: {text}"
+        );
+    }
+
+    #[test]
+    fn research_topic_top_k_clamped_to_twenty() {
+        // Ensure that top_k is accepted up to the max (20) without error.
+        let server = test_server();
+        let params = ResearchTopicParams {
+            query: "async".to_string(),
+            top_k: Some(100), // should be clamped to 20
+            max_depth: None,
+        };
+        let result = server.research_topic(Parameters(params));
+        assert!(
+            result.is_ok(),
+            "top_k over max should still succeed (clamped)"
+        );
     }
 }
