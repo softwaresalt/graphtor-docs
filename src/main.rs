@@ -10,6 +10,12 @@
 //! - `doctor`    — diagnose workspace health
 //! - `upgrade`   — upgrade the installed binary
 //! - `uninstall` — remove graphtor-docs from the current workspace
+//! - `manifest`  — print a JSON-RPC 2.0 manifest of MCP tools
+//!
+//! # Output format
+//!
+//! Pass `--json` to wrap all command output in JSON-RPC 2.0 envelopes so
+//! agents can consume the results without a running MCP server.
 //!
 //! # Exit codes
 //!
@@ -41,7 +47,7 @@ use graphtor_core::{
 };
 use tracing::{error, info, warn};
 
-use cli::{Cli, Command};
+use cli::{Cli, Command, OutputFormat};
 
 #[tokio::main]
 async fn main() {
@@ -58,11 +64,21 @@ async fn main() {
         process::exit(2);
     }
 
+    // Capture --json before cli is moved into run().
+    let use_json = cli.json;
+
     let exit_code = match run(cli).await {
         Ok(code) => code,
         Err(e) => {
             error!(error = %e, "fatal error");
-            eprintln!("error: {e}");
+            if use_json {
+                println!(
+                    "{}",
+                    cli::jsonrpc::wrap_error(cli::jsonrpc::SERVER_ERROR, e.to_string(), None,)
+                );
+            } else {
+                eprintln!("error: {e}");
+            }
             2
         }
     };
@@ -92,15 +108,22 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
     let verbose = cli.verbose;
     let _ = verbose; // available for future use
 
+    let fmt = if cli.json {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Human
+    };
+
     match cli.command {
-        Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path.as_deref(), &args),
+        Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path.as_deref(), &args, fmt),
         Command::Serve(_) => cmd_serve(&db_path, &cwd, sources_path.as_deref()).await,
-        Command::Status(args) => cmd_status(&db_path, &cwd, &args),
-        Command::Init(args) => cmd_init(&cwd, &args),
-        Command::Install(args) => cmd_install(&cwd, &args),
-        Command::Doctor => Ok(cmd_doctor(&cwd)),
-        Command::Upgrade(args) => cmd_upgrade(&cwd, &args),
-        Command::Uninstall(args) => cmd_uninstall(&cwd, &args),
+        Command::Status(args) => cmd_status(&db_path, &cwd, &args, fmt),
+        Command::Init(args) => cmd_init(&cwd, &args, fmt),
+        Command::Install(args) => cmd_install(&cwd, &args, fmt),
+        Command::Doctor => Ok(cmd_doctor(&cwd, fmt)),
+        Command::Upgrade(args) => cmd_upgrade(&cwd, &args, fmt),
+        Command::Uninstall(args) => cmd_uninstall(&cwd, &args, fmt),
+        Command::Manifest => Ok(cmd_manifest(fmt)),
     }
 }
 
@@ -171,6 +194,7 @@ fn cmd_sync(
     db_path: &std::path::Path,
     config_override: Option<&std::path::Path>,
     args: &cli::SyncArgs,
+    fmt: OutputFormat,
 ) -> anyhow::Result<i32> {
     // Resolve source config: explicit override → default path → workspace auto-discovery.
     let source_config: SourceConfig = if let Some(cfg) = load_source_config(cwd, config_override)? {
@@ -219,9 +243,15 @@ fn cmd_sync(
     };
 
     if args.full {
-        cmd_sync_full(&store, &plan, model.as_ref(), args)
+        cmd_sync_full(&store, &plan, model.as_ref(), args, fmt)
     } else {
-        Ok(cmd_sync_incremental(db_path, &store, &plan, model.as_ref()))
+        Ok(cmd_sync_incremental(
+            db_path,
+            &store,
+            &plan,
+            model.as_ref(),
+            fmt,
+        ))
     }
 }
 
@@ -231,6 +261,7 @@ fn cmd_sync_full(
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
     args: &cli::SyncArgs,
+    fmt: OutputFormat,
 ) -> anyhow::Result<i32> {
     let pipeline_config = PipelineConfig {
         batch_size: args.batch_size,
@@ -245,6 +276,22 @@ fn cmd_sync_full(
 
     let result = graphtor_core::pipeline::run(plan, store, model, &pipeline_config)
         .context("pipeline execution failed")?;
+
+    let error_count = result.errors_encountered.len();
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "mode": "full",
+                "files_processed": result.documents_processed,
+                "chunks_loaded": result.total_chunks,
+                "files_deleted": 0_usize,
+                "errors": error_count,
+            }))
+        );
+        return Ok(i32::from(error_count != 0));
+    }
 
     println!(
         "sync complete (full): {} documents, {} chunks",
@@ -268,6 +315,7 @@ fn cmd_sync_incremental(
     store: &DataStore,
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
+    fmt: OutputFormat,
 ) -> i32 {
     info!(sources = plan.sources.len(), "starting incremental sync");
 
@@ -335,16 +383,28 @@ fn cmd_sync_incremental(
         }
     }
 
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "mode": "incremental",
+                "files_processed": total_files,
+                "chunks_loaded": total_chunks,
+                "files_deleted": total_deleted,
+                "errors": total_errors,
+            }))
+        );
+        return i32::from(total_errors != 0);
+    }
+
     println!(
         "sync complete (incremental): {total_files} files processed, {total_chunks} chunks loaded, {total_deleted} files deleted"
     );
 
-    if total_errors == 0 {
-        0
-    } else {
+    if total_errors > 0 {
         eprintln!("{total_errors} error(s) encountered during sync");
-        1
     }
+    i32::from(total_errors != 0)
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────
@@ -528,9 +588,20 @@ fn cmd_status(
     db_path: &std::path::Path,
     cwd: &std::path::Path,
     args: &cli::StatusArgs,
+    fmt: OutputFormat,
 ) -> anyhow::Result<i32> {
     if !db_path.exists() {
-        println!("database not found — run `graphtor-docs sync` to create it");
+        if fmt == OutputFormat::Json || args.json {
+            println!(
+                "{}",
+                cli::jsonrpc::wrap_success(serde_json::json!({
+                    "database": db_path.display().to_string(),
+                    "sources": [],
+                }))
+            );
+        } else {
+            println!("database not found — run `graphtor-docs sync` to create it");
+        }
         return Ok(0);
     }
 
@@ -540,8 +611,8 @@ fn cmd_status(
 
     let sources = list_sources(&store).context("failed to list sources")?;
 
-    if args.json {
-        let json = serde_json::json!({
+    if args.json || fmt == OutputFormat::Json {
+        let json_value = serde_json::json!({
             "database": db_path.display().to_string(),
             "sources": sources.iter().map(|s| serde_json::json!({
                 "id": s.source_id,
@@ -551,7 +622,7 @@ fn cmd_status(
                 "synced_at": s.synced_at,
             })).collect::<Vec<_>>(),
         });
-        println!("{}", serde_json::to_string_pretty(&json)?);
+        println!("{}", cli::jsonrpc::wrap_success(json_value));
     } else {
         println!("database: {}", db_path.display());
         println!("sources:  {}", sources.len());
@@ -571,13 +642,24 @@ fn cmd_status(
 
 // ── init ──────────────────────────────────────────────────────────────────────
 
-fn cmd_init(cwd: &std::path::Path, args: &cli::InitArgs) -> anyhow::Result<i32> {
+fn cmd_init(cwd: &std::path::Path, args: &cli::InitArgs, fmt: OutputFormat) -> anyhow::Result<i32> {
     // Locate or create workspace dir.
     let workspace_dir = cwd.join(".graphtor");
     std::fs::create_dir_all(&workspace_dir).context("failed to create .graphtor/")?;
 
     let result = workspace::init::init_sources_yaml(&workspace_dir, args.force)
         .context("failed to initialise sources.yaml")?;
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "created": result.created,
+                "path": result.path.display().to_string(),
+            }))
+        );
+        return Ok(0);
+    }
 
     if result.created {
         println!("created: {}", result.path.display());
@@ -592,7 +674,11 @@ fn cmd_init(cwd: &std::path::Path, args: &cli::InitArgs) -> anyhow::Result<i32> 
 
 // ── install ───────────────────────────────────────────────────────────────────
 
-fn cmd_install(cwd: &std::path::Path, args: &cli::InstallArgs) -> anyhow::Result<i32> {
+fn cmd_install(
+    cwd: &std::path::Path,
+    args: &cli::InstallArgs,
+    fmt: OutputFormat,
+) -> anyhow::Result<i32> {
     // Always create the workspace directory scaffold first so the lock path exists.
     let ws_dir = cwd.join(".graphtor");
     std::fs::create_dir_all(&ws_dir).context("failed to create .graphtor directory")?;
@@ -603,27 +689,13 @@ fn cmd_install(cwd: &std::path::Path, args: &cli::InstallArgs) -> anyhow::Result
 
     let result = workspace::install::install(cwd).context("install failed")?;
 
-    if result.created {
-        println!("created: {}", result.workspace_dir.display());
-    } else {
-        println!(
-            "workspace already exists: {}",
-            result.workspace_dir.display()
-        );
-    }
-    println!("binary:  {}", result.binary_path.display());
-
     // Initialise sources.yaml (non-destructive).
     let init_result = workspace::init::init_sources_yaml(&result.workspace_dir, false)
         .context("failed to initialise sources.yaml")?;
-    if init_result.created {
-        println!("created: {}", init_result.path.display());
-    }
 
-    // Manage .gitignore.
+    // Manage .gitignore (side effect only; print deferred below).
     if !args.no_gitignore {
         workspace::gitignore::add_gitignore_entry(cwd).context("failed to update .gitignore")?;
-        println!("updated: .gitignore (added .graphtor/)");
     }
 
     // Generate MCP client configs.
@@ -638,6 +710,37 @@ fn cmd_install(cwd: &std::path::Path, args: &cli::InstallArgs) -> anyhow::Result
 
     let written = workspace::mcp_config::generate_mcp_configs(cwd, &editors)
         .context("failed to generate MCP configs")?;
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "created": result.created,
+                "workspace_dir": result.workspace_dir.display().to_string(),
+                "binary_path": result.binary_path.display().to_string(),
+            }))
+        );
+        return Ok(0);
+    }
+
+    if result.created {
+        println!("created: {}", result.workspace_dir.display());
+    } else {
+        println!(
+            "workspace already exists: {}",
+            result.workspace_dir.display()
+        );
+    }
+    println!("binary:  {}", result.binary_path.display());
+
+    if init_result.created {
+        println!("created: {}", init_result.path.display());
+    }
+
+    if !args.no_gitignore {
+        println!("updated: .gitignore (added .graphtor/)");
+    }
+
     for path in &written {
         println!("created: {path}");
     }
@@ -652,11 +755,46 @@ fn cmd_install(cwd: &std::path::Path, args: &cli::InstallArgs) -> anyhow::Result
 
 // ── doctor ────────────────────────────────────────────────────────────────────
 
-fn cmd_doctor(cwd: &std::path::Path) -> i32 {
+fn cmd_doctor(cwd: &std::path::Path, fmt: OutputFormat) -> i32 {
     let workspace_dir = cwd.join(".graphtor");
     let checks = workspace::doctor::run_doctor(&workspace_dir);
 
-    let mut has_fail = false;
+    let has_fail = checks
+        .iter()
+        .any(|c| c.severity == workspace::doctor::Severity::Fail);
+    let has_warn = checks
+        .iter()
+        .any(|c| c.severity == workspace::doctor::Severity::Warn);
+
+    if fmt == OutputFormat::Json {
+        let overall = if has_fail {
+            "unhealthy"
+        } else if has_warn {
+            "degraded"
+        } else {
+            "healthy"
+        };
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "checks": checks.iter().map(|c| {
+                    let status = match c.severity {
+                        workspace::doctor::Severity::Pass => "pass",
+                        workspace::doctor::Severity::Warn => "warn",
+                        workspace::doctor::Severity::Fail => "fail",
+                    };
+                    serde_json::json!({
+                        "name": c.name,
+                        "status": status,
+                        "detail": c.message,
+                    })
+                }).collect::<Vec<_>>(),
+                "overall": overall,
+            }))
+        );
+        return if has_fail { 2 } else { 0 };
+    }
+
     for check in &checks {
         let icon = match check.severity {
             workspace::doctor::Severity::Pass => "✓",
@@ -664,9 +802,6 @@ fn cmd_doctor(cwd: &std::path::Path) -> i32 {
             workspace::doctor::Severity::Fail => "✗",
         };
         println!("[{icon}] {}: {}", check.severity, check.message);
-        if check.severity == workspace::doctor::Severity::Fail {
-            has_fail = true;
-        }
     }
 
     if has_fail {
@@ -678,11 +813,22 @@ fn cmd_doctor(cwd: &std::path::Path) -> i32 {
 
 // ── upgrade ───────────────────────────────────────────────────────────────────
 
-fn cmd_upgrade(cwd: &std::path::Path, args: &cli::UpgradeArgs) -> anyhow::Result<i32> {
+fn cmd_upgrade(
+    cwd: &std::path::Path,
+    args: &cli::UpgradeArgs,
+    fmt: OutputFormat,
+) -> anyhow::Result<i32> {
     let workspace_dir = match workspace::paths::find_workspace_dir(cwd) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("error: {e}");
+            if fmt == OutputFormat::Json {
+                println!(
+                    "{}",
+                    cli::jsonrpc::wrap_error(cli::jsonrpc::SERVER_ERROR, e.to_string(), None)
+                );
+            } else {
+                eprintln!("error: {e}");
+            }
             return Ok(2);
         }
     };
@@ -692,6 +838,18 @@ fn cmd_upgrade(cwd: &std::path::Path, args: &cli::UpgradeArgs) -> anyhow::Result
 
     let result =
         workspace::upgrade::upgrade(&workspace_dir, args.force).context("upgrade failed")?;
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "upgraded": result.upgraded,
+                "message": result.message,
+            }))
+        );
+        return Ok(0);
+    }
+
     if result.upgraded {
         println!("{}", result.message);
     } else {
@@ -702,10 +860,25 @@ fn cmd_upgrade(cwd: &std::path::Path, args: &cli::UpgradeArgs) -> anyhow::Result
 
 // ── uninstall ─────────────────────────────────────────────────────────────────
 
-fn cmd_uninstall(cwd: &std::path::Path, args: &cli::UninstallArgs) -> anyhow::Result<i32> {
+fn cmd_uninstall(
+    cwd: &std::path::Path,
+    args: &cli::UninstallArgs,
+    fmt: OutputFormat,
+) -> anyhow::Result<i32> {
     if !args.confirm {
-        eprintln!("error: --confirm flag is required to prevent accidental uninstall");
-        eprintln!("       run: graphtor-docs uninstall --confirm");
+        if fmt == OutputFormat::Json {
+            println!(
+                "{}",
+                cli::jsonrpc::wrap_error(
+                    cli::jsonrpc::SERVER_ERROR,
+                    "--confirm flag is required to prevent accidental uninstall",
+                    None,
+                )
+            );
+        } else {
+            eprintln!("error: --confirm flag is required to prevent accidental uninstall");
+            eprintln!("       run: graphtor-docs uninstall --confirm");
+        }
         return Ok(2);
     }
 
@@ -722,11 +895,66 @@ fn cmd_uninstall(cwd: &std::path::Path, args: &cli::UninstallArgs) -> anyhow::Re
     let result =
         workspace::uninstall::uninstall(cwd, args.keep_config).context("uninstall failed")?;
 
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "removed": result.removed,
+            }))
+        );
+        return Ok(0);
+    }
+
     for item in &result.removed {
         println!("removed: {item}");
     }
     println!("uninstall complete");
     Ok(0)
+}
+
+// ── manifest ──────────────────────────────────────────────────────────────────
+
+/// Print all MCP tool definitions — human-readable table or JSON-RPC 2.0 envelope.
+///
+/// The tool list is identical to what the `serve` subcommand advertises on the
+/// MCP `tools/list` request, ensuring parity between the CLI and the STDIO
+/// server interface.
+fn cmd_manifest(fmt: OutputFormat) -> i32 {
+    let tools = graphtor_core::mcp::list_mcp_tools();
+
+    if fmt == OutputFormat::Json {
+        let mut tool_values: Vec<serde_json::Value> = Vec::with_capacity(tools.len());
+        for t in &tools {
+            match serde_json::to_value(t) {
+                Ok(v) => tool_values.push(v),
+                Err(e) => {
+                    println!(
+                        "{}",
+                        cli::jsonrpc::wrap_error(
+                            cli::jsonrpc::SERVER_ERROR,
+                            format!("failed to serialize tool '{}': {e}", t.name),
+                            None,
+                        )
+                    );
+                    return 1;
+                }
+            }
+        }
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({ "tools": tool_values }))
+        );
+        return 0;
+    }
+
+    // Human-readable two-column table.
+    println!("{:<35} Description", "Tool");
+    println!("{}", "─".repeat(80));
+    for tool in &tools {
+        let desc = tool.description.as_deref().unwrap_or("(no description)");
+        println!("{:<35} {desc}", tool.name);
+    }
+    0
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

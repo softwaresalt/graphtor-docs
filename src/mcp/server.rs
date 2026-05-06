@@ -529,6 +529,29 @@ impl DocServer {
     }
 }
 
+// ── Manifest helpers ──────────────────────────────────────────────────────────
+
+impl DocServer {
+    /// Return all MCP tool definitions for the CLI `manifest` command.
+    ///
+    /// Constructs the tool router and extracts the [`rmcp::model::Tool`]
+    /// attribute for every registered tool.  The returned list is sorted
+    /// by name for deterministic, reproducible output.  Note that the
+    /// live `tools/list` MCP response is unordered (`HashMap` iteration
+    /// order), so the manifest mirrors the *set* of tools but not
+    /// necessarily their order in a live server response.
+    pub(crate) fn list_tools() -> Vec<rmcp::model::Tool> {
+        let mut tools: Vec<rmcp::model::Tool> = Self::tool_router()
+            .map
+            .into_values()
+            .map(|route| route.attr)
+            .collect();
+        // Sort by name for deterministic output order.
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        tools
+    }
+}
+
 // ── ServerHandler ─────────────────────────────────────────────────────────────
 
 #[tool_handler]
