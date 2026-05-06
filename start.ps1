@@ -21,6 +21,25 @@ if (Test-Path $global_agents_src) {
 $env:COPILOT_HOME = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { ".\.copilot" }
 $env:ENGRAM_DATA_DIR = ".\.engram"   # Uncomment when the agent-engram capability pack is active
 $env:GITHUB_TOKEN = (gh auth token)
+
+# ── Pre-sync indexes ──────────────────────────────────────────────────────────
+# Ensure graphtor and backlogit indexes are fresh before agent starts.
+# Failures are non-fatal — warn and continue.
+if (Get-Command "graphtor-docs" -ErrorAction SilentlyContinue) {
+    Write-Host "[sync] graphtor-docs sync..." -ForegroundColor DarkGray
+    graphtor-docs sync 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "graphtor-docs sync failed (exit $LASTEXITCODE) — continuing"
+    }
+}
+if (Get-Command "backlogit" -ErrorAction SilentlyContinue) {
+    Write-Host "[sync] backlogit sync..." -ForegroundColor DarkGray
+    backlogit sync 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "backlogit sync failed (exit $LASTEXITCODE) — continuing"
+    }
+}
+
 $copilotExe = if ($env:COPILOT_EXE_PATH) {
     $env:COPILOT_EXE_PATH
 } elseif ($env:COPILOT_EXE) {

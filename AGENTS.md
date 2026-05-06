@@ -29,14 +29,14 @@ When documents conflict, follow this precedence order:
 
 LocalDocRAG is a documentation cross-reference system that:
 
-- **Acquires** Microsoft Docs repositories via shallow clones organized
-  into 38 thematic groups (~703 repos) using the `git2` crate
+- **Acquires** documentation from Git repositories (shallow-cloned), local
+  directories, and web URLs configured in `sources.yaml`
 - **Parses** markdown content deterministically via pulldown-cmark AST
   (frontmatter stripping, heading-based chunking, link extraction)
 - **Chunks** documents into units with stable SHA-256 correlation keys
 - **Embeds** chunks using `all-MiniLM-L6-v2` via Candle (in-process,
   384-dim vectors, pure Rust ML inference)
-- **Loads** chunks into LanceDB (vector) and Kùzu (property graph)
+- **Loads** chunks into CozoDB (embedded, sqlite backend)
 - **Serves** queries via MCP tools bound to localhost (STDIO transport)
 
 All processing is local. No data leaves the developer's machine.
@@ -185,8 +185,8 @@ pub(crate) fn run(config: &StageConfig) -> Result<(), PipelineError> {
 When implementing MCP tools under `src/mcp/tools/`:
 
 1. **One tool per module** — each tool is a separate `.rs` module
-2. **Descriptive names** — `search_ms_docs_semantic`, `explore_concept_graph`,
-   `get_document_chunk`, not `search`, `query`, `get`
+2. **Descriptive names** — `search_local_docs`, `search_semantic`,
+   `get_chunk_by_id`, not `search`, `query`, `get`
 3. **Clear descriptions** — the tool description MUST be sufficient for an
    AI agent to decide when to use it without reading source code
 4. **Typed parameters** — all tool parameters validated via typed Rust
@@ -194,7 +194,7 @@ When implementing MCP tools under `src/mcp/tools/`:
 5. **Markdown responses** — tool output is structured markdown, suitable for
    direct LLM consumption
 6. **Localhost only** — the MCP server MUST bind to localhost (STDIO transport)
-7. **rmcp macros** — use `#[tool]`/`#[tool_router]` macros from `rmcp` 0.5
+7. **rmcp macros** — use `#[tool]`/`#[tool_router]` macros from `rmcp` 1.5
 
 ## Dependency Management
 
