@@ -2,10 +2,27 @@
 //!
 //! Defines the top-level [`Cli`] struct and [`Command`] enum parsed by
 //! [`clap`]. Each variant maps to a distinct binary subcommand.
+//!
+//! When the `--json` global flag is set, command output is wrapped in
+//! JSON-RPC 2.0 response envelopes via [`jsonrpc`].
+
+pub mod jsonrpc;
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+
+/// Output format for command results.
+///
+/// Controls whether commands print human-readable text or JSON-RPC 2.0
+/// response envelopes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// Human-readable text output (default).
+    Human,
+    /// JSON-RPC 2.0 envelope output (`{"jsonrpc":"2.0","id":null,"result":{...}}`).
+    Json,
+}
 
 /// `GraphRAG` documentation index — MCP plugin server and ingestion pipeline.
 #[derive(Debug, Parser)]
@@ -19,6 +36,16 @@ pub struct Cli {
     /// Enable verbose logging (sets `RUST_LOG=debug`).
     #[arg(short, long, global = true)]
     pub verbose: bool,
+
+    /// Output results as JSON-RPC 2.0 response envelopes.
+    ///
+    /// When set, all command output is wrapped in
+    /// `{"jsonrpc":"2.0","id":null,"result":{...}}` or
+    /// `{"jsonrpc":"2.0","id":null,"error":{...}}` envelopes, matching the
+    /// format the MCP server returns over STDIO.  Suitable for consumption
+    /// by agents and scripts without a running MCP server.
+    #[arg(long, global = true)]
+    pub json: bool,
 
     /// Path to the `sources.yaml` documentation registry.
     ///
@@ -108,6 +135,15 @@ pub enum Command {
     /// Removes `.graphtor/` and MCP client config files. Requires
     /// `--confirm`. Cleans `.gitignore` entries.
     Uninstall(UninstallArgs),
+
+    /// Print a JSON-RPC 2.0 manifest of graphtor-docs MCP tools.
+    ///
+    /// Without `--json`, prints a human-readable table of tool names and
+    /// descriptions.  With `--json`, emits a `tools/list`-compatible response
+    /// envelope that mirrors what the MCP server returns on initialisation.
+    /// Tool definitions are derived from the same source as the MCP server,
+    /// guaranteeing parity.
+    Manifest,
 }
 
 /// Arguments for the `sync` subcommand.
