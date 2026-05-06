@@ -182,9 +182,12 @@ pub(crate) fn run(config: &StageConfig) -> Result<(), PipelineError> {
 
 ## MCP Tool Conventions
 
-When implementing MCP tools under `src/mcp/tools/`:
+When implementing MCP tools in `src/mcp/server.rs` (tool router and
+implementations live here; `src/mcp/mod.rs` and `src/mcp/format.rs` are
+the supporting modules):
 
-1. **One tool per module** — each tool is a separate `.rs` module
+1. **Tools in `server.rs`** — new tools are added to the `#[tool_router]`
+   in `src/mcp/server.rs`; extract to a sub-module only when size warrants it
 2. **Descriptive names** — `search_local_docs`, `search_semantic`,
    `get_chunk_by_id`, not `search`, `query`, `get`
 3. **Clear descriptions** — the tool description MUST be sufficient for an

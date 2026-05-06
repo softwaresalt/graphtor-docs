@@ -248,7 +248,7 @@ Never write production code before the corresponding test exists and has been ob
 
 ### MCP Tools
 
-* Each tool is a separate module under `src/mcp/tools/`
+* Tools are implemented in `src/mcp/server.rs` (the `#[tool_router]`); `src/mcp/mod.rs` and `src/mcp/format.rs` are supporting modules — there is no `src/mcp/tools/` sub-directory
 * Tool definitions use `#[tool]`/`#[tool_router]` macros from `rmcp` 1.5
 * Tool names use `snake_case` with descriptive prefixes (`search_local_docs`, `search_semantic`, `traverse_doc_links`)
 * Tool descriptions MUST be clear enough for an AI agent to select the right tool
