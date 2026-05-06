@@ -167,7 +167,8 @@ pub fn format_research_results(
     initial: &[SearchResult],
     related: &[TraversalResult],
 ) -> String {
-    let mut out = format!("## Research: {query}\n\n");
+    let display_query = query.trim().replace('\n', " ").replace('\r', "");
+    let mut out = format!("## Research: {display_query}\n\n");
 
     out.push_str("### Search Results\n\n");
     if initial.is_empty() {

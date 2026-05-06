@@ -117,13 +117,13 @@ fn build_workspace_source_config(cwd: &std::path::Path) -> SourceConfig {
         sources: vec![Source::Local(LocalSource {
             id: "workspace".to_string(),
             path: cwd.to_path_buf(),
-            include: Vec::new(),
+            include: vec!["**/*.md".to_string(), "**/*.markdown".to_string()],
             exclude: vec![
                 ".graphtor/**".to_string(),
                 ".git/**".to_string(),
                 "target/**".to_string(),
             ],
-            formats: vec!["md".to_string()],
+            formats: vec!["md".to_string(), "markdown".to_string()],
         })],
     }
 }
@@ -351,9 +351,11 @@ fn cmd_sync_incremental(
 
 /// Spawn a background incremental sync task and return the shared status handle.
 ///
-/// Mirrors the `cmd_sync_incremental` flow exactly: acquire → sync per source →
-/// aggregate errors.  The returned `Arc<Mutex<SyncStatus>>` is shared with the
-/// `DocServer` so `get_status` can reflect the live sync state.
+/// Follows the same high-level flow as `cmd_sync_incremental`: acquire new git
+/// repos → sync per source → aggregate errors.  Unlike the interactive command,
+/// this function does not track deleted files and reports progress through the
+/// returned `Arc<Mutex<SyncStatus>>` rather than writing to stdout.  The returned
+/// handle is shared with the `DocServer` so `get_status` can reflect live sync state.
 fn spawn_background_sync(
     source_config: SourceConfig,
     db_path_owned: PathBuf,
@@ -491,8 +493,11 @@ async fn cmd_serve(
             Arc::default()
         }
         Ok(None) => {
-            warn!("config file not found; background sync disabled");
-            Arc::default()
+            // load_source_config returns Ok(None) only when an explicit --config
+            // path was supplied but the file does not exist — fail fast.
+            let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
+            eprintln!("error: config file '{}' not found", path.display());
+            return Ok(2);
         }
         Err(e) => {
             warn!(error = %e, "failed to load source config; background sync disabled");
@@ -742,7 +747,18 @@ mod tests {
         );
         if let Source::Local(local) = source {
             assert_eq!(local.id, "workspace");
-            assert_eq!(local.formats, vec!["md"]);
+            assert!(
+                local.formats.contains(&"md".to_string()),
+                "formats should include md"
+            );
+            assert!(
+                local.formats.contains(&"markdown".to_string()),
+                "formats should include markdown"
+            );
+            assert!(
+                local.include.iter().any(|p| p.contains("*.md")),
+                "include should have an md glob"
+            );
             assert!(
                 local.exclude.iter().any(|e| e.contains(".graphtor")),
                 "should exclude .graphtor/**"
