@@ -53,7 +53,7 @@ if (-not $copilotExe) {
     throw "Unable to locate Copilot CLI. Set COPILOT_EXE_PATH (or COPILOT_EXE for backward compatibility) or add 'copilot' to PATH."
 }
 
-& $copilotExe @args
+& $copilotExe --remote
 
 # ── Claude Code ─────────────────────────────────────────────────────────────
 # Uncomment to run Claude Code with workspace-local state directories.

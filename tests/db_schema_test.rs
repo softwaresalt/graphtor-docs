@@ -36,3 +36,15 @@ fn all_expected_relations_exist_after_schema() {
         );
     }
 }
+
+#[test]
+fn hnsw_index_exists_after_schema() {
+    let s = store();
+    let names = s
+        .relation_names()
+        .expect("relation_names query should succeed");
+    assert!(
+        names.iter().any(|n| n == "doc_chunks:embedding_idx"),
+        "HNSW index 'doc_chunks:embedding_idx' should exist; found: {names:?}"
+    );
+}

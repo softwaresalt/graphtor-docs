@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::db::chunks::delete_chunks_by_path;
 use crate::db::edges::{delete_code_for_chunk, delete_edges_for_chunk};
+use crate::db::vectors::upsert_vector;
 use crate::db::{upsert_chunk, upsert_code_snippet, upsert_edge};
 use crate::embed::{embed_text, EmbeddingModel};
 use crate::error::GraphtorError;
@@ -50,8 +51,7 @@ pub fn delete_file_data(store: &DataStore, relative_path: &str) -> Result<(), Gr
 /// satisfy the path security check.  `root` is the workspace root for path
 /// validation.
 ///
-/// Pass `model = None` to skip embedding (vectors are not persisted in this
-/// release).
+/// Pass `model = None` to skip embedding.
 ///
 /// # Errors
 ///
@@ -96,20 +96,6 @@ pub fn reingest_file(
         path: Some(safe_path.clone()),
     })?;
 
-    // Optionally embed (vectors not persisted — no-op on model absence).
-    if let Some(m) = model {
-        for chunk in &parsed.chunks {
-            if let Err(e) = embed_text(m, &chunk.content) {
-                warn!(
-                    chunk_id = %chunk.chunk_id,
-                    path = rel_path,
-                    error = %e,
-                    "embedding failed during reingest; continuing without vector"
-                );
-            }
-        }
-    }
-
     // Reload into CozoDB.
     let mut chunks_loaded: usize = 0;
     for chunk in &parsed.chunks {
@@ -121,6 +107,32 @@ pub fn reingest_file(
     }
     for snippet in &parsed.code_snippets {
         upsert_code_snippet(store, snippet)?;
+    }
+
+    // Optionally embed and persist vectors (chunks must already be in DB).
+    if let Some(m) = model {
+        for chunk in &parsed.chunks {
+            match embed_text(m, &chunk.content) {
+                Ok(embedding) => {
+                    if let Err(e) = upsert_vector(store, &chunk.chunk_id, &embedding) {
+                        warn!(
+                            chunk_id = %chunk.chunk_id,
+                            path = rel_path,
+                            error = %e,
+                            "vector upsert failed during reingest; continuing without embedding"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        chunk_id = %chunk.chunk_id,
+                        path = rel_path,
+                        error = %e,
+                        "embedding failed during reingest; continuing without vector"
+                    );
+                }
+            }
+        }
     }
 
     info!(

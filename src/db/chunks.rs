@@ -3,6 +3,11 @@
 //! Manages `doc_chunks`, the primary relation that stores document content
 //! chunks with their metadata. Chunks are keyed by a stable SHA-256
 //! `chunk_id` and linked to their source via `source_id`.
+//!
+//! The `doc_chunks` relation includes an `embedding: <F32; 384>?` column
+//! that is indexed by the `doc_chunks:embedding_idx` HNSW index for
+//! semantic search. [`upsert_chunk`] always sets `embedding` to `null` —
+//! call [`crate::db::vectors::upsert_vector`] after ingestion to populate it.
 
 use std::collections::BTreeMap;
 
@@ -65,9 +70,9 @@ pub fn upsert_chunk(
         })?;
 
     let script = r"
-        ?[chunk_id, source_id, path, title, position, char_offset, headings, content]
-            <- [[$chunk_id, $source_id, $path, $title, $position, $char_offset, $headings, $content]]
-        :put doc_chunks { chunk_id => source_id, path, title, position, char_offset, headings, content }
+        ?[chunk_id, source_id, path, title, position, char_offset, headings, content, embedding]
+            <- [[$chunk_id, $source_id, $path, $title, $position, $char_offset, $headings, $content, null]]
+        :put doc_chunks { chunk_id => source_id, path, title, position, char_offset, headings, content, embedding }
     ";
     let mut params = BTreeMap::new();
     params.insert(

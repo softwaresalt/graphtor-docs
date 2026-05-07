@@ -36,10 +36,10 @@ fn get_status_on_empty_store_returns_zero_counts() {
     let status = s.get_status().expect("get_status should succeed");
     assert_eq!(status.source_count, 0, "expected 0 sources on empty store");
     assert_eq!(status.chunk_count, 0, "expected 0 chunks on empty store");
-    // Schema version must reflect the current SCHEMA_VERSION constant (2).
+    // Schema version must reflect the current SCHEMA_VERSION constant (3).
     assert_eq!(
-        status.schema_version, 2,
-        "schema version should be 2 after ensure_schema"
+        status.schema_version, 3,
+        "schema version should be 3 after ensure_schema"
     );
 }
 
@@ -76,5 +76,5 @@ fn get_status_reflects_combined_sources_and_chunks() {
     let status = s.get_status().expect("get_status should succeed");
     assert_eq!(status.source_count, 2);
     assert_eq!(status.chunk_count, 3);
-    assert_eq!(status.schema_version, 2);
+    assert_eq!(status.schema_version, 3);
 }
