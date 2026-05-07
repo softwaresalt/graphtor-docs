@@ -21,7 +21,12 @@ No cloud services. No external databases. One binary.
   in-process Rust ML inference; no external model server)
 - **Graph traversal** — follow document link graphs with BFS traversal
 - **Incremental sync** — re-ingest only changed files (git diff or mtime)
-- **7 MCP tools** — search, traverse, retrieve, status — for AI agents
+- **8 MCP tools** — search, traverse, research, retrieve, status — for AI agents
+- **JSON-RPC 2.0 output** — `--json` global flag wraps all CLI output in
+  JSON-RPC 2.0 envelopes for agent and script consumption
+- **`manifest` subcommand** — prints tool name/description table or a
+  `tools/list`-compatible JSON-RPC 2.0 envelope with the same tool definitions
+  as the live MCP server (note: ordering may differ from the live server)
 - **Single binary** — zero runtime dependencies
 
 ## Quick Start
@@ -100,7 +105,7 @@ See the [MCP Tool Reference](docs/mcp-tools.md) for available tools.
 | [CLI Reference](docs/cli-reference/graphtor-docs.md) | All subcommands and flags |
 | [Pipeline Reference](docs/pipeline.md) | Acquire → parse → embed → load |
 | [Incremental Sync](docs/incremental-sync.md) | Change detection design |
-| [MCP Tool Reference](docs/mcp-tools.md) | All 7 MCP tools |
+| [MCP Tool Reference](docs/mcp-tools.md) | All 8 MCP tools |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 
 ## License
