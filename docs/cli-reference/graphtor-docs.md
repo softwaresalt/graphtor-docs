@@ -293,11 +293,12 @@ graphtor-docs manifest [--json]
 
 Without `--json`, prints a human-readable table of tool names and descriptions.
 With `--json` (global flag), emits a `tools/list`-compatible JSON-RPC 2.0
-response envelope — identical to what the MCP server returns during
-initialisation.
+response envelope with the same tool definitions as the MCP server. Note that
+the tool list is sorted alphabetically for deterministic output; ordering may
+differ from the live server's `tools/list` response.
 
 Tool definitions are derived from the same source as the MCP server,
-guaranteeing parity between the CLI output and the live server.
+guaranteeing parity of tool names, descriptions, and parameter schemas.
 
 No additional subcommand flags. Use the global `--json` flag for machine-readable output.
 

@@ -25,7 +25,8 @@ No cloud services. No external databases. One binary.
 - **JSON-RPC 2.0 output** — `--json` global flag wraps all CLI output in
   JSON-RPC 2.0 envelopes for agent and script consumption
 - **`manifest` subcommand** — prints tool name/description table or a
-  `tools/list`-compatible JSON-RPC 2.0 envelope matching the live MCP server
+  `tools/list`-compatible JSON-RPC 2.0 envelope with the same tool definitions
+  as the live MCP server (note: ordering may differ from the live server)
 - **Single binary** — zero runtime dependencies
 
 ## Quick Start

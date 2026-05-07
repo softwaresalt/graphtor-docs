@@ -157,12 +157,13 @@ single call.
 
 **Behavior:**
 1. Runs keyword (or semantic, if model is loaded) search for `query`, taking the top `top_k` results as seeds.
-2. Performs BFS traversal from each of the top 3 seeds at `max_depth`.
+2. Performs BFS traversal from each of the top `min(top_k, 3)` seeds at `max_depth` (so if `top_k` is 1 or 2, fewer than 3 seeds are used).
 3. Returns initial search hits (with full chunk content) plus BFS-discovered related chunks (depth, path, and chunk ID only — use `get_chunk_by_id` or `get_document` to retrieve their full content), all deduplicated globally.
 
 **Response:** Markdown with two sections:
 - `### Search Results` — initial search hits with full chunk content
-- `### Related Context` — BFS-discovered related chunks as a list of `depth / path / chunk-id` entries (no content inline)
+- `### Related Context` — BFS-discovered related chunks as a bullet list in the format:
+  `- **Depth N** — \`path\` (chunk ID: \`...\`)` (no content inline)
 
 **Example:**
 ```text
