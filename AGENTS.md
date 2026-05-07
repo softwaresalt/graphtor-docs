@@ -128,7 +128,8 @@ explicit `.map_err()`. Never use `unwrap()` or `expect()` in library code.
   Datalog queries outside this module. Sub-modules: `store.rs` (lifecycle),
   `schema.rs` (DDL), `chunks.rs` (chunk upserts), `nodes.rs` (repo/document
   node CRUD), `edges.rs` (graph edge insertion), `traverse.rs` (multi-hop
-  traversal), `search.rs` (text/keyword search).
+  traversal), `search.rs` (text/keyword search), `vectors.rs` (vector
+  embedding storage and similarity lookup).
 - **Test databases**: Use temporary directories — never write to
   production database paths in tests.
 

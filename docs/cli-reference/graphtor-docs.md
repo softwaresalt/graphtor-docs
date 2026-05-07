@@ -139,16 +139,20 @@ sources:  2
 
 ```json
 {
-  "database": ".graphtor/graph.db",
-  "sources": [
-    {
-      "id": "azure-docs",
-      "name": "azure-docs",
-      "kind": "git",
-      "url": "https://github.com/MicrosoftDocs/azure-docs.git",
-      "synced_at": null
-    }
-  ]
+  "jsonrpc": "2.0",
+  "id": null,
+  "result": {
+    "database": ".graphtor/graph.db",
+    "sources": [
+      {
+        "id": "azure-docs",
+        "name": "azure-docs",
+        "kind": "git",
+        "url": "https://github.com/MicrosoftDocs/azure-docs.git",
+        "synced_at": null
+      }
+    ]
+  }
 }
 ```
 
