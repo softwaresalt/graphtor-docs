@@ -1,79 +1,84 @@
 ---
-title: "CozoDB HNSW API Patterns"
-date: 2026-05-07
-shipment: 023-S
-pr: 38
-tags: [cozodb, hnsw, vector-search, datalog]
+title: "CozoDB HNSW index: create, drop, upsert, and tilde-query patterns"
+description: "CozoDB HNSW indexes require ::hnsw drop (not ::remove), a join-put upsert, tilde-query syntax, and a full row-export migration — none of which follow the base-relation conventions."
+problem_type: "api_mismatch"
+category: "best-practices"
+component: "src/db/vectors.rs"
+root_cause: "CozoDB HNSW index operations use a distinct command namespace (::hnsw) and query syntax (tilde-query) that differ from base-relation operations; schema migration requires full row export because CozoDB has no ALTER TABLE."
+resolution_type: "code_fix"
+severity: "high"
+message: "index drop failed / embedding not stored / tilde-query syntax error"
+file_path: "src/db/vectors.rs"
+citations:
+  - "https://github.com/softwaresalt/graphtor-docs/pull/38"
+tags:
+  - cozodb
+  - hnsw
+  - vector-search
+  - datalog
+  - schema-migration
 ---
 
-# CozoDB HNSW API Patterns
+## Problem
 
-Hard-won findings from implementing native HNSW vector search in CozoDB
-(graphtor-docs shipment 023-S / PR #38). These patterns apply to any Rust
-project embedding CozoDB with the `cozo` crate.
+Implementing native HNSW vector search in CozoDB exposes several non-obvious
+API distinctions that differ from base-relation operations:
 
-## Index Management
+- Index removal used `::remove` (base-relation command) instead of `::hnsw drop`
+- Embedding upserts required a join-put pattern — direct `:put` with `null` erases stored embeddings
+- Tilde-query (`~relation:index{...}`) is distinct syntax not used elsewhere in CozoDB
+- Schema changes require full row export because CozoDB has no `ALTER TABLE`
 
-### Create an HNSW index
+## Root Cause
+
+CozoDB HNSW operations live in a separate command namespace (`::hnsw`) and use
+a distinct query syntax (tilde prefix) that is not documented alongside
+base-relation operations. Key differences:
+
+| Operation | Base relation | HNSW index |
+|---|---|---|
+| Drop | `::remove relation` | `::hnsw drop relation:index_name` |
+| Check existence | `::relations` (shows all) | Filter for `:` in name |
+| Upsert | `:put relation { ... }` | Join-put: read row, write back with `vec($emb)` |
+| Query | `*relation{ ... }` | `~relation:index{ cols \| query: q, k: $k }` |
+| Read back | `DataValue::Str` / `DataValue::Num` | `DataValue::Vec(Vector::F32(arr))` |
+
+Schema migration is especially subtle: CozoDB has no `ALTER TABLE`, so adding
+a column requires exporting all rows, dropping the relation, recreating with
+the new schema, and re-inserting.
+
+## Resolution
+
+### Index create and drop
 
 ```datalog
+-- Create (idempotent: check ::relations first)
 ::hnsw create doc_chunks:embedding_idx {
-    dim: 384,
-    m: 16,
-    dtype: F32,
-    fields: [embedding],
-    distance: Cosine,
-    ef_construction: 200
+    dim: 384, m: 16, dtype: F32,
+    fields: [embedding], distance: Cosine, ef_construction: 200
 }
-```
 
-Key parameters:
-- `dim` must match the model output exactly (all-MiniLM-L6-v2 → 384)
-- `m = 16` is a reasonable default; higher improves recall at cost of RAM
-- `ef_construction = 200` balances build quality vs. index construction time
-- `distance: Cosine` is appropriate for L2-normalised embeddings (dot product = cosine)
-
-### Drop an HNSW index
-
-```datalog
+-- Drop (use ::hnsw drop, NOT ::remove)
 ::hnsw drop doc_chunks:embedding_idx
 ```
 
-**Critical**: Use `::hnsw drop` — NOT `::remove`. `::remove` works on base
-relations only. Using `::remove` on an HNSW index will fail silently or
-raise a confusing error.
+Parameters: `dim` must match model output (all-MiniLM-L6-v2 = 384);
+`m = 16` and `ef_construction = 200` are good production defaults.
 
-### Idempotent index creation
-
-Check whether the index already exists before creating it:
-
-```datalog
-::relations
-```
-
-Returns a list of relation names including index names like
-`doc_chunks:embedding_idx`. Filter this list in Rust before calling
-`::hnsw create`.
-
-## Column Declaration
-
-Declare a nullable fixed-width vector column:
+### Nullable column declaration
 
 ```datalog
 :create doc_chunks {
     chunk_id: String =>
     ...
-    embedding: <F32; 384>?   -- nullable; null chunks skipped by HNSW automatically
+    embedding: <F32; 384>?   -- nullable; null rows are skipped by HNSW automatically
 }
 ```
 
-The `?` suffix makes the column nullable. CozoDB's HNSW implementation
-skips null-embedding rows automatically — no special handling needed.
+### Embedding upsert (join-put pattern)
 
-## Embedding Upsert (Join-Put Pattern)
-
-HNSW indexes are maintained automatically on every `:put`. The join-put
-pattern reads the existing row and writes it back with the new embedding:
+The chunk must exist before calling this. If the join returns zero rows, the
+`:put` is a silent no-op — call `upsert_chunk` first.
 
 ```datalog
 ?[chunk_id, source_id, path, title, position, char_offset, headings, content, embedding]
@@ -87,11 +92,7 @@ pattern reads the existing row and writes it back with the new embedding:
 In Rust, pass `embedding` as `DataValue::List(Vec<DataValue>)` where each
 element is `DataValue::Num(Num::Float(f64_value))`.
 
-**Important**: The chunk MUST exist in `doc_chunks` before calling this.
-If the join returns zero rows (chunk missing), the `:put` is a no-op —
-no error is raised, no embedding is stored.
-
-## Tilde-Query (Approximate Nearest Neighbour)
+### Tilde-query (approximate nearest neighbour)
 
 ```datalog
 ?[chunk_id, source_id, path, title, heading_hierarchy, content, dist]
@@ -99,15 +100,10 @@ no error is raised, no embedding is stored.
        *doc_chunks{ chunk_id, source_id, path, title, headings: heading_hierarchy, content }
 ```
 
-- `k` is the number of results; pass as `DataValue::Num(Num::Int(n))`
-- `ef = 50` is a reasonable search-time expansion factor (higher → better recall, slower)
-- The tilde-query returns a `dist` column (lower = closer for cosine distance)
-- Results are automatically joined with the base relation in the same query
+`ef = 50` is a reasonable search-time expansion factor; `k` is passed as
+`DataValue::Num(Num::Int(n))`. The `dist` column is lower for closer matches.
 
-## Reading Back Stored Embeddings
-
-Stored embeddings come back as `DataValue::Vec(cozo::Vector::F32(arr))`
-where `arr: ndarray::Array1<f32>`. Pattern-match accordingly:
+### Reading back stored embeddings
 
 ```rust
 if let DataValue::Vec(cozo::Vector::F32(arr)) = &row[col_idx] {
@@ -115,26 +111,30 @@ if let DataValue::Vec(cozo::Vector::F32(arr)) = &row[col_idx] {
 }
 ```
 
-## Schema Migration (v2 → v3)
+### Schema migration (no ALTER TABLE)
 
-CozoDB has no `ALTER TABLE`. Migration requires:
+1. Export all rows: `?[...] := *old_relation{...}` → `Vec<Vec<DataValue>>`
+2. Drop old relations: `::remove old_relation`
+3. Recreate with new schema (including the `embedding` column)
+4. Re-insert exported rows via `:put` (idempotent)
+5. Create the HNSW index
 
-1. Export all rows from the old relation into a `Vec<Vec<DataValue>>`
-2. Drop the old relation (`::remove doc_chunks`)
-3. Drop the old `doc_vectors` relation if it exists
-4. Recreate with the new schema including the `embedding` column
-5. Re-insert the exported rows (metadata preserved; embeddings cleared)
-6. Create the HNSW index
+Metadata is preserved; embeddings are cleared (null) and must be regenerated
+via a full pipeline re-sync after migration.
 
-This is idempotent when re-run — row export + `:put` is idempotent.
-Embeddings must be regenerated via a full pipeline re-sync after migration.
+## Prevention
 
-## Known Limitation: upsert_chunk Null Overwrite
+- Always use `::hnsw drop relation:index_name` to remove HNSW indexes — never `::remove`.
+- Use `::relations` to check index existence before `::hnsw create`; filter for names containing `:`.
+- The chunk row MUST exist before calling the embedding upsert — call `upsert_chunk` first.
+- When adding a column to an existing relation, plan for the full export/drop/recreate cycle.
+- Direct `:put` with `embedding: null` in `upsert_chunk` will erase stored embeddings; use
+  join-put to preserve existing embeddings (tracked as 033-F).
+- `distance: Cosine` is correct for L2-normalised embeddings — dot product equals cosine similarity.
 
-`upsert_chunk` (direct `:put` with `embedding: null`) will erase a stored
-embedding if called on a chunk that already has one. This affects the
-`model=None` sync path. The fix is to use the join-put pattern inside
-`upsert_chunk` to preserve existing embeddings — tracked as feature 033-F.
+## Citations
 
-The normal sync path is safe: `upsert_chunk` is always followed immediately
-by `upsert_vector`, which restores the embedding in the same pipeline step.
+- `src/db/vectors.rs` — `upsert_vector` (join-put), `search_by_vector` (tilde-query)
+- `src/db/schema.rs` — `ensure_schema`, `migrate_to_v3`, `create_hnsw_index_if_missing`
+- `docs/decisions/2026-05-07-cozodb-hnsw-feasibility-spike.md` — spike confirming API contract
+- PR #38: `feat(db): migrate vector search to CozoDB native HNSW index (schema v3)`
