@@ -1,11 +1,10 @@
 # AGENTS.md — Runtime AI-Agent Development Guidance
 
-Last updated: 2026-03-18
+Last updated: 2026-05-06
 
 This file provides runtime guidance for AI agents (GitHub Copilot, Cursor,
-or any MCP-compatible agent) working in the graphtor-docs (LocalDocRAG)
-codebase. It complements the development guidelines at
-`.github/copilot-instructions.md`.
+or any MCP-compatible agent) working in the graphtor-docs codebase. It
+complements the development guidelines at `.github/copilot-instructions.md`.
 
 ## Authoritative Hierarchy
 
@@ -27,7 +26,7 @@ When documents conflict, follow this precedence order:
 
 ## Project Context
 
-LocalDocRAG is a documentation cross-reference system that:
+graphtor-docs is a documentation cross-reference system that:
 
 - **Acquires** documentation from Git repositories (shallow-cloned), local
   directories, and web URLs configured in `sources.yaml`
@@ -112,7 +111,7 @@ All errors flow through the typed hierarchy defined in `src/error/`:
 
 ```text
 ConfigError         — configuration and environment issues
-DatabaseError       — LanceDB or Kùzu operation failures
+DatabaseError       — CozoDB operation failures
 PipelineError       — pipeline stage execution failures
 ExtractionError     — parsing or extraction failures
 SchemaError         — data schema validation failures
@@ -125,10 +124,11 @@ explicit `.map_err()`. Never use `unwrap()` or `expect()` in library code.
 
 ### Database Access Rules
 
-- **Vector (LanceDB)**: All operations MUST go through `src/db/vector.rs`.
-  No raw LanceDB calls in pipeline stages, MCP tools, or tests.
-- **Graph (Kùzu)**: All operations MUST go through `src/db/graph.rs`.
-  No raw Cypher queries outside this module.
+- **All database operations** MUST go through the `src/db/` module. No raw
+  Datalog queries outside this module. Sub-modules: `store.rs` (lifecycle),
+  `schema.rs` (DDL), `chunks.rs` (chunk upserts), `nodes.rs` (repo/document
+  node CRUD), `edges.rs` (graph edge insertion), `traverse.rs` (multi-hop
+  traversal), `search.rs` (text/keyword search).
 - **Test databases**: Use temporary directories — never write to
   production database paths in tests.
 
