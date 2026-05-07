@@ -1,14 +1,14 @@
 //! Unified embedded database module for `LocalDocRAG`.
 //!
 //! This module exposes a single [`DataStore`] type backed by `CozoDB` (an
-//! embedded Datalog/graph/vector database). The store holds five stored
+//! embedded Datalog/graph/vector database). The store holds four stored
 //! relations:
 //!
 //! - `doc_sources` — registered documentation sources (Git repos, local dirs)
-//! - `doc_chunks` — parsed and normalised document chunks with metadata
+//! - `doc_chunks` — parsed and normalised document chunks with metadata and
+//!   optional `embedding: <F32; 384>?` column indexed by a native HNSW index
 //! - `doc_edges` — directed hyperlink edges between chunks
 //! - `doc_code` — code snippets extracted from chunks
-//! - `doc_vectors` — 384-dimensional embeddings for semantic search
 //!
 //! ## Usage
 //!
