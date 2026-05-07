@@ -40,7 +40,7 @@ base-relation operations. Key differences:
 | Drop | `::remove relation` | `::hnsw drop relation:index_name` |
 | Check existence | `::relations` (shows all) | Filter for `:` in name |
 | Upsert | `:put relation { ... }` | Join-put: read row, write back with `vec($emb)` |
-| Query | `*relation{ ... }` | `~relation:index{ cols \| query: q, k: $k }` |
+| Query | `*relation{ ... }` | `~relation:index{ cols | query: q, k: $k }` |
 | Read back | `DataValue::Str` / `DataValue::Num` | `DataValue::Vec(Vector::F32(arr))` |
 
 Schema migration is especially subtle: CozoDB has no `ALTER TABLE`, so adding
