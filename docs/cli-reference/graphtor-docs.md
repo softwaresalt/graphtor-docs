@@ -22,6 +22,7 @@ These flags are accepted by every subcommand.
 | Flag | Short | Env var | Default | Description |
 |---|---|---|---|---|
 | `--verbose` | `-v` | — | off | Enable debug-level logging |
+| `--json` | — | — | off | Wrap all output in JSON-RPC 2.0 envelopes (`{"jsonrpc":"2.0","id":null,"result":{...}}`) |
 | `--config <FILE>` | `-c` | `GRAPHTOR_SOURCES` | `.graphtor/config/sources.yaml` | Path to `sources.yaml` |
 | `--db-path <FILE>` | `-d` | `GRAPHTOR_DB_PATH` | `.graphtor/graph.db` | Path to CozoDB database |
 
@@ -79,7 +80,7 @@ Start the MCP STDIO server.
 graphtor-docs serve
 ```
 
-Binds to STDIO (localhost only) and serves the 7 graphtor-docs MCP tools.
+Binds to STDIO (localhost only) and serves the 8 graphtor-docs MCP tools.
 Blocks until stdin closes (i.e., until the MCP client disconnects).
 
 On startup:
@@ -275,3 +276,60 @@ Removes `.graphtor/` and generated MCP client config files. Also cleans
 | `--confirm` | (required) | Required confirmation flag |
 | `--keep-config` | off | Keep `sources.yaml` and workspace config; only remove runtime data |
 | `--force-unlock` | off | Force-release the workspace lock before uninstalling |
+
+---
+
+### `manifest`
+
+Print a manifest of available MCP tools.
+
+```text
+graphtor-docs manifest [--json]
+```
+
+Without `--json`, prints a human-readable table of tool names and descriptions.
+With `--json` (global flag), emits a `tools/list`-compatible JSON-RPC 2.0
+response envelope — identical to what the MCP server returns during
+initialisation.
+
+Tool definitions are derived from the same source as the MCP server,
+guaranteeing parity between the CLI output and the live server.
+
+No additional subcommand flags. Use the global `--json` flag for machine-readable output.
+
+**Example (human-readable):**
+
+```sh
+graphtor-docs manifest
+```
+
+```text
+Tool                  Description
+----                  -----------
+search_local_docs     Full-text keyword search over indexed documentation chunks.
+search_semantic       Semantic similarity search using embeddings.
+research_topic        In-depth topic research combining keyword search and graph traversal.
+traverse_doc_links    BFS graph traversal following document link relationships.
+list_sources          List all registered documentation sources.
+get_chunk_by_id       Retrieve a single documentation chunk by its SHA-256 chunk ID.
+get_document          Retrieve all chunks for a document path, in reading order.
+get_status            Return current database status and sync state.
+```
+
+**Example (JSON-RPC 2.0 envelope):**
+
+```sh
+graphtor-docs --json manifest
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": null,
+  "result": {
+    "tools": [
+      { "name": "search_local_docs", "description": "...", "inputSchema": { ... } }
+    ]
+  }
+}
+```
