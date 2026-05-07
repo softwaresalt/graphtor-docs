@@ -45,20 +45,19 @@ pub fn ensure_schema(store: &DataStore) -> Result<(), GraphtorError> {
     )?;
     let ver = get_schema_version(store)?;
 
-    if ver >= SCHEMA_VERSION {
-        // Schema is current; ensure the HNSW index is present.
-        create_hnsw_index_if_missing(store)?;
-    } else {
-        // Fresh installation or pre-v3 database.
+    if ver < SCHEMA_VERSION {
+        // Fresh installation or pre-v3 database: run migration if needed.
         if relation_exists(store, "doc_chunks")? {
             // Existing database: migrate doc_chunks to the v3 schema.
             migrate_to_v3(store, ver)?;
         }
-        // Create any missing relations (idempotent).
-        create_all_relations(store)?;
-        create_hnsw_index_if_missing(store)?;
         upsert_schema_version(store, SCHEMA_VERSION)?;
     }
+
+    // Always create any missing base relations (idempotent self-heal).
+    create_all_relations(store)?;
+    // Always ensure the HNSW index is present (idempotent self-heal).
+    create_hnsw_index_if_missing(store)?;
 
     debug!("database schema verified at version {SCHEMA_VERSION}");
     Ok(())
@@ -111,7 +110,7 @@ fn migrate_to_v3(store: &DataStore, from_ver: i64) -> Result<(), GraphtorError> 
 
     // Drop the HNSW index before removing the base relation (defensive guard).
     if relation_exists(store, "doc_chunks:embedding_idx")? {
-        store.mutate("::remove doc_chunks:embedding_idx", BTreeMap::new())?;
+        store.mutate("::hnsw drop doc_chunks:embedding_idx", BTreeMap::new())?;
     }
     store.mutate("::remove doc_chunks", BTreeMap::new())?;
 

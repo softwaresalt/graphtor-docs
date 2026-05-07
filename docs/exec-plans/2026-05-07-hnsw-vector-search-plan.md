@@ -51,7 +51,7 @@ automatic index maintenance. The spike confirmed the full API contract
 
 **Tests:**
 - Schema v3 creates successfully on fresh database
-- Schema migration from v2 → v3 copies existing data
+- Schema migration from v2 → v3 preserves chunk metadata (source_id, path, title, content, etc.) but intentionally clears all embeddings (null); re-sync required to repopulate
 - HNSW index exists after schema creation (verify via `::relations`)
 
 **Execution posture:** Migration-first — validate the schema DDL works before touching any other module.

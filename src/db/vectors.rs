@@ -34,12 +34,13 @@ use crate::error::GraphtorError;
 /// the supplied `embedding`.  The HNSW index is updated automatically.
 ///
 /// The chunk **must** already exist in `doc_chunks` — call
-/// [`crate::db::upsert_chunk`] before calling this function.
+/// [`crate::db::upsert_chunk`] before calling this function.  If the chunk
+/// does not exist, the join produces zero rows and the call is a silent no-op
+/// (no error is returned, no embedding is stored).
 ///
 /// # Errors
 ///
-/// Returns [`GraphtorError::Database`] if the chunk does not exist or on any
-/// query or mutation failure.
+/// Returns [`GraphtorError::Database`] on any query or mutation failure.
 pub fn upsert_vector(
     store: &DataStore,
     chunk_id: &str,
