@@ -1,9 +1,9 @@
 ---
 title: MCP Tool Reference
-description: "Complete reference for all 7 MCP tools exposed by graphtor-docs — parameters, examples, and usage patterns"
+description: "Complete reference for all 8 MCP tools exposed by graphtor-docs — parameters, examples, and usage patterns"
 ---
 
-graphtor-docs exposes 7 tools via the [Model Context Protocol (MCP)][mcp].
+graphtor-docs exposes 8 tools via the [Model Context Protocol (MCP)][mcp].
 The server runs as a local STDIO process and is available only to MCP clients
 on the same machine (localhost only).
 
@@ -54,6 +54,7 @@ directory when `graphtor-docs serve` runs.
 |---|---|
 | Find documentation about a topic | `search_local_docs` |
 | Find conceptually related content (not just keyword matches) | `search_semantic` |
+| Research a topic in depth using both search and graph traversal | `research_topic` |
 | Explore linked documentation from a chunk | `traverse_doc_links` |
 | See which sources are indexed | `list_sources` |
 | Read the full text of a chunk I already have an ID for | `get_chunk_by_id` |
@@ -65,6 +66,8 @@ directory when `graphtor-docs serve` runs.
 2. `search_local_docs` — find relevant chunks; note `chunk_id` values
 3. `traverse_doc_links` — follow links from a chunk to related content
 4. `get_chunk_by_id` or `get_document` — retrieve full content
+
+For comprehensive topic exploration, use `research_topic` in place of steps 2–3.
 
 ---
 
@@ -132,6 +135,42 @@ search_semantic(
 > **Note on `--no-embed` syncs:** If `graphtor-docs sync --no-embed` was used,
 > no vectors are stored and `search_semantic` will return empty results even
 > if the model is loaded. Re-run sync without `--no-embed` to populate vectors.
+
+---
+
+### `research_topic`
+
+In-depth topic research combining keyword search and graph traversal.
+
+**When to use:** for comprehensive topic research when you want both direct
+matches and related documentation discovered through graph links. Combines
+the breadth of `search_semantic` with the depth of `traverse_doc_links` in a
+single call.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `query` | string | **yes** | — | Keyword or natural-language topic to research |
+| `top_k` | integer | no | `5` | Initial search breadth — maximum number of seed results (max: 20) |
+| `max_depth` | integer | no | `1` | Graph traversal depth from each seed result (max: 3) |
+
+**Behavior:**
+1. Runs keyword (or semantic, if model is loaded) search for `query`, taking the top `top_k` results as seeds.
+2. Performs BFS traversal from each of the top 3 seeds at `max_depth`.
+3. Returns initial search hits plus all BFS-discovered related chunks, deduplicated globally.
+
+**Response:** Markdown-formatted results section with initial search hits and
+a "Related chunks discovered via graph traversal" section.
+
+**Example:**
+```text
+research_topic(
+  query = "incremental sync change detection",
+  top_k = 5,
+  max_depth = 2
+)
+```
 
 ---
 
