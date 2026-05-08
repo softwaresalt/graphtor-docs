@@ -167,13 +167,6 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Set vendored OpenSSL (macOS x86_64 cross-compile)
-        if: matrix.target == 'x86_64-apple-darwin'
-        shell: bash
-        run: |
-          echo "OPENSSL_VENDORED=1" >> "$GITHUB_ENV"
-          echo "OPENSSL_STATIC=1"   >> "$GITHUB_ENV"
-
       - name: Build release binary (cargo)
         if: "!matrix.use_cross"
         run: cargo build --release --target ${{ matrix.target }}

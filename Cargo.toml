@@ -71,3 +71,10 @@ pdfium-render = { version = "0.9", default-features = false, features = ["thread
 tempfile = "3"
 git2 = "0.19"
 candle-core = { version = "0.8" }
+
+# When cross-compiling for x86_64-apple-darwin (from an ARM64 macOS runner),
+# openssl-sys cannot find system x86_64 OpenSSL headers.  Force vendored mode
+# so OpenSSL is compiled from source for that target only.  macOS ships Perl,
+# which is required by the vendored build.
+[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
