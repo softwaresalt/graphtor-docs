@@ -1,0 +1,48 @@
+# cliff.toml — git-cliff configuration for graphtor-docs
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+header = "# Changelog\n\nAll notable changes to graphtor-docs are documented here.\nThis file follows [Conventional Commits](https://www.conventionalcommits.org/).\n"
+body = """
+{% if version %}## [{{ version | trim_start_matches(pat="v") }}] — {{ timestamp | date(format="%Y-%m-%d") }}{% else %}## [Unreleased]{% endif %}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}{% if commit.breaking %} [**BREAKING**]{% endif %}
+{% endfor %}
+{% endfor %}
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_preprocessors = []
+
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactoring" },
+  { message = "^test", group = "Testing" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^style", group = "Style" },
+  { message = "^build", group = "Build System" },
+  { message = "^chore\\(backlog\\)", skip = true },
+  { message = "^chore\\(closure\\)", skip = true },
+  { message = "^chore\\(build\\).*archive", skip = true },
+  { message = "^chore\\(build\\).*stage", skip = true },
+  { message = "^chore\\(build\\).*ship", skip = true },
+  { message = "^chore\\(build\\).*post-merge", skip = true },
+  { message = "^chore", group = "Maintenance" },
+]
+
+filter_commits = false
+tag_pattern = "v[0-9].*"
+skip_tags = ""
+ignore_tags = ""
+sort_commits = "oldest"

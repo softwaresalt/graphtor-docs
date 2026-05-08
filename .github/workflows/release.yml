@@ -5,10 +5,9 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
 
-# Ensures partial platform failures abort the entire release (S056).
-# A failed build job cancels all sibling jobs and prevents publish from running.
+# Default to read-only. The release job gets write permissions at job level.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,17 +18,21 @@ jobs:
   test:
     name: Quality Gates
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           components: clippy, rustfmt
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -42,22 +45,25 @@ jobs:
 
   # ── Changelog generation ─────────────────────────────────────────────────────
   # Runs in parallel with `test`. The generated changelog body is passed to
-  # the publish job via job outputs. Requires git-cliff (T088).
+  # the publish job via job outputs.
   changelog:
     name: Generate Changelog
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       body: ${{ steps.cliff.outputs.content }}
     steps:
       - name: Checkout (full history for cliff)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # Install git-cliff as a pre-built binary instead of using the Docker-based
       # action, which broke when Debian Buster (the action's base image) went EOL.
       - name: Install git-cliff
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96 # v2
         with:
           tool: git-cliff
 
@@ -84,11 +90,13 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: test
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: true
       matrix:
         include:
-          # Linux x86_64 — native build; cross is available for additional targets
+          # Linux x86_64 — native build
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
@@ -110,8 +118,7 @@ jobs:
             use_cross: false
 
           # macOS Intel — cross-compiled to x86_64 on ARM64 runner (macos-13
-          # Intel runners were deprecated by GitHub Actions). The Rust toolchain
-          # natively supports this target on Apple Silicon without Docker/cross.
+          # Intel runners were deprecated by GitHub Actions).
           - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
@@ -120,32 +127,33 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           targets: ${{ matrix.target }}
 
-      # Install `cross` for cross-compilation (T086).
-      # Used when use_cross is true (e.g., additional Linux/ARM targets in future).
+      # Install `cross` for cross-compilation.
+      # Used when use_cross is true (e.g., Linux/ARM targets added in future).
       - name: Install cross
         if: matrix.use_cross
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96 # v2
         with:
           tool: cross
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target }}
 
-      # Build with cross when use_cross is true, otherwise use cargo directly
-      - name: Build release binaries (cargo)
+      - name: Build release binary (cargo)
         if: "!matrix.use_cross"
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Build release binaries (cross)
+      - name: Build release binary (cross)
         if: matrix.use_cross
         run: cross build --release --target ${{ matrix.target }}
 
@@ -155,12 +163,10 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
-          ARCHIVE_NAME="agent-intercom-${TAG}-${{ matrix.target }}.tar.gz"
+          ARCHIVE_NAME="graphtor-docs-${TAG}-${{ matrix.target }}.tar.gz"
           STAGING="staging-${{ matrix.target }}"
           mkdir -p "${STAGING}"
-          cp "target/${{ matrix.target }}/release/agent-intercom${{ matrix.binary_suffix }}" "${STAGING}/"
-          cp "target/${{ matrix.target }}/release/agent-intercom-ctl${{ matrix.binary_suffix }}" "${STAGING}/"
-          cp config.toml.example "${STAGING}/"
+          cp "target/${{ matrix.target }}/release/graphtor-docs${{ matrix.binary_suffix }}" "${STAGING}/"
           cp README.md "${STAGING}/"
           tar -czf "${ARCHIVE_NAME}" -C "${STAGING}" .
           echo "ASSET=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
@@ -171,18 +177,16 @@ jobs:
         shell: pwsh
         run: |
           $tag = "$env:GITHUB_REF_NAME"
-          $archiveName = "agent-intercom-$tag-${{ matrix.target }}.zip"
+          $archiveName = "graphtor-docs-$tag-${{ matrix.target }}.zip"
           $staging = "staging-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $staging -Force | Out-Null
-          Copy-Item "target\${{ matrix.target }}\release\agent-intercom${{ matrix.binary_suffix }}" "$staging\"
-          Copy-Item "target\${{ matrix.target }}\release\agent-intercom-ctl${{ matrix.binary_suffix }}" "$staging\"
-          Copy-Item "config.toml.example" "$staging\"
+          Copy-Item "target\${{ matrix.target }}\release\graphtor-docs${{ matrix.binary_suffix }}" "$staging\"
           Copy-Item "README.md" "$staging\"
           Compress-Archive -Path "$staging\*" -DestinationPath $archiveName
           "ASSET=$archiveName" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.target }}
           path: ${{ env.ASSET }}
@@ -195,18 +199,28 @@ jobs:
     name: Publish GitHub Release
     needs: [changelog, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           merge-multiple: true
           path: artifacts/
 
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           body: ${{ needs.changelog.outputs.body }}
-          files: artifacts/*
+          files: |
+            artifacts/*
           fail_on_unmatched_files: true
           generate_release_notes: false
           draft: false
