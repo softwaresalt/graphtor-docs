@@ -129,10 +129,10 @@ jobs:
             binary_suffix: ""
             use_cross: false
 
-          # macOS Intel — native x86_64 build on macos-13 Intel runner.
-          # macos-latest is ARM64; cross-compiling x86_64 there requires vendored
-          # OpenSSL which adds significant build time. macos-13 is native Intel.
-          - os: macos-13
+          # macOS Intel — uses macos-latest (ARM64 runner) with vendored OpenSSL
+          # so openssl-sys compiles from source rather than looking for a
+          # system x86_64 OpenSSL installation that doesn't exist on ARM runners.
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
             binary_suffix: ""
@@ -166,6 +166,13 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target }}
+
+      - name: Set vendored OpenSSL (macOS x86_64 cross-compile)
+        if: matrix.target == 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          echo "OPENSSL_VENDORED=1" >> "$GITHUB_ENV"
+          echo "OPENSSL_STATIC=1"   >> "$GITHUB_ENV"
 
       - name: Build release binary (cargo)
         if: "!matrix.use_cross"
