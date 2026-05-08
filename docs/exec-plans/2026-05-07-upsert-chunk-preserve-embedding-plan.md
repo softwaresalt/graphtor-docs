@@ -1,3 +1,12 @@
+---
+title: "Fix upsert_chunk to Preserve Existing Embedding (join-put)"
+source: "backlogit/033-F"
+date: 2026-05-07
+status: reviewed
+feature: 033-F
+shipment: 024-S
+---
+
 # Implementation Plan: Fix upsert_chunk to Preserve Existing Embedding
 
 **Feature:** 033-F  
