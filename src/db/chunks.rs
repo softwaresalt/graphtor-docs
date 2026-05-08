@@ -6,15 +6,16 @@
 //!
 //! The `doc_chunks` relation includes an `embedding: <F32; 384>?` column
 //! that is indexed by the `doc_chunks:embedding_idx` HNSW index for
-//! semantic search. [`upsert_chunk`] always sets `embedding` to `null` —
-//! call [`crate::db::vectors::upsert_vector`] after ingestion to populate it.
+//! semantic search. [`upsert_chunk`] preserves any existing non-null
+//! embedding — call [`crate::db::vectors::upsert_vector`] to store or
+//! update embeddings explicitly.
 
 use std::collections::BTreeMap;
 
 use cozo::{DataValue, Num};
 use tracing::debug;
 
-use super::store::DataStore;
+use super::{store::DataStore, vectors::get_vector};
 use crate::error::GraphtorError;
 use crate::parse::types::Chunk;
 
@@ -41,7 +42,10 @@ pub struct ChunkRecord {
 
 /// Upsert a chunk derived from a parsed [`Chunk`].
 ///
-/// Replaces any existing record with the same `chunk_id`.
+/// Updates chunk metadata for any existing record with the same `chunk_id`.
+/// Any existing non-null `embedding` is preserved — this function only manages
+/// chunk metadata. Use [`crate::db::vectors::upsert_vector`] to store or
+/// update embeddings explicitly.
 ///
 /// # Errors
 ///
@@ -69,9 +73,23 @@ pub fn upsert_chunk(
             operation: "upsert_chunk".to_string(),
         })?;
 
+    // Preserve any existing non-null embedding. If none exists (new chunk or
+    // embedding not yet computed), pass null. This prevents a model=None
+    // re-sync from erasing embeddings stored by a prior embed pass.
+    let existing_embedding = get_vector(store, chunk.chunk_id.as_str())?;
+    let embedding_val = match existing_embedding {
+        Some(floats) => DataValue::List(
+            floats
+                .into_iter()
+                .map(|x| DataValue::Num(Num::Float(f64::from(x))))
+                .collect(),
+        ),
+        None => DataValue::Null,
+    };
+
     let script = r"
         ?[chunk_id, source_id, path, title, position, char_offset, headings, content, embedding]
-            <- [[$chunk_id, $source_id, $path, $title, $position, $char_offset, $headings, $content, null]]
+            <- [[$chunk_id, $source_id, $path, $title, $position, $char_offset, $headings, $content, $embedding]]
         :put doc_chunks { chunk_id => source_id, path, title, position, char_offset, headings, content, embedding }
     ";
     let mut params = BTreeMap::new();
@@ -101,6 +119,7 @@ pub fn upsert_chunk(
         "content".to_string(),
         DataValue::Str(chunk.content.as_str().into()),
     );
+    params.insert("embedding".to_string(), embedding_val);
     store.mutate(script, params)?;
     debug!(chunk_id = %chunk.chunk_id, "upserted doc_chunks record");
     Ok(())

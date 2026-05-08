@@ -1,6 +1,10 @@
 //! Integration tests: chunk CRUD (`upsert_chunk`, `get_chunk`, `list_chunks_for_source`).
 
-use graphtor_core::db::{get_chunk, list_chunks_for_source, upsert_chunk, DataStore};
+use graphtor_core::db::{
+    get_chunk, list_chunks_for_source, upsert_chunk,
+    vectors::{get_vector, upsert_vector},
+    DataStore,
+};
 use graphtor_core::parse::types::Chunk;
 
 fn store() -> DataStore {
@@ -72,6 +76,32 @@ fn list_chunks_for_source_returns_only_matching_source() {
 
     let b_chunks = list_chunks_for_source(&s, "src-b").expect("list should succeed");
     assert_eq!(b_chunks.len(), 1);
+}
+
+#[test]
+fn upsert_chunk_preserves_existing_embedding() {
+    let s = store();
+    let chunk = sample_chunk("embed-preserve", "docs/preserve.md", 0);
+
+    // Step 1: insert chunk metadata
+    upsert_chunk(&s, "src-001", &chunk).expect("initial upsert");
+
+    // Step 2: store a synthetic 384-dim embedding
+    let mut embedding = vec![0.0_f32; 384];
+    embedding[0] = 0.1;
+    upsert_vector(&s, "embed-preserve", &embedding).expect("upsert_vector");
+
+    // Step 3: re-upsert the same chunk metadata (simulates model=None re-sync)
+    upsert_chunk(&s, "src-001", &chunk).expect("re-upsert should succeed");
+
+    // Step 4: embedding must still be present
+    let retrieved = get_vector(&s, "embed-preserve")
+        .expect("get_vector should not error")
+        .expect("embedding should survive chunk re-upsert");
+    assert!(
+        (retrieved[0] - 0.1_f32).abs() < 1e-6,
+        "embedding value should be preserved after re-upsert of chunk metadata"
+    );
 }
 
 #[test]
