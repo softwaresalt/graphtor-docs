@@ -128,13 +128,18 @@ via a full pipeline re-sync after migration.
 - Use `::relations` to check index existence before `::hnsw create`; filter for names containing `:`.
 - The chunk row MUST exist before calling the embedding upsert — call `upsert_chunk` first.
 - When adding a column to an existing relation, plan for the full export/drop/recreate cycle.
-- Direct `:put` with `embedding: null` in `upsert_chunk` will erase stored embeddings; use
-  join-put to preserve existing embeddings (tracked as 033-F).
+- Direct `:put` with `embedding: null` in `upsert_chunk` will erase stored embeddings. The fix
+  (shipped in 033-F / PR #42) uses a two-step Rust approach: call `get_vector(store, chunk_id)`
+  before the `:put`, and pass the returned embedding (or `null` if absent) as a `$embedding`
+  parameter in the Datalog script. This is safer than disjunctive Datalog negation with nullable
+  columns, which has edge-case risk in CozoDB.
 - `distance: Cosine` is correct for L2-normalised embeddings — dot product equals cosine similarity.
 
 ## Citations
 
 - `src/db/vectors.rs` — `upsert_vector` (join-put), `search_by_vector` (tilde-query)
+- `src/db/chunks.rs` — `upsert_chunk` two-step embedding preservation fix (033-F / PR #42)
 - `src/db/schema.rs` — `ensure_schema`, `migrate_to_v3`, `create_hnsw_index_if_missing`
 - `docs/decisions/2026-05-07-cozodb-hnsw-feasibility-spike.md` — spike confirming API contract
 - PR #38: `feat(db): migrate vector search to CozoDB native HNSW index (schema v3)`
+- PR #42: `fix(db): preserve existing embedding in upsert_chunk (join-put)`
