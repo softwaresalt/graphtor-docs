@@ -35,7 +35,16 @@ need() {
 # ── Dependency check ──────────────────────────────────────────────────────────
 need curl
 need tar
-need sha256sum || need shasum  # macOS ships shasum, Linux ships sha256sum
+
+# Detect the checksum command available on this platform.
+# macOS ships shasum; most Linux distributions ship sha256sum.
+if command -v sha256sum >/dev/null 2>&1; then
+    SHASUM_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+    SHASUM_CMD="shasum -a 256"
+else
+    error "sha256sum or shasum is required but not found. Please install one and try again."
+fi
 
 # ── OS / arch detection ───────────────────────────────────────────────────────
 OS="$(uname -s)"
@@ -45,7 +54,10 @@ case "${OS}" in
     Linux)
         case "${ARCH}" in
             x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
-            aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
+            aarch64)
+                error "Pre-built Linux/aarch64 binaries are not yet published. Build from source instead:
+  cargo install --git https://github.com/softwaresalt/graphtor-docs --bin graphtor-docs --locked"
+                ;;
             *) error "Unsupported Linux architecture: ${ARCH}" ;;
         esac
         ;;
@@ -96,16 +108,13 @@ curl -sSfL "${BASE_URL}/${SUMS_FILE}" -o "${TMP}/${SUMS_FILE}"
 info "Verifying checksum…"
 cd "${TMP}"
 
-if command -v sha256sum >/dev/null 2>&1; then
-    grep "${ARCHIVE}" "${SUMS_FILE}" | sha256sum --check --status \
-        || error "Checksum verification failed for ${ARCHIVE}. The download may be corrupt or tampered with."
-else
-    # macOS: shasum -a 256
-    EXPECTED="$(grep "${ARCHIVE}" "${SUMS_FILE}" | awk '{print $1}')"
-    ACTUAL="$(shasum -a 256 "${ARCHIVE}" | awk '{print $1}')"
-    [ "${EXPECTED}" = "${ACTUAL}" ] \
-        || error "Checksum verification failed for ${ARCHIVE}. The download may be corrupt or tampered with."
+EXPECTED_LINE="$(grep "${ARCHIVE}" "${SUMS_FILE}" || true)"
+if [ -z "${EXPECTED_LINE}" ]; then
+    error "No checksum entry found for ${ARCHIVE} in SHA256SUMS. Cannot verify download integrity."
 fi
+
+printf '%s\n' "${EXPECTED_LINE}" | ${SHASUM_CMD} --check --status \
+    || error "Checksum verification failed for ${ARCHIVE}. The download may be corrupt or tampered with."
 
 info "Checksum OK."
 

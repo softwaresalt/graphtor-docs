@@ -89,10 +89,14 @@ try {
 
     Write-Info "Verifying checksum..."
 
-    $expectedLine = Get-Content $sumsPath | Where-Object { $_ -like "*$archive*" }
-    if (-not $expectedLine) {
-        Write-Err "No checksum entry found for $archive in SHA256SUMS."
+    $matchedLines = @(Get-Content $sumsPath | Where-Object { $_ -like "*$archive*" })
+    if ($matchedLines.Count -eq 0) {
+        Write-Err "No checksum entry found for $archive in SHA256SUMS. Cannot verify download integrity."
     }
+    if ($matchedLines.Count -gt 1) {
+        Write-Err "Multiple checksum entries found for $archive in SHA256SUMS. Cannot verify deterministically."
+    }
+    $expectedLine = $matchedLines[0]
     $expected = ($expectedLine -split '\s+')[0].Trim()
 
     $hashResult = Get-FileHash -Path $archivePath -Algorithm SHA256
