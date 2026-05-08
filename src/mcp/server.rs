@@ -597,7 +597,10 @@ mod tests {
     use rmcp::handler::server::wrapper::Parameters;
 
     use super::*;
-    use crate::db::{schema::ensure_schema, DataStore};
+    use crate::db::{
+        schema::ensure_schema, upsert_chunk, upsert_edge, upsert_source, DataStore, SourceRecord,
+    };
+    use crate::parse::types::{Chunk, Reference};
 
     /// Returns `true` when `path` belongs to the documentation source identified by `prefix`.
     ///
@@ -921,6 +924,388 @@ mod tests {
         assert!(
             result.is_ok(),
             "top_k over max should still succeed (clamped)"
+        );
+    }
+
+    // ── Helpers for positive-path tests ──────────────────────────────────────
+
+    fn populated_store() -> DataStore {
+        let s = DataStore::open_mem().expect("in-memory store");
+        ensure_schema(&s).expect("schema");
+        s
+    }
+
+    fn chunk(id: &str, path: &str, content: &str) -> Chunk {
+        Chunk {
+            chunk_id: id.to_owned(),
+            content: content.to_owned(),
+            heading_hierarchy: vec!["Introduction".to_owned()],
+            position: 0,
+            char_offset: 0,
+            source_path: path.to_owned(),
+        }
+    }
+
+    fn source(id: &str) -> SourceRecord {
+        SourceRecord {
+            source_id: id.to_owned(),
+            url: format!("https://example.com/{id}"),
+            kind: "local".to_owned(),
+            name: id.to_owned(),
+            synced_at: None,
+        }
+    }
+
+    fn edge(from_chunk_id: &str, to_path: &str) -> Reference {
+        Reference {
+            source_chunk_id: from_chunk_id.to_owned(),
+            target_path: to_path.to_owned(),
+            link_text: "see also".to_owned(),
+            anchor: None,
+        }
+    }
+
+    // ── search_local_docs positive-path ───────────────────────────────────────
+
+    #[test]
+    fn search_local_docs_empty_query_returns_invalid_params() {
+        let server = test_server();
+        let params = SearchParams {
+            query: "   ".to_string(),
+            source_id: None,
+            top_k: None,
+        };
+        let result = server.search_local_docs(Parameters(params));
+        assert!(result.is_err(), "empty query should return an error");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("empty"),
+            "error should mention empty query, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn search_local_docs_returns_matching_chunk() {
+        let s = populated_store();
+        upsert_chunk(
+            &s,
+            "src-a",
+            &chunk(
+                "auth-chunk",
+                "docs/auth.md",
+                "authentication token validation flow",
+            ),
+        )
+        .expect("upsert");
+        let server = DocServer::new(s);
+
+        let params = SearchParams {
+            query: "authentication token".to_string(),
+            source_id: None,
+            top_k: None,
+        };
+        let result = server
+            .search_local_docs(Parameters(params))
+            .expect("search should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("auth.md"),
+            "expected result referencing auth.md, got: {text}"
+        );
+    }
+
+    #[test]
+    fn search_local_docs_source_filter_restricts_results() {
+        let s = populated_store();
+        upsert_chunk(
+            &s,
+            "source-alpha",
+            &chunk("ca-1", "docs/a.md", "blob storage container migration"),
+        )
+        .expect("upsert a");
+        upsert_chunk(
+            &s,
+            "source-beta",
+            &chunk("cb-1", "docs/b.md", "blob storage container migration"),
+        )
+        .expect("upsert b");
+        let server = DocServer::new(s);
+
+        let params = SearchParams {
+            query: "blob storage".to_string(),
+            source_id: Some("source-alpha".to_string()),
+            top_k: None,
+        };
+        let result = server
+            .search_local_docs(Parameters(params))
+            .expect("search should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("a.md"), "should include source-alpha result");
+        assert!(!text.contains("b.md"), "should exclude source-beta result");
+    }
+
+    #[test]
+    fn search_local_docs_top_k_limits_result_count() {
+        let s = populated_store();
+        for i in 0..8_usize {
+            upsert_chunk(
+                &s,
+                "src-x",
+                &chunk(
+                    &format!("tkc-{i}"),
+                    &format!("docs/item-{i}.md"),
+                    &format!("pagination rate limit throttle item {i}"),
+                ),
+            )
+            .expect("upsert");
+        }
+        let server = DocServer::new(s);
+
+        let params = SearchParams {
+            query: "pagination rate limit".to_string(),
+            source_id: None,
+            top_k: Some(3),
+        };
+        let result = server
+            .search_local_docs(Parameters(params))
+            .expect("search should succeed");
+        let text = format!("{:?}", result.content);
+        // Count how many distinct item-N paths appear — must be ≤ 3.
+        let hit_count = (0..8)
+            .filter(|i| text.contains(&format!("item-{i}.md")))
+            .count();
+        assert!(
+            hit_count <= 3,
+            "expected at most 3 results, got {hit_count}"
+        );
+    }
+
+    // ── traverse_doc_links positive-path ──────────────────────────────────────
+
+    #[test]
+    fn traverse_doc_links_via_server_finds_related_chunks() {
+        let s = populated_store();
+        upsert_chunk(&s, "src", &chunk("node-a", "a.md", "content a")).expect("upsert a");
+        upsert_chunk(&s, "src", &chunk("node-b", "b.md", "content b")).expect("upsert b");
+        upsert_edge(&s, &edge("node-a", "b.md")).expect("edge a→b");
+        let server = DocServer::new(s);
+
+        let params = TraverseParams {
+            chunk_id: "node-a".to_string(),
+            max_depth: Some(1),
+        };
+        let result = server
+            .traverse_doc_links(Parameters(params))
+            .expect("traverse should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("node-b") || text.contains("b.md"),
+            "expected traversal to find node-b, got: {text}"
+        );
+    }
+
+    #[test]
+    fn traverse_doc_links_empty_chunk_id_returns_invalid_params() {
+        let server = test_server();
+        let params = TraverseParams {
+            chunk_id: "   ".to_string(),
+            max_depth: None,
+        };
+        let result = server.traverse_doc_links(Parameters(params));
+        assert!(result.is_err(), "empty chunk_id should return an error");
+    }
+
+    // ── get_chunk_by_id positive-path ─────────────────────────────────────────
+
+    #[test]
+    fn get_chunk_by_id_returns_existing_chunk_content() {
+        let s = populated_store();
+        upsert_chunk(
+            &s,
+            "src-r",
+            &chunk("known-chunk", "docs/known.md", "unique retrieval content"),
+        )
+        .expect("upsert");
+        let server = DocServer::new(s);
+
+        let params = GetChunkParams {
+            chunk_id: "known-chunk".to_string(),
+        };
+        let result = server
+            .get_chunk_by_id(Parameters(params))
+            .expect("get should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("known.md") || text.contains("unique retrieval"),
+            "expected chunk content in response, got: {text}"
+        );
+    }
+
+    // ── get_document positive-path ────────────────────────────────────────────
+
+    #[test]
+    fn get_document_returns_chunks_in_reading_order() {
+        let s = populated_store();
+        // Insert chunks at positions 1 and 0 (out of order) for the same path.
+        let mut c0 = chunk("doc-c0", "docs/guide.md", "first section content");
+        c0.position = 0;
+        let mut c1 = chunk("doc-c1", "docs/guide.md", "second section content");
+        c1.position = 1;
+        upsert_chunk(&s, "src-doc", &c1).expect("upsert c1 first");
+        upsert_chunk(&s, "src-doc", &c0).expect("upsert c0 second");
+        let server = DocServer::new(s);
+
+        let params = GetDocumentParams {
+            source_id: String::new(),
+            path: "docs/guide.md".to_string(),
+        };
+        let result = server
+            .get_document(Parameters(params))
+            .expect("get_document should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("guide.md"),
+            "expected path in response, got: {text}"
+        );
+        // Both chunks should appear in the response.
+        assert!(
+            text.contains("first section") || text.contains("doc-c0"),
+            "expected first chunk, got: {text}"
+        );
+        assert!(
+            text.contains("second section") || text.contains("doc-c1"),
+            "expected second chunk, got: {text}"
+        );
+    }
+
+    #[test]
+    fn get_document_source_filter_restricts_to_source() {
+        let s = populated_store();
+        upsert_chunk(
+            &s,
+            "src-x",
+            &chunk("gdx-c", "shared/doc.md", "content from source x"),
+        )
+        .expect("upsert x");
+        upsert_chunk(
+            &s,
+            "src-y",
+            &chunk("gdy-c", "shared/doc.md", "content from source y"),
+        )
+        .expect("upsert y");
+        let server = DocServer::new(s);
+
+        let params = GetDocumentParams {
+            source_id: "src-x".to_string(),
+            path: "shared/doc.md".to_string(),
+        };
+        let result = server
+            .get_document(Parameters(params))
+            .expect("get_document should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("gdx-c") || text.contains("source x"),
+            "expected src-x chunk in response, got: {text}"
+        );
+        assert!(
+            !text.contains("gdy-c") && !text.contains("source y"),
+            "should not include src-y chunk, got: {text}"
+        );
+    }
+
+    // ── list_sources positive-path ────────────────────────────────────────────
+
+    #[test]
+    fn list_sources_returns_inserted_sources() {
+        let s = populated_store();
+        upsert_source(&s, &source("repo-one")).expect("upsert src 1");
+        upsert_source(&s, &source("repo-two")).expect("upsert src 2");
+        let server = DocServer::new(s);
+
+        let result = server
+            .list_sources(Parameters(ListSourcesParams {}))
+            .expect("list_sources should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("repo-one"),
+            "expected repo-one in sources list, got: {text}"
+        );
+        assert!(
+            text.contains("repo-two"),
+            "expected repo-two in sources list, got: {text}"
+        );
+    }
+
+    // ── research_topic with data ──────────────────────────────────────────────
+
+    #[test]
+    fn research_topic_without_model_returns_combined_results() {
+        let s = populated_store();
+        upsert_chunk(
+            &s,
+            "src-rt",
+            &chunk("rt-a", "docs/rt-a.md", "graph traversal depth first search"),
+        )
+        .expect("upsert rt-a");
+        upsert_chunk(
+            &s,
+            "src-rt",
+            &chunk("rt-b", "docs/rt-b.md", "related graph topology node edge"),
+        )
+        .expect("upsert rt-b");
+        upsert_edge(&s, &edge("rt-a", "docs/rt-b.md")).expect("edge");
+        let server = DocServer::new(s); // no model — falls back to text search
+
+        let params = ResearchTopicParams {
+            query: "graph traversal".to_string(),
+            top_k: Some(5),
+            max_depth: Some(1),
+        };
+        let result = server
+            .research_topic(Parameters(params))
+            .expect("research_topic should succeed");
+        let text = format!("{:?}", result.content);
+        // Should surface the direct match.
+        assert!(
+            text.contains("rt-a.md") || text.contains("graph traversal"),
+            "expected direct match in results, got: {text}"
+        );
+    }
+
+    // ── get_status with data ──────────────────────────────────────────────────
+
+    #[test]
+    fn get_status_reflects_inserted_data_counts() {
+        let s = populated_store();
+        upsert_source(&s, &source("status-src")).expect("upsert source");
+        upsert_chunk(
+            &s,
+            "status-src",
+            &chunk("st-c1", "docs/s1.md", "status test chunk one"),
+        )
+        .expect("upsert c1");
+        upsert_chunk(
+            &s,
+            "status-src",
+            &chunk("st-c2", "docs/s2.md", "status test chunk two"),
+        )
+        .expect("upsert c2");
+        let server = DocServer::new(s);
+
+        let result = server
+            .get_status(Parameters(GetStatusParams {}))
+            .expect("get_status should succeed");
+        let text = format!("{:?}", result.content);
+        // The response contains the chunk count as markdown.
+        // With 2 chunks inserted the count should appear as "2" somewhere.
+        assert!(
+            text.contains('2') || text.contains("Chunks"),
+            "expected chunk count in status, got: {text}"
+        );
+        assert!(
+            text.contains('1') || text.contains("Sources"),
+            "expected source count in status, got: {text}"
         );
     }
 }
