@@ -1168,14 +1168,17 @@ mod tests {
             text.contains("guide.md"),
             "expected path in response, got: {text}"
         );
-        // Both chunks should appear in the response.
+        // Both chunks must appear AND "first section" (position 0) must
+        // precede "second section" (position 1) — validating reading order.
+        let pos0 = text
+            .find("first section")
+            .expect("expected first-section chunk in response");
+        let pos1 = text
+            .find("second section")
+            .expect("expected second-section chunk in response");
         assert!(
-            text.contains("first section") || text.contains("doc-c0"),
-            "expected first chunk, got: {text}"
-        );
-        assert!(
-            text.contains("second section") || text.contains("doc-c1"),
-            "expected second chunk, got: {text}"
+            pos0 < pos1,
+            "reading order: 'first section' (pos {pos0}) should precede 'second section' (pos {pos1})"
         );
     }
 
@@ -1297,15 +1300,15 @@ mod tests {
             .get_status(Parameters(GetStatusParams {}))
             .expect("get_status should succeed");
         let text = format!("{:?}", result.content);
-        // The response contains the chunk count as markdown.
-        // With 2 chunks inserted the count should appear as "2" somewhere.
+        // The status markdown uses the format produced by `format_db_status`:
+        // "- **Chunks:** N" and "- **Sources:** N".
         assert!(
-            text.contains('2') || text.contains("Chunks"),
-            "expected chunk count in status, got: {text}"
+            text.contains("**Chunks:** 2"),
+            "expected '**Chunks:** 2' in status, got: {text}"
         );
         assert!(
-            text.contains('1') || text.contains("Sources"),
-            "expected source count in status, got: {text}"
+            text.contains("**Sources:** 1"),
+            "expected '**Sources:** 1' in status, got: {text}"
         );
     }
 }
