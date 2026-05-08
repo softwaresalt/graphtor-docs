@@ -9,7 +9,7 @@ description = "GraphRAG documentation index — core library and CLI"
 license = "MIT"
 rust-version = "1.75"
 authors = ["graphtor-docs contributors"]
-repository = "https://github.com/graphtor/graphtor-docs"
+repository = "https://github.com/softwaresalt/graphtor-docs"
 keywords = ["documentation", "rag", "graph", "mcp", "search"]
 categories = ["development-tools", "text-processing"]
 

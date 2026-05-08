@@ -33,13 +33,43 @@ No cloud services. No external databases. One binary.
 
 ### 1. Install
 
-```sh
-# Build from source (Rust 1.75+ required)
-cargo build --release
+**macOS / Linux — one-liner:**
 
-# Install into your workspace (.graphtor/bin/)
-./target/release/graphtor-docs install
+```sh
+curl -sSf https://raw.githubusercontent.com/softwaresalt/graphtor-docs/main/install.sh | sh
 ```
+
+**Windows — one-liner (PowerShell 5.1+):**
+
+```powershell
+irm https://raw.githubusercontent.com/softwaresalt/graphtor-docs/main/install.ps1 | iex
+```
+
+Both scripts download the latest release from [GitHub Releases][releases],
+verify the SHA-256 checksum, and install the binary to `~/.local/bin/`
+(macOS/Linux) or `%LOCALAPPDATA%\graphtor-docs\bin\` (Windows).
+
+**Direct download:**
+
+Pre-built binaries for macOS (Apple Silicon & Intel), Linux (x86_64), and
+Windows (x86_64) are available on the [Releases page][releases].
+
+**Install with cargo:**
+
+```sh
+cargo install --git https://github.com/softwaresalt/graphtor-docs --bin graphtor-docs --locked
+```
+
+**Build from source (Rust 1.75+ required):**
+
+```sh
+git clone https://github.com/softwaresalt/graphtor-docs.git
+cd graphtor-docs
+cargo build --release
+# Binary is at target/release/graphtor-docs
+```
+
+[releases]: https://github.com/softwaresalt/graphtor-docs/releases
 
 ### 2. Configure sources
 
