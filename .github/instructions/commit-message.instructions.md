@@ -28,7 +28,7 @@ Types MUST be one of the following:
 
 Scopes MUST be one of the following:
 
-acquire, chunk, config, error, logging, path, mcp, cli, docs
+acquire, chunk, config, error, logging, path, mcp, cli, docs, harness, agents, skills, instructions, workflows, scripts
 
 ## Description
 

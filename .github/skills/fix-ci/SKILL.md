@@ -10,7 +10,7 @@ Detect CI failures and code review comments on the current branch's PR, reproduc
 
 * Git repository with a remote tracked branch and an open PR
 * Access to CI pipeline status via `gh` CLI or equivalent tool
-* Local tools required by this skill must be available in PATH, including the configured quality gates `cargo fmt --all -- --check`–`cargo audit`; if formatting fixes are applied during remediation, `cargo fmt --all` must also be available
+* Local tools required by this skill must be available in PATH, including the configured quality gates `cargo fmt --all -- --check`–`cargo audit`; `cargo-audit` may need to be installed first (`cargo install cargo-audit`). If formatting fixes are applied during remediation, `cargo fmt --all` must also be available
 * Backlog tool configured when defect logging is enabled (circuit breaker halt path)
 
 ## Quick Start

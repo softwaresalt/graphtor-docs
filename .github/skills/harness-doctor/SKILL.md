@@ -36,7 +36,7 @@ This is a leaf executor. No subagent spawning. Maximum depth: 0.
 
 | Variable | Purpose |
 |---|---|
-| `.autoharness/harness-manifest.json` | Path to the installed harness manifest (default: `.autoharness/harness-manifest.yaml`) |
+| `.autoharness/harness-manifest.json` | Path to the installed harness manifest (default: `.autoharness/harness-manifest.json`) |
 | `1.3.4` | Expected autoharness version string from `autoharness_home` metadata |
 
 ## Workflow

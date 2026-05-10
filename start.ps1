@@ -24,12 +24,22 @@
 #
 $env:COPILOT_HOME = ".\.copilot"
 # $env:ENGRAM_DATA_DIR = ".\.engram"   # Uncomment when the agent-engram capability pack is active
-$env:GITHUB_TOKEN = (gh auth token)
-$copilotExe = "copilot"
-if (-not (Test-Path -LiteralPath $copilotExe -PathType Leaf) -and ($copilotExe -ne "copilot")) {
-    throw "COPILOT_EXE_PATH ('$copilotExe') must be a path to the Copilot executable only (no arguments). Update ai_tools.copilot_cli.exe_path in .autoharness/config.yaml."
+if (-not $env:GITHUB_TOKEN) {
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        try { $env:GITHUB_TOKEN = (gh auth token 2>$null) } catch {
+            Write-Warning "gh CLI not authenticated. GITHUB_TOKEN not set."
+        }
+    } else {
+        Write-Warning "gh CLI not found. GITHUB_TOKEN not set."
+    }
 }
-& $copilotExe
+$copilotExe = if ($env:COPILOT_EXE_PATH) { $env:COPILOT_EXE_PATH } elseif ($env:COPILOT_EXE) { $env:COPILOT_EXE } else { "copilot" }
+if (-not (Get-Command $copilotExe -ErrorAction SilentlyContinue)) {
+    if (-not (Test-Path -LiteralPath $copilotExe -PathType Leaf)) {
+        throw "Cannot locate Copilot CLI ('$copilotExe'). Set COPILOT_EXE_PATH or add 'copilot' to PATH."
+    }
+}
+& $copilotExe @args
 
 # ── Claude Code ─────────────────────────────────────────────────────────────
 # Uncomment to run Claude Code with workspace-local state directories.

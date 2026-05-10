@@ -37,20 +37,26 @@ This is a leaf executor. No subagent spawning. Maximum depth: 0.
 | `src/**` | Application source file patterns (e.g., `src/**/*.rs`) |
 | `Rust` | Primary language for pattern selection |
 | `docs/security` | Output directory for persisted reports (default: `docs/security`) |
-| `| Check | Pattern | Severity |
+
+### Config Check Rules
+
+| Check | Pattern | Severity |
 |---|---|---|
 | Hardcoded credentials | `password`, `secret`, `api_key`, `token` in source | CRITICAL |
 | Unpinned secrets | `${{ secrets.* }}` without pinned action versions | HIGH |
 | Debug endpoints | `/debug/`, `#[cfg(debug_assertions)]` exposed routes | MEDIUM |
 | Terminal auto-approve | `chat.tools.terminal.autoApprove` patterns in `.vscode/settings.json` | HIGH |
-| Overly permissive allow-lists | `applyTo: '**'` with destructive tool grants | MEDIUM |` | Per-environment config rule table |
-| `| Pattern | Risk | Detection |
+| Overly permissive allow-lists | `applyTo: '**'` with destructive tool grants | MEDIUM |
+
+### OWASP Detection Patterns (Rust)
+
+| Pattern | Risk | Detection |
 |---|---|---|
-| `unsafe` blocks | Memory safety bypass | Grep for `unsafe {` outside `// SAFETY:` | 
+| `unsafe` blocks | Memory safety bypass | Grep for `unsafe {` outside `// SAFETY:` |
 | Unchecked deserialization | Arbitrary code execution | `serde_json::from_str` without validation |
 | Raw SQL in embedded DB | SQL injection | String interpolation in kuzu/lancedb queries |
 | Unvalidated file paths | Path traversal | `std::fs::read` with user-controlled paths |
-| Shell command injection | RCE | `std::process::Command` with unsanitized args |` | Language-specific OWASP detection patterns |
+| Shell command injection | RCE | `std::process::Command` with unsanitized args |
 
 ## Workflow
 

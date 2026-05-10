@@ -30,7 +30,13 @@ set -euo pipefail
 #
 export COPILOT_HOME="${COPILOT_HOME:-./.copilot}"
 # export ENGRAM_DATA_DIR="./.engram"   # Uncomment when the agent-engram capability pack is active
-export GITHUB_TOKEN="$(gh auth token)"
+if [ -z "$GITHUB_TOKEN" ]; then
+	if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+		export GITHUB_TOKEN="$(gh auth token)"
+	else
+		echo "Warning: gh CLI not found or not authenticated. GITHUB_TOKEN not set." >&2
+	fi
+fi
 copilot_exe="${COPILOT_EXE_PATH:-${COPILOT_EXE:-copilot}}"
 
 if command -v "$copilot_exe" >/dev/null 2>&1; then
