@@ -1,208 +1,306 @@
 ---
-applyTo: "**"
+description: "Constitutional principles governing all agent operations in this workspace — adapted for Rust"
+applyTo: '**'
 ---
 
-# Agent Engram Constitution
+# Constitution
 
 ## Core Principles
 
 ### I. Safety-First Rust
 
-All production code MUST be written in Rust (stable toolchain,
-edition 2024, `rust-version = "1.85"`). `unsafe` code is forbidden
-at the workspace level (`#![forbid(unsafe_code)]`). Clippy pedantic
-lints MUST pass with zero warnings. `unwrap()` and `expect()` are
-denied in library code; all fallible operations MUST use the
-`Result`/`EngramError` pattern defined in `src/errors/mod.rs`.
+All production code MUST be written in Rust (edition 2021, rust-version 1.75).
+`#![forbid(unsafe_code)]` at crate root. All clippy warnings (including `clippy::pedantic`) are hard errors via `-D warnings`. All errors must be propagated via `Result<T, E>`; no `.unwrap()` or `.expect()` in library code.
 
-**Rationale**: The daemon manages an embedded database, file-system
-writes for dehydration, and long-lived SSE connections on behalf of
-AI coding assistants. Memory safety and explicit error handling are
-non-negotiable to prevent data corruption, silent failures, or
-state loss during unattended operation.
+**Rationale**: Explicit error handling and safety enforcement prevent data corruption,
+silent failures, and state loss during unattended agent operation.
 
-### II. MCP Protocol Fidelity
+### II. Test-First Development (NON-NEGOTIABLE)
 
-The server MUST implement the Model Context Protocol via the
-`mcp-sdk` 0.0.3 crate (JSON-RPC 2.0). All MCP tools MUST be
-unconditionally visible to every connected agent regardless of
-configuration. Tools called in inapplicable contexts (e.g.,
-workspace-scoped tools before `set_workspace`) MUST return a
-descriptive error rather than being hidden. Transport is SSE
-(GET `/sse`) with JSON-RPC dispatch (POST `/mcp`).
+Every feature or chore MUST have tests written before implementation code. The test
+directory structure (Unit tests colocated in source via `#[cfg(test)]`; integration tests in `tests/` directory) MUST be maintained. All tests MUST
+pass via `cargo test` before any code is merged. Steps: write test,
+confirm it fails (red), implement, confirm it passes (green). Never write
+production code before the corresponding test exists and has been observed
+to fail.
 
-**Rationale**: Consistent tool surface ensures agents can discover
-capabilities without conditional logic. Protocol compliance
-guarantees interoperability with any MCP-compatible client (Claude
-Code, GitHub Copilot CLI, Cursor, VS Code).
+**Rationale**: Agents operating unattended for extended periods cannot
+self-verify correctness without a robust test suite. Regressions caught
+in production are orders of magnitude more expensive than regressions
+caught by a failing test.
 
-### III. Test-First Development (NON-NEGOTIABLE)
+### III. Workspace Isolation and Security Boundaries
 
-Every feature MUST have tests written before implementation code.
-The test directory structure (`tests/contract/`, `tests/integration/`,
-`tests/unit/`) MUST be maintained. Contract tests validate MCP tool
-input/output schemas and error codes. Integration tests validate
-cross-module interactions (hydration, dehydration, search,
-concurrency). Unit tests validate isolated logic. Property-based
-tests with `proptest` validate serialization round-trips. All tests
-MUST pass via `cargo test` before any code is merged.
+All file-system operations MUST resolve within the configured workspace root.
+Path traversal attempts MUST be rejected. No secrets or credentials MUST
+appear in committed files.
 
-**Rationale**: The daemon operates unattended for extended periods.
-Regressions in task management, hydration/dehydration cycles, graph
-traversal, or semantic search can silently corrupt workspace state.
-Test-first discipline catches failures before they reach production.
+**Rationale**: Agents run with the operator's filesystem permissions. Without
+strict isolation, a misbehaving agent could access or corrupt unrelated
+projects, leak internal paths, or expose sensitive information.
 
-### IV. Workspace Isolation & Security Boundaries
+### IV. CLI Workspace Containment (NON-NEGOTIABLE)
 
-All file-system operations MUST resolve within the configured
-workspace root. Path traversal attempts MUST be rejected. Each
-workspace MUST map to a unique SurrealDB database via deterministic
-SHA-256 hash of the canonical workspace path. Database queries MUST
-execute solely within the active workspace's database context. The
-daemon MUST bind exclusively to `127.0.0.1`; no external network
-exposure is permitted. No secrets or credentials MUST appear in
-`.engram/` files (which may be committed to Git).
+When an agent operates in CLI mode, it MUST NOT create, modify, or delete any
+file or directory outside the current working directory tree. This applies to
+all file operations. Paths that resolve above or outside the cwd, whether via
+absolute paths, `..` traversal, symlinks, or environment variable expansion,
+MUST be refused. The only exception is reading files explicitly provided by
+the user as context.
 
-**Rationale**: The daemon serves multiple workspaces simultaneously
-and persists state to Git-committable files. Without strict
-isolation, a misbehaving agent could access or corrupt another
-workspace's data, leak internal paths, or expose sensitive
-information through serialized state.
+**Rationale**: CLI agents run with the operator's full filesystem permissions
+and no interactive approval UI. A single misrouted write can corrupt unrelated
+repositories, overwrite system configuration, or destroy data in sibling
+directories.
 
 ### V. Structured Observability
 
-All significant operations MUST emit structured tracing spans to
-stderr via `tracing-subscriber`. Span coverage MUST include: MCP
-tool call execution, workspace lifecycle events (bind, hydrate,
-flush), database operations, SSE connection management, and
-embedding/search operations. Log output MUST support both
-human-readable and JSON formats via `tracing-subscriber` features.
-No external metrics endpoint or telemetry collector is required
-for v1.
+All significant operations MUST produce traceable output. Agent actions MUST
+be logged through broadcasting, commit messages, or structured reporting.
+Coverage MUST include: build/test execution, file modifications, quality
+gate results, and error conditions.
 
-**Rationale**: The daemon runs as a background service for hours or
-days. When something goes wrong during unattended operation,
-structured traces are the primary diagnostic tool. Without them,
-debugging hydration failures, stale-file detection, or concurrency
-issues would require reproducing the exact scenario.
+**Rationale**: Agents run as background services for extended periods. When
+something goes wrong during unattended operation, structured traces are the
+primary diagnostic tool.
 
-### VI. Single-Binary Simplicity
+### VI. Single Responsibility
 
-The project MUST produce a single binary (`engram`). Dependencies
-MUST be managed via `Cargo.toml` workspace dependencies. New
-dependencies MUST be justified by a concrete requirement — do not
-add libraries speculatively. Prefer the standard library over
-external crates when the standard library solution is adequate.
-SurrealDB embedded (surrealkv) is the sole persistence layer; do
-not introduce additional databases or caches. Optional capabilities
-(e.g., embeddings via `fastembed`) MUST use Cargo feature flags.
+New dependencies MUST be justified by a concrete requirement. Do not add
+libraries or tools speculatively. Prefer the standard library and existing
+project dependencies over external additions. Optional capabilities SHOULD
+use feature flags or conditional configuration.
 
-**Rationale**: Operational simplicity is critical for a tool that
-developers install on personal workstations. Every additional
-dependency increases build time, attack surface, and maintenance
-burden. The single-binary model ensures deployment is a single
-file copy.
+**Rationale**: Every additional dependency increases build time, attack
+surface, and maintenance burden. Agents should minimize the changes they
+introduce to the dependency graph.
 
-### VII. CLI Workspace Containment (NON-NEGOTIABLE)
+### VII. Destructive Command Approval (NON-NEGOTIABLE)
 
-When GitHub Copilot operates in CLI mode, it MUST NOT create,
-modify, or delete any file or directory outside the current
-working directory tree. This applies to all tool invocations
-including `create_file`, `replace_string_in_file`,
-`multi_replace_string_in_file`, `run_in_terminal`, and any
-operation that touches the filesystem. Paths that resolve above
-or outside the cwd — whether via absolute paths, `..` traversal,
-symlinks, or environment variable expansion — MUST be refused.
-The only exception is reading files explicitly provided by the
-user as context.
+All destructive terminal commands MUST require operator approval before
+execution, regardless of permissive agent modes. A terminal command is
+destructive if it: deletes files or directories, overwrites files without
+backup, modifies system configuration, alters version control history,
+drops or truncates data, installs or removes system-level packages, or
+executes code from untrusted sources.
 
-**Rationale**: CLI agents run with the operator's full filesystem
-permissions and no interactive approval UI. A single misrouted
-write can corrupt unrelated repositories, overwrite system
-configuration, or destroy data in sibling directories. Strict
-cwd containment is the last line of defense when no human is
-watching.
+**Rationale**: Permissive agent modes exist to reduce friction for routine
+operations. They must never extend to destructive operations because a
+single misrouted destructive command can irrecoverably corrupt repositories
+or break system configuration.
 
-### VIII. Git-Friendly Persistence
+### VIII. Explicit Safety Modes for Elevated Risk
 
-All workspace state MUST be serializable to human-readable,
-Git-mergeable files in the `.engram/` directory. Markdown with
-YAML frontmatter is the canonical format for task files.
-Dehydration MUST use structured diff merge (via the `similar`
-crate) to preserve user-added comments and formatting. No binary
-files in `.engram/`. Writes MUST use atomic temp-file-then-rename
-to prevent corruption. File formats MUST minimize merge conflicts
-(sorted keys, stable ordering).
+When work involves destructive commands, production-impacting changes, uncertain root causes,
+or large blast radius, agents MUST switch into an explicit safety mode before proceeding:
+
+* **Careful mode** — enumerate risks, confirm intent, and pause before high-impact operations
+* **Freeze-scope mode** — constrain work to a declared path or subsystem boundary
+* **Investigate-first mode** — gather evidence and causal understanding before proposing fixes
+
+**Rationale**: Guardrails are more reliable when they are interactive and legible. Safety modes
+translate policy into an operating posture that both the agent and the operator can reason about.
+
+### Capability Overlay — agent-intercom
+
+When the workspace enables the `agent-intercom` capability pack, agents MUST use the configured
+intercom workflow for heartbeat, milestone broadcasting, destructive-operation approval routing,
+and operator steering waits. If the intercom path becomes unavailable, agents MUST warn that
+remote visibility is degraded and must not silently bypass approval steps that depend on it.
+
+**Rationale**: A remote operator cannot supervise or approve work they cannot see. When intercom
+is part of the harness, observability and approval routing become operational requirements rather
+than optional niceties.
+
+### Capability Overlay — agent-engram
+
+When the workspace enables the `agent-engram` capability pack, agents MUST use the configured
+engram workflow for indexed search, workspace binding and status checks, code-graph traversal,
+and freshness verification. Agents MUST prefer engram MCP tools over file-based search for
+context-related discovery, MUST refresh or verify stale index state before trusting query results,
+and MUST not hand-edit tool-managed `.engram/` artifacts as a substitute for lifecycle or sync
+operations.
+
+**Rationale**: Engram exists to compress codebase understanding into a queryable local index.
+Ignoring that index and falling back immediately to raw file reading wastes context budget and
+throws away the leverage the overlay was meant to provide.
+
+### Capability Overlay — backlogit
+
+When the workspace enables the `backlogit` capability pack, agents MUST use the configured
+backlogit workflow for queue selection, dependency management, token-efficient task lookup,
+continuity checkpoints, and task traceability. Agents MUST prefer backlogit query and queue
+operations over manual backlog scanning when those operations are available, MUST refresh the
+index after out-of-band edits before trusting query output, and MUST not bypass backlogit by
+creating parallel task state outside the configured backlog workspace.
+
+**Rationale**: backlogit exists to preserve agent context through targeted queries, explicit work
+ordering, and durable execution traces. Treating it as a thin file store would discard the very
+capabilities that justify enabling the overlay.
+
+### IX. Git-Friendly Persistence
+
+All workspace state managed by the agent harness MUST be serializable to
+human-readable, Git-mergeable files. Markdown with YAML frontmatter is the
+preferred format for structured documents. Writes SHOULD use atomic
+operations to prevent corruption. File formats SHOULD minimize merge
+conflicts through sorted keys and stable ordering.
 
 **Rationale**: Workspace state travels with the codebase in Git.
-Human-readable files enable code review of agent-managed state,
-conflict resolution during merges, and manual editing when needed.
-Atomic writes prevent half-written state from corrupting the
-workspace during crashes or concurrent access.
+Human-readable files enable code review of agent-managed state, conflict
+resolution during merges, and manual editing when needed.
+
+### X. Agent Context Efficiency
+
+Tools and data access patterns MUST preserve agent context windows by
+returning minimal, targeted data. When a structured query can replace
+directory scanning or bulk file reading, agents MUST prefer the query.
+Tool responses MUST be structured (JSON or YAML), not raw file content,
+unless the agent explicitly needs the full document.
+
+**Rationale**: AI agents operate within finite context windows. Every
+token consumed by bulk data is a token unavailable for reasoning and
+code generation. Data access architecture should serve token-efficient
+query results to agents.
+
+### XI. Merge Commit History Preservation (NON-NEGOTIABLE)
+
+All pull request merges MUST use merge commits. Squash merge and rebase
+merge are expressly forbidden. Repository settings MUST be configured to
+disable squash and rebase merge options (GitHub Settings → General →
+Pull Requests → uncheck "Allow squash merging" and "Allow rebase merging").
+The ship agent MUST verify the merge strategy before executing any merge
+and MUST halt with a P-009 violation if squash or rebase merge is detected.
+
+**Rationale**: Merge commits preserve the full development history,
+individual commit attribution, and bisect-friendly history. Squash merge
+destroys commit granularity and makes root-cause analysis of regressions
+significantly harder. Rebase merge rewrites history, breaking
+commit-traceability links and backlog commit associations.
 
 ## Technical Constraints
 
-- **Language**: Rust stable, edition 2024, `rust-version = "1.85"`
-- **Async runtime**: Tokio 1 (full features)
-- **MCP SDK**: `mcp-sdk` 0.0.3 (JSON-RPC 2.0 over SSE)
-- **HTTP Transport**: Axum 0.7 with SSE at `/sse` and JSON-RPC
-  at `/mcp`
-- **Persistence**: SurrealDB 2 embedded (surrealkv backend),
-  per-workspace namespace via SHA-256 path hash
-- **Code Parsing**: `tree-sitter` 0.24 with `tree-sitter-rust`
-  for code graph extraction
-- **Embeddings**: `fastembed` 3 (optional, behind `embeddings`
-  feature flag)
-- **Diff/Merge**: `similar` 2 for structured diff merge during
-  dehydration
-- **Markdown**: `pulldown-cmark` 0.10 for parsing `.engram/`
-  markdown files
-- **Linting**: `.cargo/config.toml` sets
-  `rustflags = ["-Dwarnings"]`; `cargo clippy` with pedantic
-  and `-D warnings`
-- **Build verification**: `cargo test` and `cargo clippy` MUST
-  pass before merge
-- **License**: MIT
+| Concern         | Constraint                                                       |
+|-----------------|------------------------------------------------------------------|
+| Language        | Rust edition 2021, rust-version 1.75                        |
+| Build           | `cargo build`                                              |
+| Test            | `cargo test`                                               |
+| Lint            | `cargo clippy --all-targets -- -D warnings -D clippy::pedantic`                                               |
+| Format          | `cargo fmt --all -- --check`                                             |
+| CI              | GitHub Actions                                                  |
+| Error Handling  | Result<T, Error>                                                |
+| Documentation   | /// doc comment                                            |
+
+## Quality Gates
+
+Run in order. Do not skip any gate.
+
+```text
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+cargo test --all-targets
+cargo audit
+```
 
 ## Development Workflow
 
-1. **Feature specs first**: Every feature MUST have a specification
-   in `specs/###-feature-name/spec.md` before implementation begins.
-2. **Plan before code**: Implementation plans MUST be generated via
-   the speckit workflow (`spec → plan → tasks`) and stored alongside
-   the spec.
-3. **Branch per feature**: Each feature MUST be developed on a
-   dedicated branch matching the spec directory name
-   (e.g., `001-core-mcp-daemon`).
-4. **Contract-first design**: MCP tool schemas and data models MUST
-   be defined in contract documents before implementation. Changes
-   to contracts require updating corresponding contract tests.
-5. **Commit discipline**: Each commit MUST represent a coherent,
-   buildable change. Commit messages MUST follow conventional
-   commits format (e.g., `feat:`, `fix:`, `docs:`, `test:`).
-6. **No dead code**: Placeholder modules (e.g., `//! placeholder`)
-   MUST be replaced with real implementations or removed before a
-   feature is considered complete.
+1. **Harness before code**: Every feature or chore MUST have a compiling but failing
+   test harness before implementation begins.
+2. **Backlog-driven planning**: All task tracking MUST use the backlog system.
+   Static markdown task lists outside `.backlogit/` are not permitted.
+3. **Branch per release unit**: Each feature or chore MUST be developed on a dedicated branch.
+4. **Commit discipline**: Each commit MUST be coherent and buildable. Commit
+   messages follow conventional commits format (`feat:`, `fix:`, `docs:`, `test:`).
+5. **No dead code**: Placeholder modules MUST be replaced or removed before a
+   release unit is considered complete.
+6. **Operational closure**: Work is not complete at “green CI” if runtime validation,
+   monitoring setup, or release handoff remains unresolved.
+
+### Task Granularity (NON-NEGOTIABLE)
+
+Agent reliability drops below 50% for tasks exceeding 2 hours of human-equivalent
+effort and approaches 0% beyond 4 hours. All task decomposition enforces these rules:
+
+* **2-Hour Rule**: Every task MUST be scoped to roughly 2 hours of human effort.
+  Heuristics: fewer than 3 files modified, fewer than 5 functions changed, fewer
+  than 4 test scenarios.
+* **Width Isolation**: Each task MUST target a single skill domain. Do not combine
+  code with documentation, schema changes with API handlers, or test
+  infrastructure with production code in the same task.
+* **Atomic Milestone**: Every task MUST produce a verifiable state change: a passing
+  test, a successful build, or a measurable output.
+
+### Stop Conditions and Circuit Breakers
+
+The full circuit breaker protocol — retry thresholds, escalation steps, stall
+detection, and error logging — is defined in `circuit-breaker.instructions.md`.
+All agents MUST follow that protocol. The summary table below is a quick
+reference; the instruction file is authoritative.
+
+| Counter                         | Limit | Action                                              |
+|---------------------------------|-------|-----------------------------------------------------|
+| Consecutive operation failures  | 3     | Stop, log to `docs/memory/`, prompt user        |
+| Skill-managed loop (build/fix-ci)| 5    | Skill limit governs inside loop scope               |
+| Same-error recurrence in loop   | 3     | Universal breaker overrides: stop, log, prompt      |
+| Tasks attempted in session      | 20    | Halt, write memory checkpoint, exit                 |
+| Consecutive task failures       | 3     | Halt, prompt operator for guidance                  |
+| Review-fix cycles per task      | 3     | Accept remaining as backlog items, commit, move on  |
+| Total fix-ci cycles             | 5     | Halt, leave PR open for manual intervention         |
+| Session stalls                  | 3     | Halt, write checkpoint, prompt operator             |
+
+### Model Routing
+
+| Tier                    | Model Class  | Agents                                         | Rationale                       |
+|-------------------------|--------------|------------------------------------------------|---------------------------------|
+| **Tier 1 (Fast/Cheap)** | Smaller model | prompt-builder, learnings-researcher          | Low-complexity tasks            |
+| **Tier 2 (Standard)**  | Medium model | ship, rust-engineer, harness-architect | Routine code, scaffolding, coordination |
+| **Tier 3 (Frontier)**  | Large model  | stage                                          | Deep analysis and architecture  |
 
 ## Governance
 
-This constitution supersedes all other development practices for
-the Engram project. All code reviews and automated checks MUST
-verify compliance with these principles.
+This constitution supersedes all other development practices in this
+workspace. All code reviews and automated checks MUST verify compliance
+with these principles.
+
+### Enforcement Language
+
+| Level | Meaning | Mechanism |
+|---|---|---|
+| **NON-NEGOTIABLE** | Agent MUST comply. Violations trigger P-005 telemetry and halt. | CI gates, policy checks, or runtime containment |
+| **MUST** | Agent MUST comply. Violations are flagged; self-correction is expected. | Agent workflow logic, review findings |
+| **SHOULD** | Recommended practice. Deviations are acceptable with documented rationale. | Advisory review findings |
+| **MAY** | Optional practice at agent discretion. | — |
+
+### Enforcement Model
+
+| Principle | Level | Enforcement Mechanism |
+|---|---|---|
+| I. Safety-First Language | MUST | CI quality gates (`cargo clippy --all-targets -- -D warnings -D clippy::pedantic`, `cargo build`) |
+| II. Test-First Development | NON-NEGOTIABLE | P-002/P-004 policies; harness-architect red phase; build-feature green phase |
+| III. Workspace Isolation | MUST | Agent runtime path resolution within workspace root |
+| IV. CLI Containment | NON-NEGOTIABLE | Agent runtime cwd boundary enforcement |
+| V. Structured Observability | MUST | Broadcasting, commit messages, structured reporting |
+| VI. Single Responsibility | SHOULD | Code review persona checks on dependency additions |
+| VII. Destructive Approval | NON-NEGOTIABLE | P-005 violation telemetry; strict-safety enforcement when enabled |
+| VIII. Safety Modes | MUST | safety-modes skill invocation; strict-safety decision gate when enabled |
+| IX. Git-Friendly Persistence | SHOULD | Markdown + YAML frontmatter convention |
+| X. Context Efficiency | SHOULD | Query-first data access patterns |
+
+For principles marked NON-NEGOTIABLE without runtime enforcement (II, IV),
+agents that observe violations MUST broadcast a P-005 event and halt rather
+than proceeding.
 
 - **Amendments**: Any change to this constitution MUST be documented
   with a version bump, rationale, and sync impact report. Principle
-  removals or redefinitions require a MAJOR version bump. New
-  principles or material expansions require MINOR. Clarifications
-  and wording fixes require PATCH.
+  removals or redefinitions require a MAJOR version bump. New principles
+  or material expansions require MINOR. Clarifications and wording fixes
+  require PATCH.
 - **Compliance review**: Every implementation plan MUST include a
-  "Constitution Check" section (per the plan template) that maps
-  the proposed work against these principles and documents any
-  justified violations in the Complexity Tracking table.
-- **Conflict resolution**: When a principle conflicts with a
-  practical implementation need, the conflict MUST be documented
-  in the plan's Complexity Tracking table with the specific
-  principle violated, the justification, and the simpler
-  alternative that was rejected.
+  "Constitution Check" section that maps the proposed work against these
+  principles and documents any justified violations.
+- **Conflict resolution**: When a principle conflicts with a practical
+  implementation need, the conflict MUST be documented with the specific
+  principle violated, the justification, and the simpler alternative that
+  was rejected.
 
-**Version**: 1.0.0 | **Ratified**: 2026-02-28 | **Last Amended**: 2026-02-28
+**Version**: 1.0.0 | **Ratified**: 2026-05-10 | **Generated by**: autoharness

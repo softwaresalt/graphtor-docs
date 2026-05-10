@@ -6,7 +6,7 @@ applyTo: '**/*.rs'
 # MCP Server Development Instructions
 
 These instructions define conventions for building Model Context Protocol
-servers in Rust using rmcp 0.5.
+servers in Rust using rmcp.
 
 ## Project Structure
 
@@ -14,11 +14,13 @@ Organize MCP server code following the standard layout:
 
 ```text
 src/
-  mcp/
-    mod.rs          -- MCP server entry point and router
-    tools/          -- One module per MCP tool
-    resources/      -- MCP resource handlers
-  main.rs           -- Binary entry point with server init
+  main.rs           # Entry point, MCP server initialization
+  acquire/          # Source acquisition (git clone, local copy, web crawl)
+  chunk/            # pulldown-cmark AST parsing, heading-based chunking
+  config/           # sources.yaml loading, CLI args
+  error/            # thiserror error types
+  logging/          # tracing subscriber setup
+  path/             # Path normalization and resolution
 ```
 
 ## Server Lifecycle

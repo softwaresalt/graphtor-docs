@@ -1,87 +1,689 @@
 {
   "schema_version": "1.0.0",
-  "installed_at": "2026-04-29T00:35:00-07:00",
+  "installed_at": "2026-05-10T08:42:00-07:00",
   "tuned_at": "2026-05-01T21:48:00-07:00",
   "autoharness_version": "1.3.4",
-  "autoharness_home": "C:\\Users\\derek.williams\\AppData\\Roaming\\uv\\tools\\autoharness\\Lib\\site-packages\\autoharness\\data",
+  "autoharness_home": "D:\\Source\\GitHub\\autoharness",
   "profile_hash": "3e295dceec3e923526177992ffa2cd92f95854a9b840f5bba3047ea4f2f86cae",
-  "config_hash": "fe0a4e330be094f46197fa447a6de1bde76495e7531b97030e260fa3c59510fb",
+  "config_hash": "9f604c2987ec13c4cd1679b9b42525f7d5ea310538aaf59ada2eea63536b90d7",
   "install_preset": "full",
   "primary_stack_pack": "mcp-server",
-  "stack_packs": ["mcp-server", "cli-tool"],
-  "install_layers": ["foundation", "instructions", "workflow", "review", "backlog", "knowledge", "overlays"],
-  "capability_packs": ["agent-intercom", "agent-engram", "backlogit", "adversarial-review"],
+  "stack_packs": [
+    "mcp-server",
+    "cli-tool"
+  ],
+  "install_layers": [
+    "foundation",
+    "instructions",
+    "workflow",
+    "review",
+    "backlog",
+    "knowledge",
+    "overlays"
+  ],
+  "capability_packs": [
+    "agent-intercom",
+    "agent-engram",
+    "backlogit",
+    "adversarial-review",
+    "graphtor-docs"
+  ],
   "capability_pack_overlays": [
     {
       "pack": "agent-intercom",
-      "overlay_targets": [".github/instructions/agent-intercom.instructions.md", ".github/skills/deliberate/SKILL.md", ".github/skills/spike/SKILL.md", ".github/skills/review/SKILL.md", ".github/skills/operational-closure/SKILL.md"],
-      "verification_checks": ["agent-intercom.instructions.md installed", "affected skills reference intercom workflow"]
+      "overlay_targets": [
+        ".github/instructions/agent-intercom.instructions.md",
+        ".github/skills/deliberate/SKILL.md",
+        ".github/skills/spike/SKILL.md",
+        ".github/skills/review/SKILL.md",
+        ".github/skills/operational-closure/SKILL.md"
+      ],
+      "verification_checks": [
+        "agent-intercom.instructions.md installed",
+        "affected skills reference intercom workflow"
+      ]
     },
     {
       "pack": "agent-engram",
-      "overlay_targets": [".github/instructions/agent-engram.instructions.md", ".github/agents/learnings-researcher.agent.md", ".github/skills/skill-search/SKILL.md"],
-      "verification_checks": ["agent-engram.instructions.md installed", "learnings-researcher references engram-first lookup"]
+      "overlay_targets": [
+        ".github/instructions/agent-engram.instructions.md",
+        ".github/agents/learnings-researcher.agent.md",
+        ".github/skills/skill-search/SKILL.md"
+      ],
+      "verification_checks": [
+        "agent-engram.instructions.md installed",
+        "learnings-researcher references engram-first lookup"
+      ]
     },
     {
       "pack": "backlogit",
-      "overlay_targets": [".github/instructions/backlogit.instructions.md", ".github/instructions/backlogit-sql-schema.instructions.md", ".github/instructions/backlogit-yaml-header-tooling.instructions.md", ".github/instructions/backlog-integration.instructions.md", ".github/skills/harvest/SKILL.md", ".github/skills/shipment-reconcile/SKILL.md", ".github/policies/workflow-policies.md"],
-      "verification_checks": ["backlogit instruction files installed", "harvest and shipment-reconcile reference backlogit operations", "P-007 policy references backlogit archive integrity"]
+      "overlay_targets": [
+        ".github/instructions/backlogit.instructions.md",
+        ".github/instructions/backlogit-sql-schema.instructions.md",
+        ".github/instructions/backlogit-yaml-header-tooling.instructions.md",
+        ".github/instructions/backlog-integration.instructions.md",
+        ".github/skills/harvest/SKILL.md",
+        ".github/skills/shipment-reconcile/SKILL.md",
+        ".github/policies/workflow-policies.md"
+      ],
+      "verification_checks": [
+        "backlogit instruction files installed",
+        "harvest and shipment-reconcile reference backlogit operations",
+        "P-007 policy references backlogit archive integrity"
+      ]
     },
     {
       "pack": "adversarial-review",
-      "overlay_targets": [".github/instructions/adversarial-review.instructions.md", ".github/agents/architecture-strategist.agent.md", ".github/agents/concurrency-reviewer.agent.md", ".github/agents/constitution-reviewer.agent.md", ".github/agents/scope-boundary-auditor.agent.md", ".github/agents/technology-reviewer.agent.md", ".github/agents/agent-native-parity-reviewer.agent.md", ".github/skills/review/SKILL.md"],
-      "verification_checks": ["adversarial-review.instructions.md installed", "all 6 review persona agents installed", "review skill references multi-persona protocol"]
+      "overlay_targets": [
+        ".github/instructions/adversarial-review.instructions.md",
+        ".github/agents/architecture-strategist.agent.md",
+        ".github/agents/concurrency-reviewer.agent.md",
+        ".github/agents/constitution-reviewer.agent.md",
+        ".github/agents/scope-boundary-auditor.agent.md",
+        ".github/agents/technology-reviewer.agent.md",
+        ".github/agents/agent-native-parity-reviewer.agent.md",
+        ".github/skills/review/SKILL.md"
+      ],
+      "verification_checks": [
+        "adversarial-review.instructions.md installed",
+        "all 6 review persona agents installed",
+        "review skill references multi-persona protocol"
+      ]
+    },
+    {
+      "pack": "graphtor-docs",
+      "overlay_targets": [
+        ".github/instructions/graphtor-docs.instructions.md"
+      ],
+      "verification_checks": [
+        "graphtor-docs.instructions.md installed",
+        "sources path resolved to .graphtor/config/sources.yaml"
+      ]
     }
   ],
-  "primitives_installed": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "primitives_installed": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
   "artifacts": [
-    {"path": ".autoharness/config.yaml", "artifact_type": "config", "primitive": 3, "template": "harness-config.yaml.tmpl", "checksum": "fe0a4e330be094f46197fa447a6de1bde76495e7531b97030e260fa3c59510fb"},
-    {"path": ".autoharness/workspace-profile.json", "artifact_type": "config", "primitive": 3, "template": "workspace-profile", "checksum": "3e295dceec3e923526177992ffa2cd92f95854a9b840f5bba3047ea4f2f86cae"},
-    {"path": ".github/policies/workflow-policies.md", "artifact_type": "policy", "primitive": 8, "template": "workflow-policies.md.tmpl", "checksum": "e258fe61195732f2b802c7112e478f2e12ed2077985146ed10e887edff2fcf20"},
-    {"path": ".github/skills/deliberate/SKILL.md", "artifact_type": "skill", "primitive": 4, "template": "deliberate/SKILL.md.tmpl", "checksum": "e5e0d459c6eb57d87ad0790e32ad550fbc1ff77ff94df33b2f3f8b492ac0a323"},
-    {"path": ".github/skills/spike/SKILL.md", "artifact_type": "skill", "primitive": 4, "template": "spike/SKILL.md.tmpl", "checksum": "e6a8bf8c7aa140063a535da898146f5314e5b093c8f391375d66372203099cc9"},
-    {"path": ".github/skills/compound/SKILL.md", "artifact_type": "skill", "primitive": 1, "template": "compound/SKILL.md.tmpl", "checksum": "ab110afd176440434db57a6ba3b8452d5d5f0a68d74cccaa1b25604ba1ef8846"},
-    {"path": ".github/skills/compound-refresh/SKILL.md", "artifact_type": "skill", "primitive": 1, "template": "compound-refresh/SKILL.md.tmpl", "checksum": "99f849184442886817ffd58f0060428e62c510fb516c85e546b6cfbfd4f28e11"},
-    {"path": ".github/skills/fix-ci/SKILL.md", "artifact_type": "skill", "primitive": 4, "template": "fix-ci/SKILL.md.tmpl", "checksum": "3557bd5303455769c9952b40c59dfbe79503e05242b91063bca4e89389486bc1"},
-    {"path": ".github/skills/harvest/SKILL.md", "artifact_type": "skill", "primitive": 2, "template": "harvest/SKILL.md.tmpl", "checksum": "54e57d95d8ad0a394c28127a07d58aee3ef051540f11b9cc5960437908fd6989"},
-    {"path": ".github/skills/impl-plan/SKILL.md", "artifact_type": "skill", "primitive": 2, "template": "impl-plan/SKILL.md.tmpl", "checksum": "00b5606f84ac817f546c1dd1c729bbfe46e7d3e1b0abf64a8dad62a8c74513b1"},
-    {"path": ".github/skills/plan-harden/SKILL.md", "artifact_type": "skill", "primitive": 10, "template": "plan-harden/SKILL.md.tmpl", "checksum": "ae768c39c1bb1ec9dffc40e189ee33aead436431b407b08f8aebcd8298d5132b"},
-    {"path": ".github/skills/plan-review/SKILL.md", "artifact_type": "skill", "primitive": 10, "template": "plan-review/SKILL.md.tmpl", "checksum": "2dfb9fce07ebb529ca183c509baa1a343293c68579dbaebb41a20200b02ca917"},
-    {"path": ".github/skills/review/SKILL.md", "artifact_type": "skill", "primitive": 7, "template": "review/SKILL.md.tmpl", "checksum": "7ad338b18acd17fe41d6426058f533c129abaec64822f0fd4f0cf76883adb58d"},
-    {"path": ".github/skills/pr-lifecycle/SKILL.md", "artifact_type": "skill", "primitive": 4, "template": "pr-lifecycle/SKILL.md.tmpl", "checksum": "fe9791b9cbcba9f000c3796d90b71f135a400c28c650ec16d9628dc046e87b80"},
-    {"path": ".github/skills/runtime-verification/SKILL.md", "artifact_type": "skill", "primitive": 10, "template": "runtime-verification/SKILL.md.tmpl", "checksum": "a04f6d5d4db2fe121bf9eb74a989d9021eeff7fb0210ba830a4c2ce99e6fd18b"},
-    {"path": ".github/skills/operational-closure/SKILL.md", "artifact_type": "skill", "primitive": 10, "template": "operational-closure/SKILL.md.tmpl", "checksum": "3687a4844bb209762907c1110f7088607c776775debbc225f6209ff81d216f51"},
-    {"path": ".github/skills/safety-modes/SKILL.md", "artifact_type": "skill", "primitive": 5, "template": "safety-modes/SKILL.md.tmpl", "checksum": "12cff288698ddd5b2365ba5939eae148fe56240cf09af74d470402517a510942"},
-    {"path": ".github/skills/shipment-reconcile/SKILL.md", "artifact_type": "skill", "primitive": 4, "template": "shipment-reconcile/SKILL.md.tmpl", "checksum": "2c325f0d04e956976f99e3bb2018320551ac4b38fa1677687ffa5bd9187f0b73"},
-    {"path": ".github/skills/skill-search/SKILL.md", "artifact_type": "skill", "primitive": 9, "template": "skill-search/SKILL.md.tmpl", "checksum": "4b5b4423eef36132a30108880409010fb25d1d3b2bbb5869eaa706955604b578"},
-    {"path": ".github/skills/file-lock/SKILL.md", "artifact_type": "skill", "primitive": 5, "template": "file-lock/SKILL.md.tmpl", "checksum": "92f9ab1fd3de3a5e2967e9aa9c4dea2f49c58589c892df04c47c892be3a0a563"},
-    {"path": ".github/skills/harness-architect/SKILL.md", "artifact_type": "skill", "primitive": 4, "template": "harness-architect/SKILL.md.tmpl", "checksum": "3c50d433b7bbcfbe016b2ee33cc8dac696ad7fd3be506ddbf89d7c2358303345"},
-    {"path": ".github/instructions/agent-intercom.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "agent-intercom.instructions.md.tmpl", "checksum": "e7174c194fbea20661bc51f37f11aad9e95b3c68d73aa2d64e6048c8ee742133"},
-    {"path": ".github/instructions/agent-engram.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "agent-engram.instructions.md.tmpl", "checksum": "259c5ced53df9b24634f3b6968f2d17d7cdcdbcdcee104ca2542e13f94eac747"},
-    {"path": ".github/instructions/backlogit.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "backlogit.instructions.md.tmpl", "checksum": "4587a1fcbe01ca19b324326366055cffd15af3f07224a4b04a19864f8fe950b8"},
-    {"path": ".github/instructions/backlogit-sql-schema.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "backlogit-sql-schema.instructions.md.tmpl", "checksum": "faea523e24f3275e97690e2c812ff0a35feb7e2ac5a455462f402b70136483f0"},
-    {"path": ".github/instructions/backlogit-yaml-header-tooling.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "backlogit-yaml-header-tooling.instructions.md.tmpl", "checksum": "d25b8a19e84b3fac44f0de7b5fb2939edcd6b7258484eee65ed303e968f25441"},
-    {"path": ".github/instructions/backlog-integration.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "backlog-integration.instructions.md.tmpl", "checksum": "4fe1842b44591c840658608009bc4f686e2a57203f97ec1b2008d032d194f049"},
-    {"path": ".github/instructions/adversarial-review.instructions.md", "artifact_type": "instruction", "primitive": 7, "template": "adversarial-review.instructions.md.tmpl", "checksum": "78f034f81859b364ffcc38e1e48e8417dca46c43cbe3c9eeeadb5663dd71b77f"},
-    {"path": ".github/instructions/concurrency.instructions.md", "artifact_type": "instruction", "primitive": 5, "template": "concurrency.instructions.md.tmpl", "checksum": "81a7b997eefe10d15689479e169963ee4aa71e65cdd840940de7e0df7142aa78"},
-    {"path": ".github/instructions/circuit-breaker.instructions.md", "artifact_type": "instruction", "primitive": 5, "template": "circuit-breaker.instructions.md.tmpl", "checksum": "27368b75943f6a57cbfe740017d43f9dba2242f74f2be0da55273acf16bf5a7d"},
-    {"path": ".github/instructions/ci-security.instructions.md", "artifact_type": "instruction", "primitive": 5, "template": "ci-security.instructions.md.tmpl", "checksum": "35f4fd46c398933f1688b3ea5594d9b5784fe7e0f3ccb5b808f8172ed2eef0db"},
-    {"path": ".github/instructions/github-pr-automation.instructions.md", "artifact_type": "instruction", "primitive": 4, "template": "github-pr-automation.instructions.md.tmpl", "checksum": "aa764b0aa5eaf40e3e1bfba5e1495167a16bb3c4d4ca613829a3e24d6c244e7f"},
-    {"path": ".github/instructions/mcp-server.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "mcp-server.instructions.md.tmpl", "checksum": "a839b723ee67868eb201f0998e8005409951407a9264f9af34bd38c6eff0896e"},
-    {"path": ".github/instructions/technology-rust.instructions.md", "artifact_type": "instruction", "primitive": 6, "template": "technology-rust.instructions.md.tmpl", "checksum": "d80fe4e78a47e6a43324031c26662aa5ada4e6e5a3d30c3d8be12aed63d296f4"},
-    {"path": ".github/instructions/architecture-doc.instructions.md", "artifact_type": "instruction", "primitive": 9, "template": "architecture-doc.instructions.md.tmpl", "checksum": "2894f4fac16ad83b703927991e751e0df28b7d8ec58373f6ecf76019fd9c82ca"},
-    {"path": ".github/agents/review/architecture-strategist.agent.md", "artifact_type": "agent", "primitive": 7, "template": "review/architecture-strategist.agent.md.tmpl", "checksum": "e2eb944d1e7310c247041e2bc75590f7c7b8f5d2b29bd2cb44fa08d2125336e5"},
-    {"path": ".github/agents/review/concurrency-reviewer.agent.md", "artifact_type": "agent", "primitive": 7, "template": "review/concurrency-reviewer.agent.md.tmpl", "checksum": "38b6f969363c87fab50be650703a1916403f381d4bf214726c61a87c0fca82a4"},
-    {"path": ".github/agents/review/constitution-reviewer.agent.md", "artifact_type": "agent", "primitive": 7, "template": "review/constitution-reviewer.agent.md.tmpl", "checksum": "24ae8d48a185b97a75b66f1267ab63079e0f1dba85f3c271176a5c9c6b76648e"},
-    {"path": ".github/agents/review/scope-boundary-auditor.agent.md", "artifact_type": "agent", "primitive": 7, "template": "review/scope-boundary-auditor.agent.md.tmpl", "checksum": "8f4d9a4c602ae08e07e1460c69b0d284f3b23f96b8a7489979482e08e1322950"},
-    {"path": ".github/agents/review/technology-reviewer.agent.md", "artifact_type": "agent", "primitive": 7, "template": "review/technology-reviewer.agent.md.tmpl", "checksum": "00455a1df0f60887c709ec2813a11d05ff96ad84662b8ca1ad9a8072568c55ff"},
-    {"path": ".github/agents/review/agent-native-parity-reviewer.agent.md", "artifact_type": "agent", "primitive": 7, "template": "review/agent-native-parity-reviewer.agent.md.tmpl", "checksum": "5acf981655592c6c244fd1aa1c6883f198a8fe1f3f854733d2893953fb4aba06"},
-    {"path": ".github/agents/research/learnings-researcher.agent.md", "artifact_type": "agent", "primitive": 1, "template": "research/learnings-researcher.agent.md.tmpl", "checksum": "89fd021cfb851d14507a0acd7575f50b35a47cac23e4383e9c1902b6c74ecfd0"},
-    {"path": ".github/agents/adversarial-review.agent.md", "artifact_type": "agent", "primitive": 7, "template": "adversarial-review.agent.md.tmpl", "checksum": "534d190cb867756ce3bb158e0be0e5fed3432aec5f41ea0c94ae0d384a60d949"},
-    {"path": ".github/agents/language-engineer.agent.md", "artifact_type": "agent", "primitive": 4, "template": "language-engineer.agent.md.tmpl", "checksum": "54ac91e600dd38e1a22487cfe072ff4602de2ad76420c90a8ef560d717e88094"},
-    {"path": ".github/prompts/stage-grouping-analysis.prompt.md", "artifact_type": "prompt", "primitive": 2, "template": "stage-grouping-analysis.prompt.md.tmpl", "checksum": "d9cdc97d07fde6f09a0b3bfaac6252f46ca2c7ebca42503ceb4c0a99835be78e"}
+    {
+      "path": ".autoharness/config.yaml",
+      "artifact_type": "config",
+      "primitive": 3,
+      "template": "harness-config.yaml.tmpl",
+      "checksum": "9f604c2987ec13c4cd1679b9b42525f7d5ea310538aaf59ada2eea63536b90d7"
+    },
+    {
+      "path": ".github/agents/orchestrator.agent.md",
+      "artifact_type": "agent",
+      "primitive": 4,
+      "template": "agents/orchestrator.agent.md.tmpl",
+      "checksum": "9c3cb0adb3b855e056655754d9e8907d275895a3e63f412348eacd248acb5fc1"
+    },
+    {
+      "path": ".github/agents/research/learnings-researcher.agent.md",
+      "artifact_type": "agent",
+      "primitive": 1,
+      "template": "agents/research/learnings-researcher.agent.md.tmpl",
+      "checksum": "262a1b29b4ec28575ca564f9b56072c4a2ca52f2ca52110b385d0678475f8b06"
+    },
+    {
+      "path": ".github/agents/review/adversarial-review.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/adversarial-review.agent.md.tmpl",
+      "checksum": "94540eaee1586d63b0470380e7273449754b1a13f73197b7b0bfabe6a35744ae"
+    },
+    {
+      "path": ".github/agents/review/agent-native-parity-reviewer.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/agent-native-parity-reviewer.agent.md.tmpl",
+      "checksum": "3ce7561887a79dd5c6718aa62f76d114d765f33c98268864d39c32167bf90c9a"
+    },
+    {
+      "path": ".github/agents/review/architecture-strategist.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/architecture-strategist.agent.md.tmpl",
+      "checksum": "708b4fcaa1f8c763eabe059c7cbab124847d65483d37b935a17a3d6dfd8b1ac2"
+    },
+    {
+      "path": ".github/agents/review/concurrency-reviewer.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/concurrency-reviewer.agent.md.tmpl",
+      "checksum": "4b07534117401075ad08ed2b57c04fb32b39240ce76ea580cd931e249be63e73"
+    },
+    {
+      "path": ".github/agents/review/constitution-reviewer.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/constitution-reviewer.agent.md.tmpl",
+      "checksum": "550e36fa1f6a1e02f94817137b9bb8df98c24e67628c542b6e732fe1300beea6"
+    },
+    {
+      "path": ".github/agents/review/scope-boundary-auditor.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/scope-boundary-auditor.agent.md.tmpl",
+      "checksum": "6ea050e07946a92178b8dd63b5a71c45b7648e7765620f6dee8478281dd9ef44"
+    },
+    {
+      "path": ".github/agents/review/security-lens-reviewer.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/security-lens-reviewer.agent.md.tmpl",
+      "checksum": "d9299499f7015556b6f98515880e88d50504cd61c3db8a91dba4dede255e3af3"
+    },
+    {
+      "path": ".github/agents/review/security-reviewer.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/security-reviewer.agent.md.tmpl",
+      "checksum": "1b502b697f01c6c675b572f686bd2887dfcc2d8405fc368556c25f4c5588a862"
+    },
+    {
+      "path": ".github/agents/review/technology-reviewer.agent.md",
+      "artifact_type": "agent",
+      "primitive": 7,
+      "template": "agents/review/technology-reviewer.agent.md.tmpl",
+      "checksum": "9a26a40f2ce1591a7f5d0e329c78726b15bb8b2504707a5bf2d4ec2222050a82"
+    },
+    {
+      "path": ".github/agents/security-sentinel.agent.md",
+      "artifact_type": "agent",
+      "primitive": 5,
+      "template": "agents/security-sentinel.agent.md.tmpl",
+      "checksum": "173b4f0f00fbf45f6f967636481dd373480b7d0e9c3e68503df4fba8410c2b1f"
+    },
+    {
+      "path": ".github/agents/ship.agent.md",
+      "artifact_type": "agent",
+      "primitive": 4,
+      "template": "agents/ship.agent.md.tmpl",
+      "checksum": "221ab7f1c0602ec884382a54d8b98d38b4ef50ffe0e50ddd4b8d9a5922beeae4"
+    },
+    {
+      "path": ".github/agents/stage.agent.md",
+      "artifact_type": "agent",
+      "primitive": 4,
+      "template": "agents/stage.agent.md.tmpl",
+      "checksum": "b19eb8a76585b38377b7f45d4aa8199532186113f11292e64c7a05f79bee23fb"
+    },
+    {
+      "path": ".github/agents/subagents/language-engineer.agent.md",
+      "artifact_type": "agent",
+      "primitive": 4,
+      "template": "agents/language-engineer.agent.md.tmpl",
+      "checksum": "f4156a8f9649613621fd2af3056d81fb5052fd13c082aaffd374ac9a53f5c8b2"
+    },
+    {
+      "path": ".github/agents/subagents/prompt-builder.agent.md",
+      "artifact_type": "agent",
+      "primitive": 4,
+      "template": "agents/prompt-builder.agent.md.tmpl",
+      "checksum": "cd391b3e1a76683744491990c81e8fd9f314283f376f9720ab579063b691dcfe"
+    },
+    {
+      "path": ".github/copilot-instructions.md",
+      "artifact_type": "foundation",
+      "primitive": 6,
+      "template": "foundation/copilot-instructions.md.tmpl",
+      "checksum": "164ffbdd096027fe4f56257b98ff1f74ca3c9804a3f63920b061149cdbad5a29"
+    },
+    {
+      "path": ".github/instructions/adversarial-review.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 7,
+      "template": "instructions/adversarial-review.instructions.md.tmpl",
+      "checksum": "78f034f81859b364ffcc38e1e48e8417dca46c43cbe3c9eeeadb5663dd71b77f"
+    },
+    {
+      "path": ".github/instructions/agent-engram.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/agent-engram.instructions.md.tmpl",
+      "checksum": "259c5ced53df9b24634f3b6968f2d17d7cdcdbcdcee104ca2542e13f94eac747"
+    },
+    {
+      "path": ".github/instructions/agent-intercom.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/agent-intercom.instructions.md.tmpl",
+      "checksum": "e7174c194fbea20661bc51f37f11aad9e95b3c68d73aa2d64e6048c8ee742133"
+    },
+    {
+      "path": ".github/instructions/architecture-doc.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 9,
+      "template": "instructions/architecture-doc.instructions.md.tmpl",
+      "checksum": "2894f4fac16ad83b703927991e751e0df28b7d8ec58373f6ecf76019fd9c82ca"
+    },
+    {
+      "path": ".github/instructions/backlog-integration.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/backlog-integration.instructions.md.tmpl",
+      "checksum": "f748d856f333e581e6144ae6f9ff93b9d0a4c67e2768943bf5371426f3fb77d5"
+    },
+    {
+      "path": ".github/instructions/backlogit-sql-schema.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/backlogit-sql-schema.instructions.md.tmpl",
+      "checksum": "faea523e24f3275e97690e2c812ff0a35feb7e2ac5a455462f402b70136483f0"
+    },
+    {
+      "path": ".github/instructions/backlogit-yaml-header-tooling.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/backlogit-yaml-header-tooling.instructions.md.tmpl",
+      "checksum": "d25b8a19e84b3fac44f0de7b5fb2939edcd6b7258484eee65ed303e968f25441"
+    },
+    {
+      "path": ".github/instructions/backlogit.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/backlogit.instructions.md.tmpl",
+      "checksum": "4587a1fcbe01ca19b324326366055cffd15af3f07224a4b04a19864f8fe950b8"
+    },
+    {
+      "path": ".github/instructions/ci-security.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 5,
+      "template": "instructions/ci-security.instructions.md.tmpl",
+      "checksum": "5a1342489bcb5663dfd2d5a8b2fb56a428be9b8eef2d73a378507313ce2eda06"
+    },
+    {
+      "path": ".github/instructions/circuit-breaker.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 5,
+      "template": "instructions/circuit-breaker.instructions.md.tmpl",
+      "checksum": "27368b75943f6a57cbfe740017d43f9dba2242f74f2be0da55273acf16bf5a7d"
+    },
+    {
+      "path": ".github/instructions/commit-message.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/commit-message.instructions.md.tmpl",
+      "checksum": "3da36704eaced148fe93bda7549a0887eeabd7287ec76c5ebbf2f55320a4c063"
+    },
+    {
+      "path": ".github/instructions/concurrency.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 5,
+      "template": "instructions/concurrency.instructions.md.tmpl",
+      "checksum": "81a7b997eefe10d15689479e169963ee4aa71e65cdd840940de7e0df7142aa78"
+    },
+    {
+      "path": ".github/instructions/constitution.instructions.md",
+      "artifact_type": "foundation",
+      "primitive": 5,
+      "template": "foundation/constitution.instructions.md.tmpl",
+      "checksum": "238d7027431dbc60d2fd6de535ac07fb181c15c8b67fa1368f921a839467061f"
+    },
+    {
+      "path": ".github/instructions/git-merge.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/git-merge.instructions.md.tmpl",
+      "checksum": "fa06c7b36ab3ff785ed003342dd52a92d3a8582ee8293d7f3a0a96d22f34b497"
+    },
+    {
+      "path": ".github/instructions/github-pr-automation.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 4,
+      "template": "instructions/github-pr-automation.instructions.md.tmpl",
+      "checksum": "aa764b0aa5eaf40e3e1bfba5e1495167a16bb3c4d4ca613829a3e24d6c244e7f"
+    },
+    {
+      "path": ".github/instructions/graphtor-docs.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/graphtor-docs.instructions.md.tmpl",
+      "checksum": "c719d7a2a0c672a0171ec141ba46b6d800922081634e68f70b920335727ee959"
+    },
+    {
+      "path": ".github/instructions/markdown.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/markdown.instructions.md.tmpl",
+      "checksum": "6ac28f56d9d00c13b76362d6058fbc8da42afe6eb96acd34fc53d9bf40868d9c"
+    },
+    {
+      "path": ".github/instructions/mcp-server.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/mcp-server.instructions.md.tmpl",
+      "checksum": "acbd6d7a7032b5484912cdcc1658c1425459e9bc77e9ab04f5a401b8ef6bf960"
+    },
+    {
+      "path": ".github/instructions/prompt-builder.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/prompt-builder.instructions.md.tmpl",
+      "checksum": "306270c592268efbff4386f069afae3ac41e311e0eeab855835acd3fb0303fc5"
+    },
+    {
+      "path": ".github/instructions/pull-request.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/pull-request.instructions.md.tmpl",
+      "checksum": "39f13c4648fce30421002fb9704e6996e116cc9f5ae2cea7cec6ad4df2d9c6e5"
+    },
+    {
+      "path": ".github/instructions/release-observability.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 10,
+      "template": "instructions/release-observability.instructions.md.tmpl",
+      "checksum": "8ecd4c49c4589b8ada7f59ef45795ef31ce41f8ace65cb7fe1d34bcbd17a2c92"
+    },
+    {
+      "path": ".github/instructions/strict-safety.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 5,
+      "template": "instructions/strict-safety.instructions.md.tmpl",
+      "checksum": "9f70e1c9978d1071a3460dd91f5b057401e26892b97a93b2d5c94eaaf4c0f790"
+    },
+    {
+      "path": ".github/instructions/technology-rust.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/technology-rust.instructions.md.tmpl",
+      "checksum": "d80fe4e78a47e6a43324031c26662aa5ada4e6e5a3d30c3d8be12aed63d296f4"
+    },
+    {
+      "path": ".github/instructions/technology.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/technology.instructions.md.tmpl",
+      "checksum": "3acf9a19b5c38d579c635e9a21e342b70cabdd340a2a409735b465ad63b459f4"
+    },
+    {
+      "path": ".github/instructions/workflows.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/workflows.instructions.md.tmpl",
+      "checksum": "a821b82483d642647cc6f4fe41990345181014d9c76763c951db453e12e4e1e9"
+    },
+    {
+      "path": ".github/instructions/writing-style.instructions.md",
+      "artifact_type": "instruction",
+      "primitive": 6,
+      "template": "instructions/writing-style.instructions.md.tmpl",
+      "checksum": "1fc5cdcb661bd09ec47193af6e6a50d8c36b1e2991c2164a4a6a33d2c630af79"
+    },
+    {
+      "path": ".github/policies/policy-proposal.md",
+      "artifact_type": "policy",
+      "primitive": 8,
+      "template": "policies/policy-proposal.md.tmpl",
+      "checksum": "65db62479e8cbbdf3cf404e573f5c7a5f67df5aba53c23ed08c23c3f8cca5a91"
+    },
+    {
+      "path": ".github/policies/workflow-policies.md",
+      "artifact_type": "policy",
+      "primitive": 8,
+      "template": "policies/workflow-policies.md.tmpl",
+      "checksum": "14616626bac112e2634bcc48c18fccf82dc3408d6923e8643ee0f2aa4bceb42f"
+    },
+    {
+      "path": ".github/prompts/ping-loop.prompt.md",
+      "artifact_type": "prompt",
+      "primitive": 2,
+      "template": "prompts/ping-loop.prompt.md.tmpl",
+      "checksum": "e3cbf1c649b0e3da65670d9c5eea846a66a1d0ec3e82071f80c7ea2ebf71dfc6"
+    },
+    {
+      "path": ".github/prompts/stage-grouping-analysis.prompt.md",
+      "artifact_type": "prompt",
+      "primitive": 2,
+      "template": "prompts/stage-grouping-analysis.prompt.md.tmpl",
+      "checksum": "d9cdc97d07fde6f09a0b3bfaac6252f46ca2c7ebca42503ceb4c0a99835be78e"
+    },
+    {
+      "path": ".github/skills/browser-automation/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/browser-automation/SKILL.md.tmpl",
+      "checksum": "c4da5af8d5465a246142bd2f7d5b7d897748371e5cf85cc51b028831d5fcb213"
+    },
+    {
+      "path": ".github/skills/build-feature/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/build-feature/SKILL.md.tmpl",
+      "checksum": "29a1766d1d41509eac66fe3eef9bc452a3afdd7bc54c402052910b281ad26f4a"
+    },
+    {
+      "path": ".github/skills/compact-context/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 1,
+      "template": "skills/compact-context/SKILL.md.tmpl",
+      "checksum": "c029725b2ff7681e4afbfab84ca09c5c658f0d0c08597ca6cd66c1fb4b99d70d"
+    },
+    {
+      "path": ".github/skills/compound-refresh/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 1,
+      "template": "skills/compound-refresh/SKILL.md.tmpl",
+      "checksum": "99f849184442886817ffd58f0060428e62c510fb516c85e546b6cfbfd4f28e11"
+    },
+    {
+      "path": ".github/skills/compound/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 1,
+      "template": "skills/compound/SKILL.md.tmpl",
+      "checksum": "ab110afd176440434db57a6ba3b8452d5d5f0a68d74cccaa1b25604ba1ef8846"
+    },
+    {
+      "path": ".github/skills/deliberate/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/deliberate/SKILL.md.tmpl",
+      "checksum": "e5e0d459c6eb57d87ad0790e32ad550fbc1ff77ff94df33b2f3f8b492ac0a323"
+    },
+    {
+      "path": ".github/skills/evolve/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 1,
+      "template": "skills/evolve/SKILL.md.tmpl",
+      "checksum": "cfc0ad402117c288651e10a9b4a34ed1a38da1c5a51e4c1865974cd243ef6928"
+    },
+    {
+      "path": ".github/skills/file-lock/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 5,
+      "template": "skills/file-lock/SKILL.md.tmpl",
+      "checksum": "92f9ab1fd3de3a5e2967e9aa9c4dea2f49c58589c892df04c47c892be3a0a563"
+    },
+    {
+      "path": ".github/skills/fix-ci/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/fix-ci/SKILL.md.tmpl",
+      "checksum": "a3583ec95104005da67d93b4ae847650ba16f29c9e282e8503b52b54f4e60cc2"
+    },
+    {
+      "path": ".github/skills/harness-architect/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/harness-architect/SKILL.md.tmpl",
+      "checksum": "5aea4e30646d1f538be4be6344b02c343b18f1664d706ff518faef1113e0771a"
+    },
+    {
+      "path": ".github/skills/harness-doctor/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 7,
+      "template": "skills/harness-doctor/SKILL.md.tmpl",
+      "checksum": "e58eb907f3febbb3116d6e4e2ace8fe4a7d46b335e872ea51fe9a929532d807c"
+    },
+    {
+      "path": ".github/skills/harvest/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 2,
+      "template": "skills/harvest/SKILL.md.tmpl",
+      "checksum": "748f8c98b42bdc39497b45af2b5fb304e2296c51a2e6d68c3754f6a056d5f280"
+    },
+    {
+      "path": ".github/skills/impl-plan/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 2,
+      "template": "skills/impl-plan/SKILL.md.tmpl",
+      "checksum": "00b5606f84ac817f546c1dd1c729bbfe46e7d3e1b0abf64a8dad62a8c74513b1"
+    },
+    {
+      "path": ".github/skills/iterative-experiment/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/iterative-experiment/SKILL.md.tmpl",
+      "checksum": "d16ee90bdc02c2425f3bdf27ee9d9cd65d71abb7225ef0ff6edff4c98cdc4c86"
+    },
+    {
+      "path": ".github/skills/learn/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 1,
+      "template": "skills/learn/SKILL.md.tmpl",
+      "checksum": "211a3808294ad1584a51ce403939590f19121621776c66c516c8623acf9524ab"
+    },
+    {
+      "path": ".github/skills/observe/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 1,
+      "template": "skills/observe/SKILL.md.tmpl",
+      "checksum": "763b621f5098004bcdbeeb04e553b2cd4716171e24a4c57e92e984ca0a902c1c"
+    },
+    {
+      "path": ".github/skills/operational-closure/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 10,
+      "template": "skills/operational-closure/SKILL.md.tmpl",
+      "checksum": "3687a4844bb209762907c1110f7088607c776775debbc225f6209ff81d216f51"
+    },
+    {
+      "path": ".github/skills/plan-harden/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 10,
+      "template": "skills/plan-harden/SKILL.md.tmpl",
+      "checksum": "ae768c39c1bb1ec9dffc40e189ee33aead436431b407b08f8aebcd8298d5132b"
+    },
+    {
+      "path": ".github/skills/plan-review/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 7,
+      "template": "skills/plan-review/SKILL.md.tmpl",
+      "checksum": "0ba84fc812eb1703d0115492ce0ef089f5a355baa6196c6183da1e43db63f5d8"
+    },
+    {
+      "path": ".github/skills/pr-lifecycle/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/pr-lifecycle/SKILL.md.tmpl",
+      "checksum": "fe9791b9cbcba9f000c3796d90b71f135a400c28c650ec16d9628dc046e87b80"
+    },
+    {
+      "path": ".github/skills/review/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 7,
+      "template": "skills/review/SKILL.md.tmpl",
+      "checksum": "5540ebf78d51c7fb4c5165eb014ce4982ad7a8dc90d8e1c53bb010181f9dba20"
+    },
+    {
+      "path": ".github/skills/runtime-verification/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 10,
+      "template": "skills/runtime-verification/SKILL.md.tmpl",
+      "checksum": "a04f6d5d4db2fe121bf9eb74a989d9021eeff7fb0210ba830a4c2ce99e6fd18b"
+    },
+    {
+      "path": ".github/skills/safety-modes/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 5,
+      "template": "skills/safety-modes/SKILL.md.tmpl",
+      "checksum": "12cff288698ddd5b2365ba5939eae148fe56240cf09af74d470402517a510942"
+    },
+    {
+      "path": ".github/skills/security-audit/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 5,
+      "template": "skills/security-audit/SKILL.md.tmpl",
+      "checksum": "f7b58314a831b45e3b81bef7e8d64e24ec722e5da46b1b25d3318a71fe512467"
+    },
+    {
+      "path": ".github/skills/shipment-reconcile/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/shipment-reconcile/SKILL.md.tmpl",
+      "checksum": "2c325f0d04e956976f99e3bb2018320551ac4b38fa1677687ffa5bd9187f0b73"
+    },
+    {
+      "path": ".github/skills/skill-search/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 9,
+      "template": "skills/skill-search/SKILL.md.tmpl",
+      "checksum": "4b5b4423eef36132a30108880409010fb25d1d3b2bbb5869eaa706955604b578"
+    },
+    {
+      "path": ".github/skills/spike/SKILL.md",
+      "artifact_type": "skill",
+      "primitive": 4,
+      "template": "skills/spike/SKILL.md.tmpl",
+      "checksum": "e6a8bf8c7aa140063a535da898146f5314e5b093c8f391375d66372203099cc9"
+    },
+    {
+      "path": ".markdownlint.json",
+      "artifact_type": "script",
+      "primitive": 5,
+      "template": "scripts/.markdownlint.json.tmpl",
+      "checksum": "40392c674cd1bee95e319d44ad7389562f9722e49fc5fcfefb9a09b45d0e4d46"
+    },
+    {
+      "path": "AGENTS.md",
+      "artifact_type": "foundation",
+      "primitive": 9,
+      "template": "foundation/AGENTS.md.tmpl",
+      "checksum": "897c0546a9b6755da72b257f22087b9606bf7e7d82394f232b4acbf9329909cb"
+    },
+    {
+      "path": "scripts/pre-commit-markdownlint.ps1",
+      "artifact_type": "script",
+      "primitive": 5,
+      "template": "scripts/pre-commit-markdownlint.ps1.tmpl",
+      "checksum": "3fe8142f02cd30f142091c12bff38cdd8131ffcdb51bec750148e78a2903cb8d"
+    },
+    {
+      "path": "scripts/pre-commit-markdownlint.sh",
+      "artifact_type": "script",
+      "primitive": 5,
+      "template": "scripts/pre-commit-markdownlint.sh.tmpl",
+      "checksum": "66d223e8102f82f52d9c4f89b36255660ea29026acd99772c2768c8ec98ea8f4"
+    },
+    {
+      "path": "start.ps1",
+      "artifact_type": "script",
+      "primitive": 5,
+      "template": "scripts/start.ps1.tmpl",
+      "checksum": "14773fdb2d35fee97dad4faedb13608e9276047e868d3eb96a9a3c01213f7c6a"
+    },
+    {
+      "path": "start.sh",
+      "artifact_type": "script",
+      "primitive": 5,
+      "template": "scripts/start.sh.tmpl",
+      "checksum": "132d05b0daa9657bf7661e6fe9e575899a851480ca00636d3e3d19353c027eb7"
+    }
   ],
   "variables_used": {
+    "PROJECT_NAME": "graphtor-docs",
     "PRIMARY_LANGUAGE": "Rust",
     "LANGUAGE_VERSION": "edition 2021, rust-version 1.75",
     "BUILD_TOOL": "cargo",
@@ -95,7 +697,6 @@
     "FORMAT_COMMAND": "cargo fmt --all",
     "FORMAT_CHECK_COMMAND": "cargo fmt --all -- --check",
     "CI_PLATFORM": "GitHub Actions",
-    "PROJECT_NAME": "graphtor-docs",
     "BACKLOG_TOOL_NAME": "backlogit",
     "BACKLOG_DIRECTORY": ".backlogit",
     "DOCS_ROOT": "docs",
@@ -103,7 +704,8 @@
     "DOCS_PLANS": "docs/exec-plans",
     "DOCS_DECISIONS": "docs/decisions",
     "DOCS_MEMORY": "docs/memory",
-    "DOCS_CLOSURE": "docs/closure"
+    "DOCS_CLOSURE": "docs/closure",
+    "ORCHESTRATOR_FAMILY": "gpt-5.4"
   },
   "tuning_history": [
     {
@@ -117,7 +719,10 @@
         "Added P-011: Branch Protection for Shipping Workflows policy",
         "Updated Ship Step 5 to explicitly require PR merge before ship_shipment"
       ],
-      "policies_added": ["P-010", "P-011"],
+      "policies_added": [
+        "P-010",
+        "P-011"
+      ],
       "evidence": "Agent called backlogit_ship_shipment during Stage operation without PR, violating branch protection and Stage/Ship boundary"
     }
   ],

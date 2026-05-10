@@ -206,66 +206,120 @@ P-005 violation event.
 
 ---
 
-## P-010: Stage/Ship Boundary Enforcement (NON-NEGOTIABLE)
+## P-010: Agent Role Boundary
 
 | Field      | Value                                    |
 |------------|------------------------------------------|
 | Policy ID  | P-010                                    |
-| Applies To | `stage`, `ship`                          |
-| Gate Point | Every tool invocation and backlog mutation |
+| Applies To | `stage`, `orchestrator`                  |
+| Gate Point | Session start, any step that would violate Stage scope |
 
-**Statement**: The Stage agent and Ship agent have non-overlapping operational domains. Stage owns the stash-to-backlog pipeline (triage, deliberation, planning, review gating, harvest, shipment assembly). Ship owns the backlog-to-shipped pipeline (branch creation, build execution, code review, CI remediation, PR lifecycle, merge, post-merge closure, and archive). Neither agent may perform actions belonging to the other's domain.
+**Statement**: The Stage agent is a planning and decomposition agent. It must not act outside its stash-to-shipment scope. The Orchestrator agent must not perform Stage or Ship work directly — it routes to them as subagents.
 
 **Stage MUST NOT**:
+- Create or checkout implementation feature or chore branches for code execution
+- Write, modify, or delete application source code, test files, or configuration files
+- Run build systems, test suites, or linters
+- Create, push, or merge pull requests
+- Claim or close shipments on behalf of Ship
 
-1. Call `backlogit_ship_shipment` — shipping is Ship's post-merge closure action
-2. Call `backlogit_archive_item` — archival is a Ship-only post-merge action
-3. Call `backlogit_delete_item` — destructive item removal requires Ship with operator approval
-4. Call `backlogit_claim_shipment` — shipment claiming is Ship's first execution step
-5. Push code to any branch (Stage does not write application code)
-6. Create or merge pull requests (PR lifecycle is Ship-only)
-7. Run `git push` in any form
+**Stage MAY** (within its legitimate scope):
+- Create, update, or archive backlog items, stash entries, shipment manifests, deliberation artifacts, and planning artifacts
+- Commit backlog and planning artifacts (on the default branch or a dedicated chore/admin branch)
+- Read source code files to understand context for planning
+- Invoke deliberation, spike, impl-plan, plan-harden, plan-review, harvest, and compound skills
 
-**Ship MUST NOT**:
-
-1. Call `backlogit_harvest_stash` — stash harvesting is Stage's decomposition action
-2. Call `backlogit_create_shipment` — shipment creation is Stage's assembly action
-3. Call `backlogit_deliberate` — deliberation routing is Stage's decision action
-4. Triage, re-prioritize, or reclassify stash entries
-
-**Handoff Protocol**: Stage's terminal action is confirming shipment readiness and reporting to the operator. The operator then orchestrates Ship (potentially with a different model or agent configuration). There is NO automatic handoff between Stage and Ship.
-
-**Precondition**: Tool lists are the primary enforcement mechanism — forbidden tools are removed from each agent's `tools:` frontmatter field. This policy provides secondary enforcement via explicit prohibition rules that agents must honor even if tool-list filtering fails.
-
-**Violation Action**: Immediate halt. Broadcast a P-005 violation event with the specific forbidden action attempted. Do not proceed. The agent must explain the violation to the operator and await guidance.
+**Violation Action**: Record a P-010 violation (via P-005 telemetry) and halt. Do not proceed past the boundary even if the operator requests implementation work — redirect to Ship instead.
 
 ---
 
-## P-011: Branch Protection for Shipping Workflows
+## P-011: Branch-Before-Mutation
 
 | Field      | Value                                    |
 |------------|------------------------------------------|
 | Policy ID  | P-011                                    |
-| Applies To | `ship`, all agents that create commits   |
-| Gate Point | Pre-push, pre-merge, branch creation     |
+| Applies To | `ship`                                   |
+| Gate Point | Ship Step 0.5, before any workspace or backlog mutation |
 
-**Statement**: All code changes, documentation updates, and backlog state commits MUST arrive on the default branch (`main` or `master`) exclusively via pull request merge. No agent, automation, or workflow may push directly to the default branch. Feature branches are mandatory for all committed work.
+**Statement**: The Ship agent must verify that a feature or chore branch is active before performing any workspace mutation (code changes, file writes, backlog claim). The default branch must never be the active branch when Ship performs implementation work.
 
-**Rules**:
+**Precondition**: A branch named `feat/{slug}` or `chore/{slug}` is checked out and the worktree is clean before the first mutation.
 
-1. **Never push directly to `main` or `master`** — all changes must arrive via PR merge
-2. **Never force-push** to any shared or protected branch
-3. **Always create a feature branch** before committing any work (Ship Step 0.5)
-4. **Branch naming**: Use `feat/{slug}`, `chore/{slug}`, `fix/{slug}`, or `docs/{slug}`
-5. **PR required before merge** — no branch may be merged without an open, reviewed PR
-6. **Operator approval required** — no PR may be merged without explicit operator approval
-7. **Ship owns the full branch lifecycle**: create branch → commit → push → open PR → CI → review → operator-approved merge
+**Required sequence** (when not already on the correct branch):
+1. `git status --short` — verify the worktree is clean
+2. `git checkout main`
+3. `git pull`
+4. `git checkout -b feat/{feature-slug}` or `git checkout -b chore/{chore-slug}`
 
-**Precondition**: The repository has branch protection rules enabled on `main`/`master`. The `.githooks/pre-push` hook blocks direct pushes at the client side.
+**Edge cases**:
+- If already on the correct shipment branch: proceed without creating a new branch
+- If on a wrong non-default branch: halt and require operator instruction
+- If worktree is dirty before branch creation: halt and do not create branch
 
-**Postcondition**: Every commit on the default branch has a merge commit parent from a feature branch PR.
+**Violation Action**: Record a P-011 violation (via P-005 telemetry) and halt. Do not proceed with any workspace mutations until a feature branch is active.
 
-**Violation Action**: Immediate halt. If any agent detects it is about to push directly to the default branch, it MUST stop, broadcast a P-005 violation event, and inform the operator. Under no circumstances may the push proceed.
+---
+
+## P-012: Tool Availability and Declared Degradation
+
+| Field      | Value                                    |
+|------------|------------------------------------------|
+| Policy ID  | P-012                                    |
+| Applies To | All agents and skills                    |
+| Gate Point | Session start (Step 0.0) before any pipeline work |
+
+**Statement**: Agents must probe configured tools before relying on them and must explicitly declare degraded mode when a configured tool is unavailable. Silent fallback to ad hoc filesystem operations (grep, cat, find) when a configured tool is expected is a policy violation.
+
+**Required actions at session start**:
+1. Check for `.autoharness/backlog-registry.yaml`. If present, identify required operations.
+2. Probe each required tool with a read-only lightweight operation.
+3. On failure: check for a registry-declared CLI fallback (`cli_command` field).
+   - If CLI fallback exists: log `TOOL_DEGRADED: {tool_name} — using CLI fallback` and proceed.
+   - If no fallback: halt with `TOOL_UNAVAILABLE: {tool_name}`.
+4. On success: log `TOOL_OK: {tool_name}`.
+
+**Forbidden**: Silently bypassing a configured tool with ad hoc `grep`, `cat`, or directory scans when the backlog tool is registered but unavailable. This masks configuration problems and produces incorrect results.
+
+**Exception**: When no backlog tool is registered (no `.autoharness/backlog-registry.yaml` or empty registry), file-backed manual mode is the intentional operating mode, not a degradation.
+
+**Violation Action**: Log `POLICY_VIOLATION: P-012 — silent fallback detected` (via P-005 telemetry), surface the degradation explicitly, and re-evaluate whether the session can continue safely.
+
+---
+
+## P-013: Agent Tier Hierarchy and Escalation
+
+**Purpose**: Enforce consistent model tier usage across the harness — agents must operate at their declared tier, subagents must not exceed the invoking agent's `max_subagent_tier`, and escalation to higher tiers follows a defined circuit before halting.
+
+| Field      | Value                                    |
+|------------|------------------------------------------|
+| Policy ID  | P-013                                    |
+| Applies To | All agents in the harness                |
+| Gate Point | Before every subagent invocation; before escalation requests |
+| Owner      | Orchestrator                             |
+
+### P-013.1 — Declared Tier Compliance
+
+Every agent must operate at the tier declared in its frontmatter `model_tier` field. An agent must not request a lower-capability model than its declared tier to reduce cost, nor a higher-capability model than its declared tier without following the escalation path in P-013.3.
+
+### P-013.2 — Subagent Tier Ceiling
+
+An agent must not invoke a subagent at a tier higher than its own `max_subagent_tier`. When an agent's `max_subagent_tier` is 1, it may only spawn Tier 1 subagents regardless of the complexity of the delegated work. If the work requires a higher tier, escalate the parent agent instead.
+
+### P-013.3 — Escalation Path Before Halt
+
+When a Tier 1 or Tier 2 agent fails the same unit of work 3 consecutive times, the agent must escalate to the next tier before halting:
+
+1. **Tier 1 → Tier 2 escalation**: Re-attempt with a Tier 2 model.
+2. **Tier 2 → Tier 3 escalation**: Re-attempt with a Tier 3 model (requires operator confirmation if `strict_safety` is enabled).
+3. **Tier 3 → Halt**: Record a P-013 violation (P-005 telemetry) and surface the failure to the operator with full context.
+
+Skipping escalation steps and halting prematurely is a P-013 violation.
+
+### P-013.4 — Tier Annotation in Agent Definitions
+
+Every agent definition (installed `.agent.md` or `.agent.md.tmpl`) must declare `model_tier` and `max_subagent_tier` as integer frontmatter fields. Agents that use only the opaque `model_routing` string and omit the structured fields are non-conformant and must be updated before the next harness verification pass.
+
+**Violation Action**: Record a P-013 violation (via P-005 telemetry) with the specific sub-policy identifier (P-013.1–P-013.4), halt the violating invocation, and surface the violation to the operator.
 
 ---
 
@@ -273,10 +327,12 @@ P-005 violation event.
 
 | Version | Date         | Change           | Reason                     |
 |---------|--------------|------------------|----------------------------|
-| 1.0.0   | 2026-04-29     | Initial registry | Generated by autoharness   |
-| 1.1.0   | 2026-04-29     | Added P-006      | Plan hardening gate enforcement |
-| 1.2.0   | 2026-04-29     | Added P-007      | Backlogit archive integrity after shipment |
-| 1.3.0   | 2026-04-29     | Added P-008      | Markdown conformance enforcement |
-| 1.4.0   | 2026-04-29     | Added P-009      | Merge-commit-only policy |
-| 1.5.0   | 2026-05-01     | Added P-010      | Stage/Ship boundary enforcement |
-| 1.6.0   | 2026-05-01     | Added P-011      | Branch protection for shipping workflows |
+| 1.0.0   | 2026-05-10     | Initial registry | Generated by autoharness   |
+| 1.1.0   | 2026-05-10     | Added P-006      | Plan hardening gate enforcement |
+| 1.2.0   | 2026-05-10     | Added P-007      | Backlogit archive integrity after shipment |
+| 1.3.0   | 2026-05-10     | Added P-008      | Markdown conformance enforcement |
+| 1.4.0   | 2026-05-10     | Added P-009      | Merge-commit-only policy |
+| 1.5.0   | 2026-05-10     | Added P-010      | Agent role boundary (Stage/Orchestrator) |
+| 1.6.0   | 2026-05-10     | Added P-011      | Branch-before-mutation (Ship) |
+| 1.7.0   | 2026-05-10     | Added P-012      | Tool availability and declared degradation |
+| 1.8.0   | 2026-05-10     | Added P-013      | Agent tier hierarchy and escalation |

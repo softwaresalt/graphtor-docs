@@ -120,7 +120,7 @@ If `${input:dry_run}` is `false`:
    Use `backlogit_list_items` or `backlogit_search_items` to check for existing
    items with matching titles.
 2. Create the root feature via `backlogit_create_item` or
-   `backlogit create`.
+   `backlogit add --type {type} --title {title}`.
 3. Create one task per implementation unit under that feature.
 4. Create granular subtasks under each task.
 5. Wire dependencies when the backlog tool supports dependency operations
