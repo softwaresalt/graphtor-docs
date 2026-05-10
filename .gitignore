@@ -111,3 +111,7 @@ tmp/
 
 # graphtor-docs — managed by graphtor-docs install
 .graphtor/
+
+# Agent lock files (autoharness file-lock skill)
+.*.lock
+**/.*.lock

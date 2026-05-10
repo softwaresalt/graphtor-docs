@@ -10,7 +10,7 @@ Detect CI failures and code review comments on the current branch's PR, reproduc
 
 * Git repository with a remote tracked branch and an open PR
 * Access to CI pipeline status via `gh` CLI or equivalent tool
-* Local tools required by this skill must be available in PATH, including the configured quality gates `cargo check`–`cargo test`; if formatting fixes are applied during remediation, `cargo fmt --all` must also be available
+* Local tools required by this skill must be available in PATH, including the configured quality gates `cargo fmt --all -- --check`–`cargo audit`; `cargo-audit` may need to be installed first (`cargo install cargo-audit`). If formatting fixes are applied during remediation, `cargo fmt --all` must also be available
 * Backlog tool configured when defect logging is enabled (circuit breaker halt path)
 
 ## Quick Start
@@ -32,8 +32,8 @@ Invoke when CI checks fail on a PR, or when automated review comments need to be
 |---|---|---|---|
 | `pr_number` | int | auto | PR number to check. Auto-detected from current branch if omitted. |
 | `max_iterations` | int | `5` | Maximum fix-push-poll cycles before circuit breaker halts. |
-| `poll_interval` | int | `60` | Seconds between CI status polls during the push-and-poll step. |
-| `max_wait` | int | `1800` | Maximum total seconds to wait for CI to reach a terminal state. |
+| `poll_interval` | int | `30` | Seconds between CI status polls during the push-and-poll step. |
+| `max_wait` | int | `600` | Maximum total seconds to wait for CI to reach a terminal state. |
 
 ## Output
 
@@ -144,8 +144,17 @@ For GitHub-hosted repositories, after addressing each comment:
 
 1. Reply to the review thread per `.github/instructions/github-pr-automation.instructions.md`
    §1.5 using the appropriate reply template (fixed / declined / partial).
-2. Resolve bot-authored threads via GraphQL per §1.6.
-3. Never resolve threads authored by human reviewers.
+2. Resolve Copilot-authored threads programmatically via GraphQL:
+   ```
+   gh api graphql -f query='mutation {
+     resolveReviewThread(input: { threadId: "{thread_id}" }) {
+       thread { id isResolved }
+     }
+   }'
+   ```
+   Confirm `isResolved: true` in the response before marking the thread as resolved.
+3. Never resolve threads authored by human reviewers — only reply to them.
+4. For other bot threads, resolve only if the fix fully addresses the comment.
 
 ### Step 6.5: Reply Gate (NON-NEGOTIABLE)
 
@@ -177,10 +186,10 @@ push any commit if any thread remains unreplied.**
 Run the full quality gate sequence:
 
 ```text
-cargo check
-cargo clippy --all-targets -- -D warnings -D clippy::pedantic
 cargo fmt --all -- --check
-cargo test
+cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+cargo test --all-targets
+cargo audit
 ```
 
 All gates must pass before pushing.

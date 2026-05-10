@@ -1,13 +1,13 @@
 ---
 description: "CI/CD security and hygiene conventions for GitHub Actions workflow files"
-applyTo: '.github/workflows/*.yml'
+applyTo: '**/.github/workflows/*.yml'
 ---
 
 # CI Security Instructions
 
 These instructions define required security conventions and structural
 expectations for CI/CD workflows. All workflow files matching
-`.github/workflows/*.yml` MUST comply with these rules.
+`**/.github/workflows/*.yml` MUST comply with these rules.
 
 ## Dependency Pinning
 

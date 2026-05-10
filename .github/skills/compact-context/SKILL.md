@@ -1,167 +1,111 @@
 ---
-name: compact-context
-description: "Usage: Compact context. Captures the current session state into a structured checkpoint file, then compacts the conversation history to reclaim context window space."
-version: 1.0
+description: "Compact and consolidate memory, plan, and tracking artifacts into durable summaries in docs/ — mandatory workflow step, not advisory"
 ---
 
-# Compact Context Skill
+## Compact Context
 
-Captures the current session state into a structured checkpoint file and compacts the conversation history. Use this skill when the context window is approaching its limit or when you want to preserve session continuity before a long operation.
+Scan `docs/memory/`, `docs/exec-plans/`, and `docs/closure/` for stale or oversized artifacts, produce compacted summaries, and archive verbose originals. For plans with appended reviews, consolidate into a decided-plan that replaces the original plan + review verbosity.
 
-## Prerequisites
+This skill is a **mandatory workflow step** invoked explicitly by the stage or ship agent (when checkpoint threshold is exceeded or at batch completion). It is NOT advisory — built-in AI assistant memory features do not write to `docs/`, so compaction is the only mechanism that ensures session knowledge is consolidated into durable, version-controlled artifacts.
 
-* The workspace root contains a `.copilot-tracking/` directory (created automatically if missing).
+## When to Use
 
-## Quick Start
+Invoke as part of the standard workflow:
 
-Invoke the skill:
+* **Stage or Ship agent**: When checkpoint count for a feature or chore exceeds 10 (mandatory trigger)
+* **Ship agent**: At batch completion (Step 5), after writing the session memory summary
+* **Manual**: When `docs/memory/` file count > 40, total size > 500 KB, or the operator requests it
 
-```text
-Compact context
-```
+## Inputs
 
-The skill runs autonomously through all required steps, producing a checkpoint file and compacting the conversation.
+* `target`: (Optional) One of `memory`, `plans`, `all`. Defaults to `all`.
+* `threshold_days`: (Optional, default 14) Files older than this are candidates for compaction.
+* `max_files`: (Optional, default 40) File count threshold that triggers compaction.
+* `max_size_kb`: (Optional, default 500) Total size threshold in KB.
 
-## Parameters Reference
+## Output
 
-| Parameter | Required | Type   | Description                                                    |
-| --------- | -------- | ------ | -------------------------------------------------------------- |
-| *none*    | —        | —      | This skill takes no parameters. It infers state from context.  |
+* Compacted summary files in `docs/memory/` (for memory/checkpoints)
+* Decided-plan files in `docs/exec-plans/` (for plans with appended reviews)
+* Compacted closure summaries in `docs/closure/` (for verification and closure records)
+* Verbose originals moved to `docs/archive/`
+* Summary report of what was compacted
 
-## Required Steps
+## Required Protocol
 
-### Step 1: Gather Session State
+### Phase 1: Assess
 
-Analyze the current session to identify:
+Scan the target directories:
 
-* **Active tasks**: Any in-progress or recently completed work from the todo list.
-* **Files read**: List of files loaded into context during this session (source, tests, configs, docs).
-* **Files modified**: List of files created or edited during this session, with a one-line summary of each change.
-* **Key decisions**: Architectural or implementation decisions made during this session.
-* **Failed approaches**: Approaches attempted and abandoned, with the reason for abandonment.
-* **Open questions**: Unresolved questions or ambiguities that remain.
-* **Current working directory**: The active directory context.
-* **Active branch**: The current Git branch if applicable.
+**Memory and checkpoints** (`docs/memory/`):
 
-Do not re-read files to gather this information. Reconstruct it from the conversation history and tool call results already in context.
+* Count files and total size per date subdirectory
+* Identify files older than `threshold_days`
+* Cross-reference against active backlog work items (do not compact active task checkpoints)
 
-### Step 2: Write Checkpoint File
+**Plans** (`docs/exec-plans/`):
 
-Create a checkpoint file at:
+* Identify plans with appended review sections (plan-review skill appends findings)
+* Identify plans whose associated feature or chore is complete (all tasks Done)
 
-```text
-.copilot-tracking/checkpoints/{YYYY-MM-DD}-{HHmm}-checkpoint.md
-```
+**Closure records** (`docs/closure/`):
 
-Where `{YYYY-MM-DD}` is today's date and `{HHmm}` is the current time (24-hour, zero-padded).
+* Identify verification and closure artifacts for completed features or chores
 
-Use this template:
+### Phase 2: Identify Candidates
 
-```markdown
-# Session Checkpoint
+Mark artifacts as compaction candidates if:
 
-**Created**: {YYYY-MM-DD} {HH:mm}
-**Branch**: {branch-name or "N/A"}
-**Working Directory**: {cwd}
+* **Memory files**: Older than threshold AND not referenced by any active work item
+* **Memory files**: Part of a completed feature or chore (all tasks Done)
+* **Memory files**: Superseded by a more recent checkpoint for the same task
+* **Plans**: Feature or chore is complete AND plan has appended review content ready for consolidation
+* **Closure records**: Feature or chore is complete AND more than `threshold_days` old
 
-## Task State
+### Phase 3: Compact
 
-{If a todo list is active, reproduce it here with current statuses.
-If no todo list, write "No active task list."}
+**Memory compaction** (per-release-unit or per-date group):
 
-## Session Summary
+1. Read all candidate memory/checkpoint files in the group
+2. Generate a dense summary capturing: decisions made, files modified, key learnings, failed approaches, outcomes
+3. Write the compacted summary to `docs/memory/compacted/{YYYY-MM-DD}-{release-unit-or-slug}-compacted.md`
+4. Move verbose originals to `docs/archive/memory/`
 
-{2-4 sentence summary of what was accomplished in this session so far.}
+**Plan consolidation** (per-plan):
 
-## Files Modified
+1. Read the plan file including all appended review sections
+2. Extract: final decisions, implementation units that survived review, key constraints, rejected alternatives
+3. Write a decided-plan to `docs/exec-plans/{YYYY-MM-DD}-{slug}-decided-plan.md` — a concise document containing only the actionable decisions and rationale, not the full deliberation history
+4. Move the verbose original plan to `docs/archive/plans/`
 
-{Bulleted list of files modified with one-line change descriptions.
-If none, write "No files modified."}
+**Closure compaction** (per-release-unit):
 
-| File | Change |
-| ---- | ------ |
-| path/to/file.rs | Added streaming iterator for row deduplication |
+1. Read verification and closure artifacts for the completed feature or chore
+2. Generate a consolidated closure record: what was verified, healthy/failure signals, monitoring status, follow-up items
+3. Write the compacted closure to `docs/closure/{YYYY-MM-DD}-{slug}-closure-summary.md`
+4. Move verbose originals to `docs/archive/closure/`
 
-## Files in Context
+### Phase 4: Report
 
-{Bulleted list of key files read during the session that would be needed
-to continue the work. Limit to the 15 most relevant files.}
+Summarize:
 
-## Key Decisions
+* Files compacted: {{count}}
+* Space recovered: {{size_reduction}}
+* Active task checkpoints preserved: {{count}}
+* Plans consolidated into decided-plans: {{count}}
+* Closure records compacted: {{count}}
 
-{Numbered list of decisions made and their rationale.
-If none, write "No significant decisions recorded."}
+## Behavioral Constraints
 
-## Failed Approaches
+* Never delete files — always archive to `docs/archive/`
+* Never compact checkpoints for active (Active status) work items
+* Preserve the most recent checkpoint for each completed task
+* All archive operations maintain a traceable path from the compacted summary back to the original verbose artifacts
+* Decided-plans must preserve all final decisions and their rationale — compaction removes verbosity, not substance
 
-{Bulleted list of approaches tried and abandoned, with reason.
-If none, write "No failed approaches."}
+## Model Routing
 
-## Open Questions
+This skill operates at **Tier 1 (Fast/Cheap)** — summarization and consolidation are low-complexity.
+Recommended model class: GPT-5.4-mini, Claude Haiku, or equivalent fast/cheap tier.
 
-{Bulleted list of unresolved questions.
-If none, write "No open questions."}
-
-## Next Steps
-
-{What should happen next to continue this work. Include specific file
-paths, function names, or task references where possible.}
-
-## Recovery Instructions
-
-To continue this session's work, read this checkpoint file and the
-following resources:
-
-- This checkpoint: .copilot-tracking/checkpoints/{this-file}
-- {List any other files critical for resumption: specs, schemas, etc.}
-```
-
-### Step 3: Report Checkpoint
-
-Report to the user:
-
-* The checkpoint file path.
-* A one-line summary of what was captured.
-* The estimated token reduction expected from compaction.
-
-### Step 4: Compact Conversation History
-
-Compact the current conversation to reclaim context window space.
-
-Run the `/compact` command to compact the conversation history.
-
-If `/compact` is not available in the current environment, inform the user that automatic compaction is not supported and recommend they:
-
-1. Start a new chat session.
-2. Begin the new session by reading the checkpoint file created in Step 2.
-
-## How It Works
-
-The context window has a fixed size. As a session progresses, earlier context gets pushed out or truncated. This skill mitigates that by:
-
-1. **Persisting** the important session state to a file on disk before it gets lost.
-2. **Compacting** the conversation so the agent regains working space.
-3. **Enabling recovery** by providing a structured file that a new or compacted session can load to restore continuity.
-
-The checkpoint file acts as durable memory. Even if the context window is fully reset, reading the checkpoint brings back the essential state without replaying the entire session.
-
-## Troubleshooting
-
-### Checkpoint directory does not exist
-
-The skill creates `.copilot-tracking/checkpoints/` automatically. If permission errors occur, create the directory manually:
-
-```bash
-mkdir -p .copilot-tracking/checkpoints
-```
-
-### /compact is not available
-
-The `/compact` command depends on the VS Code Copilot Chat version. If unavailable:
-
-* Start a new chat session and reference the checkpoint file.
-* Or continue working in the current session — the checkpoint is still saved for future recovery.
-
-### Checkpoint file is too large
-
-If the checkpoint exceeds 200 lines, trim the Files in Context section to the 10 most critical files and condense the Session Summary.
+Generated by autoharness | Template: compact-context/SKILL.md.tmpl

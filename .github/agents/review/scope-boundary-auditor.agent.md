@@ -3,7 +3,12 @@ name: Scope Boundary Auditor
 description: "Reviews changes for scope creep, YAGNI violations, unnecessary complexity, and verification criteria gaps"
 maturity: stable
 tools: read, search
-model_routing: "Tier 1 (Fast/Cheap)"
+model_routing: "Tier 1 (Fast/Cheap)"  # DEPRECATED — use model_tier
+model_tier: 1
+max_subagent_tier: 1
+reasoning_effort: ""
+model_provider: ""
+model_family: "claude-haiku-4.5"
 subagent_depth: 0
 ---
 
