@@ -35,6 +35,8 @@ Invoke as part of the standard workflow:
 
 ### Phase 1: Assess
 
+> **Intercom**: When the `agent-intercom` capability pack is installed, broadcast `[COMPACT] Starting compaction: target={target}` before scanning.
+
 Scan the target directories:
 
 **Memory and checkpoints** (`docs/memory/`):
@@ -61,6 +63,8 @@ Mark artifacts as compaction candidates if:
 * **Memory files**: Superseded by a more recent checkpoint for the same task
 * **Plans**: Feature or chore is complete AND plan has appended review content ready for consolidation
 * **Closure records**: Feature or chore is complete AND more than `threshold_days` old
+
+> **Intercom**: When the `agent-intercom` capability pack is installed, broadcast `[COMPACT] Candidates identified: {count} files` after candidate identification is complete.
 
 ### Phase 3: Compact
 
@@ -95,6 +99,8 @@ Summarize:
 * Plans consolidated into decided-plans: {{count}}
 * Closure records compacted: {{count}}
 
+> **Intercom**: When the `agent-intercom` capability pack is installed, broadcast `[COMPACT] Compacted {count} files, recovered {size_reduction}` after the summary is produced.
+
 ## Behavioral Constraints
 
 * Never delete files — always archive to `docs/archive/`
@@ -102,6 +108,17 @@ Summarize:
 * Preserve the most recent checkpoint for each completed task
 * All archive operations maintain a traceable path from the compacted summary back to the original verbose artifacts
 * Decided-plans must preserve all final decisions and their rationale — compaction removes verbosity, not substance
+
+## Intercom Events
+
+When the `agent-intercom` capability pack is installed, broadcast the
+following events at the specified trigger points:
+
+| Event | Trigger | Broadcast format |
+|---|---|---|
+| `start` | Skill invoked (Phase 1 begin) | `[COMPACT] Starting compaction: target={target}` |
+| `candidates` | Phase 2 complete | `[COMPACT] Candidates identified: {count} files` |
+| `complete` | Phase 4 report produced | `[COMPACT] Compacted {count} files, recovered {size_reduction}` |
 
 ## Model Routing
 

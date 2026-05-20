@@ -25,20 +25,13 @@ Invoke this agent before major releases, when security review is required, or wh
 The audit covers:
 
 * **Input Validation Analysis** — Identify unvalidated inputs entering the application from external sources
-* **Injection Risk Assessment** — SQL injection, XSS, command injection, template injection, LDAP injection patterns in `src/**`
+* **Injection Risk Assessment** — SQL injection, XSS, command injection, template injection, LDAP injection patterns in `src/**/*.rs`
 * **Authentication and Authorization Audit** — Access control gaps, broken authorization, privilege escalation paths
 * **Sensitive Data Exposure Scan** — PII, credentials, tokens, and financial data exposed via logs, APIs, or storage
 * **OWASP Top 10 Compliance** — Assess coverage across A01-A10 with language-specific patterns
 * **Third-Party Dependency Review** — Known vulnerable dependencies (if package manifest is present)
 
-Language-specific detection uses `* `unsafe` blocks without `// SAFETY:` justification
-* `std::process::Command::new()` with variable arguments
-* `std::fs::read()` / `std::fs::write()` with user-controlled paths
-* `serde_json::from_str()` / `serde_yaml::from_str()` on untrusted input
-* Embedded database queries with string interpolation
-* `.unwrap()` on network or filesystem operations
-* `reqwest` calls without timeout configuration
-* MCP tool handlers that accept arbitrary file paths`.
+Language-specific detection uses `unsafe blocks without // SAFETY: justification, std::process::Command::new() with variable arguments, std::fs::read()/std::fs::write() with user-controlled paths, serde_json::from_str()/serde_yaml::from_str() on untrusted input, embedded database queries with string interpolation, .unwrap() on network or filesystem operations, reqwest calls without timeout configuration, MCP tool handlers that accept arbitrary file paths`.
 
 ## Invocation
 
@@ -60,15 +53,8 @@ Default scope when no argument is provided: `full`.
 
 ### Phase 2: Input Validation and Injection Analysis
 
-1. Scan source files matching `src/**` for unvalidated external inputs
-2. Apply injection detection patterns from `* `unsafe` blocks without `// SAFETY:` justification
-* `std::process::Command::new()` with variable arguments
-* `std::fs::read()` / `std::fs::write()` with user-controlled paths
-* `serde_json::from_str()` / `serde_yaml::from_str()` on untrusted input
-* Embedded database queries with string interpolation
-* `.unwrap()` on network or filesystem operations
-* `reqwest` calls without timeout configuration
-* MCP tool handlers that accept arbitrary file paths`
+1. Scan source files matching `src/**/*.rs` for unvalidated external inputs
+2. Apply injection detection patterns from `unsafe blocks without // SAFETY: justification, std::process::Command::new() with variable arguments, std::fs::read()/std::fs::write() with user-controlled paths, serde_json::from_str()/serde_yaml::from_str() on untrusted input, embedded database queries with string interpolation, .unwrap() on network or filesystem operations, reqwest calls without timeout configuration, MCP tool handlers that accept arbitrary file paths`
 3. Check parameterized query usage vs. string-built queries in data access layers
 4. Check template rendering for user-controlled values
 5. Record findings with file, line, severity, and evidence
@@ -92,14 +78,7 @@ Default scope when no argument is provided: `full`.
 
 ### Phase 5: OWASP Top 10 Assessment
 
-Score the workspace against OWASP Top 10 categories using `* `unsafe` blocks without `// SAFETY:` justification
-* `std::process::Command::new()` with variable arguments
-* `std::fs::read()` / `std::fs::write()` with user-controlled paths
-* `serde_json::from_str()` / `serde_yaml::from_str()` on untrusted input
-* Embedded database queries with string interpolation
-* `.unwrap()` on network or filesystem operations
-* `reqwest` calls without timeout configuration
-* MCP tool handlers that accept arbitrary file paths`:
+Score the workspace against OWASP Top 10 categories using `unsafe blocks without // SAFETY: justification, std::process::Command::new() with variable arguments, std::fs::read()/std::fs::write() with user-controlled paths, serde_json::from_str()/serde_yaml::from_str() on untrusted input, embedded database queries with string interpolation, .unwrap() on network or filesystem operations, reqwest calls without timeout configuration, MCP tool handlers that accept arbitrary file paths`:
 
 | Category | Check |
 |---|---|

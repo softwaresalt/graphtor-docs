@@ -95,6 +95,9 @@ tmp/
 *.pui
 .engram/
 
+# autoharness
+.autoharness/backups/
+
 # graphtor workspace runtime (databases, state, cloned data)
 .graphtor/graph.db
 .graphtor/sync_state.json

@@ -71,7 +71,7 @@ For each iteration `i` from 1 to `budget`:
 5. **Evaluate**:
    - If the result moves in the desired direction relative to the previous best: keep the commit. Update the running best.
    - If the result does not improve: revert the commit (`git revert HEAD --no-edit`) and record the revert.
-6. **Append to log**: write the iteration row to the TSV experiment log (see Output format) before evaluating the goal check. The log file lives in `docs/experiments`. If `docs/experiments` is not gitignored, add it to `.gitignore` before the first iteration to keep ephemeral experiment data out of version control. If the operator has opted into committed reproducibility mode (see Output Format), the log must be committed in a separate step after each iteration and before the next change is applied.
+6. **Append to log**: write the iteration row to the TSV experiment log (see Output format) before evaluating the goal check. The log file lives in `docs/experiments` which is gitignored for ephemeral experiments; untracked files do not dirty the working tree, so writing the log does not violate the Git clean invariant. If the operator has opted into committed reproducibility mode (see Output Format), the log must be committed in a separate step after each iteration and before the next change is applied.
 7. **Check goal**: if a numeric goal threshold was specified and the result meets it, exit the loop early with success.
 8. **Budget check**: if `i == budget`, exit the loop with "budget exhausted" status.
 

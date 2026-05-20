@@ -207,7 +207,7 @@ General rules:
 | Build           | `cargo build`                        |
 | Test            | `cargo test`                         |
 | Lint            | `cargo clippy --all-targets -- -D warnings -D clippy::pedantic`                         |
-| Format          | `cargo fmt --all -- --check`                       |
+| Format          | `cargo fmt --all`                       |
 | CI              | GitHub Actions                            |
 
 ---

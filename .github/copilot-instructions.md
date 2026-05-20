@@ -1,6 +1,6 @@
 # graphtor-docs Development Guidelines
 
-Last updated: 2026-05-10
+Last updated: 2026-05-20
 
 graphtor-docs is a documentation cross-reference system that acquires, parses, chunks, embeds, and indexes documentation from multiple sources (Git repos, local directories, web URLs), serving semantic search queries via MCP tools over STDIO transport.
 
@@ -12,7 +12,7 @@ graphtor-docs is a documentation cross-reference system that acquires, parses, c
 | Build           | cargo            | `cargo build`                   |
 | Test            | cargo test           | `cargo test`                    |
 | Lint            | clippy                | `cargo clippy --all-targets -- -D warnings -D clippy::pedantic`                    |
-| Format          | rustfmt             | `cargo fmt --all -- --check`                  |
+| Format          | rustfmt             | `cargo fmt --all`                  |
 | CI              | GitHub Actions           | fmt → clippy → test → audit pipeline                          |
 | MCP SDK       | rmcp                      | STDIO transport, Rust-native                  |
 | Async Runtime | tokio                     | Multi-threaded async I/O                      |
@@ -56,7 +56,7 @@ docs/                   # Documentation root
 cargo build              # Build
 cargo test               # Run all tests
 cargo clippy --all-targets -- -D warnings -D clippy::pedantic               # Lint
-cargo fmt --all -- --check             # Format check
+cargo fmt --all             # Format check
 cargo check --all-targets       # Fast compilation check
 cargo doc --no-deps             # Generate documentation
 cargo audit                     # Security audit
@@ -87,7 +87,7 @@ cargo audit                     # Security audit
 ### Testing
 
 * TDD required: write tests first, verify they fail, then implement
-* Test tiers in `tests/` directory:
+* Test tiers in `tests` directory:
   * Unit tests: colocated `#[cfg(test)] mod tests` in source modules
   * Integration tests: `tests/` directory with per-module test files
 
