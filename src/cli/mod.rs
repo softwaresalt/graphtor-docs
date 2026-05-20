@@ -205,7 +205,7 @@ pub struct InstallArgs {
 
     /// Target editor(s) for MCP client config generation.
     ///
-    /// Comma-separated values. Supported: `vscode`, `cursor`, `copilot`.
+    /// Comma-separated values. Supported: `vscode`, `cursor`.
     /// Defaults to all supported editors.
     #[arg(long, value_delimiter = ',', value_name = "EDITOR")]
     pub editor: Vec<String>,
@@ -247,4 +247,21 @@ pub struct UninstallArgs {
     /// Use when a previous invocation left a stale lock file.
     #[arg(long)]
     pub force_unlock: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    #[test]
+    fn install_help_does_not_list_copilot() {
+        let mut command = Cli::command();
+        let install = command
+            .find_subcommand_mut("install")
+            .expect("install subcommand");
+        let help = install.render_long_help().to_string();
+
+        assert!(!help.contains("copilot"));
+    }
 }

@@ -79,10 +79,7 @@ pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResu
     remove_gitignore_entry(project_root)?;
 
     // Remove MCP client configs.
-    let mcp_removed = remove_mcp_configs(
-        project_root,
-        &[Editor::VsCode, Editor::Cursor, Editor::Copilot],
-    )?;
+    let mcp_removed = remove_mcp_configs(project_root, &[Editor::VsCode, Editor::Cursor])?;
     removed.extend(mcp_removed);
 
     Ok(UninstallResult { removed })
