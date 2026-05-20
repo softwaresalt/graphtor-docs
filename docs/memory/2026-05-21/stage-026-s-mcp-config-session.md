@@ -10,7 +10,7 @@
 
 | ID | Action | Promoted To |
 |---|---|---|
-| 831A0320 | Consumed → Archived | Feature 034-F, Shipment 026-S |
+| 831A0320 | Consumed → Archived | Feature 035-F, Shipment 026-S |
 
 ## Stash Entries Deferred
 
@@ -24,22 +24,22 @@
 
 - `docs/decisions/2026-05-21-mcp-config-install-path-deliberation.md`
 - `docs/exec-plans/2026-05-21-mcp-config-install-path-plan.md`
-- Feature: 034-F "Remove non-functional Editor::Copilot MCP config path"
-- Task: 034.001-T "Remove Editor::Copilot variant and update mcp_config.rs"
-- Task: 034.002-T "Update CLI --editor help text to remove copilot"
-- Task: 034.003-T "Add legacy .github/copilot/mcp.json cleanup to uninstall"
+- Feature: 035-F "Remove non-functional Editor::Copilot MCP config path"
+- Task: 035.001-T "Remove Editor::Copilot variant and update mcp_config.rs"
+- Task: 035.002-T "Update CLI --editor help text to remove copilot"
+- Task: 035.003-T "Add legacy .github/copilot/mcp.json cleanup to uninstall"
 - Shipment: 026-S (queued, 4 items)
 
 ## Dependencies Wired
 
-- 034.002-T depends on 034.001-T
-- 034.003-T depends on 034.001-T
+- 035.002-T depends on 035.001-T
+- 035.003-T depends on 035.001-T
 
 ## Shipment Handoff
 
 **Shipment ID:** 026-S  
 **Status:** queued  
-**Items:** 034-F, 034.001-T, 034.002-T, 034.003-T  
+**Items:** 035-F, 035.001-T, 035.002-T, 035.003-T  
 **Ready for Ship:** YES — once branch is merged to main  
 
 ## Blocker
