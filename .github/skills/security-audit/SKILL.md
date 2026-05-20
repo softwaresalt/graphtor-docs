@@ -34,29 +34,11 @@ This is a leaf executor. No subagent spawning. Maximum depth: 0.
 | Variable | Purpose |
 |---|---|
 | `.github/**,.vscode/**` | Glob patterns for agentic config files (e.g., `.github/**`, `.vscode/**`) |
-| `src/**` | Application source file patterns (e.g., `src/**/*.rs`) |
+| `src/**/*.rs` | Application source file patterns (e.g., `src/**/*.rs`) |
 | `Rust` | Primary language for pattern selection |
 | `docs/security` | Output directory for persisted reports (default: `docs/security`) |
-
-### Config Check Rules
-
-| Check | Pattern | Severity |
-|---|---|---|
-| Hardcoded credentials | `password`, `secret`, `api_key`, `token` in source | CRITICAL |
-| Unpinned secrets | `${{ secrets.* }}` without pinned action versions | HIGH |
-| Debug endpoints | `/debug/`, `#[cfg(debug_assertions)]` exposed routes | MEDIUM |
-| Terminal auto-approve | `chat.tools.terminal.autoApprove` patterns in `.vscode/settings.json` | HIGH |
-| Overly permissive allow-lists | `applyTo: '**'` with destructive tool grants | MEDIUM |
-
-### OWASP Detection Patterns (Rust)
-
-| Pattern | Risk | Detection |
-|---|---|---|
-| `unsafe` blocks | Memory safety bypass | Grep for `unsafe {` outside `// SAFETY:` |
-| Unchecked deserialization | Arbitrary code execution | `serde_json::from_str` without validation |
-| Raw SQL in embedded DB | SQL injection | String interpolation in kuzu/lancedb queries |
-| Unvalidated file paths | Path traversal | `std::fs::read` with user-controlled paths |
-| Shell command injection | RCE | `std::process::Command` with unsanitized args |
+| `hardcoded credentials, unpinned secrets, debug endpoints, terminal auto-approve, overly permissive allow-lists` | Per-environment config rule table |
+| `unsafe blocks, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, shell command injection` | Language-specific OWASP detection patterns |
 
 ## Workflow
 
@@ -69,7 +51,7 @@ This is a leaf executor. No subagent spawning. Maximum depth: 0.
 - `scope:full` — enumerate all surfaces
 
 1. Enumerate agentic config surfaces matching `.github/**,.vscode/**`
-2. Enumerate application source files matching `src/**`
+2. Enumerate application source files matching `src/**/*.rs`
 3. Identify the primary language (`Rust`) and select corresponding OWASP patterns
 4. Record the audit scope, file counts, and entry points found
 
@@ -79,13 +61,7 @@ This is a leaf executor. No subagent spawning. Maximum depth: 0.
 
 Apply deterministic regex checks to config surfaces found in Phase 1. Findings in this tier are eligible for `mode:fix` auto-remediation.
 
-Rules from `| Check | Pattern | Severity |
-|---|---|---|
-| Hardcoded credentials | `password`, `secret`, `api_key`, `token` in source | CRITICAL |
-| Unpinned secrets | `${{ secrets.* }}` without pinned action versions | HIGH |
-| Debug endpoints | `/debug/`, `#[cfg(debug_assertions)]` exposed routes | MEDIUM |
-| Terminal auto-approve | `chat.tools.terminal.autoApprove` patterns in `.vscode/settings.json` | HIGH |
-| Overly permissive allow-lists | `applyTo: '**'` with destructive tool grants | MEDIUM |`:
+Rules from `hardcoded credentials, unpinned secrets, debug endpoints, terminal auto-approve, overly permissive allow-lists`:
 
 * Hardcoded credential patterns (passwords, tokens, keys) in config files
 * Overly permissive tool allow-lists (e.g., `always: true` on destructive terminal commands)
@@ -112,13 +88,7 @@ Apply judgment: record findings with reasoning, not just pattern matches. These 
 
 **Skip condition**: Skip unless `scope:full`, `scope:owasp`, or `scope:<path>`.
 
-Scan source files matching `src/**` (or the specified path) using `| Pattern | Risk | Detection |
-|---|---|---|
-| `unsafe` blocks | Memory safety bypass | Grep for `unsafe {` outside `// SAFETY:` | 
-| Unchecked deserialization | Arbitrary code execution | `serde_json::from_str` without validation |
-| Raw SQL in embedded DB | SQL injection | String interpolation in kuzu/lancedb queries |
-| Unvalidated file paths | Path traversal | `std::fs::read` with user-controlled paths |
-| Shell command injection | RCE | `std::process::Command` with unsanitized args |`:
+Scan source files matching `src/**/*.rs` (or the specified path) using `unsafe blocks, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, shell command injection`:
 
 | Category | What to look for |
 |---|---|

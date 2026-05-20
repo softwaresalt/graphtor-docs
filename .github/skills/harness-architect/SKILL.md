@@ -104,9 +104,9 @@ Write harness files into the module that matches the work item's scope:
 
 * **Unit harnesses**: colocated with the production code in the
   appropriate src/ subdirectory
-* **Integration harnesses**: in `tests//integration/` when the
+* **Integration harnesses**: in `tests/integration/` when the
   task spans modules or runtime boundaries
-* **Contract harnesses**: in `tests//contract/` when the task
+* **Contract harnesses**: in `tests/contract/` when the task
   defines API, CLI, or schema behavior
 
 Write companion stub files into the production module that the tests

@@ -62,6 +62,7 @@ htmd = "0.5"
 scraper = "0.22"
 texting_robots = "0.2"
 docx-rs = "0.4"
+url = "2"
 # PDFium-based PDF backend for large files.  pdfium-render wraps the PDFium
 # C library via dynamic loading (no native compile-time deps).  The DLL is
 # located at runtime — when absent, the system falls back to pdf-extract.

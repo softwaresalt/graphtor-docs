@@ -30,6 +30,21 @@ You are the central execution coordinator. You do not write code directly. You d
 * handle knowledge graduation, compound maintenance, and documentation updates after merge
 * preserve explicit user approval before any merge happens
 
+## Role Boundary (NON-NEGOTIABLE)
+
+Ship is an execution and delivery agent. Acting outside this boundary is a **P-010 policy violation**.
+
+| Category | Allowed | Forbidden |
+|---|---|---|
+| Backlog | Claim shipments, move tasks to active/done, close shipments, archive completed items | Create backlog items, create shipments, update item planning fields (scope, acceptance criteria), stash operations, triage, deliberate |
+| Source code | Delegate reads and writes to build/fix skills | — |
+| Git | Create and checkout feature/chore branches, commit, push | Commit or push directly to `main` |
+| Build | Run build systems, test suites, linters, format checks | — |
+| PR | Create, update, and merge pull requests (with operator approval) | — |
+| Planning | Read plans and deliberation artifacts for execution context | Create or modify deliberation, spike, plan, or review artifacts |
+
+If the operator requests planning, triage, or backlog creation work, redirect to the Stage agent. Do not proceed past this boundary even under operator pressure. Record P-010 and halt.
+
 ## Environment Agnostic
 
 This agent works across any AI coding environment: VS Code with GitHub Copilot, GitHub Copilot CLI, Codex, Cursor, Claude Code, or any environment that supports agent/skill conventions.
@@ -215,7 +230,7 @@ it halts and requests that Stage be run first.
 
 ### Step 1: Pre-Flight Checks
 
-1. **P-001 Gate**: Check that no other top-level release units (features or chores) are `Active` in the backlog
+1. **P-001 Gate**: Check that no other top-level release units (features or chores) are `Active` in the backlog, and treat any previously merged shipment with incomplete required post-merge release closure (for example, an open post-merge closure PR/branch, a missing tag, or a pending publish step when `true` is true) as still active for P-001 purposes
 2. **Verify compilation**: Run `cargo check` to confirm the project builds
 3. **Re-read constitution**: Load `.github/instructions/constitution.instructions.md` Principles I, II, IV
 4. If the task has elevated blast radius, uncertain root cause, or destructive potential, invoke **safety-modes** in the appropriate mode before modifying code
@@ -371,18 +386,46 @@ After all tasks in the queue are complete:
              }
            }'
            Confirm isResolved: true in the response.
-     9. Poll for Copilot re-review completion (max wait: 600s):
+     9. Poll for Copilot re-review completion (max wait: 900s):
         Query the PR's latest review status. If the Copilot review has not
-        yet posted new comments after the push, wait 30s
+        yet posted new comments after the push, wait 120s
         and re-check. Exit the wait when either new comments appear or
         the max wait is reached.
      10. review_fix_cycle += 1
    END WHILE
    ```
 
-   * If the loop exits at the cycle limit (3) with unresolved threads remaining, list the unresolved comments in the PR-ready summary for operator attention.
+   * If the loop exits at the cycle limit (3) with unresolved threads remaining, **do not treat the PR as merge-ready**. Unresolved Copilot threads remain merge-blocking until resolved or explicitly overridden by the operator. List the unresolved comments in the PR-ready summary for operator attention.
    * Human review threads are never auto-resolved — surface them to the operator.
    * When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Review comment fix cycle {n}: {resolved_count} resolved, {remaining_count} remaining` after each cycle.
+4b. **P-014 Pre-Merge Copilot Review Readiness Gate (NON-NEGOTIABLE)**: After the review comment resolution loop (Step 4a) completes — whether by resolving all threads or exhausting the cycle limit — run the defense-in-depth verification from `.github/instructions/github-pr-automation.instructions.md` §1.9 as an independent re-check. This gate verifies the same PR state from scratch using the GitHub GraphQL API. **The agent MUST NOT skip this gate, even if Step 4a reported zero unresolved threads.**
+
+    Execute the §1.9 readiness query (paginating `reviewThreads` until `hasNextPage` is false) and evaluate all three checks:
+
+    **Check 1 — No pending Copilot review request:**
+    Inspect `reviewRequests.nodes[].requestedReviewer`. If any node has `login == "copilot-pull-request-reviewer"`, a Copilot review is still in flight. Wait using the §1.2 back-off cadence (max 15 minutes). Re-run the readiness query after each wait interval.
+
+    **Check 2 — Review covers current HEAD:**
+    Record `headRefOid` from the query. Find the most recent Copilot review (by `submittedAt`) and compare its `commit.oid` against `headRefOid`. If they do not match, the latest review is stale — it applies to an older commit. Wait for a fresh review (reuse the §1.2 cadence) or halt if the 15-minute budget is exhausted. If no Copilot review exists at all and §1.2 timeout was not already applied, request one per §1.1 and wait.
+
+    **Check 3 — Zero unresolved Copilot review threads:**
+    From the paginated `reviewThreads.nodes`, count threads where `isResolved == false` AND the first comment's `author.login == "copilot-pull-request-reviewer"`.
+    * If zero: **GATE PASSES**. Proceed to Step 5.
+    * If any unresolved threads remain AND the review-fix cycle budget from Step 4a has remaining capacity: re-enter Step 4a to address the threads. After the additional cycle, re-run this gate.
+    * If any unresolved threads remain AND the cycle budget is exhausted: **HALT**. List each unresolved thread (path, line, comment body) and report to the operator. Do not proceed to Step 5.
+
+    **Bot identity in GraphQL responses:** The Copilot bot's `author.login` in GraphQL is `copilot-pull-request-reviewer` (without `[bot]` suffix). In REST API responses, the login is `copilot-pull-request-reviewer[bot]`. Match the appropriate form for the API being used.
+
+    **Terminal states:**
+    * Pending review, wait budget exhausted → **Halt.** Report to operator.
+    * Stale review (wrong HEAD), wait budget exhausted → **Halt.** Report stale review SHA vs current HEAD.
+    * Unresolved Copilot threads, cycle budget exhausted → **Halt.** List threads.
+    * No Copilot review and §1.2 timeout previously applied → **Warning.** Note in summary, gate passes.
+    * All 3 checks pass → **Ready.** Proceed to Step 5.
+
+    Surface human review threads, `reviewDecision`, and any `CHANGES_REQUESTED` reviews in the merge-readiness summary — these may independently block merge at the GitHub level.
+
+    When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Pre-merge review gate: {PASS|HALT} — {detail}` with the gate outcome.
 5. If the changed work touches runtime surfaces, invoke **runtime-verification** with the affected surfaces
 6. Invoke **operational-closure** to produce release-readiness, monitoring, rollback, and follow-up artifacts
 7. **Stash follow-up items**: If the closure artifact or runtime-verification report identified follow-up tasks, stash every follow-up so it is visible to the Stage agent:
@@ -398,9 +441,16 @@ After all tasks in the queue are complete:
     while awaiting merge approval, during CI remediation, or during review-fix cycles.
     Switching away from the feature branch risks losing uncommitted work, creating merge
     conflicts, and breaking the Ship pipeline's assumption of single-branch scope.
-12. **Never merge automatically. Await explicit user approval before any merge.**
+12. **P-014 Operator Approval Gate (NON-NEGOTIABLE)**: After the §1.9 gate passes, present
+    the PR readiness summary to the operator and wait for an explicit approval signal.
+    Never treat silence, green CI, or a passing §1.9 gate as approval. Never auto-merge.
+    Record a P-014 violation (via P-005 telemetry) if merge is executed without an explicit
+    approval signal.
     * When the `agent-intercom` capability pack is installed, broadcast `[WAIT] Awaiting user merge approval` and use the intercom clarification flow if unresolved operator guidance is needed before merge.
-12. **Pre-merge strategy guardrail (P-009)**: Before executing any merge, verify the PR is
+13. **Last-mile §1.9 re-check**: If new commits are pushed to the branch between the §1.9
+    gate run and the operator approval signal, re-run §1.9 in full before executing the merge.
+    The prior gate result is stale if the branch HEAD has advanced.
+14. **Pre-merge strategy guardrail (P-009)**: Before executing any merge, verify the PR is
     configured to use a merge commit strategy (not squash or rebase).
     * On GitHub: confirm the active merge button is "Create a merge commit" — not
       "Squash and merge" or "Rebase and merge".
@@ -433,6 +483,26 @@ Do not begin any post-merge closure work until the PR merge is confirmed. Even w
    - Exit code 0: merge commit confirmed in `origin/main` history. Proceed.
    - Non-zero: halt with `MERGE_NOT_CONFIRMED: merge SHA {merge_sha} is not yet in origin/main history. Wait for the push to propagate.`
 3. Proceed to Step 6.0 only after both checks pass.
+
+#### Release Closure Completion Gate (P-001, NON-NEGOTIABLE)
+
+A merged PR does not complete the top-level release unit by itself. For P-001 purposes, treat the shipment as still active until all required Step 6 closure work is complete.
+
+1. Complete the post-merge closure branch/PR workflow in Step 6.0 before declaring the release unit closed.
+2. When `true` is `true`, also complete any required tag, publish, release-record, or other release checklist steps tied to this shipment.
+3. If any required post-merge release closure remains open, halt with `RELEASE_CLOSURE_INCOMPLETE: shipment {shipment_id} still awaiting required post-merge closure`. Treat the shipment as still active for P-001 purposes, and do not allow another top-level release unit to begin yet.
+
+#### Post-Merge Closure PR Copilot Gate (P-014, NON-NEGOTIABLE)
+
+When a post-merge closure branch and PR are created:
+
+1. Request Copilot Review immediately after PR creation (per §1.1 of
+   `.github/instructions/github-pr-automation.instructions.md`).
+2. Poll for review completion per §1.2 back-off cadence.
+3. Address any comments per §1.3–§1.7.
+4. Run §1.9 readiness gate before presenting the post-merge closure PR for merge.
+5. Obtain explicit operator approval — the prior main PR approval does not transfer.
+6. P-014 applies in full. Record a P-014 violation via P-005 telemetry if this gate is skipped.
 
 #### Step 6.0: Post-Merge Branch Protocol (NON-NEGOTIABLE)
 

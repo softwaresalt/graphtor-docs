@@ -121,11 +121,10 @@ Use a different model from the caller when available to force genuine diversity 
 
 1. Always-on: spawn Constitution Reviewer, Rust Reviewer, Learnings Researcher
 2. Conditional: analyze changed file paths, content patterns, and workspace agent-native signals to select additional personas:
-   * Select **Security Reviewer** (`security-reviewer.agent.md`) when the diff touches authentication, authorization, user input processing, permission checks, secret management, or files matching any of these signals:
-     - File globs: `src/acquire/**`, `src/config/**`, `src/path/**`, `src/mcp/**`
-     - Keywords: `unsafe`, `Command`, `fs::read`, `fs::write`, `from_str`, `unwrap`, `expect`, `reqwest`, `hyper`, `axum`
-     - MCP handlers: any file registering MCP tools or processing tool arguments
-     - Path handling: any module that resolves, normalizes, or traverses filesystem paths
+   * Select **Security Reviewer** (`security-reviewer.agent.md`) when the diff touches: authentication or authorization code, public endpoint handlers, user input processing, permission or role checks, secret or credential management, or files matching `* File globs: `src/acquire/**`, `src/config/**`, `src/path/**`, `src/mcp/**`
+* Keywords: `unsafe`, `Command`, `fs::read`, `fs::write`, `from_str`, `unwrap`, `expect`, `reqwest`, `hyper`, `axum`
+* MCP handlers: any file registering MCP tools or processing tool arguments
+* Path handling: any module that resolves, normalizes, or traverses filesystem paths`
 3. Broadcast the routing decision with persona count
 
 ### Step 3: Spawn Persona Subagents
