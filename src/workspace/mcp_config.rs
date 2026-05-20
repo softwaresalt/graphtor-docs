@@ -13,6 +13,7 @@ use std::path::Path;
 use graphtor_core::GraphtorError;
 
 const LEGACY_COPILOT_CONFIG_PATH: &str = ".github/copilot/mcp.json";
+const SUPPORTED_EDITOR_NAMES: &str = "vscode, cursor";
 
 /// A supported MCP client editor target.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +41,22 @@ impl Editor {
             Self::Cursor => ".cursor/mcp.json",
         }
     }
+}
+
+/// Parse CLI editor arguments into supported editor targets.
+///
+/// Returns an error when any editor name is unknown.
+pub(crate) fn parse_editors<S: AsRef<str>>(editors: &[S]) -> Result<Vec<Editor>, GraphtorError> {
+    editors
+        .iter()
+        .map(|editor| {
+            let name = editor.as_ref();
+            Editor::from_str(name).ok_or_else(|| GraphtorError::Config {
+                message: format!("unknown editor '{name}' (supported: {SUPPORTED_EDITOR_NAMES})"),
+                field: Some("editor".to_string()),
+            })
+        })
+        .collect()
 }
 
 /// Generate MCP client config files for the given editors.
@@ -195,6 +212,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_editors_rejects_unknown_editor() {
+        let error = parse_editors(&["copilot"]).expect_err("copilot should be rejected");
+
+        assert!(error.to_string().contains("unknown editor 'copilot'"));
+        assert!(error.to_string().contains(SUPPORTED_EDITOR_NAMES));
+    }
+
+    #[test]
     fn generate_default_editors_exclude_copilot() {
         let tmp = tempfile::tempdir().expect("tempdir");
 
@@ -217,8 +242,7 @@ mod tests {
         fs::create_dir_all(legacy_path.parent().expect("parent")).expect("mkdir");
         fs::write(&legacy_path, mcp_config_json(".graphtor/bin/graphtor-docs")).expect("write");
 
-        let removed =
-            remove_mcp_configs(tmp.path(), &[Editor::VsCode, Editor::Cursor]).expect("remove");
+        let removed = remove_mcp_configs(tmp.path(), &[]).expect("remove");
 
         assert_eq!(removed, vec![".github/copilot/mcp.json".to_string()]);
         assert!(!legacy_path.exists());
