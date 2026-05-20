@@ -679,6 +679,8 @@ fn cmd_install(
     args: &cli::InstallArgs,
     fmt: OutputFormat,
 ) -> anyhow::Result<i32> {
+    let editors = workspace::mcp_config::parse_editors(&args.editor)?;
+
     // Always create the workspace directory scaffold first so the lock path exists.
     let ws_dir = cwd.join(".graphtor");
     std::fs::create_dir_all(&ws_dir).context("failed to create .graphtor directory")?;
@@ -699,15 +701,6 @@ fn cmd_install(
     }
 
     // Generate MCP client configs.
-    let editors: Vec<workspace::mcp_config::Editor> = if args.editor.is_empty() {
-        vec![]
-    } else {
-        args.editor
-            .iter()
-            .filter_map(|s| workspace::mcp_config::Editor::from_str(s))
-            .collect()
-    };
-
     let written = workspace::mcp_config::generate_mcp_configs(cwd, &editors)
         .context("failed to generate MCP configs")?;
 
@@ -962,6 +955,24 @@ fn cmd_manifest(fmt: OutputFormat) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cmd_install_rejects_unknown_editor_values() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            no_gitignore: true,
+            editor: vec!["copilot".to_string()],
+            force_unlock: false,
+        };
+
+        let error = cmd_install(tmp.path(), &args, OutputFormat::Human)
+            .expect_err("unknown editor should fail");
+
+        assert!(error.to_string().contains("unknown editor"));
+        assert!(!tmp.path().join(".graphtor").exists());
+        assert!(!tmp.path().join(".vscode/mcp.json").exists());
+        assert!(!tmp.path().join(".cursor/mcp.json").exists());
+    }
 
     #[test]
     fn build_workspace_source_config_produces_local_source() {
