@@ -1,8 +1,11 @@
-# Implementation Plan: MCP Configuration Install Path Fix
-
-**Source:** `docs/decisions/2026-05-21-mcp-config-install-path-deliberation.md`  
-**Date:** 2026-05-21  
-**Stash:** 831A0320  
+---
+title: "MCP Configuration Install Path Fix"
+source: "docs/decisions/2026-05-21-mcp-config-install-path-deliberation.md"
+feature_id: "035-F"
+shipment_id: "026-S"
+stash_id: "831A0320"
+date: 2026-05-21
+---
 
 ## Problem Frame
 

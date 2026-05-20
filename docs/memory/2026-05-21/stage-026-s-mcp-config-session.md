@@ -1,3 +1,10 @@
+---
+type: session-memory
+timestamp: 2026-05-20T12:57:49-07:00
+agent: stage
+phase: shipment-staged
+---
+
 # Stage Session Memory — 2026-05-21
 
 ## Session Summary

@@ -1,8 +1,19 @@
-# MCP Configuration Install Path Fix
-
-**Stash:** 831A0320  
-**Depth:** lightweight  
-**Date:** 2026-05-21  
+---
+title: "MCP Configuration Install Path Fix"
+description: "Lightweight deliberation on removing the non-functional Editor::Copilot MCP config path from install defaults while preserving legacy uninstall cleanup."
+topic: "MCP config install defaults"
+depth: "lightweight"
+decision_status: "decided"
+promoted_to: "plan"
+linked_artifacts:
+  - "docs/exec-plans/2026-05-21-mcp-config-install-path-plan.md"
+tags:
+  - "mcp"
+  - "install"
+  - "cli"
+  - "editor-config"
+  - "copilot"
+---
 
 ## Problem Frame
 
