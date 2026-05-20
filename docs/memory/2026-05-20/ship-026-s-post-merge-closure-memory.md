@@ -17,6 +17,7 @@ phase: post-merge-closure
 * Archived shipment scope `026-S`, `035-F`, `035.001-T`, `035.002-T`, and
   `035.003-T`
 * Wrote runtime verification and operational closure artifacts for `026-S`
+* Pushed the closure branch and opened PR `#50`
 
 ## Files Changed
 
@@ -43,6 +44,5 @@ phase: post-merge-closure
 
 ## Next Step
 
-* Run `backlogit sync`
-* Commit closure work on the post-merge branch
-* Push the branch and create the closure PR
+* Await operator review and approval for closure PR `#50`
+* Re-run blocked runtime verification after the unrelated baseline compile issue is fixed

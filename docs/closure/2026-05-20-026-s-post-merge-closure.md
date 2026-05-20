@@ -69,7 +69,7 @@ Runtime verification is **BLOCKED** by a baseline compile failure in
 
 ## Deployment / Rollout Path
 
-Closure-only PR on `post-merge/035-remove-editor-copilot-mcp-path`.
+Closure-only PR `#50` on `post-merge/035-remove-editor-copilot-mcp-path`.
 No deployment step.
 
 ## Post-Deploy Checks
