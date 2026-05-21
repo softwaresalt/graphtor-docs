@@ -34,6 +34,11 @@ use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
 use crate::DataStore;
 
+/// Callback type for per-file sync progress reporting.
+///
+/// Called once per file during re-ingestion with `(path, current, total)`.
+pub type ProgressCallback<'a> = Option<&'a mut dyn FnMut(&Path, usize, usize)>;
+
 /// Sync a single documentation source against its current on-disk state.
 ///
 /// ## Behaviour
@@ -59,6 +64,13 @@ use crate::DataStore;
 /// is the workspace root used for path security validation.  Both must refer to
 /// paths within the same workspace.
 ///
+/// ## `on_progress`
+///
+/// When `Some`, the callback is invoked once for each file that is re-ingested
+/// (added or modified).  The callback receives `(path, current, total)` where
+/// `path` is the source-relative file path, `current` is the 1-based index of
+/// the current file, and `total` is the total number of files to re-ingest.
+///
 /// ## Errors
 ///
 /// Returns [`GraphtorError::Sync`] wrapping the underlying cause for any
@@ -72,6 +84,7 @@ pub fn sync_source(
     state_path: &Path,
     root: &Path,
     model: Option<&EmbeddingModel>,
+    mut on_progress: ProgressCallback<'_>,
 ) -> Result<SyncMetrics, GraphtorError> {
     let started_at = Instant::now();
     let source_id = source.id();
@@ -182,7 +195,17 @@ pub fn sync_source(
     }
 
     // ── Re-ingest added and modified files ─────────────────────────────────
-    for path in changes.added.iter().chain(changes.modified.iter()) {
+    let ingest_files: Vec<&Path> = changes
+        .added
+        .iter()
+        .chain(changes.modified.iter())
+        .map(std::path::PathBuf::as_path)
+        .collect();
+    let ingest_total = ingest_files.len();
+    for (idx, path) in ingest_files.into_iter().enumerate() {
+        if let Some(cb) = on_progress.as_mut() {
+            cb(path, idx + 1, ingest_total);
+        }
         let abs_path = source_dir.join(path);
         match reingest_file(store, source_id, &abs_path, source_dir, root, model) {
             Ok(n) => {
@@ -326,6 +349,55 @@ mod tests {
     use crate::{DataStore, Source};
 
     #[test]
+    fn sync_source_progress_callback_invoked_per_file() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        for i in 0..3_u8 {
+            fs::write(
+                source_dir.join(format!("doc{i}.md")),
+                format!("# Doc {i}\n\nContent.\n"),
+            )
+            .expect("write markdown");
+        }
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "progress-test".to_string(),
+            path: source_dir.clone(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+        });
+
+        let mut call_count: usize = 0;
+        let mut cb = |_path: &std::path::Path, _idx: usize, _total: usize| {
+            call_count += 1;
+        };
+
+        let metrics = sync_source(
+            &store,
+            &source,
+            &source_dir,
+            &state_path,
+            root,
+            None,
+            Some(&mut cb),
+        )
+        .expect("sync with progress callback");
+
+        assert_eq!(
+            call_count, 3,
+            "callback should fire once per file; got {call_count}"
+        );
+        assert_eq!(metrics.files_synced, 3, "metrics: {metrics:?}");
+    }
+
+    #[test]
     fn sync_metrics_returned_for_local_source() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path();
@@ -347,7 +419,7 @@ mod tests {
         });
 
         let metrics =
-            sync_source(&store, &source, &source_dir, &state_path, root, None).expect("sync");
+            sync_source(&store, &source, &source_dir, &state_path, root, None, None).expect("sync");
 
         assert_eq!(metrics.files_total, 1, "metrics: {metrics:?}");
         assert_eq!(metrics.files_synced, 1, "metrics: {metrics:?}");
