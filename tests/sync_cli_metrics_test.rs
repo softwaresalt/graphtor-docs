@@ -14,12 +14,7 @@ fn sync_metrics_flag_emits_raw_json_metrics() {
     .expect("write guide");
     let db_path = workspace.path().join("graph.db");
 
-    let current_exe = std::env::current_exe().expect("current test executable path");
-    let target_dir = current_exe
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("target debug directory");
-    let exe = target_dir.join(format!("graphtor-docs{}", std::env::consts::EXE_SUFFIX));
+    let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_graphtor-docs"));
 
     let output = Command::new(&exe)
         .current_dir(workspace.path())

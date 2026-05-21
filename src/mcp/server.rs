@@ -950,6 +950,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn with_sync_status_error_appears_in_get_status() {
+        use std::sync::{Arc, Mutex};
+        let store = DataStore::open_mem().expect("in-memory store");
+        ensure_schema(&store).expect("schema");
+        let status_arc: Arc<Mutex<SyncStatus>> = Arc::new(Mutex::new(SyncStatus::Error(
+            "2 file(s) failed during sync (3 files synced, 8 chunks, 25 ms)".to_string(),
+        )));
+        let server = DocServer::new(store).with_sync_status(Arc::clone(&status_arc));
+        let result = server.get_status(Parameters(GetStatusParams {})).unwrap();
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("error:")
+                && text.contains('3')
+                && text.contains('8')
+                && text.contains('2')
+                && text.contains("25"),
+            "expected degraded completion metrics in status output, got: {text}"
+        );
+    }
+
     // ── research_topic ────────────────────────────────────────────────────────
 
     #[test]

@@ -289,7 +289,12 @@ fn build_new_state(
     }
 }
 
-fn elapsed_millis(started_at: Instant) -> u64 {
+/// Convert a captured [`Instant`] to elapsed milliseconds, clamped to at least 1.
+///
+/// Exported so callers that measure the same sync cycle (e.g. the binary entry
+/// point) do not need to duplicate this logic.
+#[must_use]
+pub fn elapsed_millis(started_at: Instant) -> u64 {
     let elapsed_ms = started_at.elapsed().as_millis();
     u64::try_from(elapsed_ms).unwrap_or(u64::MAX).max(1)
 }

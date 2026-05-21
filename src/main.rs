@@ -43,7 +43,7 @@ use graphtor_core::{
     config::SourceConfig,
     db::{list_sources, DataStore},
     init_logging,
-    sync::{sync_source, SyncMetrics},
+    sync::{elapsed_millis, sync_source, SyncMetrics},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
 use tracing::{error, info, warn};
@@ -264,11 +264,6 @@ fn merge_sync_metrics(total: &mut SyncMetrics, next: &SyncMetrics) {
     total.chunks_created += next.chunks_created;
     total.chunks_deleted += next.chunks_deleted;
     total.errors += next.errors;
-}
-
-fn elapsed_millis(started_at: Instant) -> u64 {
-    let elapsed_ms = started_at.elapsed().as_millis();
-    u64::try_from(elapsed_ms).unwrap_or(u64::MAX).max(1)
 }
 
 fn print_sync_metrics(metrics: &SyncMetrics) {
@@ -522,7 +517,11 @@ fn spawn_background_sync(
         .await;
 
         let new_status = match result {
-            Ok(Ok(metrics)) => SyncStatus::Complete { metrics },
+            Ok(Ok(metrics)) if metrics.errors == 0 => SyncStatus::Complete { metrics },
+            Ok(Ok(metrics)) => SyncStatus::Error(format!(
+                "{} file(s) failed during sync ({} files synced, {} chunks, {} ms)",
+                metrics.errors, metrics.files_synced, metrics.chunks_created, metrics.duration_ms
+            )),
             Ok(Err(e)) => SyncStatus::Error(e.to_string()),
             Err(e) => SyncStatus::Error(format!("task panicked: {e}")),
         };
