@@ -23,8 +23,10 @@ pub use reingest::{delete_file_data, reingest_file};
 pub use state::{SourceSyncState, SyncState};
 
 use std::path::Path;
+use std::time::Instant;
 
-use tracing::{info, warn};
+use serde::Serialize;
+use tracing::{info, info_span, warn};
 
 use crate::config::Source;
 use crate::db::nodes::{upsert_source, SourceRecord};
@@ -62,7 +64,7 @@ use crate::DataStore;
 /// Returns [`GraphtorError::Sync`] wrapping the underlying cause for any
 /// non-fatal aggregate failure.  Returns the specific underlying error type for
 /// fatal path-violation or database schema issues.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn sync_source(
     store: &DataStore,
     source: &Source,
@@ -70,7 +72,8 @@ pub fn sync_source(
     state_path: &Path,
     root: &Path,
     model: Option<&EmbeddingModel>,
-) -> Result<SyncCycleResult, GraphtorError> {
+) -> Result<SyncMetrics, GraphtorError> {
+    let started_at = Instant::now();
     let source_id = source.id();
     let (source_kind, source_url, source_name) = match source {
         Source::Git(g) => ("git", g.url.as_str(), g.id.as_str()),
@@ -78,7 +81,10 @@ pub fn sync_source(
         Source::Url(u) => ("url", u.url.as_str(), u.id.as_str()),
     };
 
-    info!(source_id, source_kind, "starting sync cycle");
+    let sync_span = info_span!("sync_source", source_id, source_kind);
+    let _sync_span = sync_span.enter();
+
+    info!(source_name, source_url, "starting sync cycle");
 
     // Load existing state (empty on first run).
     let mut sync_state = SyncState::load(state_path, root)?;
@@ -117,37 +123,61 @@ pub fn sync_source(
         }
     };
 
+    let files_total = changes.added.len() + changes.modified.len() + changes.deleted.len();
+
     if changes.is_empty() {
-        info!(source_id, "no changes detected; skipping re-ingestion");
-        return Ok(SyncCycleResult {
-            files_processed: 0,
-            chunks_loaded: 0,
+        info!("no changes detected; skipping re-ingestion");
+
+        let metrics = SyncMetrics {
+            files_total,
+            files_synced: 0,
             files_deleted: 0,
-            files_errored: 0,
-        });
+            chunks_created: 0,
+            chunks_deleted: 0,
+            duration_ms: elapsed_millis(started_at),
+            errors: 0,
+        };
+
+        info!(
+            files_total = metrics.files_total,
+            files_synced = metrics.files_synced,
+            files_deleted = metrics.files_deleted,
+            chunks_created = metrics.chunks_created,
+            chunks_deleted = metrics.chunks_deleted,
+            duration_ms = metrics.duration_ms,
+            errors = metrics.errors,
+            "sync cycle complete"
+        );
+
+        return Ok(metrics);
     }
 
     info!(
-        source_id,
+        files_total,
         added = changes.added.len(),
         modified = changes.modified.len(),
         deleted = changes.deleted.len(),
         "changes detected; beginning re-ingestion"
     );
 
-    let mut files_processed: usize = 0;
-    let mut chunks_loaded: usize = 0;
-    let mut files_deleted: usize = 0;
-    let mut files_errored: usize = 0;
+    let mut metrics = SyncMetrics {
+        files_total,
+        files_synced: 0,
+        files_deleted: 0,
+        chunks_created: 0,
+        chunks_deleted: 0,
+        duration_ms: 0,
+        errors: 0,
+    };
 
     // ── Delete removed files ───────────────────────────────────────────────
     for path in &changes.deleted {
         let rel = path.to_string_lossy().replace('\\', "/");
         if let Err(e) = delete_file_data(store, &rel) {
-            warn!(source_id, path = %path.display(), error = %e, "failed to delete stale records");
-            files_errored += 1;
+            warn!(path = %path.display(), error = %e, "failed to delete stale records");
+            metrics.errors += 1;
         } else {
-            files_deleted += 1;
+            metrics.files_deleted += 1;
         }
     }
 
@@ -156,17 +186,16 @@ pub fn sync_source(
         let abs_path = source_dir.join(path);
         match reingest_file(store, source_id, &abs_path, source_dir, root, model) {
             Ok(n) => {
-                files_processed += 1;
-                chunks_loaded += n;
+                metrics.files_synced += 1;
+                metrics.chunks_created += n;
             }
             Err(e) => {
                 warn!(
-                    source_id,
                     path = %abs_path.display(),
                     error = %e,
                     "reingest failed; continuing"
                 );
-                files_errored += 1;
+                metrics.errors += 1;
             }
         }
     }
@@ -176,31 +205,46 @@ pub fn sync_source(
     *sync_state.source_mut(source_id) = new_source_state;
     sync_state.save(state_path, root)?;
 
+    metrics.duration_ms = elapsed_millis(started_at);
+
     info!(
-        source_id,
-        files_processed, chunks_loaded, files_deleted, files_errored, "sync cycle complete"
+        files_total = metrics.files_total,
+        files_synced = metrics.files_synced,
+        files_deleted = metrics.files_deleted,
+        chunks_created = metrics.chunks_created,
+        chunks_deleted = metrics.chunks_deleted,
+        duration_ms = metrics.duration_ms,
+        errors = metrics.errors,
+        "sync cycle complete"
     );
 
-    Ok(SyncCycleResult {
-        files_processed,
-        chunks_loaded,
-        files_deleted,
-        files_errored,
-    })
+    Ok(metrics)
 }
 
-/// Summary of a completed sync cycle for one source.
-#[derive(Debug, Clone)]
-pub struct SyncCycleResult {
-    /// Number of files successfully re-ingested (added + modified).
-    pub files_processed: usize,
-    /// Total chunks written to the database in this cycle.
-    pub chunks_loaded: usize,
+/// Structured telemetry for one completed sync cycle.
+///
+/// `chunks_deleted` is currently reported as `0` because the delete path does
+/// not expose per-chunk delete counts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct SyncMetrics {
+    /// Total files considered by the cycle (added + modified + deleted).
+    pub files_total: usize,
+    /// Number of files successfully re-ingested.
+    pub files_synced: usize,
     /// Number of deleted files whose records were removed from `CozoDB`.
     pub files_deleted: usize,
+    /// Total chunks written to the database in this cycle.
+    pub chunks_created: usize,
+    /// Total chunks deleted from the database in this cycle.
+    pub chunks_deleted: usize,
+    /// Wall-clock duration of the sync cycle in milliseconds.
+    pub duration_ms: u64,
     /// Number of files that encountered errors (non-fatal).
-    pub files_errored: usize,
+    pub errors: usize,
 }
+
+/// Backward-compatible alias for [`SyncMetrics`].
+pub type SyncCycleResult = SyncMetrics;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -245,6 +289,16 @@ fn build_new_state(
     }
 }
 
+/// Convert a captured [`Instant`] to elapsed milliseconds, clamped to at least 1.
+///
+/// Exported so callers that measure the same sync cycle (e.g. the binary entry
+/// point) do not need to duplicate this logic.
+#[must_use]
+pub fn elapsed_millis(started_at: Instant) -> u64 {
+    let elapsed_ms = started_at.elapsed().as_millis();
+    u64::try_from(elapsed_ms).unwrap_or(u64::MAX).max(1)
+}
+
 /// Return the current UTC time as a Unix-epoch seconds string.
 ///
 /// The returned string is used as the `last_sync` timestamp value in
@@ -258,4 +312,49 @@ fn chrono_now() -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     format!("{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::sync_source;
+    use crate::config::source::LocalSource;
+    use crate::db::ensure_schema;
+    use crate::{DataStore, Source};
+
+    #[test]
+    fn sync_metrics_returned_for_local_source() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        fs::write(source_dir.join("guide.md"), "# Guide\n\nHello world.\n")
+            .expect("write markdown");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "local-sync".to_string(),
+            path: source_dir.clone(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+        });
+
+        let metrics =
+            sync_source(&store, &source, &source_dir, &state_path, root, None).expect("sync");
+
+        assert_eq!(metrics.files_total, 1, "metrics: {metrics:?}");
+        assert_eq!(metrics.files_synced, 1, "metrics: {metrics:?}");
+        assert_eq!(metrics.files_deleted, 0, "metrics: {metrics:?}");
+        assert!(metrics.chunks_created > 0, "metrics: {metrics:?}");
+        assert_eq!(metrics.chunks_deleted, 0, "metrics: {metrics:?}");
+        assert!(metrics.duration_ms > 0, "metrics: {metrics:?}");
+        assert_eq!(metrics.errors, 0, "metrics: {metrics:?}");
+    }
 }

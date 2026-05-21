@@ -40,6 +40,7 @@ use crate::{
     },
     embed::EmbeddingModel,
     error::GraphtorError,
+    sync::SyncMetrics,
 };
 
 use super::format::{
@@ -53,13 +54,22 @@ use super::format::{
 ///
 /// Updated atomically by the `serve` command's background sync task and
 /// read by the `get_status` tool.  Shared via `Arc<Mutex<SyncStatus>>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum SyncStatus {
     /// No background sync has been attempted (default state).
     #[default]
     Idle,
     /// Background sync is currently running.
     Syncing,
+    /// Background sync is processing a specific source.
+    InProgress {
+        /// Source ID currently being synced.
+        source: String,
+        /// One-based source index currently in progress.
+        current: usize,
+        /// Total number of sources in this sync cycle.
+        total: usize,
+    },
     /// Background sync completed successfully.
     Done {
         /// Number of source files processed.
@@ -67,8 +77,35 @@ pub enum SyncStatus {
         /// Number of chunks loaded into the store.
         chunks: usize,
     },
+    /// Background sync completed and recorded structured metrics.
+    Complete {
+        /// Aggregate metrics for the completed sync cycle.
+        metrics: SyncMetrics,
+    },
     /// Background sync completed with errors.
     Error(String),
+}
+
+fn format_sync_status(status: &SyncStatus) -> String {
+    match status {
+        SyncStatus::Idle => "idle".to_string(),
+        SyncStatus::Syncing => "syncing (background)".to_string(),
+        SyncStatus::InProgress {
+            source,
+            current,
+            total,
+        } => format!("syncing: {source} ({current}/{total} sources)"),
+        SyncStatus::Done { files, chunks } => format!("done ({files} files, {chunks} chunks)"),
+        SyncStatus::Complete { metrics } => format!(
+            "complete ({} files synced, {} chunks, {} deleted, {} errors, {} ms)",
+            metrics.files_synced,
+            metrics.chunks_created,
+            metrics.files_deleted,
+            metrics.errors,
+            metrics.duration_ms
+        ),
+        SyncStatus::Error(msg) => format!("error: {msg}"),
+    }
 }
 
 // ── Parameter types ───────────────────────────────────────────────────────────
@@ -514,14 +551,7 @@ impl DocServer {
                 .sync_status
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match &*guard {
-                SyncStatus::Idle => "idle".to_string(),
-                SyncStatus::Syncing => "syncing (background)".to_string(),
-                SyncStatus::Done { files, chunks } => {
-                    format!("done ({files} files, {chunks} chunks)")
-                }
-                SyncStatus::Error(msg) => format!("error: {msg}"),
-            }
+            format_sync_status(&guard)
         };
         writeln!(md, "- **Auto-sync:** {sync_str}").expect("write to String is infallible");
 
@@ -870,6 +900,74 @@ mod tests {
         assert!(
             text.contains("10") && text.contains("42"),
             "expected file and chunk counts in status output, got: {text}"
+        );
+    }
+
+    #[test]
+    fn with_sync_status_in_progress_appears_in_get_status() {
+        use std::sync::{Arc, Mutex};
+        let store = DataStore::open_mem().expect("in-memory store");
+        ensure_schema(&store).expect("schema");
+        let status_arc: Arc<Mutex<SyncStatus>> = Arc::new(Mutex::new(SyncStatus::InProgress {
+            source: "docs-source".to_string(),
+            current: 2,
+            total: 5,
+        }));
+        let server = DocServer::new(store).with_sync_status(Arc::clone(&status_arc));
+        let result = server.get_status(Parameters(GetStatusParams {})).unwrap();
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("docs-source") && text.contains("2/5"),
+            "expected source progress in status output, got: {text}"
+        );
+    }
+
+    #[test]
+    fn with_sync_status_complete_appears_in_get_status() {
+        use std::sync::{Arc, Mutex};
+        let store = DataStore::open_mem().expect("in-memory store");
+        ensure_schema(&store).expect("schema");
+        let status_arc: Arc<Mutex<SyncStatus>> = Arc::new(Mutex::new(SyncStatus::Complete {
+            metrics: crate::sync::SyncMetrics {
+                files_total: 4,
+                files_synced: 3,
+                files_deleted: 1,
+                chunks_created: 8,
+                chunks_deleted: 0,
+                duration_ms: 25,
+                errors: 0,
+            },
+        }));
+        let server = DocServer::new(store).with_sync_status(Arc::clone(&status_arc));
+        let result = server.get_status(Parameters(GetStatusParams {})).unwrap();
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("complete")
+                && text.contains('3')
+                && text.contains('8')
+                && text.contains("25"),
+            "expected completion metrics in status output, got: {text}"
+        );
+    }
+
+    #[test]
+    fn with_sync_status_error_appears_in_get_status() {
+        use std::sync::{Arc, Mutex};
+        let store = DataStore::open_mem().expect("in-memory store");
+        ensure_schema(&store).expect("schema");
+        let status_arc: Arc<Mutex<SyncStatus>> = Arc::new(Mutex::new(SyncStatus::Error(
+            "2 file(s) failed during sync (3 files synced, 8 chunks, 25 ms)".to_string(),
+        )));
+        let server = DocServer::new(store).with_sync_status(Arc::clone(&status_arc));
+        let result = server.get_status(Parameters(GetStatusParams {})).unwrap();
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("error:")
+                && text.contains('3')
+                && text.contains('8')
+                && text.contains('2')
+                && text.contains("25"),
+            "expected degraded completion metrics in status output, got: {text}"
         );
     }
 

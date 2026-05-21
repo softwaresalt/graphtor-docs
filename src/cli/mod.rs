@@ -88,7 +88,8 @@ pub enum Command {
     /// By default, detects changes since the last sync (via git diff or file
     /// mtime) and surgically re-processes only added, modified, and deleted
     /// files. Pass `--full` to force a complete acquire → parse → embed → load
-    /// cycle over all files regardless of change state.
+    /// cycle over all files regardless of change state. Pass `--metrics` to
+    /// emit raw sync metrics JSON for scripting.
     Sync(SyncArgs),
 
     /// Start the MCP STDIO server.
@@ -172,6 +173,13 @@ pub struct SyncArgs {
     /// over all files regardless of change state.
     #[arg(long)]
     pub full: bool,
+
+    /// Emit raw sync metrics JSON instead of human-readable sync output.
+    ///
+    /// This flag is specific to the `sync` subcommand and takes precedence over
+    /// the global `--json` JSON-RPC envelope mode.
+    #[arg(long)]
+    pub metrics: bool,
 }
 
 /// Arguments for the `serve` subcommand.
