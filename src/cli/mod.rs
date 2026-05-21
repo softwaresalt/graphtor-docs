@@ -7,6 +7,7 @@
 //! JSON-RPC 2.0 response envelopes via [`jsonrpc`].
 
 pub mod jsonrpc;
+pub mod prewarm;
 
 use std::path::PathBuf;
 
@@ -145,6 +146,14 @@ pub enum Command {
     /// Tool definitions are derived from the same source as the MCP server,
     /// guaranteeing parity.
     Manifest,
+
+    /// Pre-warm all configured documentation sources with progress reporting.
+    ///
+    /// Syncs all sources in sequence, writing per-file progress lines to stderr
+    /// in the format `[syncing] source_id: file_name (idx/total) [pct%]`, and
+    /// emits a single JSONL telemetry record to stdout on completion.  Pass
+    /// `--quiet` to suppress stderr progress while preserving stdout telemetry.
+    Prewarm(prewarm::PrewarmArgs),
 }
 
 /// Arguments for the `sync` subcommand.
