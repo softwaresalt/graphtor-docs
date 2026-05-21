@@ -195,14 +195,14 @@ pub fn sync_source(
     }
 
     // ── Re-ingest added and modified files ─────────────────────────────────
-    let ingest_files: Vec<&Path> = changes
+    let ingest_total = changes.added.len() + changes.modified.len();
+    for (idx, path) in changes
         .added
         .iter()
         .chain(changes.modified.iter())
         .map(std::path::PathBuf::as_path)
-        .collect();
-    let ingest_total = ingest_files.len();
-    for (idx, path) in ingest_files.into_iter().enumerate() {
+        .enumerate()
+    {
         if let Some(cb) = on_progress.as_mut() {
             cb(path, idx + 1, ingest_total);
         }

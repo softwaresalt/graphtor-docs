@@ -1005,7 +1005,7 @@ fn cmd_prewarm(
 
     if source_config.sources.is_empty() {
         warn!("sources.yaml contains no sources; nothing to prewarm");
-        println!("{}", prewarm_telemetry(0, 0, 0, 1, 0));
+        println!("{}", prewarm_telemetry(0, 0, 0, 0, 0));
         return Ok(0);
     }
 
@@ -1215,7 +1215,7 @@ mod tests {
 
     #[test]
     fn epoch_secs_to_iso8601_formats_known_date() {
-        // 2026-05-21T00:00:00Z = 1_779_004_800 seconds since epoch.
+        // 2026-05-21T00:00:00Z = 1_779_321_600 seconds since epoch.
         // 1970 to 2026: 56 years, with leap years 1972,1976,...,2024 (14 leaps).
         // days = 56*365 + 14 = 20440 + 14 = 20454
         // Jan(31)+Feb(28)+Mar(31)+Apr(30)+May1-20(20) = 31+28+31+30+20 = 140 days

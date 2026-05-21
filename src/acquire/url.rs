@@ -195,6 +195,9 @@ fn fetch_robots_txt(start_url: &str) -> Option<texting_robots::Robot> {
 /// Remove files left over from previous crawls that were not produced by the
 /// current traversal.
 fn remove_stale_crawled_files(target_dir: &Path, written: &[PathBuf]) {
+    if written.is_empty() {
+        return;
+    }
     let keep: HashSet<&Path> = written.iter().map(PathBuf::as_path).collect();
 
     let Ok(entries) = std::fs::read_dir(target_dir) else {
