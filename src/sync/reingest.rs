@@ -67,15 +67,16 @@ pub fn reingest_file(
     model: Option<&EmbeddingModel>,
 ) -> Result<usize, GraphtorError> {
     let safe_path = validate_path(file_path, root)?;
+    let safe_source_root = validate_path(source_root, root)?;
 
     // Derive the source-root-relative path used as the database key.
     let rel_path = safe_path
-        .strip_prefix(source_root)
+        .strip_prefix(&safe_source_root)
         .map_err(|_| GraphtorError::Pipeline {
             message: format!(
                 "file '{}' is not within source root '{}'",
                 safe_path.display(),
-                source_root.display()
+                safe_source_root.display()
             ),
             stage: "reingest".to_owned(),
         })?

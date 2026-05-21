@@ -33,6 +33,7 @@ mod workspace;
 use std::path::PathBuf;
 use std::process;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::Context as _;
 use clap::Parser as _;
@@ -42,7 +43,7 @@ use graphtor_core::{
     config::SourceConfig,
     db::{list_sources, DataStore},
     init_logging,
-    sync::sync_source,
+    sync::{sync_source, SyncMetrics},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
 use tracing::{error, info, warn};
@@ -250,9 +251,108 @@ fn cmd_sync(
             &store,
             &plan,
             model.as_ref(),
+            args,
             fmt,
         ))
     }
+}
+
+fn merge_sync_metrics(total: &mut SyncMetrics, next: &SyncMetrics) {
+    total.files_total += next.files_total;
+    total.files_synced += next.files_synced;
+    total.files_deleted += next.files_deleted;
+    total.chunks_created += next.chunks_created;
+    total.chunks_deleted += next.chunks_deleted;
+    total.errors += next.errors;
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    let elapsed_ms = started_at.elapsed().as_millis();
+    u64::try_from(elapsed_ms).unwrap_or(u64::MAX).max(1)
+}
+
+fn print_sync_metrics(metrics: &SyncMetrics) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(metrics).expect("SyncMetrics should serialize")
+    );
+}
+
+fn run_incremental_sync<F>(
+    db_path: &std::path::Path,
+    store: &DataStore,
+    plan: &graphtor_core::acquire::AcquisitionPlan,
+    model: Option<&EmbeddingModel>,
+    mut on_source_start: F,
+) -> SyncMetrics
+where
+    F: FnMut(&str, usize, usize),
+{
+    let started_at = Instant::now();
+    info!(sources = plan.sources.len(), "starting incremental sync");
+
+    let acq_result = acquire_execute(plan, false);
+    if acq_result.failed > 0 {
+        warn!(
+            failed = acq_result.failed,
+            succeeded = acq_result.succeeded,
+            "acquisition had failures; affected sources may be skipped"
+        );
+    }
+
+    let state_path = db_path.parent().map_or_else(
+        || PathBuf::from("sync_state.json"),
+        |p| p.join("sync_state.json"),
+    );
+
+    let mut total_metrics = SyncMetrics {
+        errors: acq_result.failed,
+        ..SyncMetrics::default()
+    };
+    let total_sources = plan.sources.len();
+
+    for (index, planned) in plan.sources.iter().enumerate() {
+        let source_dir = &planned.target_dir;
+        let source_id = match &planned.source {
+            graphtor_core::Source::Git(g) => g.id.as_str(),
+            graphtor_core::Source::Local(l) => l.id.as_str(),
+            graphtor_core::Source::Url(u) => u.id.as_str(),
+        };
+
+        on_source_start(source_id, index + 1, total_sources);
+
+        if !source_dir.exists() {
+            warn!(
+                source_id,
+                path = %source_dir.display(),
+                "source directory does not exist; skipping"
+            );
+            total_metrics.errors += 1;
+            continue;
+        }
+
+        match sync_source(
+            store,
+            &planned.source,
+            source_dir,
+            &state_path,
+            &plan.allowed_root,
+            model,
+        ) {
+            Ok(result) => merge_sync_metrics(&mut total_metrics, &result),
+            Err(e) => {
+                warn!(
+                    source_id,
+                    error = %e,
+                    "incremental sync failed for source; continuing"
+                );
+                total_metrics.errors += 1;
+            }
+        }
+    }
+
+    total_metrics.duration_ms = elapsed_millis(started_at);
+    total_metrics
 }
 
 /// Full pipeline: acquire → parse → embed → load all files unconditionally.
@@ -263,6 +363,7 @@ fn cmd_sync_full(
     args: &cli::SyncArgs,
     fmt: OutputFormat,
 ) -> anyhow::Result<i32> {
+    let started_at = Instant::now();
     let pipeline_config = PipelineConfig {
         batch_size: args.batch_size,
         parallel: false,
@@ -278,6 +379,20 @@ fn cmd_sync_full(
         .context("pipeline execution failed")?;
 
     let error_count = result.errors_encountered.len();
+    let metrics = SyncMetrics {
+        files_total: result.documents_processed + error_count,
+        files_synced: result.documents_processed,
+        files_deleted: 0,
+        chunks_created: result.total_chunks,
+        chunks_deleted: 0,
+        duration_ms: elapsed_millis(started_at),
+        errors: error_count,
+    };
+
+    if args.metrics {
+        print_sync_metrics(&metrics);
+        return Ok(i32::from(metrics.errors != 0));
+    }
 
     if fmt == OutputFormat::Json {
         println!(
@@ -288,6 +403,7 @@ fn cmd_sync_full(
                 "chunks_loaded": result.total_chunks,
                 "files_deleted": 0_usize,
                 "errors": error_count,
+                "metrics": &metrics,
             }))
         );
         return Ok(i32::from(error_count != 0));
@@ -315,72 +431,14 @@ fn cmd_sync_incremental(
     store: &DataStore,
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
+    args: &cli::SyncArgs,
     fmt: OutputFormat,
 ) -> i32 {
-    info!(sources = plan.sources.len(), "starting incremental sync");
+    let metrics = run_incremental_sync(db_path, store, plan, model, |_source, _current, _total| {});
 
-    // Execute acquisition to clone any new git repos (existing ones are skipped).
-    let acq_result = acquire_execute(plan, false);
-    if acq_result.failed > 0 {
-        warn!(
-            failed = acq_result.failed,
-            succeeded = acq_result.succeeded,
-            "acquisition had failures; affected sources may be skipped"
-        );
-    }
-
-    // Derive sync state path from the database location so state and DB stay colocated.
-    let state_path = db_path.parent().map_or_else(
-        || PathBuf::from("sync_state.json"),
-        |p| p.join("sync_state.json"),
-    );
-
-    let mut total_files: usize = 0;
-    let mut total_chunks: usize = 0;
-    let mut total_deleted: usize = 0;
-    let mut total_errors: usize = acq_result.failed;
-
-    for planned in &plan.sources {
-        let source_dir = &planned.target_dir;
-        let source_id = match &planned.source {
-            graphtor_core::Source::Git(g) => g.id.as_str(),
-            graphtor_core::Source::Local(l) => l.id.as_str(),
-            graphtor_core::Source::Url(u) => u.id.as_str(),
-        };
-
-        if !source_dir.exists() {
-            warn!(
-                source_id,
-                path = %source_dir.display(),
-                "source directory does not exist; skipping"
-            );
-            total_errors += 1;
-            continue;
-        }
-
-        match sync_source(
-            store,
-            &planned.source,
-            source_dir,
-            &state_path,
-            &plan.allowed_root,
-            model,
-        ) {
-            Ok(result) => {
-                total_files += result.files_processed;
-                total_chunks += result.chunks_loaded;
-                total_deleted += result.files_deleted;
-                total_errors += result.files_errored;
-            }
-            Err(e) => {
-                warn!(
-                    source_id,
-                    error = %e,
-                    "incremental sync failed for source; continuing"
-                );
-                total_errors += 1;
-            }
-        }
+    if args.metrics {
+        print_sync_metrics(&metrics);
+        return i32::from(metrics.errors != 0);
     }
 
     if fmt == OutputFormat::Json {
@@ -388,23 +446,25 @@ fn cmd_sync_incremental(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
                 "mode": "incremental",
-                "files_processed": total_files,
-                "chunks_loaded": total_chunks,
-                "files_deleted": total_deleted,
-                "errors": total_errors,
+                "files_processed": metrics.files_synced,
+                "chunks_loaded": metrics.chunks_created,
+                "files_deleted": metrics.files_deleted,
+                "errors": metrics.errors,
+                "metrics": &metrics,
             }))
         );
-        return i32::from(total_errors != 0);
+        return i32::from(metrics.errors != 0);
     }
 
     println!(
-        "sync complete (incremental): {total_files} files processed, {total_chunks} chunks loaded, {total_deleted} files deleted"
+        "sync complete (incremental): {} files processed, {} chunks loaded, {} files deleted",
+        metrics.files_synced, metrics.chunks_created, metrics.files_deleted
     );
 
-    if total_errors > 0 {
-        eprintln!("{total_errors} error(s) encountered during sync");
+    if metrics.errors > 0 {
+        eprintln!("{} error(s) encountered during sync", metrics.errors);
     }
-    i32::from(total_errors != 0)
+    i32::from(metrics.errors != 0)
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────
@@ -434,66 +494,35 @@ fn spawn_background_sync(
             *guard = SyncStatus::Syncing;
         }
 
+        let sync_status_progress = Arc::clone(&sync_status_bg);
         let result = tokio::task::spawn_blocking(move || {
             let data_root = cwd_owned.join(".graphtor/data");
             let plan = acquire_plan::plan(&source_config, &data_root, &cwd_owned)
                 .context("background sync: failed to build acquisition plan")?;
 
-            // Clone any new git repos; local and URL sources skip acquisition.
-            let acq_result = acquire_execute(&plan, false);
-            let mut errors = acq_result.failed;
-            if errors > 0 {
-                warn!(failed = errors, "background sync: acquisition had failures");
-            }
-
-            let state_path = db_path_owned.parent().map_or_else(
-                || PathBuf::from("sync_state.json"),
-                |p| p.join("sync_state.json"),
+            let metrics = run_incremental_sync(
+                &db_path_owned,
+                &store_bg,
+                &plan,
+                model_bg.as_ref(),
+                |source, current, total| {
+                    let mut guard = sync_status_progress
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    *guard = SyncStatus::InProgress {
+                        source: source.to_string(),
+                        current,
+                        total,
+                    };
+                },
             );
 
-            let mut files: usize = 0;
-            let mut chunks: usize = 0;
-
-            for planned in &plan.sources {
-                let source_dir = &planned.target_dir;
-                if !source_dir.exists() {
-                    warn!(
-                        path = %source_dir.display(),
-                        "background sync: source directory missing; skipping"
-                    );
-                    errors += 1;
-                    continue;
-                }
-                match sync_source(
-                    &store_bg,
-                    &planned.source,
-                    source_dir,
-                    &state_path,
-                    &plan.allowed_root,
-                    model_bg.as_ref(),
-                ) {
-                    Ok(r) => {
-                        files += r.files_processed;
-                        chunks += r.chunks_loaded;
-                        errors += r.files_errored;
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "background sync: source failed");
-                        errors += 1;
-                    }
-                }
-            }
-
-            Ok::<(usize, usize, usize), anyhow::Error>((files, chunks, errors))
+            Ok::<SyncMetrics, anyhow::Error>(metrics)
         })
         .await;
 
         let new_status = match result {
-            Ok(Ok((f, c, 0))) => SyncStatus::Done {
-                files: f,
-                chunks: c,
-            },
-            Ok(Ok((_, _, e))) => SyncStatus::Error(format!("{e} source(s) had errors")),
+            Ok(Ok(metrics)) => SyncStatus::Complete { metrics },
             Ok(Err(e)) => SyncStatus::Error(e.to_string()),
             Err(e) => SyncStatus::Error(format!("task panicked: {e}")),
         };
