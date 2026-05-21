@@ -298,11 +298,9 @@ fn crawl_url_source_prioritises_iframe_sidebar_before_print_links() {
 
     let target = tempfile::tempdir().expect("tempdir");
     let result = crawl_url_source(&source, target.path()).expect("crawl succeeds");
-    let contains_chapter = result.iter().any(|path| {
-        std::fs::read_to_string(path)
-            .map(|content| content.contains("chapter"))
-            .unwrap_or(false)
-    });
+    let contains_chapter = result
+        .iter()
+        .any(|path| std::fs::read_to_string(path).is_ok_and(|content| content.contains("chapter")));
 
     assert!(
         contains_chapter,
