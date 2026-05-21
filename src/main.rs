@@ -11,6 +11,7 @@
 //! - `upgrade`   — upgrade the installed binary
 //! - `uninstall` — remove graphtor-docs from the current workspace
 //! - `manifest`  — print a JSON-RPC 2.0 manifest of MCP tools
+//! - `prewarm`   — pre-warm all documentation sources with progress reporting
 //!
 //! # Output format
 //!
@@ -39,7 +40,7 @@ use anyhow::Context as _;
 use clap::Parser as _;
 use graphtor_core::mcp::{DocServer, SyncStatus};
 use graphtor_core::{
-    acquire::{execute as acquire_execute, plan as acquire_plan},
+    acquire::{execute as acquire_execute, plan as acquire_plan, PlannedSource},
     config::SourceConfig,
     db::{list_sources, DataStore},
     init_logging,
@@ -125,6 +126,7 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Upgrade(args) => cmd_upgrade(&cwd, &args, fmt),
         Command::Uninstall(args) => cmd_uninstall(&cwd, &args, fmt),
         Command::Manifest => Ok(cmd_manifest(fmt)),
+        Command::Prewarm(args) => cmd_prewarm(&cwd, &db_path, sources_path.as_deref(), &args),
     }
 }
 
@@ -333,6 +335,7 @@ where
             &state_path,
             &plan.allowed_root,
             model,
+            None,
         ) {
             Ok(result) => merge_sync_metrics(&mut total_metrics, &result),
             Err(e) => {
@@ -978,11 +981,265 @@ fn cmd_manifest(fmt: OutputFormat) -> i32 {
     0
 }
 
+// ── prewarm ───────────────────────────────────────────────────────────────────
+
+/// Pre-warm all configured documentation sources with file-level progress
+/// output and JSONL telemetry.
+///
+/// Syncs every source in sequence, emitting `[syncing]` progress lines to
+/// stderr (suppressed by `--quiet`) and a single JSONL telemetry record to
+/// stdout on completion.
+fn cmd_prewarm(
+    cwd: &std::path::Path,
+    db_path: &std::path::Path,
+    config_override: Option<&std::path::Path>,
+    args: &cli::prewarm::PrewarmArgs,
+) -> anyhow::Result<i32> {
+    let source_config: SourceConfig = if let Some(cfg) = load_source_config(cwd, config_override)? {
+        cfg
+    } else {
+        let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
+        eprintln!("error: sources.yaml not found at {}", path.display());
+        return Ok(2);
+    };
+
+    if source_config.sources.is_empty() {
+        warn!("sources.yaml contains no sources; nothing to prewarm");
+        println!("{}", prewarm_telemetry(0, 0, 0, 0, 0));
+        return Ok(0);
+    }
+
+    let store = DataStore::open_sqlite(db_path, cwd)
+        .with_context(|| format!("failed to open database at {}", db_path.display()))?;
+    store
+        .ensure_schema()
+        .context("failed to ensure database schema")?;
+
+    let data_root: PathBuf = args
+        .data_root
+        .clone()
+        .unwrap_or_else(|| cwd.join(".graphtor/data"));
+    let plan = acquire_plan::plan(&source_config, &data_root, cwd)
+        .context("failed to build acquisition plan")?;
+
+    let model: Option<EmbeddingModel> = if args.no_embed {
+        None
+    } else {
+        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
+            Ok(m) => Some(m),
+            Err(e) => {
+                warn!(error = %e, "embedding model unavailable; proceeding without embeddings");
+                None
+            }
+        }
+    };
+
+    let started_at = Instant::now();
+    let acq_result = acquire_execute(&plan, false);
+    if acq_result.failed > 0 {
+        warn!(
+            failed = acq_result.failed,
+            succeeded = acq_result.succeeded,
+            "acquisition had failures; affected sources may be skipped"
+        );
+    }
+
+    let state_path = db_path.parent().map_or_else(
+        || PathBuf::from("sync_state.json"),
+        |p| p.join("sync_state.json"),
+    );
+    let mut total_metrics = SyncMetrics {
+        errors: acq_result.failed,
+        ..SyncMetrics::default()
+    };
+    let sources_count = plan.sources.len();
+
+    for planned in &plan.sources {
+        match prewarm_sync_source(
+            &store,
+            planned,
+            &state_path,
+            &plan.allowed_root,
+            model.as_ref(),
+            args.quiet,
+        ) {
+            Some(m) => merge_sync_metrics(&mut total_metrics, &m),
+            None => total_metrics.errors += 1,
+        }
+    }
+
+    total_metrics.duration_ms = elapsed_millis(started_at);
+    println!(
+        "{}",
+        prewarm_telemetry(
+            total_metrics.files_total,
+            total_metrics.files_synced,
+            total_metrics.chunks_created,
+            total_metrics.duration_ms,
+            sources_count,
+        )
+    );
+    Ok(i32::from(total_metrics.errors != 0))
+}
+
+/// Sync a single planned source and return its metrics, or `None` on failure.
+///
+/// Emits `[syncing]` progress to stderr unless `quiet` is set.
+fn prewarm_sync_source(
+    store: &DataStore,
+    planned: &PlannedSource,
+    state_path: &std::path::Path,
+    allowed_root: &std::path::Path,
+    model: Option<&EmbeddingModel>,
+    quiet: bool,
+) -> Option<SyncMetrics> {
+    let source_dir = &planned.target_dir;
+    let source_id = match &planned.source {
+        Source::Git(g) => g.id.as_str(),
+        Source::Local(l) => l.id.as_str(),
+        Source::Url(u) => u.id.as_str(),
+    }
+    .to_string();
+
+    if !source_dir.exists() {
+        warn!(
+            source_id = %source_id,
+            path = %source_dir.display(),
+            "source directory does not exist; skipping"
+        );
+        return None;
+    }
+
+    let source_id_cb = source_id.clone();
+    let mut file_cb = |path: &std::path::Path, idx: usize, total: usize| {
+        if !quiet {
+            let file_name = path.file_name().map_or_else(
+                || path.to_string_lossy().into_owned(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let pct = (idx * 100).checked_div(total).unwrap_or(0);
+            eprintln!("[syncing] {source_id_cb}: {file_name} ({idx}/{total}) [{pct}%]");
+        }
+    };
+
+    match sync_source(
+        store,
+        &planned.source,
+        source_dir,
+        state_path,
+        allowed_root,
+        model,
+        Some(&mut file_cb),
+    ) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            warn!(
+                source_id = %source_id,
+                error = %e,
+                "prewarm sync failed for source; continuing"
+            );
+            None
+        }
+    }
+}
+
+/// Build a `prewarm.complete` JSONL telemetry record.
+fn prewarm_telemetry(
+    files_total: usize,
+    files_synced: usize,
+    chunks_created: usize,
+    duration_ms: u64,
+    sources_count: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "event_type": "prewarm.complete",
+        "timestamp": iso8601_now(),
+        "payload": {
+            "files_total": files_total,
+            "files_synced": files_synced,
+            "chunks_created": chunks_created,
+            "duration_ms": duration_ms,
+            "sources_count": sources_count,
+        }
+    })
+}
+
+/// Return the current UTC time as an ISO-8601 timestamp (e.g. `2026-05-21T15:30:00Z`).
+#[must_use]
+fn iso8601_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    epoch_secs_to_iso8601(secs)
+}
+
+/// Convert Unix epoch seconds to an ISO-8601 UTC timestamp string.
+///
+/// Uses the civil-date algorithm from
+/// <https://howardhinnant.github.io/date_algorithms.html>.
+#[must_use]
+fn epoch_secs_to_iso8601(secs: u64) -> String {
+    let sec = secs % 60;
+    let min = (secs / 60) % 60;
+    let hour = (secs / 3_600) % 24;
+    let days = secs / 86_400;
+    let (year, month, day) = days_to_ymd(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
+/// Convert days since the Unix epoch (1970-01-01) to `(year, month, day)`.
+///
+/// Uses the civil-date algorithm described in
+/// <https://howardhinnant.github.io/date_algorithms.html>.
+#[must_use]
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    let adj = days + 719_468;
+    let era = adj / 146_097;
+    let doe = adj - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month, day)
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn epoch_secs_to_iso8601_formats_known_date() {
+        // 2026-05-21T00:00:00Z = 1_779_321_600 seconds since epoch.
+        // 1970 to 2026: 56 years, with leap years 1972,1976,...,2024 (14 leaps).
+        // days = 56*365 + 14 = 20440 + 14 = 20454
+        // Jan(31)+Feb(28)+Mar(31)+Apr(30)+May1-20(20) = 31+28+31+30+20 = 140 days
+        // days_total = 20454 + 140 = 20594
+        // secs = 20594 * 86400 = 1_779_321_600  ← computed from actual epoch
+        // Verified: date -d "2026-05-21" +%s = 1_779_321_600
+        let secs: u64 = 1_779_321_600;
+        assert_eq!(epoch_secs_to_iso8601(secs), "2026-05-21T00:00:00Z");
+    }
+
+    #[test]
+    fn epoch_secs_to_iso8601_formats_unix_epoch() {
+        assert_eq!(epoch_secs_to_iso8601(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn iso8601_now_returns_non_empty_string() {
+        let ts = iso8601_now();
+        assert!(!ts.is_empty(), "timestamp should not be empty");
+        assert!(
+            ts.ends_with('Z'),
+            "timestamp should end with Z for UTC: {ts}"
+        );
+    }
 
     #[test]
     fn cmd_install_rejects_unknown_editor_values() {
