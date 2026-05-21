@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
+use url::Url;
 
 use crate::config::source::UrlSource;
 use crate::error::GraphtorError;
@@ -131,6 +132,8 @@ pub fn crawl_url_source(
         }
     }
 
+    remove_stale_crawled_files(target_dir, &written);
+
     info!(
         source_id = %source.id,
         pages = written.len(),
@@ -189,6 +192,26 @@ fn fetch_robots_txt(start_url: &str) -> Option<texting_robots::Robot> {
     texting_robots::Robot::new("graphtor-docs", &bytes).ok()
 }
 
+/// Remove files left over from previous crawls that were not produced by the
+/// current traversal.
+fn remove_stale_crawled_files(target_dir: &Path, written: &[PathBuf]) {
+    let keep: HashSet<&Path> = written.iter().map(PathBuf::as_path).collect();
+
+    let Ok(entries) = std::fs::read_dir(target_dir) else {
+        warn!(path = %target_dir.display(), "failed to enumerate crawl output directory");
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && !keep.contains(path.as_path()) {
+            if let Err(error) = std::fs::remove_file(&path) {
+                warn!(path = %path.display(), %error, "failed to remove stale crawled file");
+            }
+        }
+    }
+}
+
 /// Extract the `scheme://host[:port]` portion of a URL.
 ///
 /// Falls back to the full URL if no `://` separator is found.
@@ -228,60 +251,128 @@ fn strip_fragment(url: &str) -> &str {
     url.split_once('#').map_or(url, |(before, _)| before)
 }
 
-/// Extract all valid absolute and relative `<a href>` links from `html`,
-/// resolving them against `base_url`.
+/// Extract all navigable document links from `html`, resolving them against
+/// `base_url`.
 fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     let document = scraper::Html::parse_document(html);
+    let mut links = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Raw iframe scanning handles both ordinary iframe elements and iframe tags
+    // embedded inside `<noscript>`, which `scraper` treats as text on the live
+    // Rust Book site.
+    for raw_link in extract_iframe_srcs(html) {
+        push_resolved_link(raw_link.as_str(), base_url, &mut links, &mut seen);
+    }
+
     let Ok(selector) = scraper::Selector::parse("a[href]") else {
-        warn!("failed to compile link CSS selector; no links extracted");
-        return Vec::new();
+        warn!("failed to compile link CSS selector");
+        return links;
     };
 
-    let mut links = Vec::new();
     for element in document.select(&selector) {
-        let Some(href) = element.value().attr("href") else {
+        let Some(raw_link) = element.value().attr("href") else {
             continue;
         };
-
-        // Skip non-navigable hrefs
-        if href.starts_with('#') || href.starts_with("javascript:") || href.starts_with("mailto:") {
-            continue;
-        }
-
-        if let Some(resolved) = resolve_link(href, base_url) {
-            let clean = strip_fragment(&resolved).to_string();
-            if !clean.is_empty() {
-                links.push(clean);
-            }
-        }
+        push_resolved_link(raw_link, base_url, &mut links, &mut seen);
     }
 
     links
+}
+
+/// Extract iframe `src` values from raw HTML text.
+fn extract_iframe_srcs(html: &str) -> Vec<String> {
+    let mut srcs = Vec::new();
+    let mut remaining = html;
+
+    while let Some(start) = remaining.find("<iframe") {
+        remaining = &remaining[start + "<iframe".len()..];
+        let Some(end) = remaining.find('>') else {
+            break;
+        };
+        let tag = &remaining[..end];
+
+        if let Some(src) = extract_attribute_value(tag, "src") {
+            srcs.push(src.to_string());
+        }
+
+        remaining = &remaining[end + 1..];
+    }
+
+    srcs
+}
+
+/// Extract a quoted HTML attribute value from a tag fragment.
+fn extract_attribute_value<'a>(tag: &'a str, attr_name: &str) -> Option<&'a str> {
+    for quote in ['"', '\''] {
+        let needle = format!("{attr_name}={quote}");
+        if let Some(start) = tag.find(&needle) {
+            let value = &tag[start + needle.len()..];
+            let end = value.find(quote)?;
+            return Some(&value[..end]);
+        }
+    }
+
+    None
+}
+
+/// Resolve and append a raw link target if it is navigable and not already
+/// present in `links`.
+fn push_resolved_link(
+    raw_link: &str,
+    base_url: &str,
+    links: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    if raw_link.starts_with('#')
+        || raw_link.starts_with("javascript:")
+        || raw_link.starts_with("mailto:")
+    {
+        return;
+    }
+
+    if let Some(resolved) = resolve_link(raw_link, base_url) {
+        let clean = strip_fragment(&resolved).to_string();
+        if !clean.is_empty() && seen.insert(clean.clone()) {
+            links.push(clean);
+        }
+    }
 }
 
 /// Resolve `href` against `base_url` into an absolute URL.
 ///
 /// Returns `None` if resolution is not possible.
 fn resolve_link(href: &str, base_url: &str) -> Option<String> {
-    if href.starts_with("https://") || href.starts_with("http://") {
-        return Some(href.to_string());
+    let mut base = Url::parse(base_url).ok()?;
+
+    // `normalise_url()` strips trailing slashes for deduplication, which makes
+    // directory indexes like `.../book/` look like file URLs. Restore the
+    // slash before joining relative links so sidebar navigation stays under the
+    // current documentation section instead of jumping to the origin root.
+    if should_treat_base_as_directory(&base) {
+        let directory_path = format!("{}/", base.path());
+        base.set_path(&directory_path);
     }
 
-    let base_origin = extract_origin(base_url);
+    base.join(href).ok().map(|resolved| resolved.to_string())
+}
 
-    if href.starts_with('/') {
-        return Some(format!("{base_origin}{href}"));
+/// Determine whether a normalised base URL should be treated as a directory for
+/// relative-link resolution.
+fn should_treat_base_as_directory(base: &Url) -> bool {
+    if base.cannot_be_a_base() || base.path().ends_with('/') {
+        return false;
     }
 
-    // Relative path: join against base_url's directory
-    let base_dir = if base_url.ends_with('/') {
-        base_url.to_string()
-    } else {
-        let last_slash = base_url.rfind('/')?;
-        base_url[..=last_slash].to_string()
+    let Some(mut segments) = base.path_segments() else {
+        return false;
     };
 
-    Some(format!("{base_dir}{href}"))
+    let Some(last_segment) = segments.next_back() else {
+        return false;
+    };
+
+    !last_segment.is_empty() && !last_segment.contains('.')
 }
 
 /// Normalise a URL for deduplication: strip trailing slash (except bare origin).
@@ -431,6 +522,29 @@ mod tests {
     }
 
     #[test]
+    fn resolve_link_preserves_directory_base_without_trailing_slash() {
+        let result = resolve_link(
+            "ch01-01-installation.html",
+            "https://doc.rust-lang.org/book",
+        );
+        assert_eq!(
+            result,
+            Some("https://doc.rust-lang.org/book/ch01-01-installation.html".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_links_uses_directory_base_after_url_normalisation() {
+        let html = r#"<a href="ch01-01-installation.html">Install</a>"#;
+        let base_url = normalise_url("https://doc.rust-lang.org/book/");
+        let links = extract_links(html, &base_url);
+        assert_eq!(
+            links,
+            vec!["https://doc.rust-lang.org/book/ch01-01-installation.html".to_string()]
+        );
+    }
+
+    #[test]
     fn extract_links_skips_fragment_only() {
         let html = r##"<a href="#section">Section</a>"##;
         let links = extract_links(html, "https://example.com/page");
@@ -449,5 +563,27 @@ mod tests {
         let html = r#"<a href="https://example.com/about">About</a>"#;
         let links = extract_links(html, "https://example.com/home");
         assert_eq!(links, vec!["https://example.com/about".to_string()]);
+    }
+
+    #[test]
+    fn extract_links_includes_iframe_src() {
+        let html = r#"<iframe src="toc.html"></iframe>"#;
+        let base_url = normalise_url("https://doc.rust-lang.org/book/");
+        let links = extract_links(html, &base_url);
+        assert_eq!(
+            links,
+            vec!["https://doc.rust-lang.org/book/toc.html".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_links_includes_iframe_src_inside_noscript() {
+        let html = r#"<noscript><iframe src="toc.html"></iframe></noscript>"#;
+        let base_url = normalise_url("https://doc.rust-lang.org/book/");
+        let links = extract_links(html, &base_url);
+        assert_eq!(
+            links,
+            vec!["https://doc.rust-lang.org/book/toc.html".to_string()]
+        );
     }
 }
