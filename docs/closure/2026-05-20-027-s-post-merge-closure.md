@@ -73,7 +73,7 @@ Runtime verification is **PASS** for the shipped telemetry and progress surfaces
 
 ## Deployment / Rollout Path
 
-Closure-only PR on `post-merge/036-backlogit-telemetry-sync-progress`.
+Closure-only PR `#52` on `post-merge/036-backlogit-telemetry-sync-progress`.
 No deployment step.
 
 ## Post-Deploy Checks

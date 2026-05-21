@@ -16,6 +16,7 @@ phase: post-merge-closure
   `post-merge/036-backlogit-telemetry-sync-progress` from `origin/main`
 * Archived shipment scope `027-S`, `036-F`, `036.001-T`, and `036.002-T`
 * Wrote runtime verification and operational closure artifacts for `027-S`
+* Pushed the closure branch and opened PR `#52`
 
 ## Files Changed
 
@@ -41,5 +42,4 @@ phase: post-merge-closure
 
 ## Next Step
 
-* Push the closure branch and open the closure PR
-* Await operator review and approval for the closure PR
+* Await operator review and approval for closure PR `#52`
