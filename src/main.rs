@@ -1117,7 +1117,7 @@ fn prewarm_sync_source(
                 || path.to_string_lossy().into_owned(),
                 |n| n.to_string_lossy().into_owned(),
             );
-            let pct = if total > 0 { idx * 100 / total } else { 0 };
+            let pct = (idx * 100).checked_div(total).unwrap_or(0);
             eprintln!("[syncing] {source_id_cb}: {file_name} ({idx}/{total}) [{pct}%]");
         }
     };
