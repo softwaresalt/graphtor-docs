@@ -129,7 +129,7 @@ src/
     source.rs             ← SourceConfig, GitSource, LocalSource, UrlSource
     validation.rs         ← duplicate-ID, required-field, glob-syntax checks
   mcp/
-    server.rs             ← DocServer; #[tool_router] impl with 7 tools
+    server.rs             ← DocServer; #[tool_router] impl with 8 tools
     format.rs             ← Markdown formatting for tool responses
   workspace/
     paths.rs              ← workspace directory layout (.graphtor/ subdirs)

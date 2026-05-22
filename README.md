@@ -21,6 +21,8 @@ No cloud services. No external databases. One binary.
   in-process Rust ML inference; no external model server)
 - **Graph traversal** — follow document link graphs with BFS traversal
 - **Incremental sync** — re-ingest only changed files (git diff or mtime)
+- **Per-source database routing** — send selected sources to separate `.db`
+  files with automatic multi-database `serve`, `status`, and `prewarm` support
 - **8 MCP tools** — search, traverse, research, retrieve, status — for AI agents
 - **JSON-RPC 2.0 output** — `--json` global flag wraps all CLI output in
   JSON-RPC 2.0 envelopes for agent and script consumption
@@ -85,14 +87,21 @@ sources:
   - type: git
     id: my-docs
     url: https://github.com/example/my-docs.git
+    database: primary.db
     include: ["**/*.md"]
 
   - type: local
     id: local-notes
     path: ./notes
+    database: notes.db
 ```
 
 See the [Configuration Guide](docs/configuration.md) for all options.
+
+When you omit `database`, the source uses the primary `--db-path` target
+(`.graphtor/graph.db` by default). When you set `database`, graphtor-docs
+creates or reuses `.graphtor/<database>` and keeps that source's incremental
+state in the matching `*.sync_state.json` file.
 
 ### 3. Sync documentation
 

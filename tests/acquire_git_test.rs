@@ -17,6 +17,7 @@ fn make_git_source(id: &str, url: &str, branch: &str) -> GitSource {
         include: vec![],
         exclude: vec![],
         formats: vec![],
+        database: None,
     }
 }
 

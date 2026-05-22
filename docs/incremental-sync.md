@@ -9,15 +9,23 @@ re-ingests only what has changed.
 
 ## Sync State File
 
-Per-source tracking data is persisted in a JSON file:
+Per-database tracking data is persisted in a JSON file:
 
 ```text
-.graphtor/sync_state.json
+.graphtor/graph.sync_state.json
 ```
 
 This path is resolved relative to the **current working directory** when
 `graphtor-docs sync` is run (specifically, in the same directory as
 `--db-path`, which defaults to `.graphtor/graph.db`).
+
+When a source sets `database`, graphtor-docs uses the matching database-scoped
+state file instead:
+
+```text
+.graphtor/notes.db          → .graphtor/notes.sync_state.json
+.graphtor/reference.db      → .graphtor/reference.sync_state.json
+```
 
 The file is created on the first successful sync and updated after each
 subsequent sync. If the file is missing, the engine treats every file as new
@@ -173,8 +181,9 @@ When to use `--full`:
 
 ### First-Time Sync
 
-When `sync_state.json` does not exist (first run or manually deleted), the
-engine treats every source as having never been synced:
+When the active database-specific `*.sync_state.json` file does not exist
+(first run or manually deleted), the engine treats every source routed into
+that database as having never been synced:
 
 - Git sources: `last_commit` is `null` → full ingest of all files in the branch
 - Local sources: `file_mtimes` is empty → full ingest of all files

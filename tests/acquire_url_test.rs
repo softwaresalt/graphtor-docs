@@ -17,6 +17,7 @@ fn make_url_source(id: &str, url: &str) -> UrlSource {
         formats: vec![],
         include: vec![],
         exclude: vec![],
+        database: None,
     }
 }
 

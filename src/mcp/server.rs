@@ -19,6 +19,7 @@
 //! Pass the server to [`rmcp::serve_server`] with [`rmcp::transport::stdio`] to
 //! start the STDIO MCP server.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
@@ -32,9 +33,9 @@ use tracing::info;
 
 use crate::{
     db::{
-        chunks::{get_chunk, list_chunks_by_path},
-        nodes::list_sources,
-        search::{search_by_text, search_similar},
+        chunks::{get_chunk, list_chunks_by_path, ChunkRecord},
+        nodes::{list_sources, SourceRecord},
+        search::{search_by_text, search_similar, SearchResult},
         traverse::find_related_chunks,
         DataStore,
     },
@@ -188,16 +189,17 @@ pub struct ResearchTopicParams {
 /// The `LocalDocRAG` MCP server.
 ///
 /// Provides `search_local_docs`, `traverse_doc_links`, `search_semantic`,
-/// `research_topic`, and supporting tools backed by an embedded [`DataStore`].
+/// `research_topic`, and supporting tools backed by one or more embedded [`DataStore`]s.
 /// The server is [`Clone`] because both [`DataStore`] and [`EmbeddingModel`] are
 /// cheap [`std::sync::Arc`] clones internally.
 ///
-/// Use [`DocServer::new`] to construct without embeddings, [`DocServer::with_model`]
-/// to add semantic search, and [`DocServer::with_sync_status`] to wire in background
-/// sync status reporting from the `serve` command.
+/// Use [`DocServer::new`] or [`DocServer::with_stores`] to construct without
+/// embeddings, [`DocServer::with_model`] or [`DocServer::with_stores_and_model`]
+/// to add semantic search, and [`DocServer::with_sync_status`] to wire in
+/// background sync status reporting from the `serve` command.
 #[derive(Clone)]
 pub struct DocServer {
-    store: DataStore,
+    stores: Vec<DataStore>,
     /// Embedding model for semantic search.  When `None`, `search_semantic`
     /// returns a descriptive error rather than silently failing.
     model: Option<EmbeddingModel>,
@@ -214,8 +216,20 @@ impl DocServer {
     /// [`DocServer::with_sync_status`] to enable runtime reporting.
     #[must_use]
     pub fn new(store: DataStore) -> Self {
+        Self::with_stores(store, Vec::new())
+    }
+
+    /// Create a new [`DocServer`] backed by multiple [`DataStore`] handles.
+    ///
+    /// `primary` is the first store and is used for operations that target a
+    /// single database. `additional` may be empty.
+    #[must_use]
+    pub fn with_stores(primary: DataStore, additional: Vec<DataStore>) -> Self {
+        let mut stores = Vec::with_capacity(additional.len() + 1);
+        stores.push(primary);
+        stores.extend(additional);
         Self {
-            store,
+            stores,
             model: None,
             sync_status: Arc::default(),
         }
@@ -224,8 +238,21 @@ impl DocServer {
     /// Create a [`DocServer`] with an embedding model for semantic search.
     #[must_use]
     pub fn with_model(store: DataStore, model: EmbeddingModel) -> Self {
+        Self::with_stores_and_model(store, Vec::new(), model)
+    }
+
+    /// Create a [`DocServer`] backed by multiple stores and a semantic model.
+    #[must_use]
+    pub fn with_stores_and_model(
+        primary: DataStore,
+        additional: Vec<DataStore>,
+        model: EmbeddingModel,
+    ) -> Self {
+        let mut stores = Vec::with_capacity(additional.len() + 1);
+        stores.push(primary);
+        stores.extend(additional);
         Self {
-            store,
+            stores,
             model: Some(model),
             sync_status: Arc::default(),
         }
@@ -246,6 +273,124 @@ impl DocServer {
 
 #[tool_router]
 impl DocServer {
+    fn primary_store(&self) -> &DataStore {
+        // Invariant: stores is non-empty (enforced by all constructors).
+        self.stores.first().unwrap()
+    }
+
+    fn merge_search_results(
+        per_store_results: &[Vec<SearchResult>],
+        limit: Option<usize>,
+    ) -> Vec<SearchResult> {
+        let mut merged = Vec::new();
+        let mut seen_chunk_ids = BTreeSet::new();
+        let mut round_index = 0;
+
+        loop {
+            let mut progressed = false;
+
+            for results in per_store_results {
+                if let Some(result) = results.get(round_index) {
+                    progressed = true;
+                    if seen_chunk_ids.insert(result.chunk_id.clone()) {
+                        merged.push(result.clone());
+                        if limit.is_some_and(|max| merged.len() >= max) {
+                            return merged;
+                        }
+                    }
+                }
+            }
+
+            if !progressed {
+                break;
+            }
+
+            round_index += 1;
+        }
+
+        merged
+    }
+
+    fn search_text_all(&self, query: &str) -> Result<Vec<SearchResult>, GraphtorError> {
+        let per_store_results = self
+            .stores
+            .iter()
+            .map(|store| search_by_text(store, query))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::merge_search_results(&per_store_results, None))
+    }
+
+    fn search_semantic_all(
+        &self,
+        query: &str,
+        model: &EmbeddingModel,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, GraphtorError> {
+        let per_store_results = self
+            .stores
+            .iter()
+            .map(|store| search_similar(store, model, query, limit))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::merge_search_results(&per_store_results, Some(limit)))
+    }
+
+    fn list_sources_all(&self) -> Result<Vec<SourceRecord>, GraphtorError> {
+        let mut sources_by_id = BTreeMap::new();
+
+        for store in &self.stores {
+            for source in list_sources(store)? {
+                sources_by_id
+                    .entry(source.source_id.clone())
+                    .or_insert(source);
+            }
+        }
+
+        Ok(sources_by_id.into_values().collect())
+    }
+
+    fn get_chunk_all(&self, chunk_id: &str) -> Result<Option<ChunkRecord>, GraphtorError> {
+        for store in &self.stores {
+            if let Some(chunk) = get_chunk(store, chunk_id)? {
+                return Ok(Some(chunk));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn list_chunks_by_path_all(&self, path: &str) -> Result<Vec<ChunkRecord>, GraphtorError> {
+        let mut all_chunks = Vec::new();
+        let mut seen_chunk_ids = BTreeSet::new();
+
+        for store in &self.stores {
+            for chunk in list_chunks_by_path(store, path)? {
+                if seen_chunk_ids.insert(chunk.chunk_id.clone()) {
+                    all_chunks.push(chunk);
+                }
+            }
+        }
+
+        all_chunks.sort_by(|left, right| {
+            left.source_id
+                .cmp(&right.source_id)
+                .then(left.position.cmp(&right.position))
+                .then(left.char_offset.cmp(&right.char_offset))
+                .then(left.chunk_id.cmp(&right.chunk_id))
+        });
+
+        Ok(all_chunks)
+    }
+
+    fn store_for_chunk_id(&self, chunk_id: &str) -> Result<Option<&DataStore>, GraphtorError> {
+        for store in &self.stores {
+            if get_chunk(store, chunk_id)?.is_some() {
+                return Ok(Some(store));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Search local documentation chunks by keyword.
     ///
     /// Returns matching chunks with path, heading context, and content
@@ -269,7 +414,9 @@ impl DocServer {
         if params.query.trim().is_empty() {
             return Err(ErrorData::invalid_params("query cannot be empty", None));
         }
-        let results = search_by_text(&self.store, &params.query).map_err(|e| into_tool_err(&e))?;
+        let results = self
+            .search_text_all(&params.query)
+            .map_err(|e| into_tool_err(&e))?;
         // Normalize empty source_id to None (treat the same as no filter).
         let sid_filter =
             params
@@ -314,8 +461,14 @@ impl DocServer {
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
         #[allow(clippy::cast_possible_truncation)]
         let depth = params.max_depth.unwrap_or(2).min(5) as usize;
-        let results = find_related_chunks(&self.store, &params.chunk_id, depth)
-            .map_err(|e| into_tool_err(&e))?;
+        let results = if let Some(store) = self
+            .store_for_chunk_id(&params.chunk_id)
+            .map_err(|e| into_tool_err(&e))?
+        {
+            find_related_chunks(store, &params.chunk_id, depth).map_err(|e| into_tool_err(&e))?
+        } else {
+            Vec::new()
+        };
         let md = format_traversal_results(&params.chunk_id, &results);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
@@ -358,7 +511,8 @@ impl DocServer {
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
         #[allow(clippy::cast_possible_truncation)]
         let limit = params.top_k.unwrap_or(10).min(50) as usize;
-        let results = search_similar(&self.store, model, &params.query, limit)
+        let results = self
+            .search_semantic_all(&params.query, model, limit)
             .map_err(|e| into_tool_err(&e))?;
         let md = format_search_results(&results);
         Ok(CallToolResult::success(vec![Content::text(md)]))
@@ -382,7 +536,7 @@ impl DocServer {
         Parameters(_params): Parameters<ListSourcesParams>,
     ) -> Result<CallToolResult, ErrorData> {
         info!("list_sources invoked");
-        let sources = list_sources(&self.store).map_err(|e| into_tool_err(&e))?;
+        let sources = self.list_sources_all().map_err(|e| into_tool_err(&e))?;
         let md = format_sources_list(&sources);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
@@ -410,7 +564,9 @@ impl DocServer {
         if params.chunk_id.trim().is_empty() {
             return Err(ErrorData::invalid_params("chunk_id cannot be empty", None));
         }
-        let chunk = get_chunk(&self.store, &params.chunk_id).map_err(|e| into_tool_err(&e))?;
+        let chunk = self
+            .get_chunk_all(&params.chunk_id)
+            .map_err(|e| into_tool_err(&e))?;
         let md = match chunk {
             Some(c) => format_chunk(&c),
             None => format!("Chunk `{}` not found.", params.chunk_id),
@@ -442,8 +598,9 @@ impl DocServer {
         if params.path.trim().is_empty() {
             return Err(ErrorData::invalid_params("path cannot be empty", None));
         }
-        let all_chunks =
-            list_chunks_by_path(&self.store, &params.path).map_err(|e| into_tool_err(&e))?;
+        let all_chunks = self
+            .list_chunks_by_path_all(&params.path)
+            .map_err(|e| into_tool_err(&e))?;
         // Filter by source_id when one is provided and non-empty.
         let sid = params.source_id.trim();
         let chunks: Vec<_> = if sid.is_empty() {
@@ -498,10 +655,12 @@ impl DocServer {
         // Prefer semantic (ranked) search when the embedding model is available;
         // fall back to unranked text search so seed selection is deterministic.
         let initial: Vec<crate::db::search::SearchResult> = if let Some(model) = &self.model {
-            search_similar(&self.store, model, &params.query, search_k)
+            self.search_semantic_all(&params.query, model, search_k)
                 .map_err(|e| into_tool_err(&e))?
         } else {
-            let all = search_by_text(&self.store, &params.query).map_err(|e| into_tool_err(&e))?;
+            let all = self
+                .search_text_all(&params.query)
+                .map_err(|e| into_tool_err(&e))?;
             all.into_iter().take(search_k).collect()
         };
 
@@ -511,11 +670,16 @@ impl DocServer {
         let mut related: Vec<crate::db::traverse::TraversalResult> = Vec::new();
 
         for seed in initial.iter().take(seed_k) {
-            let traversal = find_related_chunks(&self.store, &seed.chunk_id, depth)
-                .map_err(|e| into_tool_err(&e))?;
-            for tr in traversal {
-                if seen_ids.insert(tr.chunk_id.clone()) {
-                    related.push(tr);
+            if let Some(store) = self
+                .store_for_chunk_id(&seed.chunk_id)
+                .map_err(|e| into_tool_err(&e))?
+            {
+                let traversal = find_related_chunks(store, &seed.chunk_id, depth)
+                    .map_err(|e| into_tool_err(&e))?;
+                for tr in traversal {
+                    if seen_ids.insert(tr.chunk_id.clone()) {
+                        related.push(tr);
+                    }
                 }
             }
         }
@@ -543,7 +707,16 @@ impl DocServer {
         Parameters(_params): Parameters<GetStatusParams>,
     ) -> Result<CallToolResult, ErrorData> {
         info!("get_status invoked");
-        let status = self.store.get_status().map_err(|e| into_tool_err(&e))?;
+        let mut status = self
+            .primary_store()
+            .get_status()
+            .map_err(|e| into_tool_err(&e))?;
+        for store in self.stores.iter().skip(1) {
+            let next = store.get_status().map_err(|e| into_tool_err(&e))?;
+            status.source_count += next.source_count;
+            status.chunk_count += next.chunk_count;
+            status.schema_version = status.schema_version.max(next.schema_version);
+        }
         let mut md = format_db_status(&status);
 
         let sync_str = {
@@ -1110,6 +1283,52 @@ mod tests {
         assert!(
             text.contains("auth.md"),
             "expected result referencing auth.md, got: {text}"
+        );
+    }
+
+    #[test]
+    fn with_stores_search_aggregates_across_databases() {
+        let primary = populated_store();
+        let secondary = populated_store();
+
+        upsert_chunk(
+            &primary,
+            "src-primary",
+            &chunk(
+                "primary-chunk",
+                "docs/primary.md",
+                "shared multi database query",
+            ),
+        )
+        .expect("upsert primary");
+        upsert_chunk(
+            &secondary,
+            "src-secondary",
+            &chunk(
+                "secondary-chunk",
+                "docs/secondary.md",
+                "shared multi database query",
+            ),
+        )
+        .expect("upsert secondary");
+
+        let server = DocServer::with_stores(primary, vec![secondary]);
+        let params = SearchParams {
+            query: "shared multi database".to_string(),
+            source_id: None,
+            top_k: Some(10),
+        };
+        let result = server
+            .search_local_docs(Parameters(params))
+            .expect("search should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("primary.md"),
+            "expected primary result, got: {text}"
+        );
+        assert!(
+            text.contains("secondary.md"),
+            "expected secondary result, got: {text}"
         );
     }
 

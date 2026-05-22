@@ -89,11 +89,46 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
             }
         };
 
+        if let Some(db_name) = source.database() {
+            validate_database_name(db_name, id)?;
+        }
         validate_globs(include, id)?;
         validate_globs(exclude, id)?;
         validate_formats(source.formats(), id)?;
     }
 
+    Ok(())
+}
+
+/// Validate a database name value.
+///
+/// Rules:
+/// - Must not be empty (empty string would be confusing and unparseable).
+/// - Must not contain path separators (`/` or `\`).
+/// - Must not contain `..` path-traversal components.
+fn validate_database_name(name: &str, source_id: &str) -> Result<(), GraphtorError> {
+    if name.is_empty() {
+        return Err(GraphtorError::Config {
+            message: format!(
+                "source '{source_id}' database name must not be empty; \
+                 omit the field entirely to use the default database"
+            ),
+            field: Some("database".to_string()),
+        });
+    }
+    let has_separator = name.contains('/') || name.contains('\\');
+    let has_parent_dir = Path::new(name)
+        .components()
+        .any(|c| c == Component::ParentDir);
+    if has_separator || has_parent_dir {
+        return Err(GraphtorError::Config {
+            message: format!(
+                "source '{source_id}' database name must not contain path separators \
+                 or '..' components: '{name}'"
+            ),
+            field: Some("database".to_string()),
+        });
+    }
     Ok(())
 }
 
@@ -143,6 +178,7 @@ mod tests {
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
             formats: vec![],
+            database: None,
         })
     }
 
@@ -153,6 +189,7 @@ mod tests {
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
             formats: vec![],
+            database: None,
         })
     }
 
@@ -189,6 +226,7 @@ mod tests {
             include: vec!["[invalid-glob".to_string()],
             exclude: vec![],
             formats: vec![],
+            database: None,
         });
         let config = SourceConfig {
             sources: vec![bad_glob],
@@ -254,6 +292,7 @@ mod tests {
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string(), "pdf".to_string(), "docx".to_string()],
+            database: None,
         });
         let config = SourceConfig { sources: vec![src] };
         assert!(
@@ -270,6 +309,7 @@ mod tests {
             include: vec![],
             exclude: vec![],
             formats: vec![],
+            database: None,
         });
         let config = SourceConfig { sources: vec![src] };
         assert!(
@@ -286,6 +326,7 @@ mod tests {
             include: vec![],
             exclude: vec![],
             formats: vec!["txt".to_string()],
+            database: None,
         });
         let config = SourceConfig { sources: vec![src] };
         let result = validate(&config);
@@ -314,6 +355,7 @@ mod tests {
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string(), "zip".to_string()],
+            database: None,
         });
         let config = SourceConfig { sources: vec![src] };
         let result = validate(&config);
@@ -322,6 +364,84 @@ mod tests {
         assert!(
             msg.contains("zip"),
             "error must identify the bad format: {msg}"
+        );
+    }
+
+    // ── T038.001 database validation ─────────────────────────────────────
+
+    #[test]
+    fn database_valid_name_passes_validation() {
+        let src = Source::Local(LocalSource {
+            id: "v".to_string(),
+            path: std::path::PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some("rust-docs.db".to_string()),
+        });
+        let config = SourceConfig { sources: vec![src] };
+        assert!(validate(&config).is_ok(), "valid database name must pass");
+    }
+
+    #[test]
+    fn database_empty_string_fails_validation() {
+        let src = Source::Local(LocalSource {
+            id: "e".to_string(),
+            path: std::path::PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some(String::new()),
+        });
+        let config = SourceConfig { sources: vec![src] };
+        let result = validate(&config);
+        assert!(result.is_err(), "empty database name must fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("[config]"), "must produce Config error: {msg}");
+        assert!(
+            msg.contains("database"),
+            "must mention database field: {msg}"
+        );
+    }
+
+    #[test]
+    fn database_path_traversal_fails_validation() {
+        let src = Source::Git(GitSource {
+            id: "p".to_string(),
+            url: "https://github.com/example/repo.git".to_string(),
+            branch: "main".to_string(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some("../escape.db".to_string()),
+        });
+        let config = SourceConfig { sources: vec![src] };
+        let result = validate(&config);
+        assert!(result.is_err(), "path traversal in database name must fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("path separators") || msg.contains(".."),
+            "must describe the error: {msg}"
+        );
+    }
+
+    #[test]
+    fn database_path_separator_fails_validation() {
+        let src = Source::Local(LocalSource {
+            id: "ps".to_string(),
+            path: std::path::PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some("subdir/evil.db".to_string()),
+        });
+        let config = SourceConfig { sources: vec![src] };
+        let result = validate(&config);
+        assert!(result.is_err(), "path separator in database name must fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("path separators"),
+            "must mention separators: {msg}"
         );
     }
 }

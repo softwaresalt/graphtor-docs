@@ -372,6 +372,7 @@ mod tests {
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string()],
+            database: None,
         });
 
         let mut call_count: usize = 0;
@@ -416,6 +417,7 @@ mod tests {
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string()],
+            database: None,
         });
 
         let metrics =

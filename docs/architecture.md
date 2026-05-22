@@ -14,7 +14,7 @@ model servers. The entire system compiles to a single Rust binary.
 | **Local-first** | Embedded CozoDB (SQLite backend); Candle ML inference in-process |
 | **Lightweight footprint** | ~80 MB embedding model; single binary; no runtime dependencies |
 | **Data pipeline integrity** | SHA-256 chunk IDs; deterministic AST parsing; idempotent upserts |
-| **MCP-native interface** | All capabilities exposed via 7 MCP tools; STDIO transport |
+| **MCP-native interface** | All capabilities exposed via 8 MCP tools; STDIO transport |
 | **Automation & reproducibility** | Incremental sync; single `sync` command; re-runnable without intervention |
 
 ## Component Map
@@ -29,7 +29,7 @@ model servers. The entire system compiles to a single Rust binary.
 │  ┌────▼─────┐  ┌───▼──────┐  ┌─▼──────────────────────────┐   │
 │  │ Pipeline │  │   MCP    │  │       DataStore             │   │
 │  │ Stage    │  │  Server  │  │  (CozoDB, SQLite backend)   │   │
-│  │          │  │ (7 tools)│  │  .graphtor/graph.db         │   │
+│  │          │  │ (8 tools)│  │  .graphtor/*.db             │   │
 │  │ acquire  │  └──────────┘  └─────────────────────────────┘   │
 │  │ parse    │                                                   │
 │  │ embed ◄──┼── EmbeddingModel (all-MiniLM-L6-v2, Candle)     │
@@ -42,6 +42,8 @@ model servers. The entire system compiles to a single Rust binary.
 
 ```text
 sources.yaml
+    │
+    ├── optional per-source database file name
     │
     ▼
 ┌──────────────────────────────────────────────────────┐
@@ -80,13 +82,14 @@ sources.yaml
 └──────────────────────────────────────────────────────┘
                        │
                        ▼
-              MCP Server (serve)
-         search_local_docs  ─── text search via doc_chunks
-         search_semantic    ─── vector cosine similarity
-         traverse_doc_links ─── BFS over doc_edges
-         list_sources       ─── doc_sources registry
-         get_chunk_by_id    ─── single chunk lookup
-         get_document       ─── all chunks for a path
+               MCP Server (serve)
+          search_local_docs  ─── text search via doc_chunks
+          search_semantic    ─── vector cosine similarity
+          traverse_doc_links ─── BFS over doc_edges
+          research_topic     ─── combined search + graph traversal
+          list_sources       ─── doc_sources registry
+          get_chunk_by_id    ─── single chunk lookup
+          get_document       ─── all chunks for a path
          get_status         ─── health + counts
 ```
 
@@ -118,8 +121,10 @@ sources.yaml
     {source_id}/            ← acquired files (git clones and url crawl cache)
   cache/                    ← HuggingFace model cache (see ~/.cache/huggingface/hub/)
   logs/                     ← transient output files
-  graph.db                  ← CozoDB SQLite database
-  sync_state.json           ← incremental sync state (git SHA-1 + file mtimes)
+  graph.db                  ← primary CozoDB SQLite database
+  *.db                      ← optional per-source CozoDB SQLite databases
+  graph.sync_state.json     ← incremental sync state for graph.db
+  *.sync_state.json         ← incremental sync state for routed databases
 ```
 
 ## Chunk Identity
@@ -136,10 +141,15 @@ same input always produces the same ID and the same stored record.
 The sync engine tracks change at the source level:
 
 - **Git sources**: compares HEAD commit SHA-1 to the `last_commit` stored in
-  `sync_state.json`; re-ingests only files that appear in the diff
+  the database-specific `*.sync_state.json` file; re-ingests only files that
+  appear in the diff
 - **Local sources**: compares current file `mtime` to the stored mtime map;
   re-ingests only modified or new files
 - **URL sources**: always re-crawls (no stable diff signal); `max_pages`
   caps the crawl scope
+
+When a source sets `database`, sync, serve, status, and prewarm route that
+source through the matching `.db` file and aggregate results across all loaded
+databases.
 
 See the [Incremental Sync Design](incremental-sync.md) for full details.
