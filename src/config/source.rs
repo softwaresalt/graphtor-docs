@@ -84,6 +84,20 @@ impl Source {
             Self::Url(u) => &u.formats,
         }
     }
+
+    /// Returns the target database file name for this source, if set.
+    ///
+    /// When `Some`, the source's content is routed to the named database
+    /// file relative to `.graphtor/`. When `None`, the default database
+    /// is used.
+    #[must_use]
+    pub fn database(&self) -> Option<&str> {
+        match self {
+            Self::Git(g) => g.database.as_deref(),
+            Self::Local(l) => l.database.as_deref(),
+            Self::Url(u) => u.database.as_deref(),
+        }
+    }
 }
 
 /// A remote Git repository documentation source.
@@ -111,6 +125,14 @@ pub struct GitSource {
     /// Defaults to `["md", "pdf", "docx"]` when the field is absent from YAML.
     #[serde(default = "default_formats")]
     pub formats: Vec<String>,
+    /// Optional target database file name (e.g. `"rust-docs.db"`).
+    ///
+    /// When set, content from this source is routed to the named database
+    /// file relative to `.graphtor/`. When absent, content goes to the
+    /// default database. The value must not be empty, must not contain
+    /// path separators, and must not contain `..` components.
+    #[serde(default)]
+    pub database: Option<String>,
 }
 
 /// A local filesystem directory documentation source.
@@ -135,6 +157,14 @@ pub struct LocalSource {
     /// Defaults to `["md", "pdf", "docx"]` when the field is absent from YAML.
     #[serde(default = "default_formats")]
     pub formats: Vec<String>,
+    /// Optional target database file name (e.g. `"rust-docs.db"`).
+    ///
+    /// When set, content from this source is routed to the named database
+    /// file relative to `.graphtor/`. When absent, content goes to the
+    /// default database. The value must not be empty, must not contain
+    /// path separators, and must not contain `..` components.
+    #[serde(default)]
+    pub database: Option<String>,
 }
 
 fn default_branch() -> String {
@@ -204,6 +234,14 @@ pub struct UrlSource {
     /// Defaults to `["md", "pdf", "docx"]` when the field is absent from YAML.
     #[serde(default = "default_formats")]
     pub formats: Vec<String>,
+    /// Optional target database file name (e.g. `"rust-docs.db"`).
+    ///
+    /// When set, content from this source is routed to the named database
+    /// file relative to `.graphtor/`. When absent, content goes to the
+    /// default database. The value must not be empty, must not contain
+    /// path separators, and must not contain `..` components.
+    #[serde(default)]
+    pub database: Option<String>,
 }
 
 #[cfg(test)]
@@ -376,6 +414,7 @@ sources:
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string(), "pdf".to_string()],
+            database: None,
         });
         assert_eq!(src.formats(), &["md", "pdf"]);
     }
@@ -389,6 +428,7 @@ sources:
             include: vec![],
             exclude: vec![],
             formats: vec!["docx".to_string()],
+            database: None,
         });
         assert_eq!(src.formats(), &["docx"]);
     }
@@ -410,5 +450,98 @@ sources:
             local.formats.is_empty(),
             "empty formats list must parse as empty"
         );
+    }
+
+    // ── T038.001: database field ──────────────────────────────────────────
+
+    #[test]
+    fn database_field_defaults_to_none_when_absent_git() {
+        const YAML: &str = r#"
+sources:
+  - type: git
+    id: test-repo
+    url: https://github.com/example/repo.git
+    include: ["**/*.md"]
+"#;
+        let config: SourceConfig = serde_yaml::from_str(YAML).unwrap();
+        let Source::Git(git) = &config.sources[0] else {
+            panic!("expected GitSource");
+        };
+        assert!(git.database.is_none(), "database must default to None");
+    }
+
+    #[test]
+    fn database_field_defaults_to_none_when_absent_local() {
+        const YAML: &str = r"
+sources:
+  - type: local
+    id: local-docs
+    path: /docs
+";
+        let config: SourceConfig = serde_yaml::from_str(YAML).unwrap();
+        let Source::Local(local) = &config.sources[0] else {
+            panic!("expected LocalSource");
+        };
+        assert!(local.database.is_none(), "database must default to None");
+    }
+
+    #[test]
+    fn database_field_parsed_from_yaml_git() {
+        const YAML: &str = r#"
+sources:
+  - type: git
+    id: rust-docs
+    url: https://github.com/example/repo.git
+    include: ["**/*.md"]
+    database: "rust-docs.db"
+"#;
+        let config: SourceConfig = serde_yaml::from_str(YAML).unwrap();
+        let Source::Git(git) = &config.sources[0] else {
+            panic!("expected GitSource");
+        };
+        assert_eq!(git.database.as_deref(), Some("rust-docs.db"));
+    }
+
+    #[test]
+    fn database_field_parsed_from_yaml_local() {
+        const YAML: &str = r#"
+sources:
+  - type: local
+    id: local-docs
+    path: /docs
+    database: "local.db"
+"#;
+        let config: SourceConfig = serde_yaml::from_str(YAML).unwrap();
+        let Source::Local(local) = &config.sources[0] else {
+            panic!("expected LocalSource");
+        };
+        assert_eq!(local.database.as_deref(), Some("local.db"));
+    }
+
+    #[test]
+    fn source_database_accessor_returns_some_when_set() {
+        let src = Source::Local(LocalSource {
+            id: "t".to_string(),
+            path: PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some("target.db".to_string()),
+        });
+        assert_eq!(src.database(), Some("target.db"));
+    }
+
+    #[test]
+    fn source_database_accessor_returns_none_when_absent() {
+        let src = Source::Git(GitSource {
+            id: "t".to_string(),
+            url: "https://github.com/example/repo.git".to_string(),
+            branch: "main".to_string(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: None,
+        });
+        assert!(src.database().is_none());
     }
 }
