@@ -31,6 +31,7 @@
 mod cli;
 mod workspace;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process;
 use std::sync::{Arc, Mutex};
@@ -40,10 +41,14 @@ use anyhow::Context as _;
 use clap::Parser as _;
 use graphtor_core::mcp::{DocServer, SyncStatus};
 use graphtor_core::{
-    acquire::{execute as acquire_execute, plan as acquire_plan, PlannedSource},
+    acquire::{
+        execute as acquire_execute, plan as acquire_plan, AcquisitionPlan, PlannedSource,
+        SourceAction,
+    },
     config::SourceConfig,
     db::{list_sources, DataStore},
     init_logging,
+    pipeline::FileError,
     sync::{elapsed_millis, sync_source, SyncMetrics},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
@@ -119,7 +124,7 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
     match cli.command {
         Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path.as_deref(), &args, fmt),
         Command::Serve(_) => cmd_serve(&db_path, &cwd, sources_path.as_deref()).await,
-        Command::Status(args) => cmd_status(&db_path, &cwd, &args, fmt),
+        Command::Status(args) => cmd_status(&db_path, &cwd, sources_path.as_deref(), &args, fmt),
         Command::Init(args) => cmd_init(&cwd, &args, fmt),
         Command::Install(args) => cmd_install(&cwd, &args, fmt),
         Command::Doctor => Ok(cmd_doctor(&cwd, fmt)),
@@ -150,6 +155,7 @@ fn build_workspace_source_config(cwd: &std::path::Path) -> SourceConfig {
                 "target/**".to_string(),
             ],
             formats: vec!["md".to_string(), "markdown".to_string()],
+            database: None,
         })],
     }
 }
@@ -192,6 +198,77 @@ fn load_source_config(
     }
 }
 
+fn source_db_path(base_db_path: &std::path::Path, source: &Source) -> PathBuf {
+    source.database().map_or_else(
+        || base_db_path.to_path_buf(),
+        |database| {
+            base_db_path
+                .parent()
+                .map_or_else(|| PathBuf::from(database), |parent| parent.join(database))
+        },
+    )
+}
+
+fn discover_db_files(base_db_path: &std::path::Path, source_config: &SourceConfig) -> Vec<PathBuf> {
+    let mut db_paths = BTreeSet::new();
+
+    for source in &source_config.sources {
+        db_paths.insert(source_db_path(base_db_path, source));
+    }
+
+    if db_paths.is_empty() {
+        db_paths.insert(base_db_path.to_path_buf());
+    }
+
+    db_paths.into_iter().collect()
+}
+
+fn new_grouped_plan(base_plan: &AcquisitionPlan) -> AcquisitionPlan {
+    AcquisitionPlan {
+        data_root: base_plan.data_root.clone(),
+        allowed_root: base_plan.allowed_root.clone(),
+        sources: Vec::new(),
+        total_clone: 0,
+        total_skip: 0,
+        total_scan: 0,
+        total_crawl: 0,
+    }
+}
+
+fn push_grouped_source(plan: &mut AcquisitionPlan, planned: PlannedSource) {
+    match &planned.action {
+        SourceAction::CloneGit => plan.total_clone += 1,
+        SourceAction::SkipGit => plan.total_skip += 1,
+        SourceAction::ScanLocal => plan.total_scan += 1,
+        SourceAction::CrawlUrl => plan.total_crawl += 1,
+    }
+
+    plan.sources.push(planned);
+}
+
+fn split_plan_by_database(
+    base_db_path: &std::path::Path,
+    source_config: &SourceConfig,
+    plan: &AcquisitionPlan,
+) -> BTreeMap<PathBuf, AcquisitionPlan> {
+    let mut plans_by_db: BTreeMap<PathBuf, AcquisitionPlan> =
+        discover_db_files(base_db_path, source_config)
+            .into_iter()
+            .map(|db_path| (db_path, new_grouped_plan(plan)))
+            .collect();
+
+    for planned in &plan.sources {
+        let db_path = source_db_path(base_db_path, &planned.source);
+        let grouped_plan = plans_by_db
+            .entry(db_path)
+            .or_insert_with(|| new_grouped_plan(plan));
+        push_grouped_source(grouped_plan, planned.clone());
+    }
+
+    plans_by_db.retain(|_, grouped_plan| !grouped_plan.sources.is_empty());
+    plans_by_db
+}
+
 fn cmd_sync(
     cwd: &std::path::Path,
     db_path: &std::path::Path,
@@ -217,14 +294,6 @@ fn cmd_sync(
         return Ok(0);
     }
 
-    // Open (or create) the database.
-    let store = DataStore::open_sqlite(db_path, cwd)
-        .with_context(|| format!("failed to open database at {}", db_path.display()))?;
-    store
-        .ensure_schema()
-        .context("failed to ensure database schema")?;
-
-    // Build acquisition plan.
     let data_root: PathBuf = args
         .data_root
         .clone()
@@ -245,18 +314,36 @@ fn cmd_sync(
         }
     };
 
-    if args.full {
-        cmd_sync_full(&store, &plan, model.as_ref(), args, fmt)
-    } else {
-        Ok(cmd_sync_incremental(
-            db_path,
-            &store,
-            &plan,
-            model.as_ref(),
-            args,
-            fmt,
-        ))
+    let started_at = Instant::now();
+    let mut total_metrics = SyncMetrics::default();
+    let mut full_sync_errors = Vec::new();
+
+    for (target_db_path, grouped_plan) in split_plan_by_database(db_path, &source_config, &plan) {
+        let store = DataStore::open_sqlite(&target_db_path, cwd)
+            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
+        store
+            .ensure_schema()
+            .context("failed to ensure database schema")?;
+
+        if args.full {
+            let full_result = cmd_sync_full(&store, &grouped_plan, model.as_ref(), args)?;
+            merge_sync_metrics(&mut total_metrics, &full_result.metrics);
+            full_sync_errors.extend(full_result.errors);
+        } else {
+            let metrics =
+                cmd_sync_incremental(&target_db_path, &store, &grouped_plan, model.as_ref());
+            merge_sync_metrics(&mut total_metrics, &metrics);
+        }
     }
+
+    total_metrics.duration_ms = elapsed_millis(started_at);
+    Ok(emit_sync_output(
+        if args.full { "full" } else { "incremental" },
+        &total_metrics,
+        &full_sync_errors,
+        args.metrics,
+        fmt,
+    ))
 }
 
 fn merge_sync_metrics(total: &mut SyncMetrics, next: &SyncMetrics) {
@@ -273,6 +360,63 @@ fn print_sync_metrics(metrics: &SyncMetrics) {
         "{}",
         serde_json::to_string_pretty(metrics).expect("SyncMetrics should serialize")
     );
+}
+
+fn sync_state_path(db_path: &std::path::Path) -> PathBuf {
+    db_path.with_extension("sync_state.json")
+}
+
+fn emit_sync_output(
+    mode: &str,
+    metrics: &SyncMetrics,
+    full_sync_errors: &[FileError],
+    emit_metrics: bool,
+    fmt: OutputFormat,
+) -> i32 {
+    if emit_metrics {
+        print_sync_metrics(metrics);
+        return i32::from(metrics.errors != 0);
+    }
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "mode": mode,
+                "files_processed": metrics.files_synced,
+                "chunks_loaded": metrics.chunks_created,
+                "files_deleted": metrics.files_deleted,
+                "errors": metrics.errors,
+                "metrics": metrics,
+            }))
+        );
+        return i32::from(metrics.errors != 0);
+    }
+
+    if mode == "full" {
+        println!(
+            "sync complete (full): {} documents, {} chunks",
+            metrics.files_synced, metrics.chunks_created
+        );
+
+        if !full_sync_errors.is_empty() {
+            eprintln!("{} file(s) failed:", full_sync_errors.len());
+            for file_error in full_sync_errors {
+                eprintln!("  {}: {}", file_error.path.display(), file_error.error);
+            }
+        }
+    } else {
+        println!(
+            "sync complete (incremental): {} files processed, {} chunks loaded, {} files deleted",
+            metrics.files_synced, metrics.chunks_created, metrics.files_deleted
+        );
+
+        if metrics.errors > 0 {
+            eprintln!("{} error(s) encountered during sync", metrics.errors);
+        }
+    }
+
+    i32::from(metrics.errors != 0)
 }
 
 fn run_incremental_sync<F>(
@@ -297,10 +441,7 @@ where
         );
     }
 
-    let state_path = db_path.parent().map_or_else(
-        || PathBuf::from("sync_state.json"),
-        |p| p.join("sync_state.json"),
-    );
+    let state_path = sync_state_path(db_path);
 
     let mut total_metrics = SyncMetrics {
         errors: acq_result.failed,
@@ -353,14 +494,19 @@ where
     total_metrics
 }
 
+#[derive(Debug)]
+struct FullSyncResult {
+    metrics: SyncMetrics,
+    errors: Vec<FileError>,
+}
+
 /// Full pipeline: acquire → parse → embed → load all files unconditionally.
 fn cmd_sync_full(
     store: &DataStore,
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
     args: &cli::SyncArgs,
-    fmt: OutputFormat,
-) -> anyhow::Result<i32> {
+) -> anyhow::Result<FullSyncResult> {
     let started_at = Instant::now();
     let pipeline_config = PipelineConfig {
         batch_size: args.batch_size,
@@ -387,40 +533,10 @@ fn cmd_sync_full(
         errors: error_count,
     };
 
-    if args.metrics {
-        print_sync_metrics(&metrics);
-        return Ok(i32::from(metrics.errors != 0));
-    }
-
-    if fmt == OutputFormat::Json {
-        println!(
-            "{}",
-            cli::jsonrpc::wrap_success(serde_json::json!({
-                "mode": "full",
-                "files_processed": result.documents_processed,
-                "chunks_loaded": result.total_chunks,
-                "files_deleted": 0_usize,
-                "errors": error_count,
-                "metrics": &metrics,
-            }))
-        );
-        return Ok(i32::from(error_count != 0));
-    }
-
-    println!(
-        "sync complete (full): {} documents, {} chunks",
-        result.documents_processed, result.total_chunks
-    );
-
-    if result.errors_encountered.is_empty() {
-        Ok(0)
-    } else {
-        eprintln!("{} file(s) failed:", result.errors_encountered.len());
-        for fe in &result.errors_encountered {
-            eprintln!("  {}: {}", fe.path.display(), fe.error);
-        }
-        Ok(1)
-    }
+    Ok(FullSyncResult {
+        metrics,
+        errors: result.errors_encountered,
+    })
 }
 
 /// Incremental sync: acquire new sources, then detect and re-ingest only changes.
@@ -429,40 +545,8 @@ fn cmd_sync_incremental(
     store: &DataStore,
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
-    args: &cli::SyncArgs,
-    fmt: OutputFormat,
-) -> i32 {
-    let metrics = run_incremental_sync(db_path, store, plan, model, |_source, _current, _total| {});
-
-    if args.metrics {
-        print_sync_metrics(&metrics);
-        return i32::from(metrics.errors != 0);
-    }
-
-    if fmt == OutputFormat::Json {
-        println!(
-            "{}",
-            cli::jsonrpc::wrap_success(serde_json::json!({
-                "mode": "incremental",
-                "files_processed": metrics.files_synced,
-                "chunks_loaded": metrics.chunks_created,
-                "files_deleted": metrics.files_deleted,
-                "errors": metrics.errors,
-                "metrics": &metrics,
-            }))
-        );
-        return i32::from(metrics.errors != 0);
-    }
-
-    println!(
-        "sync complete (incremental): {} files processed, {} chunks loaded, {} files deleted",
-        metrics.files_synced, metrics.chunks_created, metrics.files_deleted
-    );
-
-    if metrics.errors > 0 {
-        eprintln!("{} error(s) encountered during sync", metrics.errors);
-    }
-    i32::from(metrics.errors != 0)
+) -> SyncMetrics {
+    run_incremental_sync(db_path, store, plan, model, |_source, _current, _total| {})
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────
@@ -478,7 +562,7 @@ fn spawn_background_sync(
     source_config: SourceConfig,
     db_path_owned: PathBuf,
     cwd_owned: PathBuf,
-    store_bg: DataStore,
+    stores_bg: Vec<(PathBuf, DataStore)>,
     model_bg: Option<EmbeddingModel>,
 ) -> Arc<Mutex<SyncStatus>> {
     let sync_status: Arc<Mutex<SyncStatus>> = Arc::default();
@@ -494,28 +578,51 @@ fn spawn_background_sync(
 
         let sync_status_progress = Arc::clone(&sync_status_bg);
         let result = tokio::task::spawn_blocking(move || {
+            let started_at = Instant::now();
             let data_root = cwd_owned.join(".graphtor/data");
             let plan = acquire_plan::plan(&source_config, &data_root, &cwd_owned)
                 .context("background sync: failed to build acquisition plan")?;
 
-            let metrics = run_incremental_sync(
-                &db_path_owned,
-                &store_bg,
-                &plan,
-                model_bg.as_ref(),
-                |source, current, total| {
-                    let mut guard = sync_status_progress
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    *guard = SyncStatus::InProgress {
-                        source: source.to_string(),
-                        current,
-                        total,
-                    };
-                },
-            );
+            let total_sources = plan.sources.len();
+            let mut completed_sources = 0;
+            let mut total_metrics = SyncMetrics::default();
+            let stores_by_db: BTreeMap<PathBuf, DataStore> = stores_bg.into_iter().collect();
 
-            Ok::<SyncMetrics, anyhow::Error>(metrics)
+            for (target_db_path, grouped_plan) in
+                split_plan_by_database(&db_path_owned, &source_config, &plan)
+            {
+                let group_source_count = grouped_plan.sources.len();
+                let Some(target_store) = stores_by_db.get(&target_db_path) else {
+                    anyhow::bail!(
+                        "background sync store missing for database {}",
+                        target_db_path.display()
+                    );
+                };
+
+                let group_offset = completed_sources;
+                let metrics = run_incremental_sync(
+                    &target_db_path,
+                    target_store,
+                    &grouped_plan,
+                    model_bg.as_ref(),
+                    |source, current, _total| {
+                        let mut guard = sync_status_progress
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        *guard = SyncStatus::InProgress {
+                            source: source.to_string(),
+                            current: group_offset + current,
+                            total: total_sources,
+                        };
+                    },
+                );
+
+                completed_sources += group_source_count;
+                merge_sync_metrics(&mut total_metrics, &metrics);
+            }
+
+            total_metrics.duration_ms = elapsed_millis(started_at);
+            Ok::<SyncMetrics, anyhow::Error>(total_metrics)
         })
         .await;
 
@@ -543,12 +650,30 @@ async fn cmd_serve(
     cwd: &std::path::Path,
     config_override: Option<&std::path::Path>,
 ) -> anyhow::Result<i32> {
-    info!(db_path = %db_path.display(), "opening database");
-    let store = DataStore::open_sqlite(db_path, cwd)
-        .with_context(|| format!("failed to open database at {}", db_path.display()))?;
-    store
-        .ensure_schema()
-        .context("failed to ensure database schema")?;
+    let source_config_result = load_source_config(cwd, config_override);
+    let db_paths = match &source_config_result {
+        Ok(Some(source_config)) => discover_db_files(db_path, source_config),
+        Ok(None) => {
+            let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
+            eprintln!("error: config file '{}' not found", path.display());
+            return Ok(2);
+        }
+        Err(e) => {
+            warn!(error = %e, "failed to load source config; using primary database only");
+            vec![db_path.to_path_buf()]
+        }
+    };
+
+    let mut stores_by_db = Vec::new();
+    for target_db_path in db_paths {
+        info!(db_path = %target_db_path.display(), "opening database");
+        let store = DataStore::open_sqlite(&target_db_path, cwd)
+            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
+        store
+            .ensure_schema()
+            .context("failed to ensure database schema")?;
+        stores_by_db.push((target_db_path, store));
+    }
 
     // Optionally load the embedding model for semantic search.
     let model: Option<EmbeddingModel> =
@@ -568,14 +693,17 @@ async fn cmd_serve(
 
     // Resolve source config (same auto-discovery logic as cmd_sync) and spawn
     // a background incremental sync task if a config is available.
-    let sync_status = match load_source_config(cwd, config_override) {
+    let sync_status = match source_config_result {
         Ok(Some(source_config)) if !source_config.sources.is_empty() => {
             info!("background sync task spawned");
             spawn_background_sync(
                 source_config,
                 db_path.to_path_buf(),
                 cwd.to_path_buf(),
-                store.clone(),
+                stores_by_db
+                    .iter()
+                    .map(|(path, store)| (path.clone(), store.clone()))
+                    .collect(),
                 model.clone(),
             )
         }
@@ -596,9 +724,13 @@ async fn cmd_serve(
         }
     };
 
+    let stores = stores_by_db
+        .into_iter()
+        .map(|(_path, store)| store)
+        .collect();
     let server = match model {
-        Some(m) => DocServer::with_model(store, m),
-        None => DocServer::new(store),
+        Some(m) => DocServer::with_stores_and_model(stores, m),
+        None => DocServer::with_stores(stores),
     };
     let server = server.with_sync_status(sync_status);
 
@@ -615,57 +747,159 @@ async fn cmd_serve(
 
 // ── status ────────────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
+struct StatusDatabaseEntry {
+    path: PathBuf,
+    sources: Vec<graphtor_core::db::SourceRecord>,
+}
+
+fn discover_status_db_paths(
+    db_path: &std::path::Path,
+    cwd: &std::path::Path,
+    config_override: Option<&std::path::Path>,
+) -> Option<Vec<PathBuf>> {
+    match load_source_config(cwd, config_override) {
+        Ok(Some(source_config)) => Some(discover_db_files(db_path, &source_config)),
+        Ok(None) => {
+            let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
+            eprintln!("error: config file '{}' not found", path.display());
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "failed to load source config; using primary database only");
+            Some(vec![db_path.to_path_buf()])
+        }
+    }
+}
+
+fn load_status_databases(
+    cwd: &std::path::Path,
+    db_paths: Vec<PathBuf>,
+) -> anyhow::Result<Vec<StatusDatabaseEntry>> {
+    let mut databases = Vec::new();
+    for candidate_db_path in db_paths {
+        let sources = if candidate_db_path.exists() {
+            let store = DataStore::open_sqlite(&candidate_db_path, cwd).with_context(|| {
+                format!("failed to open database at {}", candidate_db_path.display())
+            })?;
+            store.ensure_schema().context("failed to ensure schema")?;
+            list_sources(&store).context("failed to list sources")?
+        } else {
+            Vec::new()
+        };
+
+        databases.push(StatusDatabaseEntry {
+            path: candidate_db_path,
+            sources,
+        });
+    }
+    Ok(databases)
+}
+
+fn is_missing_single_database(databases: &[StatusDatabaseEntry]) -> bool {
+    databases.len() == 1 && databases[0].sources.is_empty() && !databases[0].path.exists()
+}
+
+fn status_source_json(source: &graphtor_core::db::SourceRecord) -> serde_json::Value {
+    serde_json::json!({
+        "id": source.source_id,
+        "name": source.name,
+        "kind": source.kind,
+        "url": source.url,
+        "synced_at": source.synced_at,
+    })
+}
+
+fn status_database_json(database: &StatusDatabaseEntry) -> serde_json::Value {
+    serde_json::json!({
+        "database": database.path.display().to_string(),
+        "sources": database.sources.iter().map(status_source_json).collect::<Vec<_>>(),
+    })
+}
+
+fn emit_missing_database_status(database: &StatusDatabaseEntry, json_output: bool) {
+    if json_output {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "database": database.path.display().to_string(),
+                "sources": [],
+            }))
+        );
+    } else {
+        println!("database not found — run `graphtor-docs sync` to create it");
+    }
+}
+
+fn emit_status_json(databases: &[StatusDatabaseEntry]) {
+    if databases.len() == 1 {
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(status_database_json(&databases[0]))
+        );
+    } else {
+        let json_value = serde_json::json!({
+            "databases": databases.iter().map(status_database_json).collect::<Vec<_>>(),
+        });
+        println!("{}", cli::jsonrpc::wrap_success(json_value));
+    }
+}
+
+fn print_status_database(database: &StatusDatabaseEntry) {
+    println!("database: {}", database.path.display());
+    println!("sources:  {}", database.sources.len());
+    for source in &database.sources {
+        println!(
+            "  [{kind}] {id} — {url} (last sync: {synced})",
+            kind = source.kind,
+            id = source.source_id,
+            url = source.url,
+            synced = source.synced_at.as_deref().unwrap_or("never"),
+        );
+    }
+}
+
+fn emit_status_text(databases: &[StatusDatabaseEntry]) {
+    if databases.len() == 1 {
+        print_status_database(&databases[0]);
+        return;
+    }
+
+    println!("databases: {}", databases.len());
+    println!(
+        "sources:   {}",
+        databases
+            .iter()
+            .map(|database| database.sources.len())
+            .sum::<usize>()
+    );
+    for database in databases {
+        print_status_database(database);
+    }
+}
+
 fn cmd_status(
     db_path: &std::path::Path,
     cwd: &std::path::Path,
+    config_override: Option<&std::path::Path>,
     args: &cli::StatusArgs,
     fmt: OutputFormat,
 ) -> anyhow::Result<i32> {
-    if !db_path.exists() {
-        if fmt == OutputFormat::Json || args.json {
-            println!(
-                "{}",
-                cli::jsonrpc::wrap_success(serde_json::json!({
-                    "database": db_path.display().to_string(),
-                    "sources": [],
-                }))
-            );
-        } else {
-            println!("database not found — run `graphtor-docs sync` to create it");
-        }
+    let Some(db_paths) = discover_status_db_paths(db_path, cwd, config_override) else {
+        return Ok(2);
+    };
+    let databases = load_status_databases(cwd, db_paths)?;
+    let json_output = args.json || fmt == OutputFormat::Json;
+
+    if is_missing_single_database(&databases) {
+        emit_missing_database_status(&databases[0], json_output);
         return Ok(0);
     }
 
-    let store = DataStore::open_sqlite(db_path, cwd)
-        .with_context(|| format!("failed to open database at {}", db_path.display()))?;
-    store.ensure_schema().context("failed to ensure schema")?;
-
-    let sources = list_sources(&store).context("failed to list sources")?;
-
-    if args.json || fmt == OutputFormat::Json {
-        let json_value = serde_json::json!({
-            "database": db_path.display().to_string(),
-            "sources": sources.iter().map(|s| serde_json::json!({
-                "id": s.source_id,
-                "name": s.name,
-                "kind": s.kind,
-                "url": s.url,
-                "synced_at": s.synced_at,
-            })).collect::<Vec<_>>(),
-        });
-        println!("{}", cli::jsonrpc::wrap_success(json_value));
+    if json_output {
+        emit_status_json(&databases);
     } else {
-        println!("database: {}", db_path.display());
-        println!("sources:  {}", sources.len());
-        for s in &sources {
-            println!(
-                "  [{kind}] {id} — {url} (last sync: {synced})",
-                kind = s.kind,
-                id = s.source_id,
-                url = s.url,
-                synced = s.synced_at.as_deref().unwrap_or("never"),
-            );
-        }
+        emit_status_text(&databases);
     }
 
     Ok(0)
@@ -1009,12 +1243,6 @@ fn cmd_prewarm(
         return Ok(0);
     }
 
-    let store = DataStore::open_sqlite(db_path, cwd)
-        .with_context(|| format!("failed to open database at {}", db_path.display()))?;
-    store
-        .ensure_schema()
-        .context("failed to ensure database schema")?;
-
     let data_root: PathBuf = args
         .data_root
         .clone()
@@ -1044,27 +1272,32 @@ fn cmd_prewarm(
         );
     }
 
-    let state_path = db_path.parent().map_or_else(
-        || PathBuf::from("sync_state.json"),
-        |p| p.join("sync_state.json"),
-    );
     let mut total_metrics = SyncMetrics {
         errors: acq_result.failed,
         ..SyncMetrics::default()
     };
     let sources_count = plan.sources.len();
 
-    for planned in &plan.sources {
-        match prewarm_sync_source(
-            &store,
-            planned,
-            &state_path,
-            &plan.allowed_root,
-            model.as_ref(),
-            args.quiet,
-        ) {
-            Some(m) => merge_sync_metrics(&mut total_metrics, &m),
-            None => total_metrics.errors += 1,
+    for (target_db_path, grouped_plan) in split_plan_by_database(db_path, &source_config, &plan) {
+        let store = DataStore::open_sqlite(&target_db_path, cwd)
+            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
+        store
+            .ensure_schema()
+            .context("failed to ensure database schema")?;
+
+        let state_path = sync_state_path(&target_db_path);
+        for planned in &grouped_plan.sources {
+            match prewarm_sync_source(
+                &store,
+                planned,
+                &state_path,
+                &grouped_plan.allowed_root,
+                model.as_ref(),
+                args.quiet,
+            ) {
+                Some(metrics) => merge_sync_metrics(&mut total_metrics, &metrics),
+                None => total_metrics.errors += 1,
+            }
         }
     }
 
