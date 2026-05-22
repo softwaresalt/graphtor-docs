@@ -71,7 +71,7 @@ results for the feature branch.
 Closure verification on the post-merge branch produced:
 
 | Check | Status | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `cargo fmt --all -- --check` | ✅ | pass |
 | `cargo clippy --all-targets -- -D warnings -D clippy::pedantic` | ✅ | pass |
 | `cargo test --all-targets` | ✅ | pass |
@@ -106,7 +106,7 @@ No deployment step.
 ## Risky Action Record
 
 | Action | Risk | Result |
-|---|---|---|
+| --- | --- | --- |
 | Create closure branch from `origin/main` in an isolated worktree while leaving the root worktree on `main` | low | Applied |
 | Archive shipment `029-S` and remove the shipped scope from `.backlogit/queue/` | moderate | Applied |
 | Verify multi-database CLI runtime behavior on merged code | low | Applied |
