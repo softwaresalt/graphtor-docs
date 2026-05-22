@@ -216,24 +216,18 @@ impl DocServer {
     /// [`DocServer::with_sync_status`] to enable runtime reporting.
     #[must_use]
     pub fn new(store: DataStore) -> Self {
-        Self::with_stores(vec![store])
+        Self::with_stores(store, Vec::new())
     }
 
     /// Create a new [`DocServer`] backed by multiple [`DataStore`] handles.
     ///
-    /// The `stores` vector must contain at least one database handle. The first
-    /// store is treated as the primary store for operations that must target a
-    /// single database.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `stores` is empty.
+    /// `primary` is the first store and is used for operations that target a
+    /// single database. `additional` may be empty.
     #[must_use]
-    pub fn with_stores(stores: Vec<DataStore>) -> Self {
-        assert!(
-            !stores.is_empty(),
-            "DocServer requires at least one database store"
-        );
+    pub fn with_stores(primary: DataStore, additional: Vec<DataStore>) -> Self {
+        let mut stores = Vec::with_capacity(additional.len() + 1);
+        stores.push(primary);
+        stores.extend(additional);
         Self {
             stores,
             model: None,
@@ -244,20 +238,19 @@ impl DocServer {
     /// Create a [`DocServer`] with an embedding model for semantic search.
     #[must_use]
     pub fn with_model(store: DataStore, model: EmbeddingModel) -> Self {
-        Self::with_stores_and_model(vec![store], model)
+        Self::with_stores_and_model(store, Vec::new(), model)
     }
 
     /// Create a [`DocServer`] backed by multiple stores and a semantic model.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `stores` is empty.
     #[must_use]
-    pub fn with_stores_and_model(stores: Vec<DataStore>, model: EmbeddingModel) -> Self {
-        assert!(
-            !stores.is_empty(),
-            "DocServer requires at least one database store"
-        );
+    pub fn with_stores_and_model(
+        primary: DataStore,
+        additional: Vec<DataStore>,
+        model: EmbeddingModel,
+    ) -> Self {
+        let mut stores = Vec::with_capacity(additional.len() + 1);
+        stores.push(primary);
+        stores.extend(additional);
         Self {
             stores,
             model: Some(model),
@@ -281,9 +274,8 @@ impl DocServer {
 #[tool_router]
 impl DocServer {
     fn primary_store(&self) -> &DataStore {
-        self.stores
-            .first()
-            .expect("DocServer requires at least one database store")
+        // Invariant: stores is non-empty (enforced by all constructors).
+        self.stores.first().unwrap()
     }
 
     fn merge_search_results(
@@ -1320,7 +1312,7 @@ mod tests {
         )
         .expect("upsert secondary");
 
-        let server = DocServer::with_stores(vec![primary, secondary]);
+        let server = DocServer::with_stores(primary, vec![secondary]);
         let params = SearchParams {
             query: "shared multi database".to_string(),
             source_id: None,

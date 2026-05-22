@@ -2,6 +2,13 @@
 
 use std::process::Command;
 
+use serde_json::Value;
+
+/// Helper: path to the compiled binary.
+fn graphtor_bin() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_graphtor-docs"))
+}
+
 #[test]
 fn status_lists_sources_from_multiple_databases() {
     let workspace = tempfile::tempdir().expect("tempdir");
@@ -33,9 +40,7 @@ fn status_lists_sources_from_multiple_databases() {
     );
     std::fs::write(config_dir.join("sources.yaml"), sources_yaml).expect("write sources.yaml");
 
-    let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_graphtor-docs"));
-
-    let sync_output = Command::new(&exe)
+    let sync_output = Command::new(graphtor_bin())
         .current_dir(ws)
         .arg("sync")
         .arg("--no-embed")
@@ -49,7 +54,7 @@ fn status_lists_sources_from_multiple_databases() {
         String::from_utf8_lossy(&sync_output.stdout),
     );
 
-    let status_output = Command::new(&exe)
+    let status_output = Command::new(graphtor_bin())
         .current_dir(ws)
         .arg("status")
         .output()
@@ -67,4 +72,97 @@ fn status_lists_sources_from_multiple_databases() {
     assert!(stdout.contains("secondary.db"), "stdout: {stdout}");
     assert!(stdout.contains("docs-a"), "stdout: {stdout}");
     assert!(stdout.contains("docs-b"), "stdout: {stdout}");
+}
+
+#[test]
+fn status_json_single_database_always_emits_databases_array() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+    std::fs::write(ws.join("guide.md"), "# Guide\n\nHello world.\n").expect("write guide");
+
+    let sync_output = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .arg("sync")
+        .arg("--no-embed")
+        .output()
+        .expect("run graphtor-docs sync");
+    assert!(
+        sync_output.status.success(),
+        "sync failed: status={:?}\nstderr={}\nstdout={}",
+        sync_output.status.code(),
+        String::from_utf8_lossy(&sync_output.stderr),
+        String::from_utf8_lossy(&sync_output.stdout),
+    );
+
+    let status_output = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .arg("status")
+        .arg("--json")
+        .output()
+        .expect("run graphtor-docs status --json");
+    assert!(
+        status_output.status.success(),
+        "status failed: status={:?}\nstderr={}\nstdout={}",
+        status_output.status.code(),
+        String::from_utf8_lossy(&status_output.stderr),
+        String::from_utf8_lossy(&status_output.stdout),
+    );
+
+    let stdout = String::from_utf8(status_output.stdout).expect("status stdout utf-8");
+    let parsed: Value = serde_json::from_str(stdout.trim()).expect("stdout should be valid JSON");
+
+    assert!(
+        parsed["result"]["databases"].is_array(),
+        "expected result.databases array, got: {stdout}"
+    );
+    assert_eq!(
+        parsed["result"]["databases"].as_array().map(Vec::len),
+        Some(1),
+        "expected exactly one database entry, got: {stdout}"
+    );
+    assert!(
+        parsed["result"].get("database").is_none(),
+        "legacy single-database shape should not be emitted: {stdout}"
+    );
+}
+
+#[test]
+fn status_json_missing_single_database_always_emits_databases_array() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+
+    let status_output = Command::new(graphtor_bin())
+        .current_dir(workspace.path())
+        .arg("status")
+        .arg("--json")
+        .output()
+        .expect("run graphtor-docs status --json");
+    assert!(
+        status_output.status.success(),
+        "status failed: status={:?}\nstderr={}\nstdout={}",
+        status_output.status.code(),
+        String::from_utf8_lossy(&status_output.stderr),
+        String::from_utf8_lossy(&status_output.stdout),
+    );
+
+    let stdout = String::from_utf8(status_output.stdout).expect("status stdout utf-8");
+    let parsed: Value = serde_json::from_str(stdout.trim()).expect("stdout should be valid JSON");
+
+    assert!(
+        parsed["result"]["databases"].is_array(),
+        "expected result.databases array, got: {stdout}"
+    );
+    assert_eq!(
+        parsed["result"]["databases"].as_array().map(Vec::len),
+        Some(1),
+        "expected exactly one database entry, got: {stdout}"
+    );
+    assert_eq!(
+        parsed["result"]["databases"][0]["sources"],
+        Value::Array(Vec::new()),
+        "missing database response should include an empty sources list: {stdout}"
+    );
+    assert!(
+        parsed["result"].get("database").is_none(),
+        "legacy single-database shape should not be emitted: {stdout}"
+    );
 }

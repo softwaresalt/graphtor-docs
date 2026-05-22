@@ -363,6 +363,16 @@ fn print_sync_metrics(metrics: &SyncMetrics) {
 }
 
 fn sync_state_path(db_path: &std::path::Path) -> PathBuf {
+    // For backward compatibility: if a legacy sync_state.json exists next to
+    // this DB file (from before multi-database support), keep using it so
+    // existing incremental sync history is preserved.
+    let legacy_path = db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("sync_state.json");
+    if legacy_path.exists() {
+        return legacy_path;
+    }
     db_path.with_extension("sync_state.json")
 }
 
@@ -724,13 +734,14 @@ async fn cmd_serve(
         }
     };
 
-    let stores = stores_by_db
-        .into_iter()
-        .map(|(_path, store)| store)
-        .collect();
+    let mut stores = stores_by_db.into_iter().map(|(_path, store)| store);
+    let Some(primary) = stores.next() else {
+        unreachable!("discover_db_files always yields at least one database path");
+    };
+    let additional: Vec<_> = stores.collect();
     let server = match model {
-        Some(m) => DocServer::with_stores_and_model(stores, m),
-        None => DocServer::with_stores(stores),
+        Some(m) => DocServer::with_stores_and_model(primary, additional, m),
+        None => DocServer::with_stores(primary, additional),
     };
     let server = server.with_sync_status(sync_status);
 
@@ -822,8 +833,10 @@ fn emit_missing_database_status(database: &StatusDatabaseEntry, json_output: boo
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
-                "database": database.path.display().to_string(),
-                "sources": [],
+                "databases": [{
+                    "database": database.path.display().to_string(),
+                    "sources": [],
+                }],
             }))
         );
     } else {
@@ -832,17 +845,10 @@ fn emit_missing_database_status(database: &StatusDatabaseEntry, json_output: boo
 }
 
 fn emit_status_json(databases: &[StatusDatabaseEntry]) {
-    if databases.len() == 1 {
-        println!(
-            "{}",
-            cli::jsonrpc::wrap_success(status_database_json(&databases[0]))
-        );
-    } else {
-        let json_value = serde_json::json!({
-            "databases": databases.iter().map(status_database_json).collect::<Vec<_>>(),
-        });
-        println!("{}", cli::jsonrpc::wrap_success(json_value));
-    }
+    let json_value = serde_json::json!({
+        "databases": databases.iter().map(status_database_json).collect::<Vec<_>>(),
+    });
+    println!("{}", cli::jsonrpc::wrap_success(json_value));
 }
 
 fn print_status_database(database: &StatusDatabaseEntry) {
@@ -1547,6 +1553,27 @@ mod tests {
         assert!(
             result.is_none(),
             "should return None when explicit override is missing"
+        );
+    }
+
+    #[test]
+    fn sync_state_path_prefers_legacy_sync_state_file_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("graph.db");
+        let legacy_path = tmp.path().join("sync_state.json");
+        std::fs::write(&legacy_path, "{}").expect("write legacy sync state");
+
+        assert_eq!(sync_state_path(&db_path), legacy_path);
+    }
+
+    #[test]
+    fn sync_state_path_uses_per_database_name_when_legacy_file_is_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("graph.db");
+
+        assert_eq!(
+            sync_state_path(&db_path),
+            tmp.path().join("graph.sync_state.json")
         );
     }
 }
