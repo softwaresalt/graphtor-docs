@@ -43,6 +43,7 @@ fn batch_size_two_processes_all_five_files() {
             include: vec![],
             exclude: vec![],
             formats: vec![],
+            database: None,
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");
@@ -88,6 +89,7 @@ fn parallel_true_produces_same_result_as_sequential() {
             include: vec![],
             exclude: vec![],
             formats: vec![],
+            database: None,
         })],
     };
 

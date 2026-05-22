@@ -52,6 +52,7 @@ fn pipeline_md_only_formats_skips_pdf_files() {
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string()],
+            database: None,
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");
@@ -99,6 +100,7 @@ fn skipped_by_format_counter_counts_all_excluded_extensions() {
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string()],
+            database: None,
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");
@@ -143,6 +145,7 @@ fn empty_formats_list_processes_all_supported_extensions() {
             include: vec![],
             exclude: vec![],
             formats: vec![], // empty = no restriction
+            database: None,
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");
@@ -184,6 +187,7 @@ fn skipped_by_format_is_zero_when_all_files_match() {
             include: vec![],
             exclude: vec![],
             formats: vec!["md".to_string()],
+            database: None,
         })],
     };
     let acquisition_plan = plan(&config, &data_root, root).expect("plan should succeed");

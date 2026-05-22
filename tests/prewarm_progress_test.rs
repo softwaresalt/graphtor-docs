@@ -116,3 +116,66 @@ fn prewarm_quiet_suppresses_stderr_progress() {
         "stderr should not contain [syncing] progress lines with --quiet; got: {stderr}"
     );
 }
+
+#[test]
+fn prewarm_routes_sources_to_multiple_databases() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+
+    let src_a = ws.join("docs_a");
+    let src_b = ws.join("docs_b");
+    std::fs::create_dir_all(&src_a).expect("create docs_a");
+    std::fs::create_dir_all(&src_b).expect("create docs_b");
+    std::fs::write(src_a.join("a.md"), "# A\n\nContent A.\n").expect("write a");
+    std::fs::write(src_b.join("b.md"), "# B\n\nContent B.\n").expect("write b");
+
+    let graphtor_dir = ws.join(".graphtor");
+    let config_dir = graphtor_dir.join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
+    let sources_yaml = format!(
+        r#"sources:
+  - type: local
+    id: docs-a
+    path: {src_a}
+    database: "primary.db"
+  - type: local
+    id: docs-b
+    path: {src_b}
+    database: "secondary.db"
+"#,
+        src_a = src_a.display(),
+        src_b = src_b.display(),
+    );
+    std::fs::write(config_dir.join("sources.yaml"), sources_yaml).expect("write sources.yaml");
+
+    let output = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .arg("prewarm")
+        .arg("--no-embed")
+        .output()
+        .expect("run graphtor-docs prewarm");
+
+    assert!(
+        output.status.success(),
+        "prewarm failed: status={:?}, stderr={}, stdout={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    let parsed: Value = serde_json::from_str(stdout.trim()).expect("stdout should be valid JSON");
+    assert_eq!(
+        parsed["payload"]["sources_count"], 2,
+        "sources_count mismatch; stdout: {stdout}"
+    );
+
+    assert!(
+        graphtor_dir.join("primary.db").exists(),
+        "primary.db must be created by prewarm"
+    );
+    assert!(
+        graphtor_dir.join("secondary.db").exists(),
+        "secondary.db must be created by prewarm"
+    );
+}

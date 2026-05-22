@@ -18,6 +18,7 @@ fn make_local_source(id: &str, path: impl Into<PathBuf>) -> LocalSource {
         include: vec![],
         exclude: vec![],
         formats: vec![],
+        database: None,
     }
 }
 

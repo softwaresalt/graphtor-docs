@@ -26,6 +26,7 @@ fn make_config(local_path: std::path::PathBuf) -> SourceConfig {
             include: vec![],
             exclude: vec![],
             formats: vec![],
+            database: None,
         })],
     }
 }
