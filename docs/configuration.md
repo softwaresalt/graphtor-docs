@@ -41,6 +41,7 @@ sources:
     id: azure-docs                          # required; unique ID
     url: https://github.com/MicrosoftDocs/azure-docs.git  # required
     branch: main                            # optional; default: "main"
+    database: primary.db                    # optional; default: primary --db-path
     include:                                # optional; glob allow-list
       - "**/*.md"
     exclude:                                # optional; glob deny-list
@@ -56,6 +57,7 @@ sources:
 | `id` | string | **yes** | — | Unique source identifier (used as directory name and DB key) |
 | `url` | string | **yes** | — | Git clone URL (HTTPS or SSH) |
 | `branch` | string | no | `"main"` | Branch to clone |
+| `database` | string | no | primary `--db-path` | Route this source into a specific database file |
 | `include` | list\<string\> | no | (all files) | Glob patterns — only matching files are indexed |
 | `exclude` | list\<string\> | no | (none) | Glob patterns — matching files are skipped |
 | `formats` | list\<string\> | no | `["md","pdf","docx"]` | Extension allow-list (see [Formats](#formats)) |
@@ -69,6 +71,7 @@ sources:
   - type: local
     id: internal-api-docs                   # required
     path: ./docs/api                        # required; path to directory
+    database: runbooks.db                   # optional; default: primary --db-path
     include:                                # optional
       - "**/*.md"
     exclude:                                # optional
@@ -81,6 +84,7 @@ sources:
 |---|---|---|---|---|
 | `id` | string | **yes** | — | Unique source identifier |
 | `path` | string | **yes** | — | Path to the local directory (relative to cwd or absolute) |
+| `database` | string | no | primary `--db-path` | Route this source into a specific database file |
 | `include` | list\<string\> | no | (all files) | Glob patterns — only matching files are indexed |
 | `exclude` | list\<string\> | no | (none) | Glob patterns — matching files are skipped |
 | `formats` | list\<string\> | no | `["md","pdf","docx"]` | Extension allow-list |
@@ -99,6 +103,7 @@ sources:
     max_pages: 100                          # optional; default: 100
     domain_lock: true                       # optional; default: true
     rate_limit_ms: 500                      # optional; default: 500
+    database: web.db                        # optional; default: primary --db-path
     include: []                             # optional
     exclude: []                             # optional
     formats:                                # optional
@@ -113,12 +118,43 @@ sources:
 | `max_pages` | integer | no | `100` | Maximum number of pages to crawl |
 | `domain_lock` | boolean | no | `true` | When true, crawler stays within `url`'s registered domain |
 | `rate_limit_ms` | integer | no | `500` | Minimum milliseconds between consecutive HTTP requests |
+| `database` | string | no | primary `--db-path` | Route this source into a specific database file |
 | `include` | list\<string\> | no | (all pages) | Glob patterns applied to the crawled page path |
 | `exclude` | list\<string\> | no | (none) | Glob patterns applied to the crawled page path |
 | `formats` | list\<string\> | no | `["md","pdf","docx"]` | Extension allow-list |
 
 URL sources always re-crawl on each `sync` run (no stable diff signal).
 Use `max_pages` to cap the crawl scope.
+
+## Database Routing
+
+Set `database` on a source when you want that source to sync into a dedicated
+SQLite file instead of the primary `--db-path` target.
+
+```yaml
+sources:
+  - type: git
+    id: product-docs
+    url: https://github.com/example/product-docs.git
+    database: product.db
+
+  - type: local
+    id: team-notes
+    path: ./notes
+    database: notes.db
+```
+
+`database` is resolved relative to the parent directory of `--db-path`. With
+the default `--db-path`, `database: notes.db` writes to `.graphtor/notes.db`.
+
+graphtor-docs also creates one incremental state file per database:
+
+* `graph.db` → `graph.sync_state.json`
+* `notes.db` → `notes.sync_state.json`
+
+Use simple file names for `database`. Values must not be empty, must not
+contain `/` or `\`, and must not contain parent-directory components such as
+`..`.
 
 ## Formats
 
@@ -173,6 +209,7 @@ Common validation errors:
 | `duplicate source ID` | Two sources share the same `id` value |
 | `missing required field` | `id` or `url`/`path` is absent |
 | `invalid glob pattern` | A pattern in `include` or `exclude` is malformed |
+| `invalid database name` | `database` is empty or contains path traversal characters |
 
 Run `graphtor-docs doctor` to validate the config file without running a sync.
 
@@ -185,6 +222,7 @@ sources:
     id: azure-docs
     url: https://github.com/MicrosoftDocs/azure-docs.git
     branch: main
+    database: azure.db
     include:
       - "articles/**/*.md"
     exclude:
@@ -197,6 +235,7 @@ sources:
   - type: local
     id: team-runbooks
     path: /home/user/runbooks
+    database: runbooks.db
     include:
       - "**/*.md"
       - "**/*.pdf"
@@ -212,6 +251,7 @@ sources:
     max_pages: 50
     domain_lock: true
     rate_limit_ms: 1000
+    database: web.db
     formats:
       - md
 ```

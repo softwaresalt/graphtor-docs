@@ -43,8 +43,10 @@ binary. After `graphtor-docs install`, the binary is at
 ### 3. Ensure the database is synced
 
 Run `graphtor-docs sync` at least once before starting the server. The server
-opens the database at `.graphtor/graph.db` relative to the current working
-directory when `graphtor-docs serve` runs.
+opens the primary database at `.graphtor/graph.db` relative to the current
+working directory by default. If any sources set `database`, `graphtor-docs
+serve` also opens those routed database files and serves one MCP surface
+across all loaded stores.
 
 ---
 
@@ -212,8 +214,8 @@ that sync has run; check last-sync timestamps.
 
 > **Note:** `synced_at` is not currently populated by the pipeline, so the
 > timestamp column will show `never` for all sources. Use
-> `sync_state.json` → `last_sync` (Unix epoch) to inspect per-source sync
-> history in the meantime.
+> the matching `*.sync_state.json` file → `last_sync` (Unix epoch) to inspect
+> per-source sync history in the meantime.
 
 **Parameters:** none
 

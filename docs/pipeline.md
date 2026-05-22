@@ -196,7 +196,10 @@ pipeline continues with the next file and reports the error at the end
 
 ## CozoDB Schema (v2)
 
-The database uses CozoDB with a SQLite backend at `.graphtor/graph.db`.
+The database uses CozoDB with a SQLite backend. By default, sync writes to
+`.graphtor/graph.db`. Sources can override that target with the `database`
+field in `sources.yaml`, which routes those sources into additional `.db`
+files under `.graphtor/`.
 Six stored relations form the schema:
 
 ### `doc_schema_ver`
@@ -329,8 +332,8 @@ Embedding vectors for semantic search.
 
 ## Sample Datalog Queries
 
-These queries can be run via the CozoDB CLI or any client with access to
-`.graphtor/graph.db`.
+These queries can be run via the CozoDB CLI or any client with access to a
+graphtor-docs database file such as `.graphtor/graph.db`.
 
 ### Find all chunks for a source
 

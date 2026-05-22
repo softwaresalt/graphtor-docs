@@ -24,10 +24,14 @@ These flags are accepted by every subcommand.
 | `--verbose` | `-v` | — | off | Enable debug-level logging |
 | `--json` | — | — | off | Wrap all output in JSON-RPC 2.0 envelopes (`{"jsonrpc":"2.0","id":null,"result":{...}}`) |
 | `--config <FILE>` | `-c` | `GRAPHTOR_SOURCES` | `.graphtor/config/sources.yaml` | Path to `sources.yaml` |
-| `--db-path <FILE>` | `-d` | `GRAPHTOR_DB_PATH` | `.graphtor/graph.db` | Path to CozoDB database |
+| `--db-path <FILE>` | `-d` | `GRAPHTOR_DB_PATH` | `.graphtor/graph.db` | Path to the primary CozoDB database |
 
 > **Note:** `--data-dir` is a deprecated alias for `--db-path`. It still works
 > but prints a warning. Use `--db-path` in new invocations.
+>
+> Sources can override the primary database target with the `database` field in
+> `sources.yaml`. Those sources sync into sibling `.db` files under the same
+> parent directory as `--db-path`.
 
 ---
 
@@ -132,8 +136,8 @@ sources:  2
 ```
 
 > **Note:** `last sync` shows `never` until a future release populates `synced_at`
-> in the pipeline. Use `sync_state.json` to inspect `last_sync` (Unix epoch) for
-> each source in the meantime.
+> in the pipeline. Use the matching `*.sync_state.json` file to inspect
+> `last_sync` (Unix epoch) for each source in the meantime.
 
 **Example output (`--json`):**
 
@@ -155,6 +159,10 @@ sources:  2
   }
 }
 ```
+
+If configured sources use the `database` field, human-readable output prints
+one section per database file and JSON output returns a `databases` array
+instead of a single `database` field.
 
 ---
 
@@ -196,9 +204,14 @@ Creates the `.graphtor/` workspace directory scaffold:
   cache/      ← directory scaffold only; HuggingFace model cache is at ~/.cache/huggingface/hub/
   config/     ← sources.yaml
   logs/       ← transient log files
-  graph.db    ← CozoDB SQLite database
-  sync_state.json ← incremental sync tracking (git SHA-1 + file mtimes)
+  graph.db    ← primary CozoDB SQLite database
+  *.db        ← optional routed database files from `sources.yaml`
+  graph.sync_state.json ← incremental sync tracking for graph.db
+  *.sync_state.json     ← incremental sync tracking for routed databases
 ```
+
+When a source sets `database`, graphtor-docs stores that source in the named
+`.db` file instead of the primary `graph.db` target.
 
 Also:
 - Copies the currently running binary to `.graphtor/bin/graphtor-docs`
