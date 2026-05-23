@@ -60,10 +60,10 @@ an explicit `database` field. In single-file mode, retain the current default
 
 **Posture**: test-first
 
-After all source files are loaded and merged, compare resolved paths across
-sources targeting different databases. Flag entries where the same file path
-(after glob expansion or literal path) appears in sources routed to different
-databases.
+After all source files are loaded and merged, compare literal paths and
+top-level directory targets across sources routed to different databases.
+Flag entries where the same explicit path or directory target appears in
+multiple databases, while deferring full glob expansion to sync time.
 
 * **Files**: `src/config/validation.rs`
 * **Changes**: New `detect_path_overlaps()` function; integration with `validate()`

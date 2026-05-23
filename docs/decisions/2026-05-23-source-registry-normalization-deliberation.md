@@ -38,7 +38,7 @@ The operator managing multiple documentation domains with dedicated databases.
 
 * Must be backward-compatible with existing single `sources.yaml`
 * Must maintain the existing config validation (duplicate IDs, glob patterns, etc.)
-* Schema must require `database` field in multi-file mode (can default to `graph.db`)
+* Multi-file mode must require an explicit `database` field; single-file mode can still default to `graph.db`
 * Preflight check must run before any ingestion begins
 * Must work with the existing CLI sync flow
 
