@@ -6,8 +6,6 @@ stash_id: E6E6477A
 created: 2026-05-23
 ---
 
-# Multi-Database Runtime Hardening — Implementation Plan
-
 ## Problem Frame
 
 The `DataStore::open_sqlite` function (`src/db/store.rs`) opens CozoDB with default SQLite

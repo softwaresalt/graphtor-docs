@@ -1,14 +1,21 @@
 ---
 title: "Multi-Database Runtime Hardening"
-type: deliberation
-status: decided
-stash_id: E6E6477A
-depth: standard
-promote_to: plan
-created: 2026-05-23
+description: "Harden concurrent multi-database access so status and search do not panic on SQLite lock contention"
+topic: "multi-database runtime hardening"
+depth: "standard"
+decision_status: "decided"
+promoted_to: "plan"
+linked_artifacts:
+  - "docs/exec-plans/2026-05-23-multi-db-runtime-hardening-plan.md"
+tags:
+  - "database"
+  - "multi-db"
+  - "locking"
+  - "concurrency"
+  - "mcp"
+stash_ids:
+  - "E6E6477A"
 ---
-
-# Multi-Database Runtime Hardening
 
 ## Problem Frame
 

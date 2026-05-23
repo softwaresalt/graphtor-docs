@@ -1,14 +1,21 @@
 ---
 title: "Source Registry Normalization and Duplicate-Intake Preflight"
-type: deliberation
-status: decided
-stash_id: 4BEEF41A
-depth: standard
-promote_to: plan
-created: 2026-05-23
+description: "Normalize source registry loading into domain-scoped *.sources.yaml files with duplicate-intake preflight and explicit database routing"
+topic: "source registry normalization"
+depth: "standard"
+decision_status: "decided"
+promoted_to: "plan"
+linked_artifacts:
+  - "docs/exec-plans/2026-05-23-source-registry-normalization-plan.md"
+tags:
+  - "config"
+  - "database"
+  - "validation"
+  - "duplicate-intake"
+  - "cli"
+stash_ids:
+  - "4BEEF41A"
 ---
-
-# Source Registry Normalization and Duplicate-Intake Preflight
 
 ## Problem Frame
 

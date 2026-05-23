@@ -6,8 +6,6 @@ stash_id: 4BEEF41A
 created: 2026-05-23
 ---
 
-# Source Registry Normalization and Duplicate-Intake Preflight — Implementation Plan
-
 ## Problem Frame
 
 The config module (`src/config/`) loads a single `sources.yaml` from
