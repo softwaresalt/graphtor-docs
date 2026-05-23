@@ -394,7 +394,27 @@ fn process_batch(
                 .and_then(|content| parse_document(&content, &path_str)),
             "pdf" => std::fs::read(file)
                 .map_err(GraphtorError::Io)
-                .and_then(|bytes| parse_pdf_document(&bytes, &path_str)),
+                .and_then(|bytes| {
+                    // `pdf-extract` may panic on malformed PDFs (e.g. empty
+                    // glyph arrays — index-out-of-bounds at lib.rs:1799).
+                    // Catch the panic and convert it to a recoverable error so
+                    // the pipeline's continue-on-failure path skips the bad
+                    // file instead of crashing the whole binary.
+                    let path_for_parse = path_str.clone();
+                    let path_for_err = path_str.clone();
+                    std::panic::catch_unwind(move || {
+                        parse_pdf_document(&bytes, &path_for_parse)
+                    })
+                    .unwrap_or_else(|_| {
+                        Err(GraphtorError::Parse {
+                            message: "pdf-extract panicked (malformed or unsupported PDF \
+                                      content; likely an empty glyph array or corrupted \
+                                      font table)"
+                                .to_string(),
+                            path: Some(path_for_err.into()),
+                        })
+                    })
+                }),
             "docx" => std::fs::read(file)
                 .map_err(GraphtorError::Io)
                 .and_then(|bytes| parse_docx_document(&bytes, &path_str)),
