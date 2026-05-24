@@ -152,4 +152,9 @@ When a source sets `database`, sync, serve, status, and prewarm route that
 source through the matching `.db` file and aggregate results across all loaded
 databases.
 
+Write paths acquire a per-database advisory lock before opening the target
+store, while `status` and MCP query surfaces use read-only handles against the
+same database files. This keeps concurrent multi-database reads available
+without letting one active writer panic or corrupt an unrelated database file.
+
 See the [Incremental Sync Design](incremental-sync.md) for full details.
