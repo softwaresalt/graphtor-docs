@@ -5,8 +5,6 @@ branch: feat/multi-database-runtime-hardening
 pr: 58
 ---
 
-# PR58 Copilot runtime hardening memory
-
 ## Completed work
 
 * Resolved the two unresolved Copilot threads on PR #58

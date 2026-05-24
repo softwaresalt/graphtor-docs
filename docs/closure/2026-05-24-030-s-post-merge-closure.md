@@ -139,7 +139,7 @@ stop working during concurrent access, or `030-S` backlog traceability is lost.
 ## Rollback Procedure
 
 ```text
-git revert 83f6ada274f43b6dadf6ebd055143cc220ada330
+git revert -m 1 83f6ada274f43b6dadf6ebd055143cc220ada330
 ```
 
 Re-run the targeted runtime verification commands after the revert.

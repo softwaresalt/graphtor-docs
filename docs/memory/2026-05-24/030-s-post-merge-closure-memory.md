@@ -6,8 +6,6 @@ shipment: 030-S
 pr: 58
 ---
 
-# 030-S post-merge closure memory
-
 ## Completed work
 
 * Re-ran the PR readiness gate for PR `#58`
