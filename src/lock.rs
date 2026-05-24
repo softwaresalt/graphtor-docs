@@ -6,6 +6,8 @@
 use std::fs;
 use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::{Arc, Barrier, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::GraphtorError;
@@ -21,6 +23,11 @@ struct LockDetails {
 
 #[derive(Debug)]
 struct AdvisoryLock {
+    path: PathBuf,
+}
+
+#[derive(Debug)]
+struct ReplacementGuard {
     path: PathBuf,
 }
 
@@ -53,7 +60,7 @@ impl AdvisoryLock {
                 Ok(Self { path })
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                handle_existing_lock(path, &content, force, kind)
+                handle_existing_lock(&path, &content, force, kind)
             }
             Err(error) => Err(GraphtorError::Config {
                 message: format!("failed to create lock file: {error}"),
@@ -64,6 +71,12 @@ impl AdvisoryLock {
 }
 
 impl Drop for AdvisoryLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+impl Drop for ReplacementGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
@@ -132,20 +145,19 @@ fn db_name(db_path: &Path) -> Result<String, GraphtorError> {
 }
 
 fn handle_existing_lock(
-    path: PathBuf,
+    path: &Path,
     content: &str,
     force: bool,
     kind: LockKind<'_>,
 ) -> Result<AdvisoryLock, GraphtorError> {
     if force {
-        write_lock_file(&path, content)?;
-        return Ok(AdvisoryLock { path });
+        return replace_lock_file(path, content, force, kind);
     }
 
-    let details = match read_lock_details(&path) {
+    let details = match read_lock_details(path) {
         Ok(details) => details,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return retry_create_lock(&path, content);
+            return retry_create_lock(path, content);
         }
         Err(error) => {
             return Err(GraphtorError::Config {
@@ -155,39 +167,117 @@ fn handle_existing_lock(
         }
     };
 
-    if is_stale(&path, &details) {
-        write_lock_file(&path, content)?;
-        return Ok(AdvisoryLock { path });
+    if is_stale(path, &details) {
+        #[cfg(test)]
+        before_stale_lock_replacement(path);
+        return replace_lock_file(path, content, force, kind);
     }
 
     Err(conflict_error(
         kind,
         &details,
-        lock_age_secs(&path, &details),
+        lock_age_secs(path, &details),
     ))
 }
 
-fn write_lock_file(path: &Path, content: &str) -> Result<(), GraphtorError> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(path)
-        .map_err(|error| GraphtorError::Config {
-            message: format!("failed to overwrite lock file: {error}"),
-            field: None,
-        })?;
+fn replace_lock_file(
+    path: &Path,
+    content: &str,
+    force: bool,
+    kind: LockKind<'_>,
+) -> Result<AdvisoryLock, GraphtorError> {
+    let Some(_guard) = try_acquire_replacement_guard(path)? else {
+        return recover_from_replacement_race(path, content, kind);
+    };
 
-    if let Err(error) = file.write_all(content.as_bytes()) {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(GraphtorError::Config {
-            message: format!("failed to write lock file: {error}"),
-            field: None,
-        });
+    match read_lock_details(path) {
+        Ok(details) if !force && !is_stale(path, &details) => {
+            return Err(conflict_error(
+                kind,
+                &details,
+                lock_age_secs(path, &details),
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(GraphtorError::Config {
+                message: format!("failed to read lock file: {error}"),
+                field: None,
+            });
+        }
     }
 
-    Ok(())
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(GraphtorError::Config {
+                message: format!("failed to remove existing lock file: {error}"),
+                field: None,
+            });
+        }
+    }
+
+    retry_create_lock(path, content)
+}
+
+fn try_acquire_replacement_guard(path: &Path) -> Result<Option<ReplacementGuard>, GraphtorError> {
+    let guard_path = replacement_guard_path(path);
+    let timestamp = current_timestamp_secs();
+    let pid = std::process::id();
+    let content = format!("pid={pid}\ntimestamp={timestamp}\n");
+
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&guard_path)
+    {
+        Ok(mut file) => {
+            if let Err(error) = file.write_all(content.as_bytes()) {
+                drop(file);
+                let _ = fs::remove_file(&guard_path);
+                return Err(GraphtorError::Config {
+                    message: format!("failed to write replacement marker: {error}"),
+                    field: None,
+                });
+            }
+            Ok(Some(ReplacementGuard { path: guard_path }))
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(None),
+        Err(error) => Err(GraphtorError::Config {
+            message: format!("failed to create replacement marker: {error}"),
+            field: None,
+        }),
+    }
+}
+
+fn replacement_guard_path(path: &Path) -> PathBuf {
+    let mut file_name = path.file_name().map_or_else(
+        || std::ffi::OsString::from("lock"),
+        std::ffi::OsStr::to_os_string,
+    );
+    file_name.push(".replacing");
+    path.with_file_name(file_name)
+}
+
+fn recover_from_replacement_race(
+    path: &Path,
+    content: &str,
+    kind: LockKind<'_>,
+) -> Result<AdvisoryLock, GraphtorError> {
+    match read_lock_details(path) {
+        Ok(details) => Err(conflict_error(
+            kind,
+            &details,
+            lock_age_secs(path, &details),
+        )),
+        Err(error) if error.kind() == ErrorKind::NotFound => retry_create_lock(path, content),
+        Err(error) => Err(GraphtorError::Config {
+            message: format!("failed to read lock file: {error}"),
+            field: None,
+        }),
+    }
 }
 
 fn retry_create_lock(path: &Path, content: &str) -> Result<AdvisoryLock, GraphtorError> {
@@ -239,6 +329,54 @@ fn current_timestamp_secs() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
+#[cfg(test)]
+#[derive(Clone)]
+struct StaleReplacementHook {
+    path: PathBuf,
+    barrier: Arc<Barrier>,
+}
+
+#[cfg(test)]
+fn stale_replacement_hook() -> &'static Mutex<Option<StaleReplacementHook>> {
+    static HOOK: OnceLock<Mutex<Option<StaleReplacementHook>>> = OnceLock::new();
+    HOOK.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+fn before_stale_lock_replacement(path: &Path) {
+    let hook = stale_replacement_hook()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if let Some(hook) = hook.filter(|hook| hook.path == path) {
+        hook.barrier.wait();
+    }
+}
+
+#[cfg(test)]
+struct StaleReplacementHookGuard;
+
+#[cfg(test)]
+impl StaleReplacementHookGuard {
+    fn install(path: PathBuf, barrier: Arc<Barrier>) -> Self {
+        let mut hook = stale_replacement_hook()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *hook = Some(StaleReplacementHook { path, barrier });
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for StaleReplacementHookGuard {
+    fn drop(&mut self) {
+        let mut hook = stale_replacement_hook()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *hook = None;
+    }
+}
+
 fn lock_age_secs(path: &Path, details: &LockDetails) -> Option<u64> {
     if let Some(timestamp) = details.timestamp {
         return Some(current_timestamp_secs().saturating_sub(timestamp));
@@ -284,6 +422,7 @@ fn conflict_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn workspace_lock_acquire_and_release() {
@@ -351,5 +490,33 @@ mod tests {
 
         let _lock = DatabaseLock::acquire(tmp.path(), &primary, false)
             .expect("stale database lock should be replaced");
+    }
+
+    #[test]
+    fn concurrent_stale_database_lock_replacement_only_allows_one_winner() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let primary = tmp.path().join("primary.db");
+        let lock_path = tmp.path().join("primary.db.lock");
+        fs::write(&lock_path, "pid=42\ntimestamp=0\n").expect("write stale lock");
+
+        let barrier = Arc::new(Barrier::new(2));
+        let _hook_guard = StaleReplacementHookGuard::install(lock_path, Arc::clone(&barrier));
+
+        let worker = {
+            let lock_dir = tmp.path().to_path_buf();
+            let db_path = primary.clone();
+            move || DatabaseLock::acquire(&lock_dir, &db_path, false)
+        };
+
+        let first = thread::spawn(worker.clone());
+        let second = thread::spawn(worker);
+
+        let results = [
+            first.join().expect("first join"),
+            second.join().expect("second join"),
+        ];
+
+        let success_count = results.iter().filter(|result| result.is_ok()).count();
+        assert_eq!(success_count, 1, "exactly one replacement should win");
     }
 }
