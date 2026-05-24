@@ -24,6 +24,10 @@ struct LockDetails {
 #[derive(Debug)]
 struct AdvisoryLock {
     path: PathBuf,
+    /// Exact content written to the lock file at acquisition time.
+    /// `Drop` compares the live file against this token before removing it,
+    /// so that a lock file replaced by another process is never evicted.
+    token: String,
 }
 
 #[derive(Debug)]
@@ -57,7 +61,10 @@ impl AdvisoryLock {
                         field: None,
                     });
                 }
-                Ok(Self { path })
+                Ok(Self {
+                    path,
+                    token: content,
+                })
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
                 handle_existing_lock(&path, &content, force, kind)
@@ -72,7 +79,12 @@ impl AdvisoryLock {
 
 impl Drop for AdvisoryLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        // Only remove the lock file if its current content matches the token written
+        // at acquisition time.  If another process replaced the lock, the content will
+        // differ and removing the file would evict the new owner.
+        if fs::read_to_string(&self.path).is_ok_and(|content| content == self.token) {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -348,6 +360,7 @@ fn retry_create_lock(path: &Path, content: &str) -> Result<AdvisoryLock, Graphto
 
     Ok(AdvisoryLock {
         path: path.to_path_buf(),
+        token: content.to_owned(),
     })
 }
 
@@ -426,7 +439,13 @@ impl Drop for StaleReplacementHookGuard {
 
 fn lock_age_secs(path: &Path, details: &LockDetails) -> Option<u64> {
     if let Some(timestamp) = details.timestamp {
-        return Some(current_timestamp_secs().saturating_sub(timestamp));
+        let now = current_timestamp_secs();
+        if timestamp <= now {
+            // Embedded timestamp is in the past or present; use it directly.
+            return Some(now - timestamp);
+        }
+        // Timestamp is in the future — likely clock skew or a corrupt lock file.
+        // Fall through to mtime-based age to preserve correct stale-lock detection.
     }
 
     path.metadata()
@@ -538,6 +557,84 @@ mod tests {
         let _lock = DatabaseLock::acquire(tmp.path(), &primary, false)
             .expect("stale database lock should be replaced");
     }
+
+    // ----- Fix 1: drop ownership semantics -----
+
+    #[test]
+    fn drop_does_not_remove_replaced_lock_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let lock_path = tmp.path().join(WORKSPACE_LOCK_FILE);
+
+        let lock = WorkspaceLock::acquire(tmp.path(), false).expect("acquire");
+        assert!(lock_path.exists(), "lock file exists while held");
+
+        // Simulate another process taking over the lock file.
+        fs::write(&lock_path, "pid=9999\ntimestamp=99999\n")
+            .expect("overwrite with new owner content");
+
+        // Our drop must NOT remove the file — its content no longer matches our token.
+        drop(lock);
+
+        assert!(
+            lock_path.exists(),
+            "lock file should survive drop when another process replaced its content"
+        );
+        assert_eq!(
+            fs::read_to_string(&lock_path).expect("read after drop"),
+            "pid=9999\ntimestamp=99999\n",
+            "new owner's content must be intact after drop"
+        );
+    }
+
+    // ----- Fix 2: future-timestamp fallback in lock_age_secs -----
+
+    #[test]
+    fn lock_age_falls_back_to_mtime_for_future_timestamp() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let lock_file = tmp.path().join("test.lock");
+
+        // A timestamp two hours in the future — saturating_sub would silently return 0,
+        // masking a potentially stale lock and hiding corrupt/skewed timestamps.
+        let future_ts = current_timestamp_secs() + 7200;
+        let content = format!("pid=42\ntimestamp={future_ts}\n");
+        fs::write(&lock_file, &content).expect("write lock");
+
+        let details = parse_lock_details(&content);
+
+        // A just-created file must not appear stale, whether via embedded ts or mtime.
+        assert!(
+            !is_stale(&lock_file, &details),
+            "just-created file with future timestamp should NOT be stale"
+        );
+        // Age must come from mtime (small), not from the saturating_sub shortcut (0).
+        let age = lock_age_secs(&lock_file, &details);
+        assert!(age.is_some(), "mtime fallback must return Some(age)");
+        assert!(
+            age.unwrap() < STALE_SECS,
+            "mtime fallback for a just-created file must give age < {STALE_SECS}s, got {age:?}"
+        );
+    }
+
+    #[test]
+    fn lock_age_uses_embedded_timestamp_when_valid() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let lock_file = tmp.path().join("test.lock");
+
+        // A timestamp old enough to exceed the stale threshold.
+        let old_ts = current_timestamp_secs().saturating_sub(STALE_SECS + 100);
+        let content = format!("pid=42\ntimestamp={old_ts}\n");
+        fs::write(&lock_file, &content).expect("write lock");
+
+        let details = parse_lock_details(&content);
+
+        // The embedded timestamp reveals a stale lock even though mtime is just now.
+        assert!(
+            is_stale(&lock_file, &details),
+            "lock with an old embedded timestamp must be detected as stale"
+        );
+    }
+
+    // ----- Original concurrent-replacement test (unchanged) -----
 
     #[test]
     fn concurrent_stale_database_lock_replacement_only_allows_one_winner() {
