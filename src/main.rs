@@ -806,7 +806,14 @@ fn load_status_databases(
                 DataStore::open_sqlite_readonly(&candidate_db_path, cwd).with_context(|| {
                     format!("failed to open database at {}", candidate_db_path.display())
                 })?;
-            list_sources(&store).context("failed to list sources")?
+            if store
+                .relation_exists("doc_sources")
+                .context("failed to inspect database schema")?
+            {
+                list_sources(&store).context("failed to list sources")?
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         };
@@ -1588,6 +1595,25 @@ mod tests {
         assert!(
             result.is_none(),
             "should return None when explicit override is missing"
+        );
+    }
+
+    #[test]
+    fn load_status_databases_returns_empty_sources_for_uninitialized_database() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("partial.db");
+
+        let _store = DataStore::open_sqlite(&db_path, tmp.path())
+            .expect("open_sqlite should create the database file");
+
+        let databases = load_status_databases(tmp.path(), vec![db_path.clone()])
+            .expect("status should tolerate an uninitialized database");
+
+        assert_eq!(databases.len(), 1, "expected one database entry");
+        assert_eq!(databases[0].path, db_path);
+        assert!(
+            databases[0].sources.is_empty(),
+            "uninitialized database should report no sources"
         );
     }
 
