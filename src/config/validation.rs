@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use globset::Glob;
 
@@ -270,12 +270,46 @@ impl fmt::Display for DuplicateIntakeReport {
 
 /// Compute the intake key for a source — the acquisition target that
 /// identifies what content will be indexed.
+///
+/// For local sources, the path is normalised lexically so that semantically
+/// identical paths written in different forms (e.g. `./docs` vs `docs`, or
+/// `/abs/path/../docs` vs `/abs/docs`) produce the same key.
 fn intake_key(source: &Source) -> String {
     match source {
         Source::Git(g) => g.url.clone(),
-        Source::Local(l) => l.path.display().to_string(),
+        Source::Local(l) => normalize_path_key(&l.path),
         Source::Url(u) => u.url.clone(),
     }
+}
+
+/// Normalise a local filesystem path into a canonical string key.
+///
+/// Resolves `.` (current-directory) and `..` (parent-directory) components
+/// **lexically** — without touching the filesystem — so that
+/// `./docs`, `docs`, and `some/../docs` all produce the same key.
+///
+/// This is intentionally a lexical operation: the path need not exist on disk
+/// at validation time, and callers should not expect symlinks or mount-points
+/// to be resolved.
+fn normalize_path_key(path: &Path) -> String {
+    let mut parts: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {} // "." — drop silently
+            Component::ParentDir => {
+                // ".." — pop the last normal segment if present; otherwise
+                // retain the ".." so that `../../foo` stays meaningful.
+                if matches!(parts.last(), Some(Component::Normal(_))) {
+                    parts.pop();
+                } else {
+                    parts.push(component);
+                }
+            }
+            other => parts.push(other),
+        }
+    }
+    let normalised: PathBuf = parts.into_iter().collect();
+    normalised.display().to_string()
 }
 
 #[cfg(test)]
@@ -689,5 +723,81 @@ mod tests {
             display.contains("<default>"),
             "display must use '<default>' for missing database field: {display}"
         );
+    }
+
+    // ── T040.001: local-path normalization in duplicate detection ────────────
+
+    #[test]
+    fn duplicate_report_normalizes_dotslash_local_paths() {
+        // "./docs" and "docs" are the same directory — must be detected as a
+        // cross-database duplicate.
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "./docs", "alpha.db"),
+                local_with_db("b", "docs", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            !report.is_empty(),
+            "'./docs' and 'docs' must be detected as the same intake key: {report}"
+        );
+    }
+
+    #[test]
+    fn duplicate_report_normalizes_parent_dir_in_absolute_paths() {
+        // "/abs/path/../docs" and "/abs/docs" resolve to the same directory.
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "/abs/path/../docs", "alpha.db"),
+                local_with_db("b", "/abs/docs", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            !report.is_empty(),
+            "lexically equivalent absolute paths must be detected as the same intake key: {report}"
+        );
+    }
+
+    #[test]
+    fn duplicate_report_same_path_different_writing_same_db_is_not_flagged() {
+        // Same logical path, same database — redundant but not a cross-db conflict.
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "./docs", "shared.db"),
+                local_with_db("b", "docs", "shared.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            report.is_empty(),
+            "same-db duplicates (even via different path forms) must not be flagged: {report}"
+        );
+    }
+
+    #[test]
+    fn normalize_path_key_strips_leading_dot_slash() {
+        assert_eq!(
+            normalize_path_key(Path::new("./docs")),
+            normalize_path_key(Path::new("docs"))
+        );
+    }
+
+    #[test]
+    fn normalize_path_key_resolves_parent_dir_component() {
+        assert_eq!(
+            normalize_path_key(Path::new("/abs/path/../docs")),
+            normalize_path_key(Path::new("/abs/docs"))
+        );
+    }
+
+    #[test]
+    fn normalize_path_key_preserves_unresolvable_parent_dirs() {
+        // Leading ".." cannot be resolved without cwd — distinct paths must
+        // remain distinct so that "../../foo" and "../../bar" don't collide.
+        let a = normalize_path_key(Path::new("../../foo"));
+        let b = normalize_path_key(Path::new("../../bar"));
+        assert_ne!(a, b, "distinct unresolvable paths must stay distinct");
     }
 }
