@@ -92,12 +92,15 @@ pub struct WorkspaceLock {
 impl WorkspaceLock {
     /// Acquire the workspace lock at `.graphtor/graphtor.lock`.
     ///
-    /// When `force` is true, any existing lock file is replaced immediately.
+    /// When `force` is true, lock acquisition attempts to replace any existing
+    /// lock file immediately. It can still fail if another process is already
+    /// performing that replacement through a live `.replacing` marker.
     ///
     /// # Errors
     ///
     /// Returns [`GraphtorError::Config`] when another live process already holds
-    /// the workspace lock and `force` is false.
+    /// the workspace lock and `force` is false, or when a concurrent
+    /// replacement attempt is already in progress.
     pub fn acquire(workspace_dir: &Path, force: bool) -> Result<Self, GraphtorError> {
         let path = workspace_dir.join(WORKSPACE_LOCK_FILE);
         AdvisoryLock::acquire(path, LockKind::Workspace, force).map(|inner| Self { _inner: inner })

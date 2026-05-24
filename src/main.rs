@@ -317,26 +317,23 @@ fn cmd_sync(
     let started_at = Instant::now();
     let mut total_metrics = SyncMetrics::default();
     let mut full_sync_errors = Vec::new();
-    let mut database_locks = Vec::new();
 
     for (target_db_path, grouped_plan) in split_plan_by_database(db_path, &source_config, &plan) {
-        let database_lock = acquire_database_lock(&target_db_path, cwd)?;
-        let store = DataStore::open_sqlite(&target_db_path, cwd)
-            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
-        store
-            .ensure_schema()
-            .context("failed to ensure database schema")?;
-        database_locks.push(database_lock);
+        let (database_metrics, database_errors) =
+            with_locked_database_store(&target_db_path, cwd, |store| {
+                if args.full {
+                    let full_result = cmd_sync_full(store, &grouped_plan, model.as_ref(), args)?;
+                    Ok((full_result.metrics, full_result.errors))
+                } else {
+                    Ok((
+                        cmd_sync_incremental(&target_db_path, store, &grouped_plan, model.as_ref()),
+                        Vec::new(),
+                    ))
+                }
+            })?;
 
-        if args.full {
-            let full_result = cmd_sync_full(&store, &grouped_plan, model.as_ref(), args)?;
-            merge_sync_metrics(&mut total_metrics, &full_result.metrics);
-            full_sync_errors.extend(full_result.errors);
-        } else {
-            let metrics =
-                cmd_sync_incremental(&target_db_path, &store, &grouped_plan, model.as_ref());
-            merge_sync_metrics(&mut total_metrics, &metrics);
-        }
+        merge_sync_metrics(&mut total_metrics, &database_metrics);
+        full_sync_errors.extend(database_errors);
     }
 
     total_metrics.duration_ms = elapsed_millis(started_at);
@@ -347,6 +344,23 @@ fn cmd_sync(
         args.metrics,
         fmt,
     ))
+}
+
+fn with_locked_database_store<T, F>(
+    target_db_path: &std::path::Path,
+    cwd: &std::path::Path,
+    action: F,
+) -> anyhow::Result<T>
+where
+    F: FnOnce(&DataStore) -> anyhow::Result<T>,
+{
+    let _database_lock = acquire_database_lock(target_db_path, cwd)?;
+    let store = DataStore::open_sqlite(target_db_path, cwd)
+        .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
+    store
+        .ensure_schema()
+        .context("failed to ensure database schema")?;
+    action(&store)
 }
 
 fn merge_sync_metrics(total: &mut SyncMetrics, next: &SyncMetrics) {
@@ -1615,6 +1629,27 @@ mod tests {
             databases[0].sources.is_empty(),
             "uninitialized database should report no sources"
         );
+    }
+
+    #[test]
+    fn with_locked_database_store_releases_lock_after_callback_returns() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("graph.db");
+        let lock_path = tmp.path().join("graph.db.lock");
+
+        with_locked_database_store(&db_path, tmp.path(), |_store| {
+            assert!(lock_path.exists(), "lock file should exist during callback");
+            Ok(())
+        })
+        .expect("locked store helper should succeed");
+
+        assert!(
+            !lock_path.exists(),
+            "lock file should be removed after callback returns"
+        );
+
+        let _lock = acquire_database_lock(&db_path, tmp.path())
+            .expect("lock should be acquirable after callback returns");
     }
 
     #[test]
