@@ -4,7 +4,8 @@
 //! enforce: duplicate source IDs, empty required fields, and glob pattern
 //! syntax validity.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::fmt;
 use std::path::{Component, Path};
 
 use globset::Glob;
@@ -163,6 +164,118 @@ fn validate_globs(patterns: &[String], source_id: &str) -> Result<(), GraphtorEr
         })?;
     }
     Ok(())
+}
+
+// ── T040.003–T040.004: DuplicateIntakeReport ─────────────────────────────────
+
+/// A single cross-database duplicate intake conflict.
+///
+/// Records the shared intake key (URL for Git and URL sources, canonical path
+/// for local sources) and the conflicting `(source_id, database)` pairs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DuplicateEntry {
+    /// The intake key shared by the conflicting sources (URL or path string).
+    pub intake_key: String,
+    /// Conflicting sources as `(source_id, database_name)` pairs.
+    ///
+    /// `database_name` is `""` when the source omits the `database` field
+    /// and routes to the default database.
+    pub conflicts: Vec<(String, String)>,
+}
+
+/// Report of cross-database duplicate intake sources.
+///
+/// A "duplicate intake" occurs when two sources with different `database`
+/// values share the same acquisition target (git URL, local path, or crawl
+/// URL). Sources that share an intake target _within the same database_ are
+/// not flagged — they are redundant but not ambiguous.
+///
+/// Use [`DuplicateIntakeReport::detect`] to build a report from a
+/// [`SourceConfig`], then inspect [`is_empty`](Self::is_empty) to decide
+/// whether the conflict should block or warn.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DuplicateIntakeReport {
+    /// All cross-database duplicate entries detected.
+    pub entries: Vec<DuplicateEntry>,
+}
+
+impl DuplicateIntakeReport {
+    /// Detect cross-database duplicate intakes in `config`.
+    ///
+    /// Groups sources by their intake key.  Within each group, checks whether
+    /// more than one distinct `database` value is present.  If so, that group
+    /// is added to the report.
+    ///
+    /// Same-database duplicates are not flagged.
+    #[must_use]
+    pub fn detect(config: &SourceConfig) -> Self {
+        let mut by_key: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+
+        for source in &config.sources {
+            let key = intake_key(source);
+            let db = source.database().unwrap_or("").to_string();
+            by_key
+                .entry(key)
+                .or_default()
+                .push((source.id().to_string(), db));
+        }
+
+        let entries = by_key
+            .into_iter()
+            .filter_map(|(key, conflicts)| {
+                let distinct_dbs: std::collections::BTreeSet<&str> =
+                    conflicts.iter().map(|(_, db)| db.as_str()).collect();
+                if distinct_dbs.len() > 1 {
+                    Some(DuplicateEntry {
+                        intake_key: key,
+                        conflicts,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Self { entries }
+    }
+
+    /// Returns `true` when no duplicate intakes were detected.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl fmt::Display for DuplicateIntakeReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "{} cross-database duplicate intake(s) detected:",
+            self.entries.len()
+        )?;
+        for entry in &self.entries {
+            writeln!(f, "  intake: {}", entry.intake_key)?;
+            for (id, db) in &entry.conflicts {
+                let db_display = if db.is_empty() {
+                    "<default>"
+                } else {
+                    db.as_str()
+                };
+                writeln!(f, "    - source '{id}' -> database '{db_display}'")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Compute the intake key for a source — the acquisition target that
+/// identifies what content will be indexed.
+fn intake_key(source: &Source) -> String {
+    match source {
+        Source::Git(g) => g.url.clone(),
+        Source::Local(l) => l.path.display().to_string(),
+        Source::Url(u) => u.url.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -442,6 +555,139 @@ mod tests {
         assert!(
             msg.contains("path separators"),
             "must mention separators: {msg}"
+        );
+    }
+
+    // ── T040.003: DuplicateIntakeReport ──────────────────────────────────────
+
+    fn git_with_db(id: &str, url: &str, db: &str) -> Source {
+        Source::Git(GitSource {
+            id: id.to_string(),
+            url: url.to_string(),
+            branch: "main".to_string(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some(db.to_string()),
+        })
+    }
+
+    fn local_with_db(id: &str, path: &str, db: &str) -> Source {
+        Source::Local(LocalSource {
+            id: id.to_string(),
+            path: std::path::PathBuf::from(path),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some(db.to_string()),
+        })
+    }
+
+    #[test]
+    fn duplicate_report_empty_when_no_conflicts() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo-a.git", "alpha.db"),
+                git_with_db("b", "https://github.com/example/repo-b.git", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(report.is_empty(), "no duplicates expected");
+    }
+
+    #[test]
+    fn duplicate_report_detects_cross_db_git_url_conflict() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo.git", "alpha.db"),
+                git_with_db("b", "https://github.com/example/repo.git", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(!report.is_empty(), "cross-db git url should be reported");
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(
+            report.entries[0].intake_key,
+            "https://github.com/example/repo.git"
+        );
+        assert_eq!(report.entries[0].conflicts.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_report_detects_cross_db_local_path_conflict() {
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "/shared/docs", "alpha.db"),
+                local_with_db("b", "/shared/docs", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(!report.is_empty(), "cross-db local path should be reported");
+        assert_eq!(report.entries.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_report_allows_same_db_duplicates() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo.git", "shared.db"),
+                git_with_db("b", "https://github.com/example/repo.git", "shared.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            report.is_empty(),
+            "same-db duplicates must not be flagged: {report}"
+        );
+    }
+
+    // ── T040.004: DuplicateIntakeReport Display ───────────────────────────────
+
+    #[test]
+    fn duplicate_report_display_is_human_readable() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo.git", "alpha.db"),
+                git_with_db("b", "https://github.com/example/repo.git", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        let display = report.to_string();
+        assert!(
+            display.contains("cross-database"),
+            "display must describe the conflict type: {display}"
+        );
+        assert!(
+            display.contains("https://github.com/example/repo.git"),
+            "display must include the intake key: {display}"
+        );
+        assert!(
+            display.contains("alpha.db") && display.contains("beta.db"),
+            "display must include database names: {display}"
+        );
+    }
+
+    #[test]
+    fn duplicate_report_display_shows_default_for_missing_database() {
+        let config = SourceConfig {
+            sources: vec![
+                git("url-src-a"),
+                Source::Git(GitSource {
+                    id: "url-src-b".to_string(),
+                    url: "https://github.com/example/repo.git".to_string(),
+                    branch: "main".to_string(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("other.db".to_string()),
+                }),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        let display = report.to_string();
+        assert!(
+            display.contains("<default>"),
+            "display must use '<default>' for missing database field: {display}"
         );
     }
 }
