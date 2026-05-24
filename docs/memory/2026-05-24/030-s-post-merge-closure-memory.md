@@ -30,7 +30,7 @@ pr: 58
 * `.backlogit/archive/039.006-T.md`
 * `.backlogit/archive/039.007-T.md`
 * `.backlogit/queue/030-S.md` (removed from queue)
-* `docs/ARCHITECTURE.md`
+* `docs/architecture.md`
 * `docs/design-docs/2026-05-24-multi-database-runtime-hardening.md`
 * `docs/closure/2026-05-24-030-s-runtime-verification.md`
 * `docs/closure/2026-05-24-030-s-post-merge-closure.md`
