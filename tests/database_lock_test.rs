@@ -64,3 +64,25 @@ fn stale_database_lock_is_replaced_using_embedded_timestamp() {
     let _lock = DatabaseLock::acquire(&workspace_dir, &primary_db, false)
         .expect("stale database lock should be replaced");
 }
+
+#[test]
+fn stale_replacement_marker_does_not_block_stale_database_lock_replacement() {
+    let tempdir = lock_root();
+    let workspace_dir = tempdir.path().join(".graphtor");
+    std::fs::create_dir_all(&workspace_dir).expect("create workspace dir");
+
+    let primary_db = workspace_dir.join("primary.db");
+    let lock_path = workspace_dir.join("primary.db.lock");
+    let replacement_path = workspace_dir.join("primary.db.lock.replacing");
+    std::fs::write(&lock_path, "pid=42\ntimestamp=0\n").expect("write stale lock");
+    std::fs::write(&replacement_path, "pid=7\ntimestamp=0\n")
+        .expect("write stale replacement marker");
+
+    let _lock = DatabaseLock::acquire(&workspace_dir, &primary_db, false)
+        .expect("stale replacement marker should not block lock replacement");
+
+    assert!(
+        !replacement_path.exists(),
+        "replacement marker should be removed after successful replacement"
+    );
+}

@@ -228,25 +228,69 @@ fn try_acquire_replacement_guard(path: &Path) -> Result<Option<ReplacementGuard>
     let pid = std::process::id();
     let content = format!("pid={pid}\ntimestamp={timestamp}\n");
 
+    let Some(guard) = try_create_replacement_guard(&guard_path, &content)? else {
+        return reclaim_or_yield_replacement_guard(&guard_path, &content);
+    };
+
+    Ok(Some(guard))
+}
+
+fn try_create_replacement_guard(
+    guard_path: &Path,
+    content: &str,
+) -> Result<Option<ReplacementGuard>, GraphtorError> {
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&guard_path)
+        .open(guard_path)
     {
         Ok(mut file) => {
             if let Err(error) = file.write_all(content.as_bytes()) {
                 drop(file);
-                let _ = fs::remove_file(&guard_path);
+                let _ = fs::remove_file(guard_path);
                 return Err(GraphtorError::Config {
                     message: format!("failed to write replacement marker: {error}"),
                     field: None,
                 });
             }
-            Ok(Some(ReplacementGuard { path: guard_path }))
+            Ok(Some(ReplacementGuard {
+                path: guard_path.to_path_buf(),
+            }))
         }
         Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(None),
         Err(error) => Err(GraphtorError::Config {
             message: format!("failed to create replacement marker: {error}"),
+            field: None,
+        }),
+    }
+}
+
+fn reclaim_or_yield_replacement_guard(
+    guard_path: &Path,
+    content: &str,
+) -> Result<Option<ReplacementGuard>, GraphtorError> {
+    match read_lock_details(guard_path) {
+        Ok(details) if is_stale(guard_path, &details) => {
+            remove_stale_replacement_guard(guard_path)?;
+            try_create_replacement_guard(guard_path, content)
+        }
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            try_create_replacement_guard(guard_path, content)
+        }
+        Err(error) => Err(GraphtorError::Config {
+            message: format!("failed to read replacement marker: {error}"),
+            field: None,
+        }),
+    }
+}
+
+fn remove_stale_replacement_guard(guard_path: &Path) -> Result<(), GraphtorError> {
+    match fs::remove_file(guard_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(GraphtorError::Config {
+            message: format!("failed to remove stale replacement marker: {error}"),
             field: None,
         }),
     }

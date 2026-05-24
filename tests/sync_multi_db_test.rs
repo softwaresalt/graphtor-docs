@@ -112,3 +112,67 @@ fn sync_fails_gracefully_when_database_lock_is_held() {
         "sync failure should mention the held database lock, got: {stderr}"
     );
 }
+
+#[test]
+fn sync_creates_missing_parent_directories_for_custom_database_path() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+    std::fs::write(ws.join("guide.md"), "# Guide\n\nHello world.\n").expect("write guide");
+
+    let custom_db = std::path::PathBuf::from(".graphtor")
+        .join("nested")
+        .join("graph.db");
+    let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_graphtor-docs"));
+    let output = Command::new(&exe)
+        .current_dir(ws)
+        .arg("--db-path")
+        .arg(&custom_db)
+        .arg("sync")
+        .arg("--no-embed")
+        .output()
+        .expect("run graphtor-docs sync");
+
+    assert!(
+        output.status.success(),
+        "sync should create missing parent directories for the custom database path: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        ws.join(&custom_db).exists(),
+        "custom database path should exist after sync"
+    );
+}
+
+#[test]
+fn sync_rejects_custom_database_path_escaping_workspace_root() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+    std::fs::write(ws.join("guide.md"), "# Guide\n\nHello world.\n").expect("write guide");
+
+    let escaped_db = std::path::PathBuf::from("..")
+        .join("escaped")
+        .join("graph.db");
+    let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_graphtor-docs"));
+    let output = Command::new(&exe)
+        .current_dir(ws)
+        .arg("--db-path")
+        .arg(&escaped_db)
+        .arg("sync")
+        .arg("--no-embed")
+        .output()
+        .expect("run graphtor-docs sync");
+
+    assert!(
+        !output.status.success(),
+        "sync should reject a database path outside the workspace: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("path_violation") || stderr.contains("must be within"),
+        "sync failure should report a path violation, got: {stderr}"
+    );
+}

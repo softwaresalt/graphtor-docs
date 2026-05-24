@@ -320,7 +320,7 @@ fn cmd_sync(
     let mut database_locks = Vec::new();
 
     for (target_db_path, grouped_plan) in split_plan_by_database(db_path, &source_config, &plan) {
-        let database_lock = acquire_database_lock(&target_db_path)?;
+        let database_lock = acquire_database_lock(&target_db_path, cwd)?;
         let store = DataStore::open_sqlite(&target_db_path, cwd)
             .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
         store
@@ -682,7 +682,7 @@ async fn cmd_serve(
     let mut database_locks = Vec::new();
     for target_db_path in db_paths {
         info!(db_path = %target_db_path.display(), "opening database");
-        let database_lock = acquire_database_lock(&target_db_path)?;
+        let database_lock = acquire_database_lock(&target_db_path, cwd)?;
         let store = DataStore::open_sqlite(&target_db_path, cwd)
             .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
         store
@@ -821,11 +821,24 @@ fn load_status_databases(
 
 fn acquire_database_lock(
     target_db_path: &std::path::Path,
+    cwd: &std::path::Path,
 ) -> anyhow::Result<workspace::lock::DatabaseLock> {
-    let lock_dir = target_db_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    workspace::lock::DatabaseLock::acquire(lock_dir, target_db_path, false)
+    let safe_db_path =
+        graphtor_core::path::validate_path(target_db_path, cwd).with_context(|| {
+            format!(
+                "database path '{}' must be within '{}'",
+                target_db_path.display(),
+                cwd.display()
+            )
+        })?;
+    let lock_dir = safe_db_path.parent().unwrap_or(cwd);
+    std::fs::create_dir_all(lock_dir).with_context(|| {
+        format!(
+            "failed to create database directory '{}'",
+            lock_dir.display()
+        )
+    })?;
+    workspace::lock::DatabaseLock::acquire(lock_dir, &safe_db_path, false)
         .with_context(|| format!("database '{}' is locked", target_db_path.display()))
 }
 
