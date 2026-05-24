@@ -43,6 +43,7 @@ pdf-extract = "0.10"
 lopdf = { version = "0.38", default-features = false, features = ["rayon"] }
 pulldown-cmark = "0.12"
 cozo = { version = "0.7", default-features = false, features = ["storage-sqlite", "rayon"] }
+sqlite = "0.32"
 candle-core = { version = "0.8" }
 candle-nn = { version = "0.8" }
 candle-transformers = { version = "0.8" }

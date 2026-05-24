@@ -5,10 +5,12 @@
 //! so that handles can be cheaply cloned and shared across threads.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
 use cozo::{DataValue, DbInstance, NamedRows, ScriptMutability};
+use sqlite::{Connection, OpenFlags, State};
 use tracing::info;
 
 use crate::error::GraphtorError;
@@ -28,6 +30,12 @@ pub struct DbStatus {
     pub schema_version: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccessMode {
+    ReadWrite,
+    ReadOnly,
+}
+
 /// A cloneable, thread-safe handle to the embedded [`DbInstance`].
 ///
 /// Wraps `cozo::DbInstance` in an [`Arc`] so that clones share the same
@@ -35,6 +43,7 @@ pub struct DbStatus {
 #[derive(Clone)]
 pub struct DataStore {
     pub(crate) db: Arc<DbInstance>,
+    access_mode: AccessMode,
 }
 
 impl std::fmt::Debug for DataStore {
@@ -61,7 +70,10 @@ impl DataStore {
             }
         })?;
         info!("opened in-memory DataStore");
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            access_mode: AccessMode::ReadWrite,
+        })
     }
 
     /// Open a persistent `DataStore` backed by an `SQLite` file at `path`.
@@ -76,18 +88,45 @@ impl DataStore {
     ///   `SQLite` file, or the path contains non-UTF-8 bytes.
     pub fn open_sqlite(path: &Path, root: &Path) -> Result<Self, GraphtorError> {
         let safe_path = validate_path(path, root)?;
-        let path_str = safe_path.to_str().ok_or_else(|| GraphtorError::Database {
-            message: "database path contains non-UTF-8 characters".to_string(),
-            operation: "open_sqlite".to_string(),
-        })?;
-        let db = DbInstance::new("sqlite", path_str, Default::default()).map_err(|e| {
-            GraphtorError::Database {
-                message: e.to_string(),
-                operation: "open_sqlite".to_string(),
-            }
-        })?;
+        ensure_database_parent_dir(&safe_path)?;
+        configure_sqlite_wal(&safe_path)?;
+        let db = open_sqlite_instance(&safe_path, "open_sqlite")?;
+        let path_str = path_to_utf8(&safe_path, "open_sqlite")?;
         info!(path = path_str, "opened SQLite DataStore");
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            access_mode: AccessMode::ReadWrite,
+        })
+    }
+
+    /// Open a query-only `DataStore` backed by an existing `SQLite` file.
+    ///
+    /// `CozoDB`'s public `SQLite` API does not expose a true read-only connection
+    /// flag, so this constructor enforces read-only behaviour at the
+    /// `DataStore` boundary: immutable queries continue to work, while any
+    /// mutable script routed through [`DataStore::mutate`] is rejected.
+    ///
+    /// # Errors
+    ///
+    /// - [`GraphtorError::PathViolation`] — `path` escapes `root`
+    /// - [`GraphtorError::Database`] — the database file does not exist, the
+    ///   path contains non-UTF-8 bytes, or `CozoDB` fails to open the database
+    pub fn open_sqlite_readonly(path: &Path, root: &Path) -> Result<Self, GraphtorError> {
+        let safe_path = validate_path(path, root)?;
+        if !safe_path.exists() {
+            return Err(GraphtorError::Database {
+                message: format!("database file '{}' does not exist", safe_path.display()),
+                operation: "open_sqlite_readonly".to_string(),
+            });
+        }
+
+        let db = open_sqlite_instance(&safe_path, "open_sqlite_readonly")?;
+        let path_str = path_to_utf8(&safe_path, "open_sqlite_readonly")?;
+        info!(path = path_str, "opened read-only SQLite DataStore");
+        Ok(Self {
+            db: Arc::new(db),
+            access_mode: AccessMode::ReadOnly,
+        })
     }
 
     /// Return the names of all stored relations present in the database.
@@ -211,6 +250,13 @@ impl DataStore {
         script: &str,
         params: BTreeMap<String, DataValue>,
     ) -> Result<NamedRows, GraphtorError> {
+        if self.access_mode == AccessMode::ReadOnly {
+            return Err(GraphtorError::Database {
+                message: "attempted mutable operation on a read-only datastore".to_string(),
+                operation: "mutate".to_string(),
+            });
+        }
+
         self.db
             .run_script(script, params, ScriptMutability::Mutable)
             .map_err(|e| GraphtorError::Database {
@@ -218,4 +264,84 @@ impl DataStore {
                 operation: "mutate".to_string(),
             })
     }
+}
+
+fn path_to_utf8(path: &Path, operation: &str) -> Result<String, GraphtorError> {
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| GraphtorError::Database {
+            message: "database path contains non-UTF-8 characters".to_string(),
+            operation: operation.to_string(),
+        })
+}
+
+fn open_sqlite_instance(path: &Path, operation: &str) -> Result<DbInstance, GraphtorError> {
+    let path_str = path_to_utf8(path, operation)?;
+    DbInstance::new("sqlite", &path_str, Default::default()).map_err(|error| {
+        GraphtorError::Database {
+            message: error.to_string(),
+            operation: operation.to_string(),
+        }
+    })
+}
+
+fn ensure_database_parent_dir(path: &Path) -> Result<(), GraphtorError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(GraphtorError::from)?;
+    }
+    Ok(())
+}
+
+fn configure_sqlite_wal(path: &Path) -> Result<(), GraphtorError> {
+    // Cozo's SQLite backend ignores the `options` string passed to `DbInstance::new`
+    // for this engine, so WAL must be enabled directly against the database file
+    // before Cozo opens its own connection pool.
+    let connection = Connection::open_thread_safe_with_flags(
+        path,
+        OpenFlags::new().with_create().with_read_write(),
+    )
+    .map_err(|error| GraphtorError::Database {
+        message: error.to_string(),
+        operation: "open_sqlite".to_string(),
+    })?;
+
+    connection
+        .execute("PRAGMA journal_mode=WAL;")
+        .map_err(|error| GraphtorError::Database {
+            message: error.to_string(),
+            operation: "open_sqlite".to_string(),
+        })?;
+
+    let mut statement = connection
+        .prepare("PRAGMA journal_mode;")
+        .map_err(|error| GraphtorError::Database {
+            message: error.to_string(),
+            operation: "open_sqlite".to_string(),
+        })?;
+    let mode = match statement.next().map_err(|error| GraphtorError::Database {
+        message: error.to_string(),
+        operation: "open_sqlite".to_string(),
+    })? {
+        State::Row => statement
+            .read::<String, _>(0)
+            .map_err(|error| GraphtorError::Database {
+                message: error.to_string(),
+                operation: "open_sqlite".to_string(),
+            })?,
+        State::Done => {
+            return Err(GraphtorError::Database {
+                message: "PRAGMA journal_mode returned no rows".to_string(),
+                operation: "open_sqlite".to_string(),
+            })
+        }
+    };
+
+    if !mode.eq_ignore_ascii_case("wal") {
+        return Err(GraphtorError::Database {
+            message: format!("failed to enable WAL mode (got '{mode}')"),
+            operation: "open_sqlite".to_string(),
+        });
+    }
+
+    Ok(())
 }
