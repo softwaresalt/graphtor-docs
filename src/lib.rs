@@ -23,6 +23,8 @@ pub mod config;
 pub mod db;
 pub mod embed;
 pub mod error;
+/// Advisory workspace and per-database lock files used by concurrent CLI flows.
+pub mod lock;
 pub mod logging;
 /// MCP plugin server — exposes search and graph traversal tools via STDIO JSON-RPC.
 pub mod mcp;
@@ -42,6 +44,7 @@ pub use config::{GitSource, LocalSource, Source, SourceConfig};
 pub use db::DataStore;
 pub use embed::{embed_batch, embed_text, EmbeddingModel};
 pub use error::GraphtorError;
+pub use lock::{DatabaseLock, WorkspaceLock};
 pub use logging::{init_logging, LogVerbosity};
 pub use path::validate_path;
 pub use pipeline::{FileError, PipelineConfig, PipelineResult};

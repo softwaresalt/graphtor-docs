@@ -317,13 +317,16 @@ fn cmd_sync(
     let started_at = Instant::now();
     let mut total_metrics = SyncMetrics::default();
     let mut full_sync_errors = Vec::new();
+    let mut database_locks = Vec::new();
 
     for (target_db_path, grouped_plan) in split_plan_by_database(db_path, &source_config, &plan) {
+        let database_lock = acquire_database_lock(&target_db_path)?;
         let store = DataStore::open_sqlite(&target_db_path, cwd)
             .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
         store
             .ensure_schema()
             .context("failed to ensure database schema")?;
+        database_locks.push(database_lock);
 
         if args.full {
             let full_result = cmd_sync_full(&store, &grouped_plan, model.as_ref(), args)?;
@@ -675,14 +678,21 @@ async fn cmd_serve(
     };
 
     let mut stores_by_db = Vec::new();
+    let mut readonly_stores_by_db = Vec::new();
+    let mut database_locks = Vec::new();
     for target_db_path in db_paths {
         info!(db_path = %target_db_path.display(), "opening database");
+        let database_lock = acquire_database_lock(&target_db_path)?;
         let store = DataStore::open_sqlite(&target_db_path, cwd)
             .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
         store
             .ensure_schema()
             .context("failed to ensure database schema")?;
-        stores_by_db.push((target_db_path, store));
+        let readonly_store = DataStore::open_sqlite_readonly(&target_db_path, cwd)
+            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
+        database_locks.push(database_lock);
+        stores_by_db.push((target_db_path.clone(), store));
+        readonly_stores_by_db.push((target_db_path, readonly_store));
     }
 
     // Optionally load the embedding model for semantic search.
@@ -734,7 +744,9 @@ async fn cmd_serve(
         }
     };
 
-    let mut stores = stores_by_db.into_iter().map(|(_path, store)| store);
+    let mut stores = readonly_stores_by_db
+        .into_iter()
+        .map(|(_path, store)| store);
     let Some(primary) = stores.next() else {
         unreachable!("discover_db_files always yields at least one database path");
     };
@@ -790,10 +802,10 @@ fn load_status_databases(
     let mut databases = Vec::new();
     for candidate_db_path in db_paths {
         let sources = if candidate_db_path.exists() {
-            let store = DataStore::open_sqlite(&candidate_db_path, cwd).with_context(|| {
-                format!("failed to open database at {}", candidate_db_path.display())
-            })?;
-            store.ensure_schema().context("failed to ensure schema")?;
+            let store =
+                DataStore::open_sqlite_readonly(&candidate_db_path, cwd).with_context(|| {
+                    format!("failed to open database at {}", candidate_db_path.display())
+                })?;
             list_sources(&store).context("failed to list sources")?
         } else {
             Vec::new()
@@ -805,6 +817,16 @@ fn load_status_databases(
         });
     }
     Ok(databases)
+}
+
+fn acquire_database_lock(
+    target_db_path: &std::path::Path,
+) -> anyhow::Result<workspace::lock::DatabaseLock> {
+    let lock_dir = target_db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    workspace::lock::DatabaseLock::acquire(lock_dir, target_db_path, false)
+        .with_context(|| format!("database '{}' is locked", target_db_path.display()))
 }
 
 fn is_missing_single_database(databases: &[StatusDatabaseEntry]) -> bool {

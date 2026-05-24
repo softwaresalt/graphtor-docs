@@ -1333,6 +1333,49 @@ mod tests {
     }
 
     #[test]
+    fn search_local_docs_uses_readonly_store_while_database_lock_is_held() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let db_root = workspace.path().join(".graphtor");
+        std::fs::create_dir_all(&db_root).expect("create db root");
+        let db_path = db_root.join("primary.db");
+
+        let store = DataStore::open_sqlite(&db_path, workspace.path())
+            .expect("open read-write sqlite store");
+        ensure_schema(&store).expect("ensure schema");
+        upsert_source(&store, &source("source-readonly")).expect("seed source");
+        upsert_chunk(
+            &store,
+            "source-readonly",
+            &chunk(
+                "readonly-chunk",
+                "docs/readonly.md",
+                "shared read only search query",
+            ),
+        )
+        .expect("seed chunk");
+
+        let _lock = crate::lock::DatabaseLock::acquire(&db_root, &db_path, false)
+            .expect("database lock should be acquired");
+        let readonly = DataStore::open_sqlite_readonly(&db_path, workspace.path())
+            .expect("open read-only sqlite store");
+
+        let server = DocServer::new(readonly);
+        let params = SearchParams {
+            query: "shared read only".to_string(),
+            source_id: None,
+            top_k: Some(10),
+        };
+        let result = server
+            .search_local_docs(Parameters(params))
+            .expect("search should succeed");
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("readonly.md"),
+            "expected read-only result, got: {text}"
+        );
+    }
+
+    #[test]
     fn search_local_docs_source_filter_restricts_results() {
         let s = populated_store();
         upsert_chunk(

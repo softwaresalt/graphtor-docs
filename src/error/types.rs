@@ -37,6 +37,18 @@ pub enum GraphtorError {
         operation: String,
     },
 
+    /// Database access blocked by an active advisory lock.
+    #[error(
+        "[database_locked] database '{db_name}' is locked{}",
+        .holder_pid.map_or_else(String::new, |pid| format!(" by process {pid}"))
+    )]
+    DatabaseLocked {
+        /// Database file name associated with the lock.
+        db_name: String,
+        /// Process identifier recorded in the lock file, when available.
+        holder_pid: Option<u32>,
+    },
+
     /// Pipeline stage execution failure.
     #[error("[pipeline] {message}: {stage}")]
     Pipeline {
@@ -160,6 +172,21 @@ mod tests {
         );
         assert!(s.contains("connection refused"), "missing message: {s}");
         assert!(s.contains("insert"), "missing operation: {s}");
+    }
+
+    #[test]
+    fn database_locked_error_includes_database_name_and_holder_pid() {
+        let e = GraphtorError::DatabaseLocked {
+            db_name: "primary.db".to_string(),
+            holder_pid: Some(42),
+        };
+        let s = e.to_string();
+        assert!(
+            s.starts_with("[database_locked]"),
+            "expected '[database_locked]' prefix: {s}"
+        );
+        assert!(s.contains("primary.db"), "missing database name: {s}");
+        assert!(s.contains("42"), "missing holder pid: {s}");
     }
 
     #[test]
@@ -309,6 +336,10 @@ mod tests {
                 message: "m".to_string(),
                 operation: "op".to_string(),
             },
+            GraphtorError::DatabaseLocked {
+                db_name: "graph.db".to_string(),
+                holder_pid: Some(7),
+            },
             GraphtorError::Pipeline {
                 message: "m".to_string(),
                 stage: "s".to_string(),
@@ -333,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn all_eight_variants_produce_distinct_categories() {
+    fn all_nine_variants_produce_distinct_categories() {
         let errors: Vec<String> = vec![
             GraphtorError::Config {
                 message: "m".to_string(),
@@ -343,6 +374,11 @@ mod tests {
             GraphtorError::Database {
                 message: "m".to_string(),
                 operation: "op".to_string(),
+            }
+            .to_string(),
+            GraphtorError::DatabaseLocked {
+                db_name: "graph.db".to_string(),
+                holder_pid: Some(7),
             }
             .to_string(),
             GraphtorError::Pipeline {
@@ -379,8 +415,8 @@ mod tests {
             .collect();
         assert_eq!(
             categories.len(),
-            8,
-            "expected 8 distinct error categories, got {}: {categories:?}",
+            9,
+            "expected 9 distinct error categories, got {}: {categories:?}",
             categories.len()
         );
     }
