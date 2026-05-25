@@ -307,7 +307,8 @@ fn cmd_sync(
 
     // Duplicate-intake preflight: the same URL/path indexed into multiple
     // databases creates confusing or overlapping search results.
-    let dup_report = DuplicateIntakeReport::detect(&source_config);
+    let dup_report = DuplicateIntakeReport::detect_with_context(&source_config, db_path, Some(cwd))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     if !dup_report.is_empty() {
         if args.force {
             eprintln!(
