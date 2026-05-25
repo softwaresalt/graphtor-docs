@@ -68,6 +68,7 @@ url = "2"
 # C library via dynamic loading (no native compile-time deps).  The DLL is
 # located at runtime — when absent, the system falls back to pdf-extract.
 pdfium-render = { version = "0.9", default-features = false, features = ["thread_safe", "pdfium_latest"] }
+sysinfo = "0.30"
 
 [dev-dependencies]
 tempfile = "3"

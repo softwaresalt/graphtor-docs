@@ -198,10 +198,12 @@ fn load_source_config(
 
     if files.is_empty() {
         // Default path missing: fall back to workspace auto-discovery.
-        info!("no sources.yaml found; using workspace auto-discovery (indexing .md files)");
+        info!(
+            "no source registry config found; using workspace auto-discovery (indexing .md files)"
+        );
         eprintln!(
-            "info: no sources.yaml found — indexing .md files in the current directory. \
-             Run `graphtor-docs init` to create a sources.yaml."
+            "info: no source registry config found — indexing .md files in the current directory. \
+             Run `graphtor-docs init` to create a source registry config."
         );
         return Ok(Some(build_workspace_source_config(cwd)));
     }
@@ -284,12 +286,15 @@ fn cmd_sync(
     } else {
         // Only reachable when config_override is Some but the file does not exist.
         let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
-        eprintln!("error: sources.yaml not found at {}", path.display());
+        eprintln!(
+            "error: source registry config not found at {}",
+            path.display()
+        );
         return Ok(2);
     };
 
     if source_config.sources.is_empty() {
-        warn!("sources.yaml contains no sources; nothing to sync");
+        warn!("source registry config contains no sources; nothing to sync");
         println!(
             "No sources configured. Add documentation sources and re-run `graphtor-docs sync`."
         );
@@ -299,7 +304,12 @@ fn cmd_sync(
     // Duplicate-intake preflight: the same URL/path indexed into multiple
     // databases creates confusing or overlapping search results.
     let dup_report = DuplicateIntakeReport::detect_with_context(&source_config, db_path, Some(cwd))
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .with_context(|| {
+            format!(
+                "failed duplicate-intake preflight for database {}",
+                db_path.display()
+            )
+        })?;
     if !dup_report.is_empty() {
         if args.force {
             eprintln!(

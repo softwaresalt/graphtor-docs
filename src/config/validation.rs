@@ -172,11 +172,11 @@ fn validate_globs(patterns: &[String], source_id: &str) -> Result<(), GraphtorEr
 
 /// A single cross-database duplicate intake conflict.
 ///
-/// Records the shared intake key (URL for Git and URL sources, canonical path
-/// for local sources) and the conflicting `(source_id, database)` pairs.
+/// Records the shared intake key (URL, canonical path, or local-overlap
+/// summary) and the conflicting `(source_id, database)` pairs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DuplicateEntry {
-    /// The intake key shared by the conflicting sources (URL or path string).
+    /// The intake summary shared by the conflicting sources.
     pub intake_key: String,
     /// Conflicting sources as `(source_id, database_name)` pairs.
     ///
@@ -256,11 +256,12 @@ impl DuplicateIntakeReport {
     ///    `base_db_path`, eliminating false positives from `database: null`
     ///    vs `database: "graph.db"` (the default filename).
     ///
-    /// 2. For local sources that share the same root path, compares actual
-    ///    filtered file intakes when `workspace_root` is `Some`. Sources are
-    ///    only flagged when their filtered file sets **overlap**. When
-    ///    `workspace_root` is `None`, local sources with distinct resolved DBs
-    ///    are flagged conservatively (same as [`detect`]).
+    /// 2. For local sources, compares actual filtered file intakes when
+    ///    `workspace_root` is `Some`. Sources are only flagged when their
+    ///    filtered file sets **overlap**, including ancestor/descendant roots
+    ///    such as `docs/` and `docs/api/`. When enumeration is incomplete, or
+    ///    when `workspace_root` is `None`, overlapping local roots are flagged
+    ///    conservatively.
     ///
     /// Git and URL sources cannot be enumerated at preflight time; any
     /// same-URL sources with distinct resolved DBs are always flagged.
@@ -274,99 +275,79 @@ impl DuplicateIntakeReport {
         base_db_path: &Path,
         workspace_root: Option<&Path>,
     ) -> Result<Self, GraphtorError> {
-        let mut by_key: BTreeMap<String, Vec<(usize, String, PathBuf)>> = BTreeMap::new();
-        for (idx, source) in config.sources.iter().enumerate() {
-            let key = intake_key(source);
+        let mut entries = Vec::new();
+        let mut non_local_by_key: BTreeMap<String, Vec<(String, PathBuf)>> = BTreeMap::new();
+        let mut local_sources = Vec::new();
+
+        for source in &config.sources {
             let db = resolve_source_db_path(base_db_path, source);
-            by_key
-                .entry(key)
-                .or_default()
-                .push((idx, source.id().to_string(), db));
+            match source {
+                Source::Local(local_src) => {
+                    local_sources.push((local_src, source.id().to_string(), db));
+                }
+                _ => {
+                    non_local_by_key
+                        .entry(intake_key(source))
+                        .or_default()
+                        .push((source.id().to_string(), db));
+                }
+            }
         }
 
-        let mut entries = Vec::new();
-        for (key, group) in by_key {
-            // Clone DB paths to avoid borrow-lifetime conflicts later.
+        for (key, conflicts) in non_local_by_key {
             let distinct_dbs: BTreeSet<PathBuf> =
-                group.iter().map(|(_, _, db)| db.clone()).collect();
+                conflicts.iter().map(|(_, db)| db.clone()).collect();
             if distinct_dbs.len() <= 1 {
                 continue;
             }
+            entries.push(DuplicateEntry {
+                intake_key: key,
+                conflicts: format_conflicts(conflicts),
+            });
+        }
 
-            let all_local = group
-                .iter()
-                .all(|(idx, _, _)| matches!(&config.sources[*idx], Source::Local(_)));
+        let prepared_locals = if let Some(root) = workspace_root {
+            local_sources
+                .into_iter()
+                .map(|(local_src, id, db)| prepare_local_source(local_src, id, db, root))
+                .collect::<Result<Vec<_>, GraphtorError>>()?
+        } else {
+            local_sources
+                .into_iter()
+                .map(|(local_src, id, db)| PreparedLocalSource {
+                    id,
+                    db_path: db,
+                    root_path: lexically_normalize_path(&local_src.path),
+                    root_key: normalize_path_key(&local_src.path),
+                    files: None,
+                })
+                .collect()
+        };
 
-            let is_conflict = if all_local {
-                if let Some(root) = workspace_root {
-                    // Validate workspace containment for every local source path
-                    // BEFORE any filesystem enumeration.  Lexical normalisation
-                    // resolves `..` segments without requiring the path to exist,
-                    // so traversal attempts are caught even for missing targets.
-                    let root_normalized = lexically_normalize_path(root);
-                    for (idx, _, _) in &group {
-                        if let Source::Local(local_src) = &config.sources[*idx] {
-                            let resolved = if local_src.path.is_absolute() {
-                                local_src.path.clone()
-                            } else {
-                                root.join(&local_src.path)
-                            };
-                            let normalized = lexically_normalize_path(&resolved);
-                            if !normalized.starts_with(&root_normalized) {
-                                return Err(GraphtorError::PathViolation {
-                                    attempted: resolved,
-                                    allowed_root: root.to_path_buf(),
-                                });
-                            }
-                        }
-                    }
-                    // If any local root is missing or unreadable, WalkDir would
-                    // silently yield zero entries, producing an empty file set and
-                    // a false negative.  Fall back conservatively and flag the pair
-                    // as a conflict whenever enumeration cannot be trusted.
-                    let any_unreadable = group.iter().any(|(idx, _, _)| {
-                        matches!(&config.sources[*idx], Source::Local(l) if !l.path.exists())
-                    });
-                    if any_unreadable {
-                        true
-                    } else {
-                        let mut db_to_files: BTreeMap<PathBuf, HashSet<PathBuf>> = BTreeMap::new();
-                        for (idx, _, db) in &group {
-                            if let Source::Local(local_src) = &config.sources[*idx] {
-                                let files = enumerate_and_filter_local(local_src)?;
-                                db_to_files.entry(db.clone()).or_default().extend(files);
-                            }
-                        }
-                        let sets: Vec<&HashSet<PathBuf>> = db_to_files.values().collect();
-                        sets.iter().enumerate().any(|(i, set_i)| {
-                            sets.iter()
-                                .skip(i + 1)
-                                .any(|set_j| set_i.iter().any(|f| set_j.contains(f)))
-                        })
-                    }
-                } else {
-                    true
+        for (idx, left) in prepared_locals.iter().enumerate() {
+            for right in prepared_locals.iter().skip(idx + 1) {
+                if left.db_path == right.db_path
+                    || !local_roots_may_overlap(&left.root_path, &right.root_path)
+                {
+                    continue;
                 }
-            } else {
-                true
-            };
 
-            if is_conflict {
-                let conflicts: Vec<(String, String)> = group
-                    .into_iter()
-                    .map(|(_, id, db)| {
-                        let db_name = db
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("")
-                            .to_string();
-                        (id, db_name)
-                    })
-                    .collect();
-                entries.push(DuplicateEntry {
-                    intake_key: key,
-                    conflicts,
-                });
+                let is_conflict = match (&left.files, &right.files) {
+                    (Some(left_files), Some(right_files)) => {
+                        left_files.iter().any(|file| right_files.contains(file))
+                    }
+                    _ => true,
+                };
+
+                if is_conflict {
+                    entries.push(DuplicateEntry {
+                        intake_key: local_overlap_key(left, right),
+                        conflicts: format_conflicts(vec![
+                            (left.id.clone(), left.db_path.clone()),
+                            (right.id.clone(), right.db_path.clone()),
+                        ]),
+                    });
+                }
             }
         }
 
@@ -481,6 +462,96 @@ pub fn resolve_source_db_path(base_db_path: &Path, source: &Source) -> PathBuf {
     )
 }
 
+#[derive(Debug)]
+struct PreparedLocalSource {
+    id: String,
+    db_path: PathBuf,
+    root_path: PathBuf,
+    root_key: String,
+    files: Option<HashSet<PathBuf>>,
+}
+
+#[derive(Debug)]
+struct EnumeratedLocalFiles {
+    files: HashSet<PathBuf>,
+    complete: bool,
+}
+
+fn resolve_local_source_root(local_path: &Path, workspace_root: &Path) -> PathBuf {
+    if local_path.is_absolute() {
+        local_path.to_path_buf()
+    } else {
+        workspace_root.join(local_path)
+    }
+}
+
+fn prepare_local_source(
+    local_src: &LocalSource,
+    id: String,
+    db_path: PathBuf,
+    workspace_root: &Path,
+) -> Result<PreparedLocalSource, GraphtorError> {
+    let resolved_root = resolve_local_source_root(&local_src.path, workspace_root);
+    let normalized_root = lexically_normalize_path(&resolved_root);
+    let normalized_workspace_root = lexically_normalize_path(workspace_root);
+    if !normalized_root.starts_with(&normalized_workspace_root) {
+        return Err(GraphtorError::PathViolation {
+            attempted: resolved_root,
+            allowed_root: workspace_root.to_path_buf(),
+        });
+    }
+
+    let files = if normalized_root.exists() {
+        let enumerated = enumerate_and_filter_local(&normalized_root, local_src)?;
+        if enumerated.complete {
+            Some(enumerated.files)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(PreparedLocalSource {
+        id,
+        db_path,
+        root_path: normalized_root.clone(),
+        root_key: normalize_path_key(&normalized_root),
+        files,
+    })
+}
+
+fn local_roots_may_overlap(left: &Path, right: &Path) -> bool {
+    let left = lexically_normalize_path(left);
+    let right = lexically_normalize_path(right);
+    left.starts_with(&right) || right.starts_with(&left)
+}
+
+fn local_overlap_key(left: &PreparedLocalSource, right: &PreparedLocalSource) -> String {
+    if left.root_path == right.root_path {
+        left.root_key.clone()
+    } else {
+        format!(
+            "overlapping local files between '{}' and '{}'",
+            left.root_key, right.root_key
+        )
+    }
+}
+
+fn format_conflicts(conflicts: Vec<(String, PathBuf)>) -> Vec<(String, String)> {
+    conflicts
+        .into_iter()
+        .map(|(id, db)| {
+            let db_name = db
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string();
+            (id, db_name)
+        })
+        .collect()
+}
+
 /// Build an optional [`GlobSet`] from a slice of pattern strings.
 ///
 /// Returns `None` when `patterns` is empty (interpreted as "match all" for
@@ -516,43 +587,56 @@ fn path_to_preflight_fwd_slash(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// Enumerate files in a local source directory, strip the source root prefix,
-/// and apply include/exclude filters.
+/// Enumerate files in a local source directory and apply include/exclude
+/// filters.
 ///
-/// Returns relative [`PathBuf`]s (relative to `source.path`) for files that
-/// pass the filters.
+/// Returns absolute [`PathBuf`]s for files that pass the filters, along with a
+/// completeness flag that indicates whether `WalkDir` traversed the entire tree
+/// without errors.
 ///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] if any glob pattern cannot be compiled.
-fn enumerate_and_filter_local(source: &LocalSource) -> Result<HashSet<PathBuf>, GraphtorError> {
-    let root = &source.path;
+fn enumerate_and_filter_local(
+    root: &Path,
+    source: &LocalSource,
+) -> Result<EnumeratedLocalFiles, GraphtorError> {
     let include_set = build_preflight_glob_set(&source.include, &source.id)?;
     let exclude_set = build_preflight_glob_set(&source.exclude, &source.id)?;
+    let mut complete = true;
+    let mut files = HashSet::new();
 
-    let files: HashSet<PathBuf> = WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| e.path().strip_prefix(root).ok().map(Path::to_path_buf))
-        .filter(|rel| {
-            let s = path_to_preflight_fwd_slash(rel);
-            let included = match &include_set {
-                None => true,
-                Some(set) => set.is_match(&s),
-            };
-            if !included {
-                return false;
-            }
-            match &exclude_set {
-                None => true,
-                Some(set) => !set.is_match(&s),
-            }
-        })
-        .collect();
+    for entry in WalkDir::new(root).follow_links(false) {
+        let Ok(entry) = entry else {
+            complete = false;
+            continue;
+        };
 
-    Ok(files)
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let Ok(rel) = entry.path().strip_prefix(root) else {
+            complete = false;
+            continue;
+        };
+
+        let rel_str = path_to_preflight_fwd_slash(rel);
+        let included = match &include_set {
+            None => true,
+            Some(set) => set.is_match(&rel_str),
+        };
+        if !included {
+            continue;
+        }
+        if matches!(&exclude_set, Some(set) if set.is_match(&rel_str)) {
+            continue;
+        }
+
+        files.insert(entry.path().to_path_buf());
+    }
+
+    Ok(EnumeratedLocalFiles { files, complete })
 }
 
 #[cfg(test)]
@@ -1132,6 +1216,92 @@ mod tests {
         assert!(
             !report.is_empty(),
             "overlapping local include globs across different DBs must be flagged: {report}"
+        );
+    }
+
+    #[test]
+    fn detect_with_context_ancestor_descendant_local_roots_is_conflict() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path();
+        let docs = root.join("docs");
+        let api = docs.join("api");
+        std::fs::create_dir_all(&api).unwrap();
+        std::fs::write(docs.join("guide.md"), b"# guide").unwrap();
+        std::fs::write(api.join("reference.md"), b"# api").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "docs-src".to_string(),
+                    path: docs.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "api-src".to_string(),
+                    path: api.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let report = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root))
+            .expect("detect_with_context should not error");
+
+        assert!(
+            !report.is_empty(),
+            "ancestor/descendant local roots with shared files must be flagged: {report}"
+        );
+    }
+
+    #[test]
+    fn detect_with_context_ancestor_descendant_local_roots_disjoint_files_not_conflict() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path();
+        let docs = root.join("docs");
+        let api = docs.join("api");
+        let guides = docs.join("guides");
+        std::fs::create_dir_all(&api).unwrap();
+        std::fs::create_dir_all(&guides).unwrap();
+        std::fs::write(api.join("reference.md"), b"# api").unwrap();
+        std::fs::write(guides.join("guide.md"), b"# guide").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "guides-src".to_string(),
+                    path: docs.clone(),
+                    include: vec!["guides/**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "api-src".to_string(),
+                    path: api.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let report = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root))
+            .expect("detect_with_context should not error");
+
+        assert!(
+            report.is_empty(),
+            "ancestor/descendant local roots with disjoint files must not be flagged: {report}"
         );
     }
 

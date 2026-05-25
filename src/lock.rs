@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use sysinfo::{Pid, System};
+
 use crate::GraphtorError;
 
 const WORKSPACE_LOCK_FILE: &str = "graphtor.lock";
@@ -455,7 +457,17 @@ fn lock_age_secs(path: &Path, details: &LockDetails) -> Option<u64> {
         .map(|duration| duration.as_secs())
 }
 
+fn process_is_alive(pid: u32) -> bool {
+    let mut system = System::new();
+    system.refresh_processes();
+    system.process(Pid::from_u32(pid)).is_some()
+}
+
 fn is_stale(path: &Path, details: &LockDetails) -> bool {
+    if details.pid.is_some_and(|pid| !process_is_alive(pid)) {
+        return true;
+    }
+
     lock_age_secs(path, details).is_some_and(|age| age >= STALE_SECS)
 }
 
@@ -596,7 +608,7 @@ mod tests {
         // A timestamp two hours in the future — saturating_sub would silently return 0,
         // masking a potentially stale lock and hiding corrupt/skewed timestamps.
         let future_ts = current_timestamp_secs() + 7200;
-        let content = format!("pid=42\ntimestamp={future_ts}\n");
+        let content = format!("pid={}\ntimestamp={future_ts}\n", std::process::id());
         fs::write(&lock_file, &content).expect("write lock");
 
         let details = parse_lock_details(&content);
