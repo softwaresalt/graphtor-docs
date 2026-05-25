@@ -297,30 +297,55 @@ impl DuplicateIntakeReport {
                 .iter()
                 .all(|(idx, _, _)| matches!(&config.sources[*idx], Source::Local(_)));
 
-            let is_conflict = if all_local && workspace_root.is_some() {
-                // If any local root is missing or unreadable, WalkDir would
-                // silently yield zero entries, producing an empty file set and
-                // a false negative.  Fall back conservatively and flag the pair
-                // as a conflict whenever enumeration cannot be trusted.
-                let any_unreadable = group.iter().any(|(idx, _, _)| {
-                    matches!(&config.sources[*idx], Source::Local(l) if !l.path.exists())
-                });
-                if any_unreadable {
-                    true
-                } else {
-                    let mut db_to_files: BTreeMap<PathBuf, HashSet<PathBuf>> = BTreeMap::new();
-                    for (idx, _, db) in &group {
+            let is_conflict = if all_local {
+                if let Some(root) = workspace_root {
+                    // Validate workspace containment for every local source path
+                    // BEFORE any filesystem enumeration.  Lexical normalisation
+                    // resolves `..` segments without requiring the path to exist,
+                    // so traversal attempts are caught even for missing targets.
+                    let root_normalized = lexically_normalize_path(root);
+                    for (idx, _, _) in &group {
                         if let Source::Local(local_src) = &config.sources[*idx] {
-                            let files = enumerate_and_filter_local(local_src)?;
-                            db_to_files.entry(db.clone()).or_default().extend(files);
+                            let resolved = if local_src.path.is_absolute() {
+                                local_src.path.clone()
+                            } else {
+                                root.join(&local_src.path)
+                            };
+                            let normalized = lexically_normalize_path(&resolved);
+                            if !normalized.starts_with(&root_normalized) {
+                                return Err(GraphtorError::PathViolation {
+                                    attempted: resolved,
+                                    allowed_root: root.to_path_buf(),
+                                });
+                            }
                         }
                     }
-                    let sets: Vec<&HashSet<PathBuf>> = db_to_files.values().collect();
-                    sets.iter().enumerate().any(|(i, set_i)| {
-                        sets.iter()
-                            .skip(i + 1)
-                            .any(|set_j| set_i.iter().any(|f| set_j.contains(f)))
-                    })
+                    // If any local root is missing or unreadable, WalkDir would
+                    // silently yield zero entries, producing an empty file set and
+                    // a false negative.  Fall back conservatively and flag the pair
+                    // as a conflict whenever enumeration cannot be trusted.
+                    let any_unreadable = group.iter().any(|(idx, _, _)| {
+                        matches!(&config.sources[*idx], Source::Local(l) if !l.path.exists())
+                    });
+                    if any_unreadable {
+                        true
+                    } else {
+                        let mut db_to_files: BTreeMap<PathBuf, HashSet<PathBuf>> = BTreeMap::new();
+                        for (idx, _, db) in &group {
+                            if let Source::Local(local_src) = &config.sources[*idx] {
+                                let files = enumerate_and_filter_local(local_src)?;
+                                db_to_files.entry(db.clone()).or_default().extend(files);
+                            }
+                        }
+                        let sets: Vec<&HashSet<PathBuf>> = db_to_files.values().collect();
+                        sets.iter().enumerate().any(|(i, set_i)| {
+                            sets.iter()
+                                .skip(i + 1)
+                                .any(|set_j| set_i.iter().any(|f| set_j.contains(f)))
+                        })
+                    }
+                } else {
+                    true
                 }
             } else {
                 true
@@ -413,6 +438,30 @@ fn normalize_path_key(path: &Path) -> String {
     }
     let normalised: PathBuf = parts.into_iter().collect();
     normalised.display().to_string()
+}
+
+/// Lexically normalise a path by resolving `.` and `..` components without
+/// touching the filesystem.
+///
+/// Unlike `normalize_path_key`, this function returns a `PathBuf` so that
+/// callers can use `starts_with` for containment checks rather than comparing
+/// display strings.
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    let mut parts: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(parts.last(), Some(Component::Normal(_))) {
+                    parts.pop();
+                } else {
+                    parts.push(component);
+                }
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.into_iter().collect()
 }
 
 /// Resolve the effective database path for a source given the base DB path.
@@ -1096,7 +1145,7 @@ mod tests {
     /// The conservative path ensures correctness when the intake cannot be enumerated.
     #[test]
     fn detect_with_context_nonexistent_local_root_flags_conservatively() {
-        let nonexistent = PathBuf::from("/this/path/does/not/exist/graphtor_test_d2e9f1a3");
+        let nonexistent = PathBuf::from("/workspace/this/path/does/not/exist/graphtor_test_d2e9f1a3");
         let config = SourceConfig {
             sources: vec![
                 Source::Local(LocalSource {
@@ -1164,6 +1213,95 @@ mod tests {
         assert!(
             report.is_empty(),
             "`database: null` and `database: \"graph.db\"` must not be flagged when they resolve to the same path: {report}"
+        );
+    }
+
+    // ── T040.010: workspace containment in detect_with_context ──────────────
+
+    /// Local source whose path escapes `workspace_root` must produce a
+    /// `PathViolation` error — never silently enumerate files outside the
+    /// workspace boundary.
+    #[test]
+    fn detect_with_context_local_path_escaping_workspace_returns_path_violation() {
+        use tempfile::TempDir;
+        let workspace = TempDir::new().expect("tempdir");
+        let root = workspace.path();
+
+        // Construct a path that escapes the workspace via ".." traversal.
+        let outside = root.join("../../outside_graphtor_test");
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "escape-a".to_string(),
+                    path: outside.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "escape-b".to_string(),
+                    path: outside.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let result = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root));
+
+        assert!(
+            result.is_err(),
+            "local source escaping workspace must return Err, got Ok: {result:?}"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, GraphtorError::PathViolation { .. }),
+            "expected PathViolation, got: {err:?}"
+        );
+    }
+
+    /// Local source path within `workspace_root` must not produce an error.
+    #[test]
+    fn detect_with_context_local_path_within_workspace_does_not_error() {
+        use tempfile::TempDir;
+        let workspace = TempDir::new().expect("tempdir");
+        let root = workspace.path();
+
+        let shared = root.join("shared");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("file.md"), b"# file").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "in-a".to_string(),
+                    path: shared.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "in-b".to_string(),
+                    path: shared.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let result = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root));
+        assert!(
+            result.is_ok(),
+            "local source within workspace must not error: {result:?}"
         );
     }
 }

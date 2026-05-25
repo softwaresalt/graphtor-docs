@@ -33,33 +33,39 @@ use crate::error::GraphtorError;
 /// If no `*.sources.yaml` files are found, the function falls back to
 /// `sources.yaml` in the same directory for backward compatibility.
 ///
-/// Returns an empty `Vec` when neither pattern files nor the fallback exist.
-#[must_use]
-pub fn discover_source_files(config_dir: &Path) -> Vec<PathBuf> {
-    let mut matches: Vec<PathBuf> = std::fs::read_dir(config_dir)
-        .map(|entries| {
-            entries
-                .filter_map(std::result::Result::ok)
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.ends_with(".sources.yaml"))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+/// Returns `Ok(Vec::new())` when `config_dir` does not exist or contains
+/// neither pattern files nor the fallback.  Returns `Err` when `config_dir`
+/// exists but cannot be read (for example, due to a permission error).
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Io`] when `config_dir` exists but directory
+/// enumeration fails for a reason other than the directory not being found.
+pub fn discover_source_files(config_dir: &Path) -> Result<Vec<PathBuf>, GraphtorError> {
+    let mut matches: Vec<PathBuf> = match std::fs::read_dir(config_dir) {
+        Ok(entries) => entries
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with(".sources.yaml"))
+            })
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(GraphtorError::Io(e)),
+    };
 
     if !matches.is_empty() {
         matches.sort();
-        return matches;
+        return Ok(matches);
     }
 
     let fallback = config_dir.join("sources.yaml");
     if fallback.exists() {
-        vec![fallback]
+        Ok(vec![fallback])
     } else {
-        Vec::new()
+        Ok(Vec::new())
     }
 }
 
@@ -151,7 +157,7 @@ mod tests {
             "sources:\n  - type: local\n    id: gr\n    path: /gr\n    database: gr.db\n",
         );
 
-        let files = discover_source_files(d);
+        let files = discover_source_files(d).expect("discover_source_files");
         assert_eq!(files.len(), 2, "should find both *.sources.yaml files");
 
         let names: Vec<&str> = files
@@ -172,7 +178,7 @@ mod tests {
 
         write_yaml(d, "sources.yaml", "sources: []\n");
 
-        let files = discover_source_files(d);
+        let files = discover_source_files(d).expect("discover_source_files");
         assert_eq!(files.len(), 1);
         assert_eq!(
             files[0].file_name().unwrap().to_str().unwrap(),
@@ -183,7 +189,7 @@ mod tests {
     #[test]
     fn discover_returns_empty_when_nothing_exists() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let files = discover_source_files(dir.path());
+        let files = discover_source_files(dir.path()).expect("discover_source_files");
         assert!(
             files.is_empty(),
             "should return empty vec when no files exist"
@@ -203,7 +209,7 @@ mod tests {
         );
         write_yaml(d, "sources.yaml", "sources: []\n");
 
-        let files = discover_source_files(d);
+        let files = discover_source_files(d).expect("discover_source_files");
         assert_eq!(files.len(), 1, "pattern file takes priority over fallback");
         assert_eq!(
             files[0].file_name().unwrap().to_str().unwrap(),
@@ -225,7 +231,7 @@ mod tests {
             "sources:\n  - type: local\n    id: no-db\n    path: /docs\n",
         );
 
-        let files = discover_source_files(d);
+        let files = discover_source_files(d).expect("discover_source_files");
         let result = load_multi_file_config(&files);
         assert!(
             result.is_err(),
@@ -254,7 +260,7 @@ mod tests {
             "sources:\n  - type: local\n    id: no-db\n    path: /docs\n",
         );
 
-        let files = discover_source_files(d);
+        let files = discover_source_files(d).expect("discover_source_files");
         let result = load_multi_file_config(&files);
         assert!(
             result.is_ok(),
@@ -279,8 +285,19 @@ mod tests {
             "sources:\n  - type: local\n    id: src-b\n    path: /b\n    database: b.db\n",
         );
 
-        let files = discover_source_files(d);
+        let files = discover_source_files(d).expect("discover_source_files");
         let config = load_multi_file_config(&files).expect("should merge cleanly");
         assert_eq!(config.sources.len(), 2, "both sources should be merged");
+    }
+
+    #[test]
+    fn discover_returns_ok_empty_for_missing_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("nonexistent");
+        let files = discover_source_files(&missing).expect("should return Ok for non-existent dir");
+        assert!(
+            files.is_empty(),
+            "should return empty vec when config dir does not exist"
+        );
     }
 }

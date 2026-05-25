@@ -32,18 +32,24 @@ fn sync_preflight_blocks_on_cross_db_duplicates_without_force() {
     let workspace = tmp.path();
     setup_workspace(workspace);
 
+    // Create a shared local directory with a file so both sources overlap.
+    let shared = workspace.join("shared");
+    fs::create_dir_all(&shared).expect("create shared dir");
+    fs::write(shared.join("readme.md"), b"# shared").expect("write readme");
+    let shared_str = shared.to_string_lossy().replace('\\', "/");
+
     let config_dir = workspace.join(".graphtor/config");
 
-    // Two pattern files pointing the same URL to different databases.
+    // Two pattern files pointing the same local path to different databases.
     write_yaml(
         &config_dir,
         "alpha.sources.yaml",
-        "sources:\n  - type: git\n    id: shared-a\n    url: https://github.com/example/shared.git\n    branch: main\n    database: alpha.db\n",
+        &format!("sources:\n  - type: local\n    id: shared-a\n    path: {shared_str}\n    database: alpha.db\n"),
     );
     write_yaml(
         &config_dir,
         "beta.sources.yaml",
-        "sources:\n  - type: git\n    id: shared-b\n    url: https://github.com/example/shared.git\n    branch: main\n    database: beta.db\n",
+        &format!("sources:\n  - type: local\n    id: shared-b\n    path: {shared_str}\n    database: beta.db\n"),
     );
 
     let output = Command::new(graphtor_bin())
@@ -77,17 +83,23 @@ fn sync_force_flag_proceeds_past_cross_db_duplicates() {
     let workspace = tmp.path();
     setup_workspace(workspace);
 
+    // Create a shared local directory with a file so both sources overlap.
+    let shared = workspace.join("shared");
+    fs::create_dir_all(&shared).expect("create shared dir");
+    fs::write(shared.join("readme.md"), b"# shared").expect("write readme");
+    let shared_str = shared.to_string_lossy().replace('\\', "/");
+
     let config_dir = workspace.join(".graphtor/config");
 
     write_yaml(
         &config_dir,
         "alpha.sources.yaml",
-        "sources:\n  - type: git\n    id: shared-a\n    url: https://github.com/example/shared.git\n    branch: main\n    database: alpha.db\n",
+        &format!("sources:\n  - type: local\n    id: shared-a\n    path: {shared_str}\n    database: alpha.db\n"),
     );
     write_yaml(
         &config_dir,
         "beta.sources.yaml",
-        "sources:\n  - type: git\n    id: shared-b\n    url: https://github.com/example/shared.git\n    branch: main\n    database: beta.db\n",
+        &format!("sources:\n  - type: local\n    id: shared-b\n    path: {shared_str}\n    database: beta.db\n"),
     );
 
     let output = Command::new(graphtor_bin())
@@ -98,8 +110,7 @@ fn sync_force_flag_proceeds_past_cross_db_duplicates() {
         .output()
         .expect("run graphtor-docs");
 
-    // With --force the exit code must not be 2 (even if acquisition fails
-    // for network reasons, the preflight must not be the blocker).
+    // With --force the exit code must not be 2 (the preflight must not block).
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_ne!(
         output.status.code(),

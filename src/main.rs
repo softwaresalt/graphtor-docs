@@ -193,7 +193,8 @@ fn load_source_config(
     }
 
     let config_dir = cwd.join(".graphtor/config");
-    let files = discover_source_files(&config_dir);
+    let files = discover_source_files(&config_dir)
+        .with_context(|| format!("failed to read config dir {}", config_dir.display()))?;
 
     if files.is_empty() {
         // Default path missing: fall back to workspace auto-discovery.
