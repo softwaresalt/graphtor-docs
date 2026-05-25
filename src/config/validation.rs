@@ -308,35 +308,51 @@ impl DuplicateIntakeReport {
 
         let prepared_locals = if let Some(root) = workspace_root {
             local_sources
-                .into_iter()
-                .map(|(local_src, id, db)| prepare_local_source(local_src, id, db, root))
+                .iter()
+                .map(|(local_src, id, db)| {
+                    prepare_local_source(local_src, id.clone(), db.clone(), root)
+                })
                 .collect::<Result<Vec<_>, GraphtorError>>()?
         } else {
             local_sources
-                .into_iter()
+                .iter()
                 .map(|(local_src, id, db)| PreparedLocalSource {
-                    id,
-                    db_path: db,
+                    id: id.clone(),
+                    db_path: db.clone(),
                     root_path: lexically_normalize_path(&local_src.path),
                     root_key: normalize_path_key(&local_src.path),
-                    files: None,
+                    root_exists: false,
                 })
                 .collect()
         };
+        let mut local_file_states: Vec<LocalFileState> =
+            std::iter::repeat_with(LocalFileState::default)
+                .take(prepared_locals.len())
+                .collect();
 
         for (idx, left) in prepared_locals.iter().enumerate() {
-            for right in prepared_locals.iter().skip(idx + 1) {
+            for (right_idx, right) in prepared_locals.iter().enumerate().skip(idx + 1) {
                 if left.db_path == right.db_path
                     || !local_roots_may_overlap(&left.root_path, &right.root_path)
                 {
                     continue;
                 }
 
-                let is_conflict = match (&left.files, &right.files) {
-                    (Some(left_files), Some(right_files)) => {
-                        left_files.iter().any(|file| right_files.contains(file))
+                let is_conflict = if workspace_root.is_some() {
+                    ensure_local_files(idx, left, &local_sources, &mut local_file_states)?;
+                    ensure_local_files(right_idx, right, &local_sources, &mut local_file_states)?;
+
+                    match (
+                        &local_file_states[idx].files,
+                        &local_file_states[right_idx].files,
+                    ) {
+                        (Some(left_files), Some(right_files)) => {
+                            left_files.iter().any(|file| right_files.contains(file))
+                        }
+                        _ => true,
                     }
-                    _ => true,
+                } else {
+                    true
                 };
 
                 if is_conflict {
@@ -401,24 +417,31 @@ fn intake_key(source: &Source) -> String {
 /// at validation time, and callers should not expect symlinks or mount-points
 /// to be resolved.
 fn normalize_path_key(path: &Path) -> String {
+    lexically_normalize_path(path).display().to_string()
+}
+
+fn normalize_path_components(path: &Path) -> PathBuf {
     let mut parts: Vec<Component<'_>> = Vec::new();
+    let absolute_path = path.is_absolute();
     for component in path.components() {
         match component {
             Component::CurDir => {} // "." — drop silently
             Component::ParentDir => {
                 // ".." — pop the last normal segment if present; otherwise
                 // retain the ".." so that `../../foo` stays meaningful.
-                if matches!(parts.last(), Some(Component::Normal(_))) {
-                    parts.pop();
-                } else {
-                    parts.push(component);
+                match parts.last() {
+                    Some(Component::Normal(_)) => {
+                        parts.pop();
+                    }
+                    Some(Component::RootDir) => {}
+                    Some(Component::Prefix(_)) if absolute_path => {}
+                    _ => parts.push(component),
                 }
             }
             other => parts.push(other),
         }
     }
-    let normalised: PathBuf = parts.into_iter().collect();
-    normalised.display().to_string()
+    parts.into_iter().collect()
 }
 
 /// Lexically normalise a path by resolving `.` and `..` components without
@@ -428,21 +451,7 @@ fn normalize_path_key(path: &Path) -> String {
 /// callers can use `starts_with` for containment checks rather than comparing
 /// display strings.
 fn lexically_normalize_path(path: &Path) -> PathBuf {
-    let mut parts: Vec<Component<'_>> = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if matches!(parts.last(), Some(Component::Normal(_))) {
-                    parts.pop();
-                } else {
-                    parts.push(component);
-                }
-            }
-            other => parts.push(other),
-        }
-    }
-    parts.into_iter().collect()
+    normalize_path_components(path)
 }
 
 /// Resolve the effective database path for a source given the base DB path.
@@ -468,6 +477,12 @@ struct PreparedLocalSource {
     db_path: PathBuf,
     root_path: PathBuf,
     root_key: String,
+    root_exists: bool,
+}
+
+#[derive(Debug, Default)]
+struct LocalFileState {
+    evaluated: bool,
     files: Option<HashSet<PathBuf>>,
 }
 
@@ -501,23 +516,12 @@ fn prepare_local_source(
         });
     }
 
-    let files = if normalized_root.exists() {
-        let enumerated = enumerate_and_filter_local(&normalized_root, local_src)?;
-        if enumerated.complete {
-            Some(enumerated.files)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
     Ok(PreparedLocalSource {
         id,
         db_path,
         root_path: normalized_root.clone(),
         root_key: normalize_path_key(&normalized_root),
-        files,
+        root_exists: normalized_root.exists(),
     })
 }
 
@@ -550,6 +554,32 @@ fn format_conflicts(conflicts: Vec<(String, PathBuf)>) -> Vec<(String, String)> 
             (id, db_name)
         })
         .collect()
+}
+
+fn ensure_local_files(
+    index: usize,
+    prepared: &PreparedLocalSource,
+    local_sources: &[(&LocalSource, String, PathBuf)],
+    local_file_states: &mut [LocalFileState],
+) -> Result<(), GraphtorError> {
+    let state = &mut local_file_states[index];
+    if state.evaluated {
+        return Ok(());
+    }
+
+    state.files = if prepared.root_exists {
+        let (local_src, _, _) = &local_sources[index];
+        let enumerated = enumerate_and_filter_local(&prepared.root_path, local_src)?;
+        if enumerated.complete {
+            Some(enumerated.files)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    state.evaluated = true;
+    Ok(())
 }
 
 /// Build an optional [`GlobSet`] from a slice of pattern strings.
@@ -1120,6 +1150,18 @@ mod tests {
     }
 
     #[test]
+    fn normalize_path_key_drops_parent_dir_at_absolute_root() {
+        assert_eq!(
+            normalize_path_key(Path::new("/../docs")),
+            normalize_path_key(Path::new("/docs"))
+        );
+        assert_eq!(
+            lexically_normalize_path(Path::new("/../docs")),
+            lexically_normalize_path(Path::new("/docs"))
+        );
+    }
+
+    #[test]
     fn normalize_path_key_preserves_unresolvable_parent_dirs() {
         // Leading ".." cannot be resolved without cwd — distinct paths must
         // remain distinct so that "../../foo" and "../../bar" don't collide.
@@ -1433,6 +1475,37 @@ mod tests {
         assert!(
             matches!(err, GraphtorError::PathViolation { .. }),
             "expected PathViolation, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn detect_with_context_single_local_path_escaping_workspace_returns_path_violation() {
+        use tempfile::TempDir;
+        let workspace = TempDir::new().expect("tempdir");
+        let root = workspace.path();
+        let outside = root.join("../../outside_graphtor_test_single");
+
+        let config = SourceConfig {
+            sources: vec![Source::Local(LocalSource {
+                id: "escape-only".to_string(),
+                path: outside,
+                include: vec![],
+                exclude: vec![],
+                formats: vec![],
+                database: Some("alpha.db".to_string()),
+            })],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let result = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root));
+
+        assert!(
+            result.is_err(),
+            "single escaping local source must return Err, got Ok: {result:?}"
+        );
+        assert!(
+            matches!(result.unwrap_err(), GraphtorError::PathViolation { .. }),
+            "single escaping source must still trigger PathViolation"
         );
     }
 

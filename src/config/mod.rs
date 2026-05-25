@@ -23,6 +23,29 @@ use std::path::{Path, PathBuf};
 
 use crate::error::GraphtorError;
 
+fn collect_pattern_source_files<I>(entries: I) -> Result<Vec<PathBuf>, GraphtorError>
+where
+    I: IntoIterator<Item = Result<PathBuf, std::io::Error>>,
+{
+    let mut matches = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(path) => {
+                let is_pattern_source = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".sources.yaml"));
+                if is_pattern_source {
+                    matches.push(path);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(GraphtorError::Io(error)),
+        }
+    }
+    Ok(matches)
+}
+
 /// Discover source configuration files within `config_dir`.
 ///
 /// Searches `config_dir` for files matching the `*.sources.yaml` pattern
@@ -42,16 +65,8 @@ use crate::error::GraphtorError;
 /// Returns [`GraphtorError::Io`] when `config_dir` exists but directory
 /// enumeration fails for a reason other than the directory not being found.
 pub fn discover_source_files(config_dir: &Path) -> Result<Vec<PathBuf>, GraphtorError> {
-    let mut matches: Vec<PathBuf> = match std::fs::read_dir(config_dir) {
-        Ok(entries) => entries
-            .filter_map(std::result::Result::ok)
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.ends_with(".sources.yaml"))
-            })
-            .collect(),
+    let mut matches = match std::fs::read_dir(config_dir) {
+        Ok(entries) => collect_pattern_source_files(entries.map(|entry| entry.map(|e| e.path())))?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(GraphtorError::Io(e)),
     };
@@ -169,6 +184,34 @@ mod tests {
             vec!["graph.sources.yaml", "powerbi.sources.yaml"],
             "files should be in alphabetical order"
         );
+    }
+
+    #[test]
+    fn collect_pattern_source_files_propagates_entry_errors() {
+        let result = collect_pattern_source_files(vec![Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        ))]);
+
+        let err = result.expect_err("entry error should propagate");
+        assert!(
+            matches!(err, GraphtorError::Io(_)),
+            "expected Io error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn collect_pattern_source_files_skips_not_found_entries() {
+        let result = collect_pattern_source_files(vec![
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "vanished entry",
+            )),
+            Ok(PathBuf::from("graph.sources.yaml")),
+        ])
+        .expect("not-found entry should be ignored");
+
+        assert_eq!(result, vec![PathBuf::from("graph.sources.yaml")]);
     }
 
     #[test]
