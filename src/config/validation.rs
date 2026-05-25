@@ -298,19 +298,30 @@ impl DuplicateIntakeReport {
                 .all(|(idx, _, _)| matches!(&config.sources[*idx], Source::Local(_)));
 
             let is_conflict = if all_local && workspace_root.is_some() {
-                let mut db_to_files: BTreeMap<PathBuf, HashSet<PathBuf>> = BTreeMap::new();
-                for (idx, _, db) in &group {
-                    if let Source::Local(local_src) = &config.sources[*idx] {
-                        let files = enumerate_and_filter_local(local_src)?;
-                        db_to_files.entry(db.clone()).or_default().extend(files);
+                // If any local root is missing or unreadable, WalkDir would
+                // silently yield zero entries, producing an empty file set and
+                // a false negative.  Fall back conservatively and flag the pair
+                // as a conflict whenever enumeration cannot be trusted.
+                let any_unreadable = group.iter().any(|(idx, _, _)| {
+                    matches!(&config.sources[*idx], Source::Local(l) if !l.path.exists())
+                });
+                if any_unreadable {
+                    true
+                } else {
+                    let mut db_to_files: BTreeMap<PathBuf, HashSet<PathBuf>> = BTreeMap::new();
+                    for (idx, _, db) in &group {
+                        if let Source::Local(local_src) = &config.sources[*idx] {
+                            let files = enumerate_and_filter_local(local_src)?;
+                            db_to_files.entry(db.clone()).or_default().extend(files);
+                        }
                     }
+                    let sets: Vec<&HashSet<PathBuf>> = db_to_files.values().collect();
+                    sets.iter().enumerate().any(|(i, set_i)| {
+                        sets.iter()
+                            .skip(i + 1)
+                            .any(|set_j| set_i.iter().any(|f| set_j.contains(f)))
+                    })
                 }
-                let sets: Vec<&HashSet<PathBuf>> = db_to_files.values().collect();
-                sets.iter().enumerate().any(|(i, set_i)| {
-                    sets.iter()
-                        .skip(i + 1)
-                        .any(|set_j| set_i.iter().any(|f| set_j.contains(f)))
-                })
             } else {
                 true
             };
@@ -1072,6 +1083,50 @@ mod tests {
         assert!(
             !report.is_empty(),
             "overlapping local include globs across different DBs must be flagged: {report}"
+        );
+    }
+
+    // ── T040.008: conservative fallback for non-existent local roots ─────────
+
+    /// When any local source root is non-existent or unreadable, `detect_with_context`
+    /// must fall back conservatively and flag the pair as a conflict.
+    ///
+    /// `WalkDir` silently yields zero entries for a non-existent directory, which
+    /// would produce an empty file set and a false negative (no overlap detected).
+    /// The conservative path ensures correctness when the intake cannot be enumerated.
+    #[test]
+    fn detect_with_context_nonexistent_local_root_flags_conservatively() {
+        let nonexistent = PathBuf::from("/this/path/does/not/exist/graphtor_test_d2e9f1a3");
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "src-a".to_string(),
+                    path: nonexistent.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "src-b".to_string(),
+                    path: nonexistent.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = PathBuf::from("/workspace/.graphtor/graph.db");
+        let workspace_root = PathBuf::from("/workspace");
+        let report =
+            DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(&workspace_root))
+                .expect("detect_with_context must not error on non-existent roots");
+
+        assert!(
+            !report.is_empty(),
+            "non-existent local root must be flagged conservatively: {report}"
         );
     }
 

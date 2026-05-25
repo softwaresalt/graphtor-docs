@@ -49,6 +49,7 @@ use graphtor_core::{
     db::{list_sources, DataStore},
     init_logging,
     pipeline::FileError,
+    resolve_source_db_path,
     sync::{elapsed_millis, sync_source, SyncMetrics},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
@@ -209,22 +210,11 @@ fn load_source_config(
     Ok(Some(cfg))
 }
 
-fn source_db_path(base_db_path: &std::path::Path, source: &Source) -> PathBuf {
-    source.database().map_or_else(
-        || base_db_path.to_path_buf(),
-        |database| {
-            base_db_path
-                .parent()
-                .map_or_else(|| PathBuf::from(database), |parent| parent.join(database))
-        },
-    )
-}
-
 fn discover_db_files(base_db_path: &std::path::Path, source_config: &SourceConfig) -> Vec<PathBuf> {
     let mut db_paths = BTreeSet::new();
 
     for source in &source_config.sources {
-        db_paths.insert(source_db_path(base_db_path, source));
+        db_paths.insert(resolve_source_db_path(base_db_path, source));
     }
 
     if db_paths.is_empty() {
@@ -269,7 +259,7 @@ fn split_plan_by_database(
             .collect();
 
     for planned in &plan.sources {
-        let db_path = source_db_path(base_db_path, &planned.source);
+        let db_path = resolve_source_db_path(base_db_path, &planned.source);
         let grouped_plan = plans_by_db
             .entry(db_path)
             .or_insert_with(|| new_grouped_plan(plan));

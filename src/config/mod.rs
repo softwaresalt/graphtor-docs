@@ -17,7 +17,7 @@ pub mod source;
 pub(crate) mod validation;
 
 pub use source::{GitSource, LocalSource, Source, SourceConfig};
-pub use validation::DuplicateIntakeReport;
+pub use validation::{resolve_source_db_path, DuplicateIntakeReport};
 
 use std::path::{Path, PathBuf};
 

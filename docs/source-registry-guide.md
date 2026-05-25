@@ -132,6 +132,29 @@ written in different forms are treated as the same source:
 A source at `./docs` and a source at `docs` pointing to different databases
 are flagged as a cross-database duplicate.
 
+### Local source overlap detection
+
+For local sources that share the same normalized root path, graphtor-docs
+checks whether the **filtered file intakes overlap** rather than merely
+comparing directory roots. Two local sources with the same root directory but
+non-overlapping `include`/`exclude` glob filters produce disjoint file sets
+and are **not** flagged as conflicting.
+
+For example, if source A includes only `docs/**/*.md` and source B includes
+only `api/**/*.md`, their file intakes are disjoint even though they share a
+root. No conflict is reported.
+
+Overlap detection requires an accessible workspace root. When the workspace
+root is not provided (for example, in non-interactive validation), the system
+falls back to the conservative path-key comparison used for Git and URL
+sources.
+
+> [!IMPORTANT]
+> **Conservative fallback for unreadable roots:** when any local source root
+> does not exist or cannot be enumerated at preflight time, graphtor-docs falls
+> back conservatively and flags the pair as a conflict. This avoids a silent
+> false negative that would allow duplicate intakes to proceed undetected.
+
 > [!IMPORTANT]
 > The `--force` flag is non-interactive. It does not prompt for confirmation.
 > Use it in CI pipelines or scripted workflows where you have intentionally
