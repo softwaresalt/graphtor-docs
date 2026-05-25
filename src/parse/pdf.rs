@@ -27,9 +27,10 @@
 //! rendered text output.
 
 use std::any::Any;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::chunk::generate_chunk_id;
 use crate::error::GraphtorError;
@@ -694,6 +695,27 @@ fn pdf_panic_hook_lock() -> &'static Mutex<()> {
     PDF_PANIC_HOOK_LOCK.get_or_init(|| Mutex::new(()))
 }
 
+std::thread_local! {
+    static PDF_PANIC_HOOK_SUPPRESSION_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+fn pdf_panic_hook_suppressed() -> bool {
+    PDF_PANIC_HOOK_SUPPRESSION_DEPTH.with(|depth| depth.get() > 0)
+}
+
+fn with_pdf_panic_hook_suppressed<T, F>(work: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    PDF_PANIC_HOOK_SUPPRESSION_DEPTH.with(|depth| {
+        let previous_depth = depth.get();
+        depth.set(previous_depth.saturating_add(1));
+        let result = work();
+        depth.set(previous_depth);
+        result
+    })
+}
+
 /// Execute a `pdf-extract` operation and convert dependency panics into parse errors.
 fn with_pdf_panic_guard<T, F>(
     source_path: &str,
@@ -707,13 +729,43 @@ where
         .lock()
         .map_err(|_| GraphtorError::Parse {
             message: format!(
-            "failed to silence pdf-extract panic hook during {operation}: panic hook lock poisoned"
-        ),
+                "failed to silence pdf-extract panic hook during {operation}: panic hook lock poisoned"
+            ),
             path: Some(source_path.into()),
         })?;
-    let previous_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let result = std::panic::catch_unwind(work);
+    let previous_hook_slot = Arc::new(Mutex::new(Some(std::panic::take_hook())));
+    std::panic::set_hook({
+        let previous_hook_slot = Arc::clone(&previous_hook_slot);
+        Box::new(move |panic_info| {
+            if pdf_panic_hook_suppressed() {
+                return;
+            }
+
+            let previous_hook = previous_hook_slot.lock().ok();
+            if let Some(previous_hook) = previous_hook {
+                if let Some(previous_hook) = previous_hook.as_ref() {
+                    previous_hook(panic_info);
+                }
+            }
+        })
+    });
+    let result = with_pdf_panic_hook_suppressed(|| std::panic::catch_unwind(work));
+    let _ = std::panic::take_hook();
+    let previous_hook = previous_hook_slot
+        .lock()
+        .map_err(|_| GraphtorError::Parse {
+            message: format!(
+                "failed to restore pdf-extract panic hook during {operation}: previous panic hook lock poisoned"
+            ),
+            path: Some(source_path.into()),
+        })?
+        .take()
+        .ok_or_else(|| GraphtorError::Parse {
+            message: format!(
+                "failed to restore pdf-extract panic hook during {operation}: previous panic hook missing"
+            ),
+            path: Some(source_path.into()),
+        })?;
     std::panic::set_hook(previous_hook);
     result.map_err(|payload| GraphtorError::Parse {
         message: format!(
@@ -2035,8 +2087,7 @@ mod tests {
     }
 
     fn pdf_panic_guard_test_lock() -> &'static std::sync::Mutex<()> {
-        static TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
-            std::sync::OnceLock::new();
+        static TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         TEST_LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 
@@ -2119,7 +2170,7 @@ mod tests {
     }
 
     #[test]
-    fn pdf_panic_guard_silences_hook_and_restores_previous_hook() {
+    fn pdf_panic_guard_only_silences_guarded_thread() {
         use std::sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -2136,7 +2187,11 @@ mod tests {
         }));
 
         let result = with_pdf_panic_guard("panic.pdf", "test operation", || {
-            panic!("hook should stay silent");
+            let child = std::thread::spawn(|| {
+                panic!("other thread should still hit the hook");
+            });
+            let _ = child.join();
+            panic!("guarded thread should stay silent");
             #[allow(unreachable_code)]
             Ok::<(), GraphtorError>(())
         });
@@ -2147,15 +2202,15 @@ mod tests {
         );
         assert_eq!(
             hook_calls.load(Ordering::SeqCst),
-            0,
-            "custom hook must not run while the pdf panic guard is active"
+            1,
+            "only the unrelated thread panic should reach the custom hook"
         );
 
         let _ = std::panic::catch_unwind(|| panic!("hook restored"));
         assert_eq!(
             hook_calls.load(Ordering::SeqCst),
-            1,
-            "previous hook must be restored after the pdf panic guard completes"
+            2,
+            "custom hook must still run after the pdf panic guard completes"
         );
 
         std::panic::set_hook(previous_hook);
