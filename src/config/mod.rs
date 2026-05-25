@@ -114,8 +114,7 @@ pub fn load_multi_file_config(files: &[PathBuf]) -> Result<SourceConfig, Graphto
     let mut all_sources = Vec::new();
 
     for path in files {
-        let content = std::fs::read_to_string(path)?;
-        let config: SourceConfig = serde_yaml::from_str(&content)?;
+        let config = load_source_config_file(path)?;
 
         if multi_file_mode {
             for source in &config.sources {
@@ -140,6 +139,23 @@ pub fn load_multi_file_config(files: &[PathBuf]) -> Result<SourceConfig, Graphto
     };
     validation::validate(&merged)?;
     Ok(merged)
+}
+
+fn load_source_config_file(path: &Path) -> Result<SourceConfig, GraphtorError> {
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        GraphtorError::Io(std::io::Error::new(
+            error.kind(),
+            format!("failed to read source config '{}': {error}", path.display()),
+        ))
+    })?;
+
+    serde_yaml::from_str(&content).map_err(|error| GraphtorError::Config {
+        message: format!(
+            "failed to parse source config '{}': {error}",
+            path.display()
+        ),
+        field: None,
+    })
 }
 
 #[cfg(test)]
@@ -331,6 +347,45 @@ mod tests {
         let files = discover_source_files(d).expect("discover_source_files");
         let config = load_multi_file_config(&files).expect("should merge cleanly");
         assert_eq!(config.sources.len(), 2, "both sources should be merged");
+    }
+
+    #[test]
+    fn load_multi_file_config_read_error_includes_file_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("missing.sources.yaml");
+
+        let err = load_multi_file_config(std::slice::from_ref(&missing))
+            .expect_err("missing config file should fail");
+
+        let message = err.to_string();
+        assert!(message.starts_with("[io]"), "expected Io error: {message}");
+        assert!(
+            message.contains("missing.sources.yaml"),
+            "error should include the missing file path: {message}"
+        );
+    }
+
+    #[test]
+    fn load_multi_file_config_yaml_error_includes_file_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let invalid = write_yaml(
+            dir.path(),
+            "invalid.sources.yaml",
+            "sources:\n  - type: local\n    id: broken\n    path: [unterminated\n",
+        );
+
+        let err = load_multi_file_config(std::slice::from_ref(&invalid))
+            .expect_err("invalid yaml should fail");
+
+        let message = err.to_string();
+        assert!(
+            message.starts_with("[config]"),
+            "expected Config error: {message}"
+        );
+        assert!(
+            message.contains("invalid.sources.yaml"),
+            "error should include the invalid file path: {message}"
+        );
     }
 
     #[test]

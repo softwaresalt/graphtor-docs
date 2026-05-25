@@ -741,11 +741,11 @@ where
                 return;
             }
 
-            let previous_hook = previous_hook_slot.lock().ok();
-            if let Some(previous_hook) = previous_hook {
-                if let Some(previous_hook) = previous_hook.as_ref() {
-                    previous_hook(panic_info);
-                }
+            let previous_hook = previous_hook_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(previous_hook) = previous_hook.as_ref() {
+                previous_hook(panic_info);
             }
         })
     });
