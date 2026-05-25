@@ -1145,7 +1145,8 @@ mod tests {
     /// The conservative path ensures correctness when the intake cannot be enumerated.
     #[test]
     fn detect_with_context_nonexistent_local_root_flags_conservatively() {
-        let nonexistent = PathBuf::from("/workspace/this/path/does/not/exist/graphtor_test_d2e9f1a3");
+        let nonexistent =
+            PathBuf::from("/workspace/this/path/does/not/exist/graphtor_test_d2e9f1a3");
         let config = SourceConfig {
             sources: vec![
                 Source::Local(LocalSource {
