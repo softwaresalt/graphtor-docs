@@ -45,10 +45,11 @@ use graphtor_core::{
         execute as acquire_execute, plan as acquire_plan, AcquisitionPlan, PlannedSource,
         SourceAction,
     },
-    config::SourceConfig,
+    config::{discover_source_files, load_multi_file_config, DuplicateIntakeReport, SourceConfig},
     db::{list_sources, DataStore},
     init_logging,
     pipeline::FileError,
+    resolve_source_db_path,
     sync::{elapsed_millis, sync_source, SyncMetrics},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
@@ -170,50 +171,53 @@ fn build_workspace_source_config(cwd: &std::path::Path) -> SourceConfig {
 /// 4. `config_override` is `None` and the default path is missing → auto-discover
 ///    the workspace (`build_workspace_source_config`).
 ///
+/// When `config_override` is `None`, the function calls [`discover_source_files`]
+/// on `.graphtor/config/` to support the multi-file registry layout where each
+/// team maintains their own `*.sources.yaml` file.
+///
 /// Returns `Err` only when a file exists but cannot be read or parsed (always fatal).
 fn load_source_config(
     cwd: &std::path::Path,
     config_override: Option<&std::path::Path>,
 ) -> anyhow::Result<Option<SourceConfig>> {
-    let default_path = cwd.join(".graphtor/config/sources.yaml");
-    let path = config_override.map_or(default_path.as_path(), |p| p);
-
-    if path.exists() {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let cfg: SourceConfig = serde_yaml::from_str(&content)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
-        Ok(Some(cfg))
-    } else if config_override.is_some() {
+    if let Some(path) = config_override {
+        if path.exists() {
+            let content = std::fs::read_to_string(path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let cfg: SourceConfig = serde_yaml::from_str(&content)
+                .with_context(|| format!("failed to parse {}", path.display()))?;
+            return Ok(Some(cfg));
+        }
         // Explicit override provided but missing — caller decides how to handle.
-        Ok(None)
-    } else {
-        // Default path missing: fall back to workspace auto-discovery.
-        info!("no sources.yaml found; using workspace auto-discovery (indexing .md files)");
-        eprintln!(
-            "info: no sources.yaml found — indexing .md files in the current directory. \
-             Run `graphtor-docs init` to create a sources.yaml."
-        );
-        Ok(Some(build_workspace_source_config(cwd)))
+        return Ok(None);
     }
-}
 
-fn source_db_path(base_db_path: &std::path::Path, source: &Source) -> PathBuf {
-    source.database().map_or_else(
-        || base_db_path.to_path_buf(),
-        |database| {
-            base_db_path
-                .parent()
-                .map_or_else(|| PathBuf::from(database), |parent| parent.join(database))
-        },
-    )
+    let config_dir = cwd.join(".graphtor/config");
+    let files = discover_source_files(&config_dir)
+        .with_context(|| format!("failed to read config dir {}", config_dir.display()))?;
+
+    if files.is_empty() {
+        // Default path missing: fall back to workspace auto-discovery.
+        info!(
+            "no source registry config found; using workspace auto-discovery (indexing .md files)"
+        );
+        eprintln!(
+            "info: no source registry config found — indexing .md files in the current directory. \
+             Run `graphtor-docs init` to create a source registry config."
+        );
+        return Ok(Some(build_workspace_source_config(cwd)));
+    }
+
+    let cfg = load_multi_file_config(&files)
+        .with_context(|| format!("failed to load source config from {}", config_dir.display()))?;
+    Ok(Some(cfg))
 }
 
 fn discover_db_files(base_db_path: &std::path::Path, source_config: &SourceConfig) -> Vec<PathBuf> {
     let mut db_paths = BTreeSet::new();
 
     for source in &source_config.sources {
-        db_paths.insert(source_db_path(base_db_path, source));
+        db_paths.insert(resolve_source_db_path(base_db_path, source));
     }
 
     if db_paths.is_empty() {
@@ -258,7 +262,7 @@ fn split_plan_by_database(
             .collect();
 
     for planned in &plan.sources {
-        let db_path = source_db_path(base_db_path, &planned.source);
+        let db_path = resolve_source_db_path(base_db_path, &planned.source);
         let grouped_plan = plans_by_db
             .entry(db_path)
             .or_insert_with(|| new_grouped_plan(plan));
@@ -282,16 +286,40 @@ fn cmd_sync(
     } else {
         // Only reachable when config_override is Some but the file does not exist.
         let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
-        eprintln!("error: sources.yaml not found at {}", path.display());
+        eprintln!(
+            "error: source registry config not found at {}",
+            path.display()
+        );
         return Ok(2);
     };
 
     if source_config.sources.is_empty() {
-        warn!("sources.yaml contains no sources; nothing to sync");
+        warn!("source registry config contains no sources; nothing to sync");
         println!(
             "No sources configured. Add documentation sources and re-run `graphtor-docs sync`."
         );
         return Ok(0);
+    }
+
+    // Duplicate-intake preflight: the same URL/path indexed into multiple
+    // databases creates confusing or overlapping search results.
+    let dup_report = DuplicateIntakeReport::detect_with_context(&source_config, db_path, Some(cwd))
+        .with_context(|| {
+            format!(
+                "failed duplicate-intake preflight for database {}",
+                db_path.display()
+            )
+        })?;
+    if !dup_report.is_empty() {
+        if args.force {
+            eprintln!(
+                "warning: cross-database duplicate intakes detected (proceeding due to --force):\n{dup_report}"
+            );
+        } else {
+            eprintln!("error: cross-database duplicate intakes detected:\n{dup_report}");
+            eprintln!("use --force to proceed anyway");
+            return Ok(2);
+        }
     }
 
     let data_root: PathBuf = args

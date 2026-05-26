@@ -40,6 +40,8 @@ pub use acquire::{
     SourceAction, SourceOutcome, SourceType, ValidationError, ValidationReport,
 };
 pub use chunk::generate_chunk_id;
+pub use config::resolve_source_db_path;
+pub use config::{discover_source_files, load_multi_file_config, DuplicateIntakeReport};
 pub use config::{GitSource, LocalSource, Source, SourceConfig};
 pub use db::DataStore;
 pub use embed::{embed_batch, embed_text, EmbeddingModel};

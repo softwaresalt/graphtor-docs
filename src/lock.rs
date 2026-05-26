@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use sysinfo::{Pid, System};
+
 use crate::GraphtorError;
 
 const WORKSPACE_LOCK_FILE: &str = "graphtor.lock";
@@ -67,7 +69,9 @@ impl AdvisoryLock {
                 })
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                handle_existing_lock(&path, &content, force, kind)
+                let mut system = System::new();
+                system.refresh_processes();
+                handle_existing_lock(&path, &content, force, kind, &system)
             }
             Err(error) => Err(GraphtorError::Config {
                 message: format!("failed to create lock file: {error}"),
@@ -164,9 +168,10 @@ fn handle_existing_lock(
     content: &str,
     force: bool,
     kind: LockKind<'_>,
+    system: &System,
 ) -> Result<AdvisoryLock, GraphtorError> {
     if force {
-        return replace_lock_file(path, content, force, kind);
+        return replace_lock_file(path, content, force, kind, system);
     }
 
     let details = match read_lock_details(path) {
@@ -182,10 +187,10 @@ fn handle_existing_lock(
         }
     };
 
-    if is_stale(path, &details) {
+    if is_stale_with_system(path, &details, system) {
         #[cfg(test)]
         before_stale_lock_replacement(path);
-        return replace_lock_file(path, content, force, kind);
+        return replace_lock_file(path, content, force, kind, system);
     }
 
     Err(conflict_error(
@@ -200,13 +205,14 @@ fn replace_lock_file(
     content: &str,
     force: bool,
     kind: LockKind<'_>,
+    system: &System,
 ) -> Result<AdvisoryLock, GraphtorError> {
-    let Some(_guard) = try_acquire_replacement_guard(path)? else {
+    let Some(_guard) = try_acquire_replacement_guard(path, system)? else {
         return recover_from_replacement_race(path, content, kind);
     };
 
     match read_lock_details(path) {
-        Ok(details) if !force && !is_stale(path, &details) => {
+        Ok(details) if !force && !is_stale_with_system(path, &details, system) => {
             return Err(conflict_error(
                 kind,
                 &details,
@@ -237,14 +243,17 @@ fn replace_lock_file(
     retry_create_lock(path, content)
 }
 
-fn try_acquire_replacement_guard(path: &Path) -> Result<Option<ReplacementGuard>, GraphtorError> {
+fn try_acquire_replacement_guard(
+    path: &Path,
+    system: &System,
+) -> Result<Option<ReplacementGuard>, GraphtorError> {
     let guard_path = replacement_guard_path(path);
     let timestamp = current_timestamp_secs();
     let pid = std::process::id();
     let content = format!("pid={pid}\ntimestamp={timestamp}\n");
 
     let Some(guard) = try_create_replacement_guard(&guard_path, &content)? else {
-        return reclaim_or_yield_replacement_guard(&guard_path, &content);
+        return reclaim_or_yield_replacement_guard(&guard_path, &content, system);
     };
 
     Ok(Some(guard))
@@ -283,9 +292,10 @@ fn try_create_replacement_guard(
 fn reclaim_or_yield_replacement_guard(
     guard_path: &Path,
     content: &str,
+    system: &System,
 ) -> Result<Option<ReplacementGuard>, GraphtorError> {
     match read_lock_details(guard_path) {
-        Ok(details) if is_stale(guard_path, &details) => {
+        Ok(details) if is_stale_with_system(guard_path, &details, system) => {
             remove_stale_replacement_guard(guard_path)?;
             try_create_replacement_guard(guard_path, content)
         }
@@ -455,8 +465,26 @@ fn lock_age_secs(path: &Path, details: &LockDetails) -> Option<u64> {
         .map(|duration| duration.as_secs())
 }
 
-fn is_stale(path: &Path, details: &LockDetails) -> bool {
+fn process_is_alive(system: &System, pid: u32) -> bool {
+    system.process(Pid::from_u32(pid)).is_some()
+}
+
+fn is_stale_with_system(path: &Path, details: &LockDetails, system: &System) -> bool {
+    if details
+        .pid
+        .is_some_and(|pid| !process_is_alive(system, pid))
+    {
+        return true;
+    }
+
     lock_age_secs(path, details).is_some_and(|age| age >= STALE_SECS)
+}
+
+#[cfg(test)]
+fn is_stale(path: &Path, details: &LockDetails) -> bool {
+    let mut system = System::new();
+    system.refresh_processes();
+    is_stale_with_system(path, details, &system)
 }
 
 fn conflict_error(
@@ -596,7 +624,7 @@ mod tests {
         // A timestamp two hours in the future — saturating_sub would silently return 0,
         // masking a potentially stale lock and hiding corrupt/skewed timestamps.
         let future_ts = current_timestamp_secs() + 7200;
-        let content = format!("pid=42\ntimestamp={future_ts}\n");
+        let content = format!("pid={}\ntimestamp={future_ts}\n", std::process::id());
         fs::write(&lock_file, &content).expect("write lock");
 
         let details = parse_lock_details(&content);

@@ -158,6 +158,7 @@ pub enum Command {
 
 /// Arguments for the `sync` subcommand.
 #[derive(Debug, clap::Args)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct SyncArgs {
     /// Batch size — number of files to process per parse/embed/load cycle.
     #[arg(long, default_value = "20", value_name = "N")]
@@ -189,6 +190,14 @@ pub struct SyncArgs {
     /// the global `--json` JSON-RPC envelope mode.
     #[arg(long)]
     pub metrics: bool,
+
+    /// Proceed even when cross-database duplicate intakes are detected.
+    ///
+    /// By default, `sync` blocks when the same source URL or path is indexed
+    /// into more than one database.  Use `--force` to emit a warning and
+    /// continue regardless.
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Arguments for the `serve` subcommand.

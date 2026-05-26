@@ -26,8 +26,11 @@
 //! PDF sources — structure cannot be recovered deterministically from
 //! rendered text output.
 
+use std::any::Any;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::chunk::generate_chunk_id;
 use crate::error::GraphtorError;
@@ -687,6 +690,103 @@ fn extract_title_from_sections(sections: &[PdfSection], source_path: &str) -> Op
 /// (e.g. `PdfiumBackend`) can be introduced without changing the public API.
 pub(crate) struct PdfExtractBackend;
 
+fn pdf_panic_hook_lock() -> &'static Mutex<()> {
+    static PDF_PANIC_HOOK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    PDF_PANIC_HOOK_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+std::thread_local! {
+    static PDF_PANIC_HOOK_SUPPRESSION_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+fn pdf_panic_hook_suppressed() -> bool {
+    PDF_PANIC_HOOK_SUPPRESSION_DEPTH.with(|depth| depth.get() > 0)
+}
+
+fn with_pdf_panic_hook_suppressed<T, F>(work: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    PDF_PANIC_HOOK_SUPPRESSION_DEPTH.with(|depth| {
+        let previous_depth = depth.get();
+        depth.set(previous_depth.saturating_add(1));
+        let result = work();
+        depth.set(previous_depth);
+        result
+    })
+}
+
+/// Execute a `pdf-extract` operation and convert dependency panics into parse errors.
+fn with_pdf_panic_guard<T, F>(
+    source_path: &str,
+    operation: &str,
+    work: F,
+) -> Result<T, GraphtorError>
+where
+    F: FnOnce() -> Result<T, GraphtorError> + std::panic::UnwindSafe,
+{
+    let _panic_hook_guard = pdf_panic_hook_lock()
+        .lock()
+        .map_err(|_| GraphtorError::Parse {
+            message: format!(
+                "failed to silence pdf-extract panic hook during {operation}: panic hook lock poisoned"
+            ),
+            path: Some(source_path.into()),
+        })?;
+    let previous_hook_slot = Arc::new(Mutex::new(Some(std::panic::take_hook())));
+    std::panic::set_hook({
+        let previous_hook_slot = Arc::clone(&previous_hook_slot);
+        Box::new(move |panic_info| {
+            if pdf_panic_hook_suppressed() {
+                return;
+            }
+
+            let previous_hook = previous_hook_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(previous_hook) = previous_hook.as_ref() {
+                previous_hook(panic_info);
+            }
+        })
+    });
+    let result = with_pdf_panic_hook_suppressed(|| std::panic::catch_unwind(work));
+    let _ = std::panic::take_hook();
+    let previous_hook = previous_hook_slot
+        .lock()
+        .map_err(|_| GraphtorError::Parse {
+            message: format!(
+                "failed to restore pdf-extract panic hook during {operation}: previous panic hook lock poisoned"
+            ),
+            path: Some(source_path.into()),
+        })?
+        .take()
+        .ok_or_else(|| GraphtorError::Parse {
+            message: format!(
+                "failed to restore pdf-extract panic hook during {operation}: previous panic hook missing"
+            ),
+            path: Some(source_path.into()),
+        })?;
+    std::panic::set_hook(previous_hook);
+    result.map_err(|payload| GraphtorError::Parse {
+        message: format!(
+            "pdf-extract panicked during {operation}: {}",
+            panic_payload_message(payload.as_ref())
+        ),
+        path: Some(source_path.into()),
+    })?
+}
+
+/// Convert an unwind payload into a human-readable panic message.
+fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
 impl PdfExtractBackend {
     /// Parse raw PDF bytes using the two-pass `pdf-extract` pipeline.
     ///
@@ -718,94 +818,99 @@ impl PdfExtractBackend {
     /// # Errors
     ///
     /// Returns [`GraphtorError::Parse`] if `pdf-extract` cannot decode the
-    /// bytes as a valid PDF, or if chunk ID generation fails.
+    /// bytes as a valid PDF, if `pdf-extract` panics internally, or if chunk
+    /// ID generation fails.
     pub(crate) fn parse(bytes: &[u8], source_path: &str) -> Result<ParsedDocument, GraphtorError> {
-        // Load the PDF document once — reused for all passes.
-        let doc = pdf_extract::Document::load_mem(bytes).map_err(|e| GraphtorError::Parse {
-            message: format!("pdf load failed: {e}"),
-            path: Some(source_path.into()),
-        })?;
-
-        // Pass 1: build font-size histogram (first HISTOGRAM_SAMPLE_PAGES pages only).
-        let page_count = u32::try_from(doc.get_pages().len()).unwrap_or(u32::MAX);
-        let sample_end = page_count.min(HISTOGRAM_SAMPLE_PAGES);
-        let mut histogram = FontSizeHistogram::new();
-        for page_num in 1..=sample_end {
-            pdf_extract::output_doc_page(&doc, &mut histogram, page_num).map_err(|e| {
-                GraphtorError::Parse {
-                    message: format!("pdf font-size scan failed: {e}"),
-                    path: Some(source_path.into()),
-                }
+        with_pdf_panic_guard(source_path, "pdf parsing", || {
+            // Load the PDF document once — reused for all passes.
+            let doc = pdf_extract::Document::load_mem(bytes).map_err(|e| GraphtorError::Parse {
+                message: format!("pdf load failed: {e}"),
+                path: Some(source_path.into()),
             })?;
-        }
 
-        let body_font_size = histogram.body_font_size();
-        let distinct_sizes = histogram.counts.len();
-
-        // Resolve the "uniform-sample" false-positive: when the first
-        // HISTOGRAM_SAMPLE_PAGES pages all share one font size but later pages
-        // contain heading-sized text, we must not fall back to per-page chunking.
-        let really_uniform = if distinct_sizes <= 1 && page_count > HISTOGRAM_SAMPLE_PAGES {
-            let h2_threshold = body_font_size * H2_RATIO;
-            let mut detector = HeadingFontDetector::new(h2_threshold);
-            for page_num in (sample_end + 1)..=page_count {
-                pdf_extract::output_doc_page(&doc, &mut detector, page_num).map_err(|e| {
+            // Pass 1: build font-size histogram (first HISTOGRAM_SAMPLE_PAGES pages only).
+            let page_count = u32::try_from(doc.get_pages().len()).unwrap_or(u32::MAX);
+            let sample_end = page_count.min(HISTOGRAM_SAMPLE_PAGES);
+            let mut histogram = FontSizeHistogram::new();
+            for page_num in 1..=sample_end {
+                pdf_extract::output_doc_page(&doc, &mut histogram, page_num).map_err(|e| {
                     GraphtorError::Parse {
-                        message: format!("pdf heading-font scan failed: {e}"),
+                        message: format!("pdf font-size scan failed: {e}"),
                         path: Some(source_path.into()),
                     }
                 })?;
-                if detector.found_heading() {
-                    break;
+            }
+
+            let body_font_size = histogram.body_font_size();
+            let distinct_sizes = histogram.counts.len();
+
+            // Resolve the "uniform-sample" false-positive: when the first
+            // HISTOGRAM_SAMPLE_PAGES pages all share one font size but later pages
+            // contain heading-sized text, we must not fall back to per-page chunking.
+            let really_uniform = if distinct_sizes <= 1 && page_count > HISTOGRAM_SAMPLE_PAGES {
+                let h2_threshold = body_font_size * H2_RATIO;
+                let mut detector = HeadingFontDetector::new(h2_threshold);
+                for page_num in (sample_end + 1)..=page_count {
+                    pdf_extract::output_doc_page(&doc, &mut detector, page_num).map_err(|e| {
+                        GraphtorError::Parse {
+                            message: format!("pdf heading-font scan failed: {e}"),
+                            path: Some(source_path.into()),
+                        }
+                    })?;
+                    if detector.found_heading() {
+                        break;
+                    }
                 }
-            }
-            !detector.found_heading()
-        } else {
-            distinct_sizes <= 1
-        };
+                !detector.found_heading()
+            } else {
+                distinct_sizes <= 1
+            };
 
-        let (chunks, title) = if really_uniform {
-            // Uniform or empty document — fall back to per-page chunking.
-            let mut acc = PageTextAccumulator::new();
-            for page_num in 1..=page_count {
-                pdf_extract::output_doc_page(&doc, &mut acc, page_num).map_err(|e| {
-                    GraphtorError::Parse {
-                        message: format!("pdf per-page extraction failed at page {page_num}: {e}"),
-                        path: Some(source_path.into()),
-                    }
-                })?;
-            }
-            let pages = acc.finish();
-            let title = extract_title_from_pages(&pages, source_path);
-            let chunks = chunk_pdf_pages(&pages, source_path)?;
-            (chunks, title)
-        } else {
-            // Pass 2: heading-aware extraction using an output_doc_page loop so
-            // heading state accumulates incrementally across all pages.
-            let mut heading_output = HeadingAwareOutput::new(body_font_size);
-            for page_num in 1..=page_count {
-                pdf_extract::output_doc_page(&doc, &mut heading_output, page_num).map_err(|e| {
-                    GraphtorError::Parse {
-                        message: format!(
-                            "pdf heading-aware extraction failed at page {page_num}: {e}"
-                        ),
-                        path: Some(source_path.into()),
-                    }
-                })?;
-            }
-            let sections = heading_output.finish();
-            let title = extract_title_from_sections(&sections, source_path);
-            let chunks = sections_to_chunks(sections, source_path)?;
-            (chunks, title)
-        };
+            let (chunks, title) = if really_uniform {
+                // Uniform or empty document — fall back to per-page chunking.
+                let mut acc = PageTextAccumulator::new();
+                for page_num in 1..=page_count {
+                    pdf_extract::output_doc_page(&doc, &mut acc, page_num).map_err(|e| {
+                        GraphtorError::Parse {
+                            message: format!(
+                                "pdf per-page extraction failed at page {page_num}: {e}"
+                            ),
+                            path: Some(source_path.into()),
+                        }
+                    })?;
+                }
+                let pages = acc.finish();
+                let title = extract_title_from_pages(&pages, source_path);
+                let chunks = chunk_pdf_pages(&pages, source_path)?;
+                (chunks, title)
+            } else {
+                // Pass 2: heading-aware extraction using an output_doc_page loop so
+                // heading state accumulates incrementally across all pages.
+                let mut heading_output = HeadingAwareOutput::new(body_font_size);
+                for page_num in 1..=page_count {
+                    pdf_extract::output_doc_page(&doc, &mut heading_output, page_num).map_err(
+                        |e| GraphtorError::Parse {
+                            message: format!(
+                                "pdf heading-aware extraction failed at page {page_num}: {e}"
+                            ),
+                            path: Some(source_path.into()),
+                        },
+                    )?;
+                }
+                let sections = heading_output.finish();
+                let title = extract_title_from_sections(&sections, source_path);
+                let chunks = sections_to_chunks(sections, source_path)?;
+                (chunks, title)
+            };
 
-        Ok(ParsedDocument {
-            path: source_path.to_string(),
-            title,
-            frontmatter: None,
-            chunks,
-            references: Vec::new(),
-            code_snippets: Vec::new(),
+            Ok(ParsedDocument {
+                path: source_path.to_string(),
+                title,
+                frontmatter: None,
+                chunks,
+                references: Vec::new(),
+                code_snippets: Vec::new(),
+            })
         })
     }
 }
@@ -991,8 +1096,8 @@ impl PdfiumBackend {
 ///
 /// # Errors
 ///
-/// Returns [`GraphtorError::Parse`] if the bytes are not a valid PDF or if
-/// chunk ID generation fails.
+/// Returns [`GraphtorError::Parse`] if the bytes are not a valid PDF, if a
+/// PDF backend panics internally, or if chunk ID generation fails.
 pub fn parse_pdf_document(
     bytes: &[u8],
     source_path: &str,
@@ -1182,12 +1287,14 @@ fn split_at_word_boundaries(text: &str) -> Vec<&str> {
 mod tests {
     use super::{
         build_heading_hierarchy, chunk_pdf_pages, extract_title_from_pages,
-        extract_title_from_sections, sections_to_chunks, split_at_word_boundaries, split_long_text,
-        FontSizeHistogram, HeadingAwareOutput, HeadingFontDetector, PageTextAccumulator,
-        PdfExtractBackend, PdfSection, H1_RATIO, H2_RATIO, HISTOGRAM_SAMPLE_PAGES,
-        LARGE_PDF_THRESHOLD, MAX_CHUNK_CHARS,
+        extract_title_from_sections, panic_payload_message, sections_to_chunks,
+        split_at_word_boundaries, split_long_text, with_pdf_panic_guard, FontSizeHistogram,
+        HeadingAwareOutput, HeadingFontDetector, PageTextAccumulator, PdfExtractBackend,
+        PdfSection, H1_RATIO, H2_RATIO, HISTOGRAM_SAMPLE_PAGES, LARGE_PDF_THRESHOLD,
+        MAX_CHUNK_CHARS,
     };
     // Import the OutputDev trait so method calls resolve on concrete types.
+    use crate::error::GraphtorError;
     use pdf_extract::OutputDev as _;
 
     // ── test helpers ─────────────────────────────────────────────────────────
@@ -1979,15 +2086,142 @@ mod tests {
         );
     }
 
+    fn pdf_panic_guard_test_lock() -> &'static std::sync::Mutex<()> {
+        static TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        TEST_LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     // ── PdfExtractBackend ─────────────────────────────────────────────────────
 
     #[test]
     fn pdf_extract_backend_returns_error_on_empty_bytes() {
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Empty bytes are not a valid PDF — parse must return an error, not panic.
         let result = PdfExtractBackend::parse(&[], "empty.pdf");
         assert!(
             result.is_err(),
             "PdfExtractBackend::parse must fail on empty bytes"
+        );
+    }
+
+    #[test]
+    fn pdf_panic_guard_returns_inner_ok() {
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let result =
+            with_pdf_panic_guard("ok.pdf", "test operation", || Ok::<usize, GraphtorError>(7));
+        assert!(matches!(result, Ok(7)));
+    }
+
+    #[test]
+    fn pdf_panic_guard_preserves_inner_error() {
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let result = with_pdf_panic_guard("error.pdf", "test operation", || {
+            Err::<(), GraphtorError>(GraphtorError::Parse {
+                message: "pdf load failed".to_string(),
+                path: Some("error.pdf".into()),
+            })
+        });
+
+        assert!(matches!(
+            result,
+            Err(GraphtorError::Parse { message, .. }) if message == "pdf load failed"
+        ));
+    }
+
+    #[test]
+    fn pdf_panic_guard_converts_str_panic_to_parse_error() {
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let result = with_pdf_panic_guard("panic.pdf", "test operation", || {
+            panic!("dependency blew up");
+            #[allow(unreachable_code)]
+            Ok::<(), GraphtorError>(())
+        });
+
+        assert!(matches!(
+            result,
+            Err(GraphtorError::Parse { message, .. })
+                if message.contains("pdf-extract panicked during test operation: dependency blew up")
+        ));
+    }
+
+    #[test]
+    fn pdf_panic_guard_converts_string_panic_to_parse_error() {
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let result = with_pdf_panic_guard("panic.pdf", "test operation", || {
+            std::panic::panic_any(String::from("owned panic message"));
+            #[allow(unreachable_code)]
+            Ok::<(), GraphtorError>(())
+        });
+
+        assert!(matches!(
+            result,
+            Err(GraphtorError::Parse { message, .. }) if message.contains("owned panic message")
+        ));
+    }
+
+    #[test]
+    fn pdf_panic_guard_only_silences_guarded_thread() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let hook_calls = Arc::new(AtomicUsize::new(0));
+        let hook_calls_for_hook = Arc::clone(&hook_calls);
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |_| {
+            hook_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        let result = with_pdf_panic_guard("panic.pdf", "test operation", || {
+            let child = std::thread::spawn(|| {
+                panic!("other thread should still hit the hook");
+            });
+            let _ = child.join();
+            panic!("guarded thread should stay silent");
+            #[allow(unreachable_code)]
+            Ok::<(), GraphtorError>(())
+        });
+
+        assert!(
+            result.is_err(),
+            "panic guard must still convert the panic to an error"
+        );
+        assert_eq!(
+            hook_calls.load(Ordering::SeqCst),
+            1,
+            "only the unrelated thread panic should reach the custom hook"
+        );
+
+        let _ = std::panic::catch_unwind(|| panic!("hook restored"));
+        assert_eq!(
+            hook_calls.load(Ordering::SeqCst),
+            2,
+            "custom hook must still run after the pdf panic guard completes"
+        );
+
+        std::panic::set_hook(previous_hook);
+    }
+
+    #[test]
+    fn panic_payload_message_falls_back_for_unknown_payloads() {
+        let payload = Box::new(7_u8) as Box<dyn std::any::Any + Send>;
+        assert_eq!(
+            panic_payload_message(payload.as_ref()),
+            "unknown panic payload"
         );
     }
 
@@ -2053,6 +2287,9 @@ mod tests {
     #[test]
     fn parse_pdf_document_falls_back_for_large_input() {
         use super::parse_pdf_document;
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // A large (>20 MiB) byte slice of non-PDF junk should attempt
         // pdfium first, then fall back to pdf-extract, which also fails
         // on invalid content. The important thing is no panic.
@@ -2065,6 +2302,9 @@ mod tests {
     #[test]
     fn parse_pdf_document_uses_pdf_extract_for_small_files() {
         use super::parse_pdf_document;
+        let _test_lock = pdf_panic_guard_test_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // A small input (below threshold) goes directly to pdf-extract,
         // skipping the pdfium path. Non-PDF bytes produce an error.
         let small_junk = vec![0u8; LARGE_PDF_THRESHOLD - 1];

@@ -66,6 +66,25 @@ fn stale_database_lock_is_replaced_using_embedded_timestamp() {
 }
 
 #[test]
+fn fresh_database_lock_with_dead_pid_is_replaced() {
+    let tempdir = lock_root();
+    let workspace_dir = tempdir.path().join(".graphtor");
+    std::fs::create_dir_all(&workspace_dir).expect("create workspace dir");
+
+    let primary_db = workspace_dir.join("primary.db");
+    let lock_path = workspace_dir.join("primary.db.lock");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after unix epoch")
+        .as_secs();
+    std::fs::write(&lock_path, format!("pid={}\ntimestamp={now}\n", u32::MAX))
+        .expect("write fresh dead-pid lock");
+
+    let _lock = DatabaseLock::acquire(&workspace_dir, &primary_db, false)
+        .expect("fresh lock with dead pid should be replaced");
+}
+
+#[test]
 fn stale_replacement_marker_does_not_block_stale_database_lock_replacement() {
     let tempdir = lock_root();
     let workspace_dir = tempdir.path().join(".graphtor");

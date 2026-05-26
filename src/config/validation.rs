@@ -4,12 +4,15 @@
 //! enforce: duplicate source IDs, empty required fields, and glob pattern
 //! syntax validity.
 
-use std::collections::HashSet;
-use std::path::{Component, Path};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fmt;
+use std::path::{Component, Path, PathBuf};
 
-use globset::Glob;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 
-use crate::config::source::{Source, SourceConfig};
+use walkdir::WalkDir;
+
+use crate::config::source::{LocalSource, Source, SourceConfig};
 use crate::error::GraphtorError;
 
 /// Extension strings accepted by the ingestion pipeline.
@@ -163,6 +166,507 @@ fn validate_globs(patterns: &[String], source_id: &str) -> Result<(), GraphtorEr
         })?;
     }
     Ok(())
+}
+
+// ── T040.003–T040.004: DuplicateIntakeReport ─────────────────────────────────
+
+/// A single cross-database duplicate intake conflict.
+///
+/// Records the shared intake key (URL, canonical path, or local-overlap
+/// summary) and the conflicting `(source_id, database)` pairs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DuplicateEntry {
+    /// The intake summary shared by the conflicting sources.
+    pub intake_key: String,
+    /// Conflicting sources as `(source_id, database_name)` pairs.
+    ///
+    /// `database_name` is `""` when the source omits the `database` field
+    /// and routes to the default database.
+    pub conflicts: Vec<(String, String)>,
+}
+
+/// Report of cross-database duplicate intake sources.
+///
+/// A "duplicate intake" occurs when two sources with different `database`
+/// values share the same acquisition target (git URL, local path, or crawl
+/// URL). Sources that share an intake target _within the same database_ are
+/// not flagged — they are redundant but not ambiguous.
+///
+/// Use [`DuplicateIntakeReport::detect`] to build a report from a
+/// [`SourceConfig`], then inspect [`is_empty`](Self::is_empty) to decide
+/// whether the conflict should block or warn.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DuplicateIntakeReport {
+    /// All cross-database duplicate entries detected.
+    pub entries: Vec<DuplicateEntry>,
+}
+
+impl DuplicateIntakeReport {
+    /// Detect cross-database duplicate intakes in `config`.
+    ///
+    /// Groups sources by their intake key.  Within each group, checks whether
+    /// more than one distinct `database` value is present.  If so, that group
+    /// is added to the report.
+    ///
+    /// Same-database duplicates are not flagged.
+    #[must_use]
+    pub fn detect(config: &SourceConfig) -> Self {
+        let mut by_key: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+
+        for source in &config.sources {
+            let key = intake_key(source);
+            let db = source.database().unwrap_or("").to_string();
+            by_key
+                .entry(key)
+                .or_default()
+                .push((source.id().to_string(), db));
+        }
+
+        let entries = by_key
+            .into_iter()
+            .filter_map(|(key, conflicts)| {
+                let distinct_dbs: std::collections::BTreeSet<&str> =
+                    conflicts.iter().map(|(_, db)| db.as_str()).collect();
+                if distinct_dbs.len() > 1 {
+                    Some(DuplicateEntry {
+                        intake_key: key,
+                        conflicts,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Self { entries }
+    }
+
+    /// Returns `true` when no duplicate intakes were detected.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Detect cross-database duplicate intakes using resolved DB paths and,
+    /// for local sources, actual file-level overlap checking.
+    ///
+    /// Unlike [`detect`], this method:
+    ///
+    /// 1. Resolves each source's effective database path relative to
+    ///    `base_db_path`, eliminating false positives from `database: null`
+    ///    vs `database: "graph.db"` (the default filename).
+    ///
+    /// 2. For local sources, compares actual filtered file intakes when
+    ///    `workspace_root` is `Some`. Sources are only flagged when their
+    ///    filtered file sets **overlap**, including ancestor/descendant roots
+    ///    such as `docs/` and `docs/api/`. When enumeration is incomplete, or
+    ///    when `workspace_root` is `None`, overlapping local roots are flagged
+    ///    conservatively.
+    ///
+    /// Git and URL sources cannot be enumerated at preflight time; any
+    /// same-URL sources with distinct resolved DBs are always flagged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphtorError::Config`] if any include or exclude glob
+    /// pattern cannot be compiled.
+    pub fn detect_with_context(
+        config: &SourceConfig,
+        base_db_path: &Path,
+        workspace_root: Option<&Path>,
+    ) -> Result<Self, GraphtorError> {
+        let mut entries = Vec::new();
+        let mut non_local_by_key: BTreeMap<String, Vec<(String, PathBuf)>> = BTreeMap::new();
+        let mut local_sources = Vec::new();
+
+        for source in &config.sources {
+            let db = resolve_source_db_path(base_db_path, source);
+            match source {
+                Source::Local(local_src) => {
+                    local_sources.push((local_src, source.id().to_string(), db));
+                }
+                _ => {
+                    non_local_by_key
+                        .entry(intake_key(source))
+                        .or_default()
+                        .push((source.id().to_string(), db));
+                }
+            }
+        }
+
+        for (key, conflicts) in non_local_by_key {
+            let distinct_dbs: BTreeSet<PathBuf> =
+                conflicts.iter().map(|(_, db)| db.clone()).collect();
+            if distinct_dbs.len() <= 1 {
+                continue;
+            }
+            entries.push(DuplicateEntry {
+                intake_key: key,
+                conflicts: format_conflicts(conflicts),
+            });
+        }
+
+        let prepared_locals = if let Some(root) = workspace_root {
+            local_sources
+                .iter()
+                .map(|(local_src, id, db)| {
+                    prepare_local_source(local_src, id.clone(), db.clone(), root)
+                })
+                .collect::<Result<Vec<_>, GraphtorError>>()?
+        } else {
+            local_sources
+                .iter()
+                .map(|(local_src, id, db)| PreparedLocalSource {
+                    id: id.clone(),
+                    db_path: db.clone(),
+                    root_path: lexically_normalize_path(&local_src.path),
+                    root_key: normalize_path_key(&local_src.path),
+                    root_exists: false,
+                })
+                .collect()
+        };
+        let mut local_file_states: Vec<LocalFileState> =
+            std::iter::repeat_with(LocalFileState::default)
+                .take(prepared_locals.len())
+                .collect();
+
+        for (idx, left) in prepared_locals.iter().enumerate() {
+            for (right_idx, right) in prepared_locals.iter().enumerate().skip(idx + 1) {
+                if left.db_path == right.db_path
+                    || !local_roots_may_overlap(&left.root_path, &right.root_path)
+                {
+                    continue;
+                }
+
+                let is_conflict = if workspace_root.is_some() {
+                    ensure_local_files(idx, left, &local_sources, &mut local_file_states)?;
+                    ensure_local_files(right_idx, right, &local_sources, &mut local_file_states)?;
+
+                    match (
+                        &local_file_states[idx].files,
+                        &local_file_states[right_idx].files,
+                    ) {
+                        (Some(left_files), Some(right_files)) => {
+                            left_files.iter().any(|file| right_files.contains(file))
+                        }
+                        _ => true,
+                    }
+                } else {
+                    true
+                };
+
+                if is_conflict {
+                    entries.push(DuplicateEntry {
+                        intake_key: local_overlap_key(left, right),
+                        conflicts: format_conflicts(vec![
+                            (left.id.clone(), left.db_path.clone()),
+                            (right.id.clone(), right.db_path.clone()),
+                        ]),
+                    });
+                }
+            }
+        }
+
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for DuplicateIntakeReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "{} cross-database duplicate intake(s) detected:",
+            self.entries.len()
+        )?;
+        for entry in &self.entries {
+            writeln!(f, "  intake: {}", entry.intake_key)?;
+            for (id, db) in &entry.conflicts {
+                let db_display = if db.is_empty() {
+                    "<default>"
+                } else {
+                    db.as_str()
+                };
+                writeln!(f, "    - source '{id}' -> database '{db_display}'")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Compute the intake key for a source — the acquisition target that
+/// identifies what content will be indexed.
+///
+/// For local sources, the path is normalised lexically so that semantically
+/// identical paths written in different forms (e.g. `./docs` vs `docs`, or
+/// `/abs/path/../docs` vs `/abs/docs`) produce the same key.
+fn intake_key(source: &Source) -> String {
+    match source {
+        Source::Git(g) => g.url.clone(),
+        Source::Local(l) => normalize_path_key(&l.path),
+        Source::Url(u) => u.url.clone(),
+    }
+}
+
+/// Normalise a local filesystem path into a canonical string key.
+///
+/// Resolves `.` (current-directory) and `..` (parent-directory) components
+/// **lexically** — without touching the filesystem — so that
+/// `./docs`, `docs`, and `some/../docs` all produce the same key.
+///
+/// This is intentionally a lexical operation: the path need not exist on disk
+/// at validation time, and callers should not expect symlinks or mount-points
+/// to be resolved.
+fn normalize_path_key(path: &Path) -> String {
+    lexically_normalize_path(path).display().to_string()
+}
+
+fn normalize_path_components(path: &Path) -> PathBuf {
+    let mut parts: Vec<Component<'_>> = Vec::new();
+    let absolute_path = path.is_absolute();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {} // "." — drop silently
+            Component::ParentDir => {
+                // ".." — pop the last normal segment if present; otherwise
+                // retain the ".." so that `../../foo` stays meaningful.
+                match parts.last() {
+                    Some(Component::Normal(_)) => {
+                        parts.pop();
+                    }
+                    Some(Component::RootDir) => {}
+                    Some(Component::Prefix(_)) if absolute_path => {}
+                    _ => parts.push(component),
+                }
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.into_iter().collect()
+}
+
+/// Lexically normalise a path by resolving `.` and `..` components without
+/// touching the filesystem.
+///
+/// Unlike `normalize_path_key`, this function returns a `PathBuf` so that
+/// callers can use `starts_with` for containment checks rather than comparing
+/// display strings.
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    normalize_path_components(path)
+}
+
+/// Resolve the effective database path for a source given the base DB path.
+///
+/// When `database` is `None`, the source uses `base_db_path` as-is.  When
+/// `database` is set, the source uses `base_db_path.parent() / database_name`,
+/// mirroring the `source_db_path` logic in the `graphtor-docs` binary.
+#[must_use]
+pub fn resolve_source_db_path(base_db_path: &Path, source: &Source) -> PathBuf {
+    source.database().map_or_else(
+        || base_db_path.to_path_buf(),
+        |database| {
+            base_db_path
+                .parent()
+                .map_or_else(|| PathBuf::from(database), |parent| parent.join(database))
+        },
+    )
+}
+
+#[derive(Debug)]
+struct PreparedLocalSource {
+    id: String,
+    db_path: PathBuf,
+    root_path: PathBuf,
+    root_key: String,
+    root_exists: bool,
+}
+
+#[derive(Debug, Default)]
+struct LocalFileState {
+    evaluated: bool,
+    files: Option<HashSet<PathBuf>>,
+}
+
+#[derive(Debug)]
+struct EnumeratedLocalFiles {
+    files: HashSet<PathBuf>,
+    complete: bool,
+}
+
+fn resolve_local_source_root(local_path: &Path, workspace_root: &Path) -> PathBuf {
+    if local_path.is_absolute() {
+        local_path.to_path_buf()
+    } else {
+        workspace_root.join(local_path)
+    }
+}
+
+fn prepare_local_source(
+    local_src: &LocalSource,
+    id: String,
+    db_path: PathBuf,
+    workspace_root: &Path,
+) -> Result<PreparedLocalSource, GraphtorError> {
+    let resolved_root = resolve_local_source_root(&local_src.path, workspace_root);
+    let normalized_root = lexically_normalize_path(&resolved_root);
+    let normalized_workspace_root = lexically_normalize_path(workspace_root);
+    if !normalized_root.starts_with(&normalized_workspace_root) {
+        return Err(GraphtorError::PathViolation {
+            attempted: resolved_root,
+            allowed_root: workspace_root.to_path_buf(),
+        });
+    }
+
+    Ok(PreparedLocalSource {
+        id,
+        db_path,
+        root_path: normalized_root.clone(),
+        root_key: normalize_path_key(&normalized_root),
+        root_exists: normalized_root.exists(),
+    })
+}
+
+fn local_roots_may_overlap(left: &Path, right: &Path) -> bool {
+    let left = lexically_normalize_path(left);
+    let right = lexically_normalize_path(right);
+    left.starts_with(&right) || right.starts_with(&left)
+}
+
+fn local_overlap_key(left: &PreparedLocalSource, right: &PreparedLocalSource) -> String {
+    if left.root_path == right.root_path {
+        left.root_key.clone()
+    } else {
+        format!(
+            "overlapping local files between '{}' and '{}'",
+            left.root_key, right.root_key
+        )
+    }
+}
+
+fn format_conflicts(conflicts: Vec<(String, PathBuf)>) -> Vec<(String, String)> {
+    conflicts
+        .into_iter()
+        .map(|(id, db)| {
+            let db_name = db
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string();
+            (id, db_name)
+        })
+        .collect()
+}
+
+fn ensure_local_files(
+    index: usize,
+    prepared: &PreparedLocalSource,
+    local_sources: &[(&LocalSource, String, PathBuf)],
+    local_file_states: &mut [LocalFileState],
+) -> Result<(), GraphtorError> {
+    let state = &mut local_file_states[index];
+    if state.evaluated {
+        return Ok(());
+    }
+
+    state.files = if prepared.root_exists {
+        let (local_src, _, _) = &local_sources[index];
+        let enumerated = enumerate_and_filter_local(&prepared.root_path, local_src)?;
+        if enumerated.complete {
+            Some(enumerated.files)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    state.evaluated = true;
+    Ok(())
+}
+
+/// Build an optional [`GlobSet`] from a slice of pattern strings.
+///
+/// Returns `None` when `patterns` is empty (interpreted as "match all" for
+/// include, or "match none" for exclude, by the caller).
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Config`] for any syntactically invalid pattern.
+fn build_preflight_glob_set(
+    patterns: &[String],
+    source_id: &str,
+) -> Result<Option<GlobSet>, GraphtorError> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        let glob = Glob::new(pattern).map_err(|e| GraphtorError::Config {
+            message: format!("invalid glob pattern '{pattern}' in source '{source_id}': {e}"),
+            field: Some("include/exclude".to_string()),
+        })?;
+        builder.add(glob);
+    }
+    let set = builder.build().map_err(|e| GraphtorError::Config {
+        message: format!("failed to compile glob set for source '{source_id}': {e}"),
+        field: Some("include/exclude".to_string()),
+    })?;
+    Ok(Some(set))
+}
+
+/// Convert a path to a forward-slash string for cross-platform glob matching.
+fn path_to_preflight_fwd_slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Enumerate files in a local source directory and apply include/exclude
+/// filters.
+///
+/// Returns absolute [`PathBuf`]s for files that pass the filters, along with a
+/// completeness flag that indicates whether `WalkDir` traversed the entire tree
+/// without errors.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Config`] if any glob pattern cannot be compiled.
+fn enumerate_and_filter_local(
+    root: &Path,
+    source: &LocalSource,
+) -> Result<EnumeratedLocalFiles, GraphtorError> {
+    let include_set = build_preflight_glob_set(&source.include, &source.id)?;
+    let exclude_set = build_preflight_glob_set(&source.exclude, &source.id)?;
+    let mut complete = true;
+    let mut files = HashSet::new();
+
+    for entry in WalkDir::new(root).follow_links(false) {
+        let Ok(entry) = entry else {
+            complete = false;
+            continue;
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let Ok(rel) = entry.path().strip_prefix(root) else {
+            complete = false;
+            continue;
+        };
+
+        let rel_str = path_to_preflight_fwd_slash(rel);
+        let included = match &include_set {
+            None => true,
+            Some(set) => set.is_match(&rel_str),
+        };
+        if !included {
+            continue;
+        }
+        if matches!(&exclude_set, Some(set) if set.is_match(&rel_str)) {
+            continue;
+        }
+
+        files.insert(entry.path().to_path_buf());
+    }
+
+    Ok(EnumeratedLocalFiles { files, complete })
 }
 
 #[cfg(test)]
@@ -442,6 +946,606 @@ mod tests {
         assert!(
             msg.contains("path separators"),
             "must mention separators: {msg}"
+        );
+    }
+
+    // ── T040.003: DuplicateIntakeReport ──────────────────────────────────────
+
+    fn git_with_db(id: &str, url: &str, db: &str) -> Source {
+        Source::Git(GitSource {
+            id: id.to_string(),
+            url: url.to_string(),
+            branch: "main".to_string(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some(db.to_string()),
+        })
+    }
+
+    fn local_with_db(id: &str, path: &str, db: &str) -> Source {
+        Source::Local(LocalSource {
+            id: id.to_string(),
+            path: std::path::PathBuf::from(path),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: Some(db.to_string()),
+        })
+    }
+
+    #[test]
+    fn duplicate_report_empty_when_no_conflicts() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo-a.git", "alpha.db"),
+                git_with_db("b", "https://github.com/example/repo-b.git", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(report.is_empty(), "no duplicates expected");
+    }
+
+    #[test]
+    fn duplicate_report_detects_cross_db_git_url_conflict() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo.git", "alpha.db"),
+                git_with_db("b", "https://github.com/example/repo.git", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(!report.is_empty(), "cross-db git url should be reported");
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(
+            report.entries[0].intake_key,
+            "https://github.com/example/repo.git"
+        );
+        assert_eq!(report.entries[0].conflicts.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_report_detects_cross_db_local_path_conflict() {
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "/shared/docs", "alpha.db"),
+                local_with_db("b", "/shared/docs", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(!report.is_empty(), "cross-db local path should be reported");
+        assert_eq!(report.entries.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_report_allows_same_db_duplicates() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo.git", "shared.db"),
+                git_with_db("b", "https://github.com/example/repo.git", "shared.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            report.is_empty(),
+            "same-db duplicates must not be flagged: {report}"
+        );
+    }
+
+    // ── T040.004: DuplicateIntakeReport Display ───────────────────────────────
+
+    #[test]
+    fn duplicate_report_display_is_human_readable() {
+        let config = SourceConfig {
+            sources: vec![
+                git_with_db("a", "https://github.com/example/repo.git", "alpha.db"),
+                git_with_db("b", "https://github.com/example/repo.git", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        let display = report.to_string();
+        assert!(
+            display.contains("cross-database"),
+            "display must describe the conflict type: {display}"
+        );
+        assert!(
+            display.contains("https://github.com/example/repo.git"),
+            "display must include the intake key: {display}"
+        );
+        assert!(
+            display.contains("alpha.db") && display.contains("beta.db"),
+            "display must include database names: {display}"
+        );
+    }
+
+    #[test]
+    fn duplicate_report_display_shows_default_for_missing_database() {
+        let config = SourceConfig {
+            sources: vec![
+                git("url-src-a"),
+                Source::Git(GitSource {
+                    id: "url-src-b".to_string(),
+                    url: "https://github.com/example/repo.git".to_string(),
+                    branch: "main".to_string(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("other.db".to_string()),
+                }),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        let display = report.to_string();
+        assert!(
+            display.contains("<default>"),
+            "display must use '<default>' for missing database field: {display}"
+        );
+    }
+
+    // ── T040.001: local-path normalization in duplicate detection ────────────
+
+    #[test]
+    fn duplicate_report_normalizes_dotslash_local_paths() {
+        // "./docs" and "docs" are the same directory — must be detected as a
+        // cross-database duplicate.
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "./docs", "alpha.db"),
+                local_with_db("b", "docs", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            !report.is_empty(),
+            "'./docs' and 'docs' must be detected as the same intake key: {report}"
+        );
+    }
+
+    #[test]
+    fn duplicate_report_normalizes_parent_dir_in_absolute_paths() {
+        // "/abs/path/../docs" and "/abs/docs" resolve to the same directory.
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "/abs/path/../docs", "alpha.db"),
+                local_with_db("b", "/abs/docs", "beta.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            !report.is_empty(),
+            "lexically equivalent absolute paths must be detected as the same intake key: {report}"
+        );
+    }
+
+    #[test]
+    fn duplicate_report_same_path_different_writing_same_db_is_not_flagged() {
+        // Same logical path, same database — redundant but not a cross-db conflict.
+        let config = SourceConfig {
+            sources: vec![
+                local_with_db("a", "./docs", "shared.db"),
+                local_with_db("b", "docs", "shared.db"),
+            ],
+        };
+        let report = DuplicateIntakeReport::detect(&config);
+        assert!(
+            report.is_empty(),
+            "same-db duplicates (even via different path forms) must not be flagged: {report}"
+        );
+    }
+
+    #[test]
+    fn normalize_path_key_strips_leading_dot_slash() {
+        assert_eq!(
+            normalize_path_key(Path::new("./docs")),
+            normalize_path_key(Path::new("docs"))
+        );
+    }
+
+    #[test]
+    fn normalize_path_key_resolves_parent_dir_component() {
+        assert_eq!(
+            normalize_path_key(Path::new("/abs/path/../docs")),
+            normalize_path_key(Path::new("/abs/docs"))
+        );
+    }
+
+    #[test]
+    fn normalize_path_key_drops_parent_dir_at_absolute_root() {
+        assert_eq!(
+            normalize_path_key(Path::new("/../docs")),
+            normalize_path_key(Path::new("/docs"))
+        );
+        assert_eq!(
+            lexically_normalize_path(Path::new("/../docs")),
+            lexically_normalize_path(Path::new("/docs"))
+        );
+    }
+
+    #[test]
+    fn normalize_path_key_preserves_unresolvable_parent_dirs() {
+        // Leading ".." cannot be resolved without cwd — distinct paths must
+        // remain distinct so that "../../foo" and "../../bar" don't collide.
+        let a = normalize_path_key(Path::new("../../foo"));
+        let b = normalize_path_key(Path::new("../../bar"));
+        assert_ne!(a, b, "distinct unresolvable paths must stay distinct");
+    }
+
+    // ── T040.007: detect_with_context ─────────────────────────────────────
+
+    /// Same local root, different DBs, DISJOINT include globs — must NOT flag.
+    ///
+    /// Source A covers `docs/**/*.md`, source B covers `api/**/*.md`. The
+    /// files they index do not overlap, so no conflict should be reported.
+    #[test]
+    fn detect_with_context_disjoint_local_globs_different_dbs_not_conflict() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::create_dir_all(root.join("api")).unwrap();
+        std::fs::write(root.join("docs/README.md"), b"# docs").unwrap();
+        std::fs::write(root.join("api/reference.md"), b"# api").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "docs-src".to_string(),
+                    path: root.to_path_buf(),
+                    include: vec!["docs/**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "api-src".to_string(),
+                    path: root.to_path_buf(),
+                    include: vec!["api/**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = PathBuf::from("/workspace/.graphtor/graph.db");
+        let report = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root))
+            .expect("detect_with_context should not error");
+
+        assert!(
+            report.is_empty(),
+            "disjoint local include globs must not be flagged as a conflict: {report}"
+        );
+    }
+
+    /// Same local root, different DBs, OVERLAPPING include globs — must flag.
+    ///
+    /// Source A includes `**/*.md` (matches everything), source B includes
+    /// `api/**/*.md`. Both match `api/reference.md`, so a conflict must be
+    /// reported.
+    #[test]
+    fn detect_with_context_overlapping_local_globs_different_dbs_is_conflict() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("api")).unwrap();
+        std::fs::write(root.join("api/reference.md"), b"# api ref").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "all-src".to_string(),
+                    path: root.to_path_buf(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "api-src".to_string(),
+                    path: root.to_path_buf(),
+                    include: vec!["api/**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = PathBuf::from("/workspace/.graphtor/graph.db");
+        let report = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root))
+            .expect("detect_with_context should not error");
+
+        assert!(
+            !report.is_empty(),
+            "overlapping local include globs across different DBs must be flagged: {report}"
+        );
+    }
+
+    #[test]
+    fn detect_with_context_ancestor_descendant_local_roots_is_conflict() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path();
+        let docs = root.join("docs");
+        let api = docs.join("api");
+        std::fs::create_dir_all(&api).unwrap();
+        std::fs::write(docs.join("guide.md"), b"# guide").unwrap();
+        std::fs::write(api.join("reference.md"), b"# api").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "docs-src".to_string(),
+                    path: docs.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "api-src".to_string(),
+                    path: api.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let report = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root))
+            .expect("detect_with_context should not error");
+
+        assert!(
+            !report.is_empty(),
+            "ancestor/descendant local roots with shared files must be flagged: {report}"
+        );
+    }
+
+    #[test]
+    fn detect_with_context_ancestor_descendant_local_roots_disjoint_files_not_conflict() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path();
+        let docs = root.join("docs");
+        let api = docs.join("api");
+        let guides = docs.join("guides");
+        std::fs::create_dir_all(&api).unwrap();
+        std::fs::create_dir_all(&guides).unwrap();
+        std::fs::write(api.join("reference.md"), b"# api").unwrap();
+        std::fs::write(guides.join("guide.md"), b"# guide").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "guides-src".to_string(),
+                    path: docs.clone(),
+                    include: vec!["guides/**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "api-src".to_string(),
+                    path: api.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let report = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root))
+            .expect("detect_with_context should not error");
+
+        assert!(
+            report.is_empty(),
+            "ancestor/descendant local roots with disjoint files must not be flagged: {report}"
+        );
+    }
+
+    // ── T040.008: conservative fallback for non-existent local roots ─────────
+
+    /// When any local source root is non-existent or unreadable, `detect_with_context`
+    /// must fall back conservatively and flag the pair as a conflict.
+    ///
+    /// `WalkDir` silently yields zero entries for a non-existent directory, which
+    /// would produce an empty file set and a false negative (no overlap detected).
+    /// The conservative path ensures correctness when the intake cannot be enumerated.
+    #[test]
+    fn detect_with_context_nonexistent_local_root_flags_conservatively() {
+        let nonexistent =
+            PathBuf::from("/workspace/this/path/does/not/exist/graphtor_test_d2e9f1a3");
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "src-a".to_string(),
+                    path: nonexistent.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "src-b".to_string(),
+                    path: nonexistent.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = PathBuf::from("/workspace/.graphtor/graph.db");
+        let workspace_root = PathBuf::from("/workspace");
+        let report =
+            DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(&workspace_root))
+                .expect("detect_with_context must not error on non-existent roots");
+
+        assert!(
+            !report.is_empty(),
+            "non-existent local root must be flagged conservatively: {report}"
+        );
+    }
+
+    /// `database: null` and `database: "graph.db"` (explicit default basename)
+    /// both resolve to the same physical path — must NOT be flagged.
+    #[test]
+    fn detect_with_context_null_db_and_explicit_default_basename_are_same_db() {
+        let config = SourceConfig {
+            sources: vec![
+                Source::Git(GitSource {
+                    id: "src-null-db".to_string(),
+                    url: "https://github.com/example/repo.git".to_string(),
+                    branch: "main".to_string(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: None,
+                }),
+                Source::Git(GitSource {
+                    id: "src-explicit-default".to_string(),
+                    url: "https://github.com/example/repo.git".to_string(),
+                    branch: "main".to_string(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("graph.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = PathBuf::from("/workspace/.graphtor/graph.db");
+        let report = DuplicateIntakeReport::detect_with_context(&config, &base_db, None)
+            .expect("detect_with_context should not error");
+
+        assert!(
+            report.is_empty(),
+            "`database: null` and `database: \"graph.db\"` must not be flagged when they resolve to the same path: {report}"
+        );
+    }
+
+    // ── T040.010: workspace containment in detect_with_context ──────────────
+
+    /// Local source whose path escapes `workspace_root` must produce a
+    /// `PathViolation` error — never silently enumerate files outside the
+    /// workspace boundary.
+    #[test]
+    fn detect_with_context_local_path_escaping_workspace_returns_path_violation() {
+        use tempfile::TempDir;
+        let workspace = TempDir::new().expect("tempdir");
+        let root = workspace.path();
+
+        // Construct a path that escapes the workspace via ".." traversal.
+        let outside = root.join("../../outside_graphtor_test");
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "escape-a".to_string(),
+                    path: outside.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "escape-b".to_string(),
+                    path: outside.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let result = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root));
+
+        assert!(
+            result.is_err(),
+            "local source escaping workspace must return Err, got Ok: {result:?}"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, GraphtorError::PathViolation { .. }),
+            "expected PathViolation, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn detect_with_context_single_local_path_escaping_workspace_returns_path_violation() {
+        use tempfile::TempDir;
+        let workspace = TempDir::new().expect("tempdir");
+        let root = workspace.path();
+        let outside = root.join("../../outside_graphtor_test_single");
+
+        let config = SourceConfig {
+            sources: vec![Source::Local(LocalSource {
+                id: "escape-only".to_string(),
+                path: outside,
+                include: vec![],
+                exclude: vec![],
+                formats: vec![],
+                database: Some("alpha.db".to_string()),
+            })],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let result = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root));
+
+        assert!(
+            result.is_err(),
+            "single escaping local source must return Err, got Ok: {result:?}"
+        );
+        assert!(
+            matches!(result.unwrap_err(), GraphtorError::PathViolation { .. }),
+            "single escaping source must still trigger PathViolation"
+        );
+    }
+
+    /// Local source path within `workspace_root` must not produce an error.
+    #[test]
+    fn detect_with_context_local_path_within_workspace_does_not_error() {
+        use tempfile::TempDir;
+        let workspace = TempDir::new().expect("tempdir");
+        let root = workspace.path();
+
+        let shared = root.join("shared");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("file.md"), b"# file").unwrap();
+
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(LocalSource {
+                    id: "in-a".to_string(),
+                    path: shared.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("alpha.db".to_string()),
+                }),
+                Source::Local(LocalSource {
+                    id: "in-b".to_string(),
+                    path: shared.clone(),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec![],
+                    database: Some("beta.db".to_string()),
+                }),
+            ],
+        };
+
+        let base_db = root.join(".graphtor/graph.db");
+        let result = DuplicateIntakeReport::detect_with_context(&config, &base_db, Some(root));
+        assert!(
+            result.is_ok(),
+            "local source within workspace must not error: {result:?}"
         );
     }
 }
