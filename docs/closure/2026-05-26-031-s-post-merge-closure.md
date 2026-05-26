@@ -156,7 +156,7 @@ path escape, or loses backlog archive traceability for `031-S`.
 ## Rollback Procedure
 
 ```text
-git revert 295518da2bc131ec3c3a40915fe0282ea2e6f5ed
+git revert -m 1 295518da2bc131ec3c3a40915fe0282ea2e6f5ed
 backlogit sync --cwd .
 ```
 
