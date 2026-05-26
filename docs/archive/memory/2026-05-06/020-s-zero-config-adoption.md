@@ -1,10 +1,13 @@
-# Session Memory — 020-S Zero-Config Adoption & Composite Research Tool
+---
+type: session-memory
+timestamp: 2026-05-06T00:00:00Z
+shipment: 020-S
+pr: "https://github.com/softwaresalt/graphtor-docs/pull/35"
+branch: feat/zero-config-adoption
+status: shipped
+---
 
-**Date:** 2026-05-06  
-**Shipment:** 020-S  
-**PR:** #35 — https://github.com/softwaresalt/graphtor-docs/pull/35  
-**Branch:** feat/zero-config-adoption  
-**Status:** Shipped ✅
+# Session Memory — 020-S Zero-Config Adoption & Composite Research Tool
 
 ---
 

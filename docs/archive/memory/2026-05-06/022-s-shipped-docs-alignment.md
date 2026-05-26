@@ -1,9 +1,14 @@
-# Session Memory: 022-S Docs Alignment Shipped
+---
+type: session-memory
+timestamp: 2026-05-06T00:00:00Z
+agent: Ship
+shipment: 022-S
+feature: 031-F
+pr: "https://github.com/softwaresalt/graphtor-docs/pull/37"
+status: shipped
+---
 
-**Date:** 2026-05-06  
-**Shipment:** 022-S — Documentation alignment (CLI, MCP tools, README, AGENTS)  
-**PR:** #37 (merged to main at `df78386`)  
-**Feature:** 031-F | Tasks: 031.001-T – 031.004-T
+# Session Memory: 022-S Docs Alignment Shipped
 
 ---
 

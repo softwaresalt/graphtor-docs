@@ -1,4 +1,7 @@
 ---
+type: compacted-memory
+agent: ship
+timestamp: 2026-05-26T00:00:00Z
 title: "Compacted Memory: 025-S v0.2.0 release shipment"
 date: 2026-05-26
 shipment: 025-S

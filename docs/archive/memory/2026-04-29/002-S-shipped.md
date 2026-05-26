@@ -1,8 +1,12 @@
-# Shipment 002-S — Core Data Layer — FULLY CLOSED
+---
+type: session-memory
+timestamp: 2026-04-29T00:00:00Z
+shipment: 002-S
+status: fully-closed
+outcome: All features delivered, verified, and archived
+---
 
-**Date:** 2026-04-29  
-**Outcome:** All features delivered, verified, and archived  
-**Commits:** `8026045`, `28eee5e`, `7dca7d7`, `b6e4fa8` (pushed to `main`)
+# Shipment 002-S — Core Data Layer — FULLY CLOSED
 
 ## Features Delivered
 
@@ -30,7 +34,7 @@ Features 005-F (LanceDB) and 006-F (Kùzu) were blocked and removed from shipmen
 
 ## Modules Delivered
 
-```
+```text
 src/db/mod.rs       — re-exports DataStore
 src/db/store.rs     — DataStore, open(), open_memory()
 src/db/schema.rs    — DDL for 9 relations, SCHEMA_VERSION, ensure_schema()

@@ -1,10 +1,14 @@
-# Session Memory — Ship 009-S: MCP Tool Surface Expansion
+---
+type: session-memory
+timestamp: 2026-05-01T00:00:00Z
+agent: Ship
+shipment: 009-S
+feature: 017-F
+pr: "https://github.com/softwaresalt/graphtor-docs/pull/15"
+status: shipped
+---
 
-**Date:** 2026-05-01
-**Agent:** Ship
-**Shipment:** 009-S
-**Feature:** 017-F
-**PR:** #15 (merged at 8611445)
+# Session Memory — Ship 009-S: MCP Tool Surface Expansion
 
 ## Outcome
 
