@@ -16,6 +16,46 @@ graphtor-docs resolves the config path in this order:
 
 Run `graphtor-docs init` to generate a starter file at the default location.
 
+## Multi-file layout
+
+You can split your source registry across multiple files by using the
+`*.sources.yaml` naming convention. Place each file under
+`.graphtor/config/`:
+
+```text
+.graphtor/config/
+  azure.sources.yaml
+  internal-runbooks.sources.yaml
+  web.sources.yaml
+```
+
+graphtor-docs discovers all `*.sources.yaml` files in that directory,
+sorts them alphabetically, and merges them into a single source registry
+before running any pipeline stage.
+
+When any `*.sources.yaml` file is present, the legacy `sources.yaml`
+fallback is ignored. In multi-file mode every source entry must include
+an explicit `database` field so routing is unambiguous.
+
+> [!TIP]
+> Use multi-file layout when separate teams or products own different
+> source groups. Each file is independently editable and reviewable.
+
+## Auto-generated stub
+
+When any command loads config via `load_source_config` and finds an existing
+database file but no source configuration, graphtor-docs writes a minimal stub
+at `.graphtor/config/sources.yaml` containing only `sources: []`.
+
+This prevents background sync from triggering on a database that was
+imported without a configuration. The stub is written only when:
+
+* The database file exists, **and**
+* Neither `sources.yaml` nor any `*.sources.yaml` file is present in
+  `.graphtor/config/`
+
+The stub is never overwritten once any source configuration exists.
+
 ## File Format
 
 ```yaml
