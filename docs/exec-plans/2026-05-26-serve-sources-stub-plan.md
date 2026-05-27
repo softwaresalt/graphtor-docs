@@ -38,7 +38,7 @@ skip workspace auto-discovery and background sync.
 that:
 1. Checks if any `*.sources.yaml` or `sources.yaml` exists in `config_dir` - if yes, returns `None`.
 2. Checks if `data_dir` contains at least one `*.db` file - if not, returns `None`.
-3. Creates `config_dir` (`mkdir_all`) and writes `sources: []\n` to `config_dir/sources.yaml`.
+3. Creates `config_dir` (`std::fs::create_dir_all`) and writes `sources: []\n` to `config_dir/sources.yaml`.
 4. Returns `Ok(Some(path))` pointing to the generated stub.
 
 **Acceptance**:
