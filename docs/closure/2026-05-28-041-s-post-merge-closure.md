@@ -65,10 +65,17 @@ Quality gate summary:
 
 ## Review readiness
 
-The closure branch is ready for PR review, but it is not merge-ready until:
+Closure PR: [#66](https://github.com/softwaresalt/graphtor-docs/pull/66)
 
-* the closure PR is created
-* Copilot review is requested on that PR
+Current state:
+
+* CI has started on PR #66
+* Copilot review was requested on PR #66 through the GitHub review-request API
+
+The closure PR is not merge-ready until:
+
+* CI completes successfully or the operator accepts any existing repository-level blocker
+* Copilot review completes on the current PR HEAD
 * the operator reviews the PR and approves the merge
 
 ## Source artifact cleanup record

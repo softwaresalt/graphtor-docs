@@ -32,8 +32,6 @@ status: in-review
 
 ## Next steps
 
-* review the closure diff
-* commit and push the closure branch
-* create the closure PR
-* request Copilot review on the closure PR
+* watch PR #66 CI
+* wait for Copilot review on PR #66
 * wait for operator approval before any merge
