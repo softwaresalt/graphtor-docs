@@ -45,7 +45,10 @@ use graphtor_core::{
         execute as acquire_execute, plan as acquire_plan, AcquisitionPlan, PlannedSource,
         SourceAction,
     },
-    config::{discover_source_files, load_multi_file_config, DuplicateIntakeReport, SourceConfig},
+    config::{
+        discover_source_files, ensure_sources_stub, load_multi_file_config, DuplicateIntakeReport,
+        SourceConfig,
+    },
     db::{list_sources, DataStore},
     init_logging,
     pipeline::FileError,
@@ -167,7 +170,9 @@ fn build_workspace_source_config(cwd: &std::path::Path) -> SourceConfig {
 /// 1. `config_override` is `Some` and the file exists → load and parse it.
 /// 2. `config_override` is `Some` and the file **does not** exist → return `Ok(None)`
 ///    so the caller can surface an appropriate error.
-/// 3. `config_override` is `None` and the default path exists → load it.
+/// 3. `config_override` is `None` → call [`ensure_sources_stub`] to auto-generate
+///    `.graphtor/config/sources.yaml` when `db_path` exists but no config is present,
+///    then discover source files.
 /// 4. `config_override` is `None` and the default path is missing → auto-discover
 ///    the workspace (`build_workspace_source_config`).
 ///
@@ -178,6 +183,7 @@ fn build_workspace_source_config(cwd: &std::path::Path) -> SourceConfig {
 /// Returns `Err` only when a file exists but cannot be read or parsed (always fatal).
 fn load_source_config(
     cwd: &std::path::Path,
+    db_path: &std::path::Path,
     config_override: Option<&std::path::Path>,
 ) -> anyhow::Result<Option<SourceConfig>> {
     if let Some(path) = config_override {
@@ -193,6 +199,12 @@ fn load_source_config(
     }
 
     let config_dir = cwd.join(".graphtor/config");
+
+    // Auto-generate a stub when an imported DB exists but no sources yaml is present.
+    // This prevents workspace auto-discovery from triggering background sync.
+    ensure_sources_stub(&config_dir, db_path)
+        .with_context(|| format!("failed to ensure sources stub in {}", config_dir.display()))?;
+
     let files = discover_source_files(&config_dir)
         .with_context(|| format!("failed to read config dir {}", config_dir.display()))?;
 
@@ -281,17 +293,18 @@ fn cmd_sync(
     fmt: OutputFormat,
 ) -> anyhow::Result<i32> {
     // Resolve source config: explicit override → default path → workspace auto-discovery.
-    let source_config: SourceConfig = if let Some(cfg) = load_source_config(cwd, config_override)? {
-        cfg
-    } else {
-        // Only reachable when config_override is Some but the file does not exist.
-        let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
-        eprintln!(
-            "error: source registry config not found at {}",
-            path.display()
-        );
-        return Ok(2);
-    };
+    let source_config: SourceConfig =
+        if let Some(cfg) = load_source_config(cwd, db_path, config_override)? {
+            cfg
+        } else {
+            // Only reachable when config_override is Some but the file does not exist.
+            let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
+            eprintln!(
+                "error: source registry config not found at {}",
+                path.display()
+            );
+            return Ok(2);
+        };
 
     if source_config.sources.is_empty() {
         warn!("source registry config contains no sources; nothing to sync");
@@ -705,7 +718,7 @@ async fn cmd_serve(
     cwd: &std::path::Path,
     config_override: Option<&std::path::Path>,
 ) -> anyhow::Result<i32> {
-    let source_config_result = load_source_config(cwd, config_override);
+    let source_config_result = load_source_config(cwd, db_path, config_override);
     let db_paths = match &source_config_result {
         Ok(Some(source_config)) => discover_db_files(db_path, source_config),
         Ok(None) => {
@@ -823,7 +836,7 @@ fn discover_status_db_paths(
     cwd: &std::path::Path,
     config_override: Option<&std::path::Path>,
 ) -> Option<Vec<PathBuf>> {
-    match load_source_config(cwd, config_override) {
+    match load_source_config(cwd, db_path, config_override) {
         Ok(Some(source_config)) => Some(discover_db_files(db_path, &source_config)),
         Ok(None) => {
             let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
@@ -1319,13 +1332,14 @@ fn cmd_prewarm(
     config_override: Option<&std::path::Path>,
     args: &cli::prewarm::PrewarmArgs,
 ) -> anyhow::Result<i32> {
-    let source_config: SourceConfig = if let Some(cfg) = load_source_config(cwd, config_override)? {
-        cfg
-    } else {
-        let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
-        eprintln!("error: sources.yaml not found at {}", path.display());
-        return Ok(2);
-    };
+    let source_config: SourceConfig =
+        if let Some(cfg) = load_source_config(cwd, db_path, config_override)? {
+            cfg
+        } else {
+            let path = config_override.unwrap_or_else(|| std::path::Path::new("(unknown)"));
+            eprintln!("error: sources.yaml not found at {}", path.display());
+            return Ok(2);
+        };
 
     if source_config.sources.is_empty() {
         warn!("sources.yaml contains no sources; nothing to prewarm");
@@ -1621,8 +1635,11 @@ mod tests {
     fn load_source_config_returns_auto_discovery_when_default_missing() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cwd = tmp.path();
-        // No sources.yaml in tmp directory — should auto-discover.
-        let result = load_source_config(cwd, None).expect("load_source_config should succeed");
+        // No sources.yaml in tmp directory, and the imported-db stub should not
+        // trigger because the expected database file is missing.
+        let db_path = cwd.join("graph.db");
+        let result =
+            load_source_config(cwd, &db_path, None).expect("load_source_config should succeed");
         let cfg = result.expect("should return Some config for auto-discovery");
         assert_eq!(cfg.sources.len(), 1, "auto-discovery returns one source");
         assert!(matches!(cfg.sources[0], Source::Local(_)));
@@ -1631,8 +1648,9 @@ mod tests {
     #[test]
     fn load_source_config_returns_none_for_explicit_missing_override() {
         let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("graph.db"); // does not exist
         let missing = tmp.path().join("nonexistent.yaml");
-        let result = load_source_config(tmp.path(), Some(&missing))
+        let result = load_source_config(tmp.path(), &db_path, Some(&missing))
             .expect("should not error for missing override");
         assert!(
             result.is_none(),
