@@ -1635,8 +1635,9 @@ mod tests {
     fn load_source_config_returns_auto_discovery_when_default_missing() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cwd = tmp.path();
-        let db_path = cwd.join("graph.db"); // does not exist — stub not triggered
-                                            // No sources.yaml in tmp directory — should auto-discover.
+        // No sources.yaml in tmp directory, and the imported-db stub should not
+        // trigger because the expected database file is missing.
+        let db_path = cwd.join("graph.db");
         let result =
             load_source_config(cwd, &db_path, None).expect("load_source_config should succeed");
         let cfg = result.expect("should return Some config for auto-discovery");
