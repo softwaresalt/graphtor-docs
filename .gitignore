@@ -100,7 +100,7 @@ tmp/
 .autoharness/backups/
 
 # graphtor workspace runtime (databases, state, cloned data)
-.graphtor/graph.db
+.graphtor/*.db
 .graphtor/sync_state.json
 .graphtor/data/
 .graphtor/bin/
