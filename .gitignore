@@ -41,6 +41,7 @@ celerybeat.pid
 .env
 .envrc
 .venv
+.sandbox/
 env/
 venv/
 ENV/

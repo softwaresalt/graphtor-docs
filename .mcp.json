@@ -24,11 +24,6 @@
       "args": ["-y", "@upstash/context7-mcp"],
       "tools": ["*"]
     },
-    "microsoft-docs": {
-      "type": "http",
-      "url": "https://learn.microsoft.com/api/mcp",
-      "tools": ["*"]
-    },
     "agent-intercom": {
       "type": "stdio",
       "command": "npx",
@@ -37,8 +32,12 @@
     },
     "tavily": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}"]
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "if ([string]::IsNullOrWhiteSpace($env:TAVILY_API_KEY)) { throw 'TAVILY_API_KEY is not set.' }; npx -y tavily-mcp@latest"
+      ]
     },
     "github": {
       "type": "stdio",
