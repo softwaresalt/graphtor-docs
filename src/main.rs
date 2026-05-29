@@ -50,6 +50,7 @@ use graphtor_core::{
         SourceConfig,
     },
     db::{list_sources, DataStore},
+    embed::{resolve_embedding_model, ResolverCaller},
     init_logging,
     pipeline::FileError,
     resolve_source_db_path,
@@ -342,18 +343,10 @@ fn cmd_sync(
     let plan = acquire_plan::plan(&source_config, &data_root, cwd)
         .context("failed to build acquisition plan")?;
 
-    // Optionally load the embedding model.
-    let model: Option<EmbeddingModel> = if args.no_embed {
-        None
-    } else {
-        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
-            Ok(m) => Some(m),
-            Err(e) => {
-                warn!(error = %e, "embedding model unavailable; proceeding without embeddings");
-                None
-            }
-        }
-    };
+    // Load the embedding model via the shared resolver (sync/serve/prewarm parity).
+    let model: Option<EmbeddingModel> =
+        resolve_embedding_model(ResolverCaller::Sync, args.no_embed)
+            .context("embedding model resolution failed")?;
 
     let started_at = Instant::now();
     let mut total_metrics = SyncMetrics::default();
@@ -493,12 +486,19 @@ fn run_incremental_sync<F>(
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
     mut on_source_start: F,
+    emit_file_progress: bool,
 ) -> SyncMetrics
 where
     F: FnMut(&str, usize, usize),
 {
     let started_at = Instant::now();
     info!(sources = plan.sources.len(), "starting incremental sync");
+    if emit_file_progress {
+        eprintln!(
+            "[sync] starting incremental sync ({} source(s))",
+            plan.sources.len()
+        );
+    }
 
     let acq_result = acquire_execute(plan, false);
     if acq_result.failed > 0 {
@@ -527,6 +527,10 @@ where
 
         on_source_start(source_id, index + 1, total_sources);
 
+        if emit_file_progress {
+            eprintln!("[sync] source {}/{}: {source_id}", index + 1, total_sources);
+        }
+
         if !source_dir.exists() {
             warn!(
                 source_id,
@@ -537,6 +541,21 @@ where
             continue;
         }
 
+        let source_id_owned = source_id.to_string();
+        let mut file_cb = |path: &std::path::Path, idx: usize, total: usize| {
+            let file_name = path.file_name().map_or_else(
+                || path.to_string_lossy().into_owned(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let pct = (idx * 100).checked_div(total).unwrap_or(0);
+            eprintln!("[sync] {source_id_owned}: {file_name} ({idx}/{total}) [{pct}%]");
+        };
+        let progress: graphtor_core::sync::ProgressCallback<'_> = if emit_file_progress {
+            Some(&mut file_cb)
+        } else {
+            None
+        };
+
         match sync_source(
             store,
             &planned.source,
@@ -544,7 +563,7 @@ where
             &state_path,
             &plan.allowed_root,
             model,
-            None,
+            progress,
         ) {
             Ok(result) => merge_sync_metrics(&mut total_metrics, &result),
             Err(e) => {
@@ -559,6 +578,12 @@ where
     }
 
     total_metrics.duration_ms = elapsed_millis(started_at);
+    if emit_file_progress {
+        eprintln!(
+            "[sync] incremental sync complete: {} files processed, {} chunks loaded, {} errors",
+            total_metrics.files_synced, total_metrics.chunks_created, total_metrics.errors
+        );
+    }
     total_metrics
 }
 
@@ -586,9 +611,26 @@ fn cmd_sync_full(
         batch_size = args.batch_size,
         "starting full sync"
     );
+    eprintln!(
+        "[sync-full] starting full sync: {} source(s), batch_size={}",
+        plan.sources.len(),
+        args.batch_size
+    );
+
+    // The pipeline executes acquire → parse → embed → load as one call; we
+    // announce the combined stages around it so operators see progress
+    // bracketing rather than long silent waits. Per-file granularity within
+    // the pipeline is owned by the pipeline module itself.
+    for stage in ["acquire", "parse", "embed", "load"] {
+        eprintln!("[sync-full] stage-start: {stage}");
+    }
 
     let result = graphtor_core::pipeline::run(plan, store, model, &pipeline_config)
         .context("pipeline execution failed")?;
+
+    for stage in ["acquire", "parse", "embed", "load"] {
+        eprintln!("[sync-full] stage-complete: {stage}");
+    }
 
     let error_count = result.errors_encountered.len();
     let metrics = SyncMetrics {
@@ -600,6 +642,11 @@ fn cmd_sync_full(
         duration_ms: elapsed_millis(started_at),
         errors: error_count,
     };
+
+    eprintln!(
+        "[sync-full] complete: {} documents, {} chunks, {} errors ({} ms)",
+        metrics.files_synced, metrics.chunks_created, metrics.errors, metrics.duration_ms
+    );
 
     Ok(FullSyncResult {
         metrics,
@@ -614,7 +661,14 @@ fn cmd_sync_incremental(
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
 ) -> SyncMetrics {
-    run_incremental_sync(db_path, store, plan, model, |_source, _current, _total| {})
+    run_incremental_sync(
+        db_path,
+        store,
+        plan,
+        model,
+        |_source, _current, _total| {},
+        true,
+    )
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────
@@ -683,6 +737,7 @@ fn spawn_background_sync(
                             total: total_sources,
                         };
                     },
+                    false,
                 );
 
                 completed_sources += group_source_count;
@@ -750,21 +805,9 @@ async fn cmd_serve(
         readonly_stores_by_db.push((target_db_path, readonly_store));
     }
 
-    // Optionally load the embedding model for semantic search.
-    let model: Option<EmbeddingModel> =
-        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
-            Ok(m) => {
-                info!("embedding model loaded; semantic search enabled");
-                Some(m)
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "embedding model unavailable; semantic search disabled"
-                );
-                None
-            }
-        };
+    // Load the embedding model for semantic search via the shared resolver.
+    let model: Option<EmbeddingModel> = resolve_embedding_model(ResolverCaller::Serve, false)
+        .context("embedding model resolution failed")?;
 
     // Resolve source config (same auto-discovery logic as cmd_sync) and spawn
     // a background incremental sync task if a config is available.
@@ -1354,17 +1397,9 @@ fn cmd_prewarm(
     let plan = acquire_plan::plan(&source_config, &data_root, cwd)
         .context("failed to build acquisition plan")?;
 
-    let model: Option<EmbeddingModel> = if args.no_embed {
-        None
-    } else {
-        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
-            Ok(m) => Some(m),
-            Err(e) => {
-                warn!(error = %e, "embedding model unavailable; proceeding without embeddings");
-                None
-            }
-        }
-    };
+    let model: Option<EmbeddingModel> =
+        resolve_embedding_model(ResolverCaller::Prewarm, args.no_embed)
+            .context("embedding model resolution failed")?;
 
     let started_at = Instant::now();
     let acq_result = acquire_execute(&plan, false);

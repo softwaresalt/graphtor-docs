@@ -402,18 +402,16 @@ fn process_batch(
                     // file instead of crashing the whole binary.
                     let path_for_parse = path_str.clone();
                     let path_for_err = path_str.clone();
-                    std::panic::catch_unwind(move || {
-                        parse_pdf_document(&bytes, &path_for_parse)
-                    })
-                    .unwrap_or_else(|_| {
-                        Err(GraphtorError::Parse {
-                            message: "pdf-extract panicked (malformed or unsupported PDF \
+                    std::panic::catch_unwind(move || parse_pdf_document(&bytes, &path_for_parse))
+                        .unwrap_or_else(|_| {
+                            Err(GraphtorError::Parse {
+                                message: "pdf-extract panicked (malformed or unsupported PDF \
                                       content; likely an empty glyph array or corrupted \
                                       font table)"
-                                .to_string(),
-                            path: Some(path_for_err.into()),
+                                    .to_string(),
+                                path: Some(path_for_err.into()),
+                            })
                         })
-                    })
                 }),
             "docx" => std::fs::read(file)
                 .map_err(GraphtorError::Io)
