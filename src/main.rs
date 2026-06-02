@@ -34,8 +34,9 @@ mod workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use clap::Parser as _;
@@ -54,7 +55,7 @@ use graphtor_core::{
     init_logging,
     pipeline::FileError,
     resolve_source_db_path,
-    sync::{elapsed_millis, sync_source, SyncMetrics},
+    sync::{elapsed_millis, sync_source, SyncMetrics, SyncProgressEvent, SyncProgressStatus},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
 use tracing::{error, info, warn};
@@ -480,6 +481,224 @@ fn emit_sync_output(
     i32::from(metrics.errors != 0)
 }
 
+const SYNC_PROGRESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+
+struct PeriodicHeartbeat {
+    stop_tx: mpsc::Sender<()>,
+    join_handle: thread::JoinHandle<()>,
+}
+
+impl PeriodicHeartbeat {
+    fn spawn<F>(interval: Duration, mut on_tick: F) -> Self
+    where
+        F: FnMut(Duration) + Send + 'static,
+    {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let join_handle = thread::spawn(move || {
+            let started_at = Instant::now();
+            loop {
+                match stop_rx.recv_timeout(interval) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => on_tick(started_at.elapsed()),
+                }
+            }
+        });
+        Self {
+            stop_tx,
+            join_handle,
+        }
+    }
+
+    fn stop(self) {
+        let _ = self.stop_tx.send(());
+        let _ = self.join_handle.join();
+    }
+}
+
+struct SyncProgressHeartbeat {
+    inner: PeriodicHeartbeat,
+}
+
+impl SyncProgressHeartbeat {
+    fn start(
+        tag: &'static str,
+        source_id: String,
+        file_path: String,
+        current: usize,
+        total: usize,
+    ) -> Self {
+        let pct = sync_progress_percent(current, total);
+        let inner = PeriodicHeartbeat::spawn(SYNC_PROGRESS_HEARTBEAT_INTERVAL, move |elapsed| {
+            eprintln!(
+                "{tag} {source_id}: still processing {file_path} ({current}/{total}) [{pct}%] elapsed {}",
+                format_sync_duration(elapsed)
+            );
+        });
+        Self { inner }
+    }
+
+    fn stop(self) {
+        self.inner.stop();
+    }
+}
+
+struct CliSyncProgressReporter {
+    tag: &'static str,
+    source_id: String,
+    enabled: bool,
+    heartbeat: Option<SyncProgressHeartbeat>,
+}
+
+impl CliSyncProgressReporter {
+    fn new(tag: &'static str, source_id: impl Into<String>, enabled: bool) -> Self {
+        Self {
+            tag,
+            source_id: source_id.into(),
+            enabled,
+            heartbeat: None,
+        }
+    }
+
+    fn handle_event(&mut self, event: SyncProgressEvent) {
+        if !self.enabled {
+            return;
+        }
+
+        let SyncProgressEvent {
+            path,
+            current,
+            total,
+            size_bytes,
+            status,
+        } = event;
+        let file_path = display_sync_path(&path);
+        let pct = sync_progress_percent(current, total);
+
+        match status {
+            SyncProgressStatus::Started => {
+                self.finish();
+                let size_suffix = size_bytes
+                    .map(|size| format!(" {}", format_sync_file_size(size)))
+                    .unwrap_or_default();
+                eprintln!(
+                    "{} {}: processing {file_path} ({current}/{total}) [{pct}%]{}",
+                    self.tag, self.source_id, size_suffix
+                );
+                self.heartbeat = Some(SyncProgressHeartbeat::start(
+                    self.tag,
+                    self.source_id.clone(),
+                    file_path,
+                    current,
+                    total,
+                ));
+            }
+            SyncProgressStatus::Completed {
+                elapsed,
+                chunks_created,
+            } => {
+                self.finish();
+                eprintln!(
+                    "{} {}: completed {file_path} ({current}/{total}) [{pct}%] in {} ({} chunk(s))",
+                    self.tag,
+                    self.source_id,
+                    format_sync_duration(elapsed),
+                    chunks_created
+                );
+            }
+            SyncProgressStatus::Failed { elapsed, error } => {
+                self.finish();
+                eprintln!(
+                    "{} {}: failed {file_path} ({current}/{total}) [{pct}%] after {}: {error}",
+                    self.tag,
+                    self.source_id,
+                    format_sync_duration(elapsed)
+                );
+            }
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Some(active) = self.heartbeat.take() {
+            active.stop();
+        }
+    }
+}
+
+fn sync_progress_percent(current: usize, total: usize) -> usize {
+    current
+        .checked_mul(100)
+        .unwrap_or(0)
+        .checked_div(total)
+        .unwrap_or(0)
+}
+
+fn display_sync_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn format_sync_file_size(size_bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    fn format_scaled(size_bytes: u64, unit_size: u64, unit: &str) -> String {
+        let whole = size_bytes / unit_size;
+        let tenth = ((size_bytes % unit_size) * 10) / unit_size;
+        format!("{whole}.{tenth} {unit}")
+    }
+
+    if size_bytes >= GIB {
+        format_scaled(size_bytes, GIB, "GiB")
+    } else if size_bytes >= MIB {
+        format_scaled(size_bytes, MIB, "MiB")
+    } else if size_bytes >= KIB {
+        format_scaled(size_bytes, KIB, "KiB")
+    } else {
+        format!("{size_bytes} B")
+    }
+}
+
+fn format_sync_duration(duration: Duration) -> String {
+    if duration.as_secs() >= 3600 {
+        let hours = duration.as_secs() / 3600;
+        let minutes = (duration.as_secs() % 3600) / 60;
+        let seconds = duration.as_secs() % 60;
+        format!("{hours}h{minutes:02}m{seconds:02}s")
+    } else if duration.as_secs() >= 60 {
+        let minutes = duration.as_secs() / 60;
+        let seconds = duration.as_secs() % 60;
+        format!("{minutes}m{seconds:02}s")
+    } else if duration.as_secs() >= 1 {
+        format!("{}.{:03}s", duration.as_secs(), duration.subsec_millis())
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
+}
+
+#[cfg(test)]
+mod sync_progress_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::PeriodicHeartbeat;
+
+    #[test]
+    fn periodic_heartbeat_emits_ticks_before_stop() {
+        let tick_count = Arc::new(AtomicUsize::new(0));
+        let on_tick = Arc::clone(&tick_count);
+        let heartbeat = PeriodicHeartbeat::spawn(Duration::from_millis(1), move |_elapsed| {
+            on_tick.fetch_add(1, Ordering::Relaxed);
+        });
+        std::thread::sleep(Duration::from_millis(25));
+        heartbeat.stop();
+        assert!(
+            tick_count.load(Ordering::Relaxed) > 0,
+            "heartbeat should emit at least one tick before stop"
+        );
+    }
+}
+
 fn run_incremental_sync<F>(
     db_path: &std::path::Path,
     store: &DataStore,
@@ -541,30 +760,34 @@ where
             continue;
         }
 
-        let source_id_owned = source_id.to_string();
-        let mut file_cb = |path: &std::path::Path, idx: usize, total: usize| {
-            let file_name = path.file_name().map_or_else(
-                || path.to_string_lossy().into_owned(),
-                |n| n.to_string_lossy().into_owned(),
-            );
-            let pct = (idx * 100).checked_div(total).unwrap_or(0);
-            eprintln!("[sync] {source_id_owned}: {file_name} ({idx}/{total}) [{pct}%]");
-        };
-        let progress: graphtor_core::sync::ProgressCallback<'_> = if emit_file_progress {
-            Some(&mut file_cb)
-        } else {
-            None
+        let source_result = {
+            let mut reporter =
+                CliSyncProgressReporter::new("[sync]", source_id, emit_file_progress);
+            let mut file_cb = |event: SyncProgressEvent| {
+                reporter.handle_event(event);
+            };
+            let result = {
+                let progress: graphtor_core::sync::ProgressCallback<'_> = if emit_file_progress {
+                    Some(&mut file_cb)
+                } else {
+                    None
+                };
+
+                sync_source(
+                    store,
+                    &planned.source,
+                    source_dir,
+                    &state_path,
+                    &plan.allowed_root,
+                    model,
+                    progress,
+                )
+            };
+            reporter.finish();
+            result
         };
 
-        match sync_source(
-            store,
-            &planned.source,
-            source_dir,
-            &state_path,
-            &plan.allowed_root,
-            model,
-            progress,
-        ) {
+        match source_result {
             Ok(result) => merge_sync_metrics(&mut total_metrics, &result),
             Err(e) => {
                 warn!(
@@ -1482,27 +1705,26 @@ fn prewarm_sync_source(
         return None;
     }
 
-    let source_id_cb = source_id.clone();
-    let mut file_cb = |path: &std::path::Path, idx: usize, total: usize| {
-        if !quiet {
-            let file_name = path.file_name().map_or_else(
-                || path.to_string_lossy().into_owned(),
-                |n| n.to_string_lossy().into_owned(),
-            );
-            let pct = (idx * 100).checked_div(total).unwrap_or(0);
-            eprintln!("[syncing] {source_id_cb}: {file_name} ({idx}/{total}) [{pct}%]");
-        }
+    let mut reporter = CliSyncProgressReporter::new("[syncing]", source_id.clone(), !quiet);
+    let mut file_cb = |event: SyncProgressEvent| {
+        reporter.handle_event(event);
     };
 
-    match sync_source(
-        store,
-        &planned.source,
-        source_dir,
-        state_path,
-        allowed_root,
-        model,
-        Some(&mut file_cb),
-    ) {
+    let result = {
+        let progress: graphtor_core::sync::ProgressCallback<'_> = Some(&mut file_cb);
+        sync_source(
+            store,
+            &planned.source,
+            source_dir,
+            state_path,
+            allowed_root,
+            model,
+            progress,
+        )
+    };
+    reporter.finish();
+
+    match result {
         Ok(m) => Some(m),
         Err(e) => {
             warn!(

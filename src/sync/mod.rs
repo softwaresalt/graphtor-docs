@@ -22,22 +22,59 @@ pub use mtime_diff::{compute_mtime_diff, scan_mtimes};
 pub use reingest::{delete_file_data, reingest_file};
 pub use state::{SourceSyncState, SyncState};
 
-use std::path::Path;
-use std::time::Instant;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tracing::{info, info_span, warn};
 
+use crate::acquire::filter_files;
 use crate::config::Source;
 use crate::db::nodes::{upsert_source, SourceRecord};
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
+use crate::parse::{is_supported_document_extension, normalized_document_extension};
 use crate::DataStore;
 
+/// Lifecycle state for a per-file sync progress event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncProgressStatus {
+    /// A file is about to be re-ingested.
+    Started,
+    /// A file finished re-ingestion successfully.
+    Completed {
+        /// Wall-clock time spent re-ingesting the file.
+        elapsed: Duration,
+        /// Number of chunks created while processing the file.
+        chunks_created: usize,
+    },
+    /// A file failed during re-ingestion.
+    Failed {
+        /// Wall-clock time spent before the failure occurred.
+        elapsed: Duration,
+        /// Human-readable error surfaced by the parser / loader pipeline.
+        error: String,
+    },
+}
+
+/// Structured per-file sync progress reporting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncProgressEvent {
+    /// Source-relative path to the file being processed.
+    pub path: PathBuf,
+    /// One-based index of the current file.
+    pub current: usize,
+    /// Total number of files scheduled for re-ingestion.
+    pub total: usize,
+    /// Source file size, when metadata is available.
+    pub size_bytes: Option<u64>,
+    /// Lifecycle state for this file.
+    pub status: SyncProgressStatus,
+}
+
 /// Callback type for per-file sync progress reporting.
-///
-/// Called once per file during re-ingestion with `(path, current, total)`.
-pub type ProgressCallback<'a> = Option<&'a mut dyn FnMut(&Path, usize, usize)>;
+pub type ProgressCallback<'a> = Option<&'a mut dyn FnMut(SyncProgressEvent)>;
 
 /// Sync a single documentation source against its current on-disk state.
 ///
@@ -45,7 +82,7 @@ pub type ProgressCallback<'a> = Option<&'a mut dyn FnMut(&Path, usize, usize)>;
 ///
 /// ### First run (no stored state for this source)
 ///
-/// All Markdown files in the source directory are treated as newly added.  The
+/// All tracked files in the source directory are treated as newly added.  The
 /// pipeline re-ingests every file and persists the resulting state.
 ///
 /// ### Incremental run (stored state found)
@@ -66,10 +103,10 @@ pub type ProgressCallback<'a> = Option<&'a mut dyn FnMut(&Path, usize, usize)>;
 ///
 /// ## `on_progress`
 ///
-/// When `Some`, the callback is invoked once for each file that is re-ingested
-/// (added or modified).  The callback receives `(path, current, total)` where
-/// `path` is the source-relative file path, `current` is the 1-based index of
-/// the current file, and `total` is the total number of files to re-ingest.
+/// When `Some`, the callback is invoked for per-file lifecycle events while a
+/// file is re-ingested. The callback receives the source-relative file path,
+/// the 1-based file index, total file count, optional file size metadata, and
+/// whether the file started, completed, or failed.
 ///
 /// ## Errors
 ///
@@ -124,7 +161,8 @@ pub fn sync_source(
                 .as_ref()
                 .map(|s| &s.file_mtimes)
                 .map_or_else(Default::default, Clone::clone);
-            compute_mtime_diff(source_dir, &stored_mtimes)?
+            let current_mtimes = scan_tracked_source_mtimes(source, source_dir)?;
+            mtime_diff::diff_mtimes(&current_mtimes, &stored_mtimes)
         }
         Source::Url(_) => {
             // URL sources: treat all crawled files as mtime-tracked, same as local.
@@ -132,7 +170,8 @@ pub fn sync_source(
                 .as_ref()
                 .map(|s| &s.file_mtimes)
                 .map_or_else(Default::default, Clone::clone);
-            compute_mtime_diff(source_dir, &stored_mtimes)?
+            let current_mtimes = scan_tracked_source_mtimes(source, source_dir)?;
+            mtime_diff::diff_mtimes(&current_mtimes, &stored_mtimes)
         }
     };
 
@@ -203,14 +242,37 @@ pub fn sync_source(
         .map(std::path::PathBuf::as_path)
         .enumerate()
     {
-        if let Some(cb) = on_progress.as_mut() {
-            cb(path, idx + 1, ingest_total);
-        }
         let abs_path = source_dir.join(path);
+        let current = idx + 1;
+        let size_bytes = abs_path.metadata().ok().map(|metadata| metadata.len());
+
+        if let Some(cb) = on_progress.as_mut() {
+            cb(SyncProgressEvent {
+                path: path.to_path_buf(),
+                current,
+                total: ingest_total,
+                size_bytes,
+                status: SyncProgressStatus::Started,
+            });
+        }
+
+        let file_started_at = Instant::now();
         match reingest_file(store, source_id, &abs_path, source_dir, root, model) {
             Ok(n) => {
                 metrics.files_synced += 1;
                 metrics.chunks_created += n;
+                if let Some(cb) = on_progress.as_mut() {
+                    cb(SyncProgressEvent {
+                        path: path.to_path_buf(),
+                        current,
+                        total: ingest_total,
+                        size_bytes,
+                        status: SyncProgressStatus::Completed {
+                            elapsed: file_started_at.elapsed(),
+                            chunks_created: n,
+                        },
+                    });
+                }
             }
             Err(e) => {
                 warn!(
@@ -219,12 +281,24 @@ pub fn sync_source(
                     "reingest failed; continuing"
                 );
                 metrics.errors += 1;
+                if let Some(cb) = on_progress.as_mut() {
+                    cb(SyncProgressEvent {
+                        path: path.to_path_buf(),
+                        current,
+                        total: ingest_total,
+                        size_bytes,
+                        status: SyncProgressStatus::Failed {
+                            elapsed: file_started_at.elapsed(),
+                            error: e.to_string(),
+                        },
+                    });
+                }
             }
         }
     }
 
     // ── Persist updated state ──────────────────────────────────────────────
-    let new_source_state = build_new_state(source, source_dir, stored.as_ref());
+    let new_source_state = build_new_state(source, source_dir, stored.as_ref())?;
     *sync_state.source_mut(source_id) = new_source_state;
     sync_state.save(state_path, root)?;
 
@@ -276,7 +350,7 @@ fn build_new_state(
     source: &Source,
     source_dir: &Path,
     _stored: Option<&SourceSyncState>,
-) -> SourceSyncState {
+) -> Result<SourceSyncState, GraphtorError> {
     let now = chrono_now();
     match source {
         Source::Git(_) => {
@@ -285,31 +359,63 @@ fn build_new_state(
                 let target = repo.head().ok()?.target()?;
                 Some(target.to_string())
             });
-            SourceSyncState {
+            Ok(SourceSyncState {
                 last_commit,
                 file_mtimes: std::collections::HashMap::new(),
                 last_sync: Some(now),
-            }
+            })
         }
         Source::Local(_) => {
             // Scan current mtimes to record the new baseline.
-            let file_mtimes = scan_mtimes(source_dir).unwrap_or_default();
-            SourceSyncState {
+            let file_mtimes = scan_tracked_source_mtimes(source, source_dir)?;
+            Ok(SourceSyncState {
                 last_commit: None,
                 file_mtimes,
                 last_sync: Some(now),
-            }
+            })
         }
         Source::Url(_) => {
             // URL sources: track by mtime, same as local sources.
-            let file_mtimes = scan_mtimes(source_dir).unwrap_or_default();
-            SourceSyncState {
+            let file_mtimes = scan_tracked_source_mtimes(source, source_dir)?;
+            Ok(SourceSyncState {
                 last_commit: None,
                 file_mtimes,
                 last_sync: Some(now),
-            }
+            })
         }
     }
+}
+
+fn scan_tracked_source_mtimes(
+    source: &Source,
+    source_dir: &Path,
+) -> Result<HashMap<String, u64>, GraphtorError> {
+    let all_mtimes = scan_mtimes(source_dir)?;
+    let relative_paths: Vec<PathBuf> = all_mtimes.keys().map(PathBuf::from).collect();
+    let tracked_paths: HashSet<String> =
+        filter_files(&relative_paths, source.include(), source.exclude())?
+            .into_iter()
+            .filter(|path| is_tracked_source_path(source, path))
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+
+    Ok(all_mtimes
+        .into_iter()
+        .filter(|(path, _)| tracked_paths.contains(path))
+        .collect())
+}
+
+fn is_tracked_source_path(source: &Source, relative_path: &Path) -> bool {
+    let Some(ext) = normalized_document_extension(relative_path) else {
+        return false;
+    };
+
+    is_supported_document_extension(&ext)
+        && (source.formats().is_empty()
+            || source
+                .formats()
+                .iter()
+                .any(|format| format.eq_ignore_ascii_case(&ext)))
 }
 
 /// Convert a captured [`Instant`] to elapsed milliseconds, clamped to at least 1.
@@ -343,7 +449,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::sync_source;
+    use super::{sync_source, SyncProgressStatus};
     use crate::config::source::LocalSource;
     use crate::db::ensure_schema;
     use crate::{DataStore, Source};
@@ -375,9 +481,9 @@ mod tests {
             database: None,
         });
 
-        let mut call_count: usize = 0;
-        let mut cb = |_path: &std::path::Path, _idx: usize, _total: usize| {
-            call_count += 1;
+        let mut progress_events = Vec::new();
+        let mut cb = |event| {
+            progress_events.push(event);
         };
 
         let metrics = sync_source(
@@ -392,9 +498,52 @@ mod tests {
         .expect("sync with progress callback");
 
         assert_eq!(
-            call_count, 3,
-            "callback should fire once per file; got {call_count}"
+            progress_events.len(),
+            6,
+            "callback should fire start and completion events per file; got {progress_events:#?}"
         );
+        let mut per_file = std::collections::BTreeMap::new();
+        let mut observed_indices = std::collections::BTreeSet::new();
+        for event in &progress_events {
+            let file_name = event
+                .path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .expect("progress event filename")
+                .to_string();
+            let entry = per_file.entry(file_name).or_insert_with(Vec::new);
+            entry.push((event.current, &event.status));
+            observed_indices.insert(event.current);
+            assert_eq!(event.total, 3, "unexpected total in event: {event:#?}");
+        }
+        assert_eq!(
+            observed_indices,
+            std::collections::BTreeSet::from([1, 2, 3]),
+            "expected one progress index per file; got {progress_events:#?}"
+        );
+        for index in 0..3 {
+            let expected_name = format!("doc{index}.md");
+            let Some(events) = per_file.get(expected_name.as_str()) else {
+                panic!("missing progress events for {expected_name}: {progress_events:#?}");
+            };
+            assert_eq!(
+                events.len(),
+                2,
+                "expected two events for {expected_name}: {events:#?}"
+            );
+            assert!(
+                matches!(events[0].1, SyncProgressStatus::Started),
+                "expected start event first for {expected_name}: {events:#?}"
+            );
+            assert!(
+                matches!(events[1].1, SyncProgressStatus::Completed { .. }),
+                "expected completion event second for {expected_name}: {events:#?}"
+            );
+            assert_eq!(
+                events[0].0, events[1].0,
+                "expected start/completion indices to match for {expected_name}: {events:#?}"
+            );
+        }
         assert_eq!(metrics.files_synced, 3, "metrics: {metrics:?}");
     }
 

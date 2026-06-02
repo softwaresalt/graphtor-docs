@@ -1,8 +1,8 @@
 //! Local file modification-time change detection.
 //!
 //! Compares current filesystem mtimes against stored values to identify which
-//! Markdown files have been added, modified, or deleted since the last sync
-//! of a local directory source.
+//! tracked files have been added, modified, or deleted since the last sync of
+//! a local directory source.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,10 +34,19 @@ pub fn compute_mtime_diff<S: std::hash::BuildHasher>(
     stored_mtimes: &std::collections::HashMap<String, u64, S>,
 ) -> Result<ChangedFiles, GraphtorError> {
     let current = scan_mtimes(source_root)?;
+    Ok(diff_mtimes(&current, stored_mtimes))
+}
+
+/// Compare a current mtime map against a stored mtime map.
+#[must_use]
+pub fn diff_mtimes<C: std::hash::BuildHasher, S: std::hash::BuildHasher>(
+    current: &HashMap<String, u64, C>,
+    stored_mtimes: &HashMap<String, u64, S>,
+) -> ChangedFiles {
     let mut result = ChangedFiles::default();
 
     // Added and modified.
-    for (rel_path, &current_mtime) in &current {
+    for (rel_path, &current_mtime) in current {
         match stored_mtimes.get(rel_path) {
             None => result.added.push(PathBuf::from(rel_path)),
             Some(&stored_mtime) if current_mtime > stored_mtime => {
@@ -60,11 +69,11 @@ pub fn compute_mtime_diff<S: std::hash::BuildHasher>(
         deleted = result.deleted.len(),
         "mtime diff computed"
     );
-    Ok(result)
+    result
 }
 
 /// Recursively scan `root` and return a map of relative path → mtime (seconds
-/// since the Unix epoch) for all Markdown files.
+/// since the Unix epoch) for all regular files.
 ///
 /// Keys use forward-slash separators on all platforms.
 ///
@@ -79,9 +88,6 @@ pub fn scan_mtimes(root: &Path) -> Result<HashMap<String, u64>, GraphtorError> {
             continue;
         }
         let path = entry.path();
-        if !is_markdown(path) {
-            continue;
-        }
         let rel = path
             .strip_prefix(root)
             .map_err(|e| GraphtorError::Pipeline {
@@ -108,12 +114,6 @@ pub fn scan_mtimes(root: &Path) -> Result<HashMap<String, u64>, GraphtorError> {
         result.insert(rel.to_string_lossy().replace('\\', "/"), mtime);
     }
     Ok(result)
-}
-
-fn is_markdown(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
 #[cfg(test)]
@@ -195,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn non_markdown_files_are_ignored() {
+    fn non_markdown_files_are_tracked() {
         let dir = temp_dir();
         fs::write(dir.path().join("readme.txt"), "text").expect("write");
         fs::write(dir.path().join("script.rs"), "fn main() {}").expect("write");
@@ -203,6 +203,8 @@ mod tests {
         let stored: HashMap<String, u64> = HashMap::new();
         let diff = compute_mtime_diff(dir.path(), &stored).expect("diff");
 
-        assert!(diff.is_empty(), "non-markdown files should be ignored");
+        assert_eq!(diff.added.len(), 2, "all regular files should be tracked");
+        assert!(diff.modified.is_empty());
+        assert!(diff.deleted.is_empty());
     }
 }

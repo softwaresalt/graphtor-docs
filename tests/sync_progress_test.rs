@@ -16,7 +16,7 @@ fn graphtor_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_graphtor-docs"))
 }
 
-/// Incremental sync emits `[sync]` progress lines on stderr.
+/// Incremental sync emits start and completion progress lines on stderr.
 #[test]
 fn sync_incremental_emits_stderr_progress() {
     let workspace = tempfile::tempdir().expect("tempdir");
@@ -51,6 +51,14 @@ fn sync_incremental_emits_stderr_progress() {
     assert!(
         stderr.contains("starting incremental sync"),
         "stderr should announce sync start; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("processing guide.md (1/1) [100%]"),
+        "stderr should announce file processing start; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("completed guide.md (1/1) [100%]"),
+        "stderr should announce file processing completion; got: {stderr}"
     );
 }
 
