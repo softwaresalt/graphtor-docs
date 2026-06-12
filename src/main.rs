@@ -58,6 +58,7 @@ use graphtor_core::{
     sync::{elapsed_millis, sync_source, SyncMetrics, SyncProgressEvent, SyncProgressStatus},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
+use std::any::Any;
 use tracing::{error, info, warn};
 
 use cli::{Cli, Command, OutputFormat};
@@ -511,7 +512,23 @@ impl PeriodicHeartbeat {
 
     fn stop(self) {
         let _ = self.stop_tx.send(());
-        let _ = self.join_handle.join();
+        if let Err(panic) = self.join_handle.join() {
+            warn!(
+                panic = %thread_panic_message(panic.as_ref()),
+                "periodic heartbeat thread panicked"
+            );
+        }
+    }
+}
+
+#[must_use]
+fn thread_panic_message(panic: &(dyn Any + Send)) -> String {
+    if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = panic.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else {
+        "unknown panic payload".to_string()
     }
 }
 
@@ -677,11 +694,57 @@ fn format_sync_duration(duration: Duration) -> String {
 
 #[cfg(test)]
 mod sync_progress_tests {
+    use std::io;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
     use super::PeriodicHeartbeat;
+
+    struct TestLogWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl io::Write for TestLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.output
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn capture_warn_logs<F>(operation: F) -> String
+    where
+        F: FnOnce(),
+    {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer({
+                let output = Arc::clone(&output);
+                move || TestLogWriter {
+                    output: Arc::clone(&output),
+                }
+            })
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, operation);
+
+        let bytes = output
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+
+        String::from_utf8(bytes).expect("tracing output should be valid utf-8")
+    }
 
     #[test]
     fn periodic_heartbeat_emits_ticks_before_stop() {
@@ -695,6 +758,32 @@ mod sync_progress_tests {
         assert!(
             tick_count.load(Ordering::Relaxed) > 0,
             "heartbeat should emit at least one tick before stop"
+        );
+    }
+
+    #[test]
+    fn periodic_heartbeat_logs_warning_when_thread_panics() {
+        let (tick_tx, tick_rx) = mpsc::sync_channel(1);
+
+        let logs = capture_warn_logs(|| {
+            let heartbeat = PeriodicHeartbeat::spawn(Duration::from_millis(1), move |_elapsed| {
+                let _ = tick_tx.send(());
+                panic!("simulated heartbeat panic");
+            });
+
+            tick_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("heartbeat should tick before timing out");
+            heartbeat.stop();
+        });
+
+        assert!(
+            logs.contains("periodic heartbeat thread panicked"),
+            "expected panic warning in logs, got {logs:?}"
+        );
+        assert!(
+            logs.contains("simulated heartbeat panic"),
+            "expected panic payload in logs, got {logs:?}"
         );
     }
 }

@@ -345,7 +345,8 @@ pub type SyncCycleResult = SyncMetrics;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Build the new [`SourceSyncState`] to persist after a successful sync cycle.
+/// Build the new [`SourceSyncState`] to persist after a completed sync cycle,
+/// including runs that reported non-fatal per-file errors.
 fn build_new_state(
     source: &Source,
     source_dir: &Path,

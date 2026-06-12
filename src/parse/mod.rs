@@ -119,6 +119,26 @@ pub(crate) fn is_supported_document_extension(ext: &str) -> bool {
     matches!(ext, "md" | "pdf" | "docx")
 }
 
+fn parse_pdf_bytes_with_parser<P>(
+    bytes: &[u8],
+    file: &Path,
+    source_path: &str,
+    parser: P,
+) -> Result<ParsedDocument, GraphtorError>
+where
+    P: FnOnce(&[u8], &str) -> Result<ParsedDocument, GraphtorError> + std::panic::UnwindSafe,
+{
+    match std::panic::catch_unwind(|| parser(bytes, source_path)) {
+        Ok(result) => result,
+        Err(_) => Err(GraphtorError::Parse {
+            message: "pdf-extract panicked (malformed or unsupported PDF content; \
+                      likely an empty glyph array or corrupted font table)"
+                .to_string(),
+            path: Some(file.to_path_buf()),
+        }),
+    }
+}
+
 /// Parse a document file by dispatching to the correct format parser.
 ///
 /// `file` is the on-disk path and `source_path` is the source-relative path
@@ -154,17 +174,7 @@ pub fn parse_file(file: &Path, source_path: &str) -> Result<ParsedDocument, Grap
                 path: Some(file.to_path_buf()),
             })?;
 
-            let parse_path = source_path.to_string();
-            let panic_path = source_path.to_string();
-            std::panic::catch_unwind(move || parse_pdf_document(&bytes, &parse_path))
-                .unwrap_or_else(|_| {
-                    Err(GraphtorError::Parse {
-                        message: "pdf-extract panicked (malformed or unsupported PDF content; \
-                                  likely an empty glyph array or corrupted font table)"
-                            .to_string(),
-                        path: Some(panic_path.into()),
-                    })
-                })
+            parse_pdf_bytes_with_parser(&bytes, file, source_path, parse_pdf_document)
         }
         "docx" => {
             let bytes = std::fs::read(file).map_err(|error| GraphtorError::Parse {
@@ -178,5 +188,41 @@ pub fn parse_file(file: &Path, source_path: &str) -> Result<ParsedDocument, Grap
             message: format!("unsupported file extension '{ext}'"),
             path: Some(file.to_path_buf()),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::parse_pdf_bytes_with_parser;
+    use crate::error::GraphtorError;
+
+    #[test]
+    fn pdf_panic_fallback_uses_on_disk_file_path() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("panic.pdf");
+        fs::write(&file, b"%PDF-test").expect("write test pdf");
+
+        let error = parse_pdf_bytes_with_parser(
+            b"%PDF-test",
+            &file,
+            "docs/panic.pdf",
+            |_bytes, _source_path| panic!("simulated parser panic"),
+        )
+        .expect_err("panic should be converted to a parse error");
+
+        assert!(
+            matches!(
+                error,
+                GraphtorError::Parse {
+                    path: Some(ref path),
+                    ..
+                } if path == &file
+            ),
+            "expected panic fallback to use on-disk file path, got {error:?}"
+        );
     }
 }
