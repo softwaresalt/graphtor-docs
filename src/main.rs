@@ -34,8 +34,9 @@ mod workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use clap::Parser as _;
@@ -50,12 +51,14 @@ use graphtor_core::{
         SourceConfig,
     },
     db::{list_sources, DataStore},
+    embed::{resolve_embedding_model, ResolverCaller},
     init_logging,
     pipeline::FileError,
     resolve_source_db_path,
-    sync::{elapsed_millis, sync_source, SyncMetrics},
+    sync::{elapsed_millis, sync_source, SyncMetrics, SyncProgressEvent, SyncProgressStatus},
     EmbeddingModel, LocalSource, LogVerbosity, PipelineConfig, Source,
 };
+use std::any::Any;
 use tracing::{error, info, warn};
 
 use cli::{Cli, Command, OutputFormat};
@@ -342,18 +345,10 @@ fn cmd_sync(
     let plan = acquire_plan::plan(&source_config, &data_root, cwd)
         .context("failed to build acquisition plan")?;
 
-    // Optionally load the embedding model.
-    let model: Option<EmbeddingModel> = if args.no_embed {
-        None
-    } else {
-        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
-            Ok(m) => Some(m),
-            Err(e) => {
-                warn!(error = %e, "embedding model unavailable; proceeding without embeddings");
-                None
-            }
-        }
-    };
+    // Load the embedding model via the shared resolver (sync/serve/prewarm parity).
+    let model: Option<EmbeddingModel> =
+        resolve_embedding_model(ResolverCaller::Sync, args.no_embed)
+            .context("embedding model resolution failed")?;
 
     let started_at = Instant::now();
     let mut total_metrics = SyncMetrics::default();
@@ -487,18 +482,331 @@ fn emit_sync_output(
     i32::from(metrics.errors != 0)
 }
 
+const SYNC_PROGRESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+
+struct PeriodicHeartbeat {
+    stop_tx: mpsc::Sender<()>,
+    join_handle: thread::JoinHandle<()>,
+}
+
+impl PeriodicHeartbeat {
+    fn spawn<F>(interval: Duration, mut on_tick: F) -> Self
+    where
+        F: FnMut(Duration) + Send + 'static,
+    {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let join_handle = thread::spawn(move || {
+            let started_at = Instant::now();
+            loop {
+                match stop_rx.recv_timeout(interval) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => on_tick(started_at.elapsed()),
+                }
+            }
+        });
+        Self {
+            stop_tx,
+            join_handle,
+        }
+    }
+
+    fn stop(self) {
+        let _ = self.stop_tx.send(());
+        if let Err(panic) = self.join_handle.join() {
+            warn!(
+                panic = %thread_panic_message(panic.as_ref()),
+                "periodic heartbeat thread panicked"
+            );
+        }
+    }
+}
+
+#[must_use]
+fn thread_panic_message(panic: &(dyn Any + Send)) -> String {
+    if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = panic.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
+struct SyncProgressHeartbeat {
+    inner: PeriodicHeartbeat,
+}
+
+impl SyncProgressHeartbeat {
+    fn start(
+        tag: &'static str,
+        source_id: String,
+        file_path: String,
+        current: usize,
+        total: usize,
+    ) -> Self {
+        let pct = sync_progress_percent(current, total);
+        let inner = PeriodicHeartbeat::spawn(SYNC_PROGRESS_HEARTBEAT_INTERVAL, move |elapsed| {
+            eprintln!(
+                "{tag} {source_id}: still processing {file_path} ({current}/{total}) [{pct}%] elapsed {}",
+                format_sync_duration(elapsed)
+            );
+        });
+        Self { inner }
+    }
+
+    fn stop(self) {
+        self.inner.stop();
+    }
+}
+
+struct CliSyncProgressReporter {
+    tag: &'static str,
+    source_id: String,
+    enabled: bool,
+    heartbeat: Option<SyncProgressHeartbeat>,
+}
+
+impl CliSyncProgressReporter {
+    fn new(tag: &'static str, source_id: impl Into<String>, enabled: bool) -> Self {
+        Self {
+            tag,
+            source_id: source_id.into(),
+            enabled,
+            heartbeat: None,
+        }
+    }
+
+    fn handle_event(&mut self, event: SyncProgressEvent) {
+        if !self.enabled {
+            return;
+        }
+
+        let SyncProgressEvent {
+            path,
+            current,
+            total,
+            size_bytes,
+            status,
+        } = event;
+        let file_path = display_sync_path(&path);
+        let pct = sync_progress_percent(current, total);
+
+        match status {
+            SyncProgressStatus::Started => {
+                self.finish();
+                let size_suffix = size_bytes
+                    .map(|size| format!(" {}", format_sync_file_size(size)))
+                    .unwrap_or_default();
+                eprintln!(
+                    "{} {}: processing {file_path} ({current}/{total}) [{pct}%]{}",
+                    self.tag, self.source_id, size_suffix
+                );
+                self.heartbeat = Some(SyncProgressHeartbeat::start(
+                    self.tag,
+                    self.source_id.clone(),
+                    file_path,
+                    current,
+                    total,
+                ));
+            }
+            SyncProgressStatus::Completed {
+                elapsed,
+                chunks_created,
+            } => {
+                self.finish();
+                eprintln!(
+                    "{} {}: completed {file_path} ({current}/{total}) [{pct}%] in {} ({} chunk(s))",
+                    self.tag,
+                    self.source_id,
+                    format_sync_duration(elapsed),
+                    chunks_created
+                );
+            }
+            SyncProgressStatus::Failed { elapsed, error } => {
+                self.finish();
+                eprintln!(
+                    "{} {}: failed {file_path} ({current}/{total}) [{pct}%] after {}: {error}",
+                    self.tag,
+                    self.source_id,
+                    format_sync_duration(elapsed)
+                );
+            }
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Some(active) = self.heartbeat.take() {
+            active.stop();
+        }
+    }
+}
+
+fn sync_progress_percent(current: usize, total: usize) -> usize {
+    current
+        .checked_mul(100)
+        .unwrap_or(0)
+        .checked_div(total)
+        .unwrap_or(0)
+}
+
+fn display_sync_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn format_sync_file_size(size_bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    fn format_scaled(size_bytes: u64, unit_size: u64, unit: &str) -> String {
+        let whole = size_bytes / unit_size;
+        let tenth = ((size_bytes % unit_size) * 10) / unit_size;
+        format!("{whole}.{tenth} {unit}")
+    }
+
+    if size_bytes >= GIB {
+        format_scaled(size_bytes, GIB, "GiB")
+    } else if size_bytes >= MIB {
+        format_scaled(size_bytes, MIB, "MiB")
+    } else if size_bytes >= KIB {
+        format_scaled(size_bytes, KIB, "KiB")
+    } else {
+        format!("{size_bytes} B")
+    }
+}
+
+fn format_sync_duration(duration: Duration) -> String {
+    if duration.as_secs() >= 3600 {
+        let hours = duration.as_secs() / 3600;
+        let minutes = (duration.as_secs() % 3600) / 60;
+        let seconds = duration.as_secs() % 60;
+        format!("{hours}h{minutes:02}m{seconds:02}s")
+    } else if duration.as_secs() >= 60 {
+        let minutes = duration.as_secs() / 60;
+        let seconds = duration.as_secs() % 60;
+        format!("{minutes}m{seconds:02}s")
+    } else if duration.as_secs() >= 1 {
+        format!("{}.{:03}s", duration.as_secs(), duration.subsec_millis())
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
+}
+
+#[cfg(test)]
+mod sync_progress_tests {
+    use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    use super::PeriodicHeartbeat;
+
+    struct TestLogWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl io::Write for TestLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.output
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn capture_warn_logs<F>(operation: F) -> String
+    where
+        F: FnOnce(),
+    {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer({
+                let output = Arc::clone(&output);
+                move || TestLogWriter {
+                    output: Arc::clone(&output),
+                }
+            })
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, operation);
+
+        let bytes = output
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+
+        String::from_utf8(bytes).expect("tracing output should be valid utf-8")
+    }
+
+    #[test]
+    fn periodic_heartbeat_emits_ticks_before_stop() {
+        let tick_count = Arc::new(AtomicUsize::new(0));
+        let on_tick = Arc::clone(&tick_count);
+        let heartbeat = PeriodicHeartbeat::spawn(Duration::from_millis(1), move |_elapsed| {
+            on_tick.fetch_add(1, Ordering::Relaxed);
+        });
+        std::thread::sleep(Duration::from_millis(25));
+        heartbeat.stop();
+        assert!(
+            tick_count.load(Ordering::Relaxed) > 0,
+            "heartbeat should emit at least one tick before stop"
+        );
+    }
+
+    #[test]
+    fn periodic_heartbeat_logs_warning_when_thread_panics() {
+        let (tick_tx, tick_rx) = mpsc::sync_channel(1);
+
+        let logs = capture_warn_logs(|| {
+            let heartbeat = PeriodicHeartbeat::spawn(Duration::from_millis(1), move |_elapsed| {
+                let _ = tick_tx.send(());
+                panic!("simulated heartbeat panic");
+            });
+
+            tick_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("heartbeat should tick before timing out");
+            heartbeat.stop();
+        });
+
+        assert!(
+            logs.contains("periodic heartbeat thread panicked"),
+            "expected panic warning in logs, got {logs:?}"
+        );
+        assert!(
+            logs.contains("simulated heartbeat panic"),
+            "expected panic payload in logs, got {logs:?}"
+        );
+    }
+}
+
 fn run_incremental_sync<F>(
     db_path: &std::path::Path,
     store: &DataStore,
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
     mut on_source_start: F,
+    emit_file_progress: bool,
 ) -> SyncMetrics
 where
     F: FnMut(&str, usize, usize),
 {
     let started_at = Instant::now();
     info!(sources = plan.sources.len(), "starting incremental sync");
+    if emit_file_progress {
+        eprintln!(
+            "[sync] starting incremental sync ({} source(s))",
+            plan.sources.len()
+        );
+    }
 
     let acq_result = acquire_execute(plan, false);
     if acq_result.failed > 0 {
@@ -527,6 +835,10 @@ where
 
         on_source_start(source_id, index + 1, total_sources);
 
+        if emit_file_progress {
+            eprintln!("[sync] source {}/{}: {source_id}", index + 1, total_sources);
+        }
+
         if !source_dir.exists() {
             warn!(
                 source_id,
@@ -537,15 +849,34 @@ where
             continue;
         }
 
-        match sync_source(
-            store,
-            &planned.source,
-            source_dir,
-            &state_path,
-            &plan.allowed_root,
-            model,
-            None,
-        ) {
+        let source_result = {
+            let mut reporter =
+                CliSyncProgressReporter::new("[sync]", source_id, emit_file_progress);
+            let mut file_cb = |event: SyncProgressEvent| {
+                reporter.handle_event(event);
+            };
+            let result = {
+                let progress: graphtor_core::sync::ProgressCallback<'_> = if emit_file_progress {
+                    Some(&mut file_cb)
+                } else {
+                    None
+                };
+
+                sync_source(
+                    store,
+                    &planned.source,
+                    source_dir,
+                    &state_path,
+                    &plan.allowed_root,
+                    model,
+                    progress,
+                )
+            };
+            reporter.finish();
+            result
+        };
+
+        match source_result {
             Ok(result) => merge_sync_metrics(&mut total_metrics, &result),
             Err(e) => {
                 warn!(
@@ -559,6 +890,12 @@ where
     }
 
     total_metrics.duration_ms = elapsed_millis(started_at);
+    if emit_file_progress {
+        eprintln!(
+            "[sync] incremental sync complete: {} files processed, {} chunks loaded, {} errors",
+            total_metrics.files_synced, total_metrics.chunks_created, total_metrics.errors
+        );
+    }
     total_metrics
 }
 
@@ -586,9 +923,26 @@ fn cmd_sync_full(
         batch_size = args.batch_size,
         "starting full sync"
     );
+    eprintln!(
+        "[sync-full] starting full sync: {} source(s), batch_size={}",
+        plan.sources.len(),
+        args.batch_size
+    );
+
+    // The pipeline executes acquire → parse → embed → load as one call; we
+    // announce the combined stages around it so operators see progress
+    // bracketing rather than long silent waits. Per-file granularity within
+    // the pipeline is owned by the pipeline module itself.
+    for stage in ["acquire", "parse", "embed", "load"] {
+        eprintln!("[sync-full] stage-start: {stage}");
+    }
 
     let result = graphtor_core::pipeline::run(plan, store, model, &pipeline_config)
         .context("pipeline execution failed")?;
+
+    for stage in ["acquire", "parse", "embed", "load"] {
+        eprintln!("[sync-full] stage-complete: {stage}");
+    }
 
     let error_count = result.errors_encountered.len();
     let metrics = SyncMetrics {
@@ -600,6 +954,11 @@ fn cmd_sync_full(
         duration_ms: elapsed_millis(started_at),
         errors: error_count,
     };
+
+    eprintln!(
+        "[sync-full] complete: {} documents, {} chunks, {} errors ({} ms)",
+        metrics.files_synced, metrics.chunks_created, metrics.errors, metrics.duration_ms
+    );
 
     Ok(FullSyncResult {
         metrics,
@@ -614,7 +973,14 @@ fn cmd_sync_incremental(
     plan: &graphtor_core::acquire::AcquisitionPlan,
     model: Option<&EmbeddingModel>,
 ) -> SyncMetrics {
-    run_incremental_sync(db_path, store, plan, model, |_source, _current, _total| {})
+    run_incremental_sync(
+        db_path,
+        store,
+        plan,
+        model,
+        |_source, _current, _total| {},
+        true,
+    )
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────
@@ -683,6 +1049,7 @@ fn spawn_background_sync(
                             total: total_sources,
                         };
                     },
+                    false,
                 );
 
                 completed_sources += group_source_count;
@@ -750,21 +1117,9 @@ async fn cmd_serve(
         readonly_stores_by_db.push((target_db_path, readonly_store));
     }
 
-    // Optionally load the embedding model for semantic search.
-    let model: Option<EmbeddingModel> =
-        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
-            Ok(m) => {
-                info!("embedding model loaded; semantic search enabled");
-                Some(m)
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "embedding model unavailable; semantic search disabled"
-                );
-                None
-            }
-        };
+    // Load the embedding model for semantic search via the shared resolver.
+    let model: Option<EmbeddingModel> = resolve_embedding_model(ResolverCaller::Serve, false)
+        .context("embedding model resolution failed")?;
 
     // Resolve source config (same auto-discovery logic as cmd_sync) and spawn
     // a background incremental sync task if a config is available.
@@ -1354,17 +1709,9 @@ fn cmd_prewarm(
     let plan = acquire_plan::plan(&source_config, &data_root, cwd)
         .context("failed to build acquisition plan")?;
 
-    let model: Option<EmbeddingModel> = if args.no_embed {
-        None
-    } else {
-        match EmbeddingModel::load("sentence-transformers/all-MiniLM-L6-v2") {
-            Ok(m) => Some(m),
-            Err(e) => {
-                warn!(error = %e, "embedding model unavailable; proceeding without embeddings");
-                None
-            }
-        }
-    };
+    let model: Option<EmbeddingModel> =
+        resolve_embedding_model(ResolverCaller::Prewarm, args.no_embed)
+            .context("embedding model resolution failed")?;
 
     let started_at = Instant::now();
     let acq_result = acquire_execute(&plan, false);
@@ -1447,27 +1794,26 @@ fn prewarm_sync_source(
         return None;
     }
 
-    let source_id_cb = source_id.clone();
-    let mut file_cb = |path: &std::path::Path, idx: usize, total: usize| {
-        if !quiet {
-            let file_name = path.file_name().map_or_else(
-                || path.to_string_lossy().into_owned(),
-                |n| n.to_string_lossy().into_owned(),
-            );
-            let pct = (idx * 100).checked_div(total).unwrap_or(0);
-            eprintln!("[syncing] {source_id_cb}: {file_name} ({idx}/{total}) [{pct}%]");
-        }
+    let mut reporter = CliSyncProgressReporter::new("[syncing]", source_id.clone(), !quiet);
+    let mut file_cb = |event: SyncProgressEvent| {
+        reporter.handle_event(event);
     };
 
-    match sync_source(
-        store,
-        &planned.source,
-        source_dir,
-        state_path,
-        allowed_root,
-        model,
-        Some(&mut file_cb),
-    ) {
+    let result = {
+        let progress: graphtor_core::sync::ProgressCallback<'_> = Some(&mut file_cb);
+        sync_source(
+            store,
+            &planned.source,
+            source_dir,
+            state_path,
+            allowed_root,
+            model,
+            progress,
+        )
+    };
+    reporter.finish();
+
+    match result {
         Ok(m) => Some(m),
         Err(e) => {
             warn!(

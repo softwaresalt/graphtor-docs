@@ -15,6 +15,8 @@
 //!     └─ ParsedDocument       — assembled output
 //! ```
 
+use std::path::Path;
+
 pub mod ast;
 pub mod chunker;
 pub mod code;
@@ -92,4 +94,135 @@ pub fn parse_document(content: &str, source_path: &str) -> Result<ParsedDocument
         references: all_references,
         code_snippets: all_snippets,
     })
+}
+
+/// Normalize a file extension to the parser's canonical form.
+///
+/// Currently `.markdown` is treated the same as `.md`.
+#[must_use]
+pub(crate) fn normalized_document_extension(path: &Path) -> Option<String> {
+    let raw = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)?;
+
+    if raw == "markdown" {
+        Some("md".to_string())
+    } else {
+        Some(raw)
+    }
+}
+
+/// Return `true` when `ext` is one of the parser-supported document formats.
+#[must_use]
+pub(crate) fn is_supported_document_extension(ext: &str) -> bool {
+    matches!(ext, "md" | "pdf" | "docx")
+}
+
+fn parse_pdf_bytes_with_parser<P>(
+    bytes: &[u8],
+    file: &Path,
+    source_path: &str,
+    parser: P,
+) -> Result<ParsedDocument, GraphtorError>
+where
+    P: FnOnce(&[u8], &str) -> Result<ParsedDocument, GraphtorError> + std::panic::UnwindSafe,
+{
+    match std::panic::catch_unwind(|| parser(bytes, source_path)) {
+        Ok(result) => result,
+        Err(_) => Err(GraphtorError::Parse {
+            message: "pdf-extract panicked (malformed or unsupported PDF content; \
+                      likely an empty glyph array or corrupted font table)"
+                .to_string(),
+            path: Some(file.to_path_buf()),
+        }),
+    }
+}
+
+/// Parse a document file by dispatching to the correct format parser.
+///
+/// `file` is the on-disk path and `source_path` is the source-relative path
+/// recorded in the parsed document.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Parse`] if the file cannot be read, uses an
+/// unsupported extension, or fails to parse.
+pub fn parse_file(file: &Path, source_path: &str) -> Result<ParsedDocument, GraphtorError> {
+    let Some(ext) = normalized_document_extension(file) else {
+        return Err(GraphtorError::Parse {
+            message: "file has no supported extension".to_string(),
+            path: Some(file.to_path_buf()),
+        });
+    };
+
+    match ext.as_str() {
+        "md" => {
+            let content = std::fs::read_to_string(file).map_err(|error| GraphtorError::Parse {
+                message: format!("failed to read file: {error}"),
+                path: Some(file.to_path_buf()),
+            })?;
+
+            parse_document(&content, source_path).map_err(|error| GraphtorError::Parse {
+                message: format!("markdown parse failed: {error}"),
+                path: Some(file.to_path_buf()),
+            })
+        }
+        "pdf" => {
+            let bytes = std::fs::read(file).map_err(|error| GraphtorError::Parse {
+                message: format!("failed to read file: {error}"),
+                path: Some(file.to_path_buf()),
+            })?;
+
+            parse_pdf_bytes_with_parser(&bytes, file, source_path, parse_pdf_document)
+        }
+        "docx" => {
+            let bytes = std::fs::read(file).map_err(|error| GraphtorError::Parse {
+                message: format!("failed to read file: {error}"),
+                path: Some(file.to_path_buf()),
+            })?;
+
+            parse_docx_document(&bytes, source_path)
+        }
+        _ => Err(GraphtorError::Parse {
+            message: format!("unsupported file extension '{ext}'"),
+            path: Some(file.to_path_buf()),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::parse_pdf_bytes_with_parser;
+    use crate::error::GraphtorError;
+
+    #[test]
+    fn pdf_panic_fallback_uses_on_disk_file_path() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("panic.pdf");
+        fs::write(&file, b"%PDF-test").expect("write test pdf");
+
+        let error = parse_pdf_bytes_with_parser(
+            b"%PDF-test",
+            &file,
+            "docs/panic.pdf",
+            |_bytes, _source_path| panic!("simulated parser panic"),
+        )
+        .expect_err("panic should be converted to a parse error");
+
+        assert!(
+            matches!(
+                error,
+                GraphtorError::Parse {
+                    path: Some(ref path),
+                    ..
+                } if path == &file
+            ),
+            "expected panic fallback to use on-disk file path, got {error:?}"
+        );
+    }
 }

@@ -14,7 +14,7 @@ use crate::db::vectors::upsert_vector;
 use crate::db::{upsert_chunk, upsert_code_snippet, upsert_edge};
 use crate::embed::{embed_text, EmbeddingModel};
 use crate::error::GraphtorError;
-use crate::parse::parse_document;
+use crate::parse::parse_file;
 use crate::path::validate_path;
 use crate::DataStore;
 
@@ -86,16 +86,8 @@ pub fn reingest_file(
     // Delete stale records first.
     delete_file_data(store, &rel_path)?;
 
-    // Re-parse.
-    let content = std::fs::read_to_string(&safe_path).map_err(|e| GraphtorError::Parse {
-        message: format!("failed to read file: {e}"),
-        path: Some(safe_path.clone()),
-    })?;
-
-    let parsed = parse_document(&content, &rel_path).map_err(|e| GraphtorError::Parse {
-        message: format!("markdown parse failed: {e}"),
-        path: Some(safe_path.clone()),
-    })?;
+    // Re-parse using the same format dispatch as the full pipeline.
+    let parsed = parse_file(&safe_path, &rel_path)?;
 
     // Reload into CozoDB.
     let mut chunks_loaded: usize = 0;
@@ -144,4 +136,52 @@ pub fn reingest_file(
         "re-ingested file"
     );
     Ok(chunks_loaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::reingest_file;
+    use crate::db::ensure_schema;
+    use crate::error::GraphtorError;
+    use crate::DataStore;
+
+    #[test]
+    fn reingest_pdf_routes_to_pdf_parser() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_root = root.join("docs");
+        fs::create_dir_all(&source_root).expect("create source root");
+
+        let file_path = source_root.join("bad.pdf");
+        fs::write(&file_path, [0xFF, 0x00, 0xFE, 0x7F]).expect("write invalid pdf");
+
+        let store = DataStore::open_mem().expect("open mem db");
+        ensure_schema(&store).expect("ensure schema");
+
+        let error = reingest_file(&store, "pdf-source", &file_path, &source_root, root, None)
+            .expect_err("invalid pdf should fail parsing");
+
+        match error {
+            GraphtorError::Parse { message, .. } => {
+                let lower = message.to_ascii_lowercase();
+                assert!(
+                    lower.contains("pdf"),
+                    "expected pdf parser error, got: {message}"
+                );
+                assert!(
+                    !lower.contains("failed to read file"),
+                    "pdf dispatch should not use markdown text reader: {message}"
+                );
+                assert!(
+                    !lower.contains("markdown parse failed"),
+                    "pdf dispatch should not report markdown parser errors: {message}"
+                );
+            }
+            other => panic!("expected parse error, got: {other}"),
+        }
+    }
 }

@@ -18,9 +18,11 @@
 
 pub mod model;
 pub mod pool;
+pub mod resolver;
 
 pub use model::EmbeddingModel;
 pub use pool::mean_pool;
+pub use resolver::{resolve_embedding_model, ResolverCaller, DEFAULT_MODEL_ID};
 
 use crate::error::GraphtorError;
 

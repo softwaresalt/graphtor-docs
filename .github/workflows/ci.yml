@@ -9,12 +9,17 @@ on:
 permissions:
   contents: read
 
+# Regular PR/push CI intentionally stays Linux-only. Windows is already covered
+# by local development builds, and macOS/Windows release verification remains
+# in .github/workflows/release.yml.
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Free disk space
         run: |
@@ -26,12 +31,13 @@ jobs:
           df -h
 
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
+          toolchain: stable
           components: clippy,rustfmt
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install mold linker
         run: sudo apt-get install -y mold

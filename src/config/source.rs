@@ -85,6 +85,24 @@ impl Source {
         }
     }
 
+    /// Returns the source-relative include glob patterns for this source.
+    pub(crate) fn include(&self) -> &[String] {
+        match self {
+            Self::Git(g) => &g.include,
+            Self::Local(l) => &l.include,
+            Self::Url(u) => &u.include,
+        }
+    }
+
+    /// Returns the source-relative exclude glob patterns for this source.
+    pub(crate) fn exclude(&self) -> &[String] {
+        match self {
+            Self::Git(g) => &g.exclude,
+            Self::Local(l) => &l.exclude,
+            Self::Url(u) => &u.exclude,
+        }
+    }
+
     /// Returns the target database file name for this source, if set.
     ///
     /// When `Some`, the source's content is routed to the named database
