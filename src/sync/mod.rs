@@ -35,6 +35,7 @@ use crate::db::nodes::{upsert_source, SourceRecord};
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
 use crate::parse::{is_supported_document_extension, normalized_document_extension};
+use crate::path::validate_path;
 use crate::DataStore;
 
 /// Lifecycle state for a per-file sync progress event.
@@ -244,7 +245,7 @@ pub fn sync_source(
     {
         let abs_path = source_dir.join(path);
         let current = idx + 1;
-        let size_bytes = abs_path.metadata().ok().map(|metadata| metadata.len());
+        let size_bytes = validated_file_size(&abs_path, root);
 
         if let Some(cb) = on_progress.as_mut() {
             cb(SyncProgressEvent {
@@ -419,6 +420,18 @@ fn is_tracked_source_path(source: &Source, relative_path: &Path) -> bool {
                 .any(|format| format.eq_ignore_ascii_case(&ext)))
 }
 
+/// Validate `path` against `root` before performing any metadata I/O.
+///
+/// This ensures progress reporting cannot touch symlink targets or other paths
+/// outside the workspace boundary before `reingest_file()` enforces the same
+/// validation.
+fn validated_file_size(path: &Path, root: &Path) -> Option<u64> {
+    validate_path(path, root)
+        .ok()
+        .and_then(|canonical| canonical.metadata().ok())
+        .map(|metadata| metadata.len())
+}
+
 /// Convert a captured [`Instant`] to elapsed milliseconds, clamped to at least 1.
 ///
 /// Exported so callers that measure the same sync cycle (e.g. the binary entry
@@ -450,7 +463,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{sync_source, SyncProgressStatus};
+    use super::{sync_source, validated_file_size, SyncProgressStatus};
     use crate::config::source::LocalSource;
     use crate::db::ensure_schema;
     use crate::{DataStore, Source};
@@ -546,6 +559,15 @@ mod tests {
             );
         }
         assert_eq!(metrics.files_synced, 3, "metrics: {metrics:?}");
+        // All files are valid and exist within root: size_bytes must be populated
+        // after validate_path succeeds (regression guard for the metadata-before-
+        // validation fix — guards the happy path).
+        for event in &progress_events {
+            assert!(
+                event.size_bytes.is_some(),
+                "size_bytes should be populated for valid in-root files: {event:#?}"
+            );
+        }
     }
 
     #[test]
@@ -580,5 +602,19 @@ mod tests {
         assert_eq!(metrics.chunks_deleted, 0, "metrics: {metrics:?}");
         assert!(metrics.duration_ms > 0, "metrics: {metrics:?}");
         assert_eq!(metrics.errors, 0, "metrics: {metrics:?}");
+    }
+
+    #[test]
+    fn validated_file_size_returns_none_for_path_outside_root() {
+        let workspace = tempdir().expect("workspace tempdir");
+        let outside = tempdir().expect("outside tempdir");
+        let outside_file = outside.path().join("secret.md");
+        fs::write(&outside_file, "# Secret\n\nSensitive content.\n").expect("write outside file");
+
+        assert_eq!(
+            validated_file_size(&outside_file, workspace.path()),
+            None,
+            "progress metadata must not be read for paths outside the workspace root"
+        );
     }
 }
