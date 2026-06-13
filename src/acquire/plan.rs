@@ -2,7 +2,7 @@
 //!
 //! Provides:
 //! - [`plan`]: resolve a [`SourceConfig`] into an [`AcquisitionPlan`] with per-source actions.
-//! - [`validate_sources`]: check all sources for configuration errors in a single pass (FR-011–FR-014).
+//! - [`validate_sources`]: check all sources for configuration errors in a single pass.
 //!
 //! [`SourceConfig`]: crate::config::SourceConfig
 //! [`AcquisitionPlan`]: crate::acquire::result::AcquisitionPlan
@@ -12,14 +12,12 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 
 use crate::acquire::result::{AcquisitionPlan, PlannedSource, SourceAction, ValidationReport};
-use crate::config::source::Source;
 use crate::config::SourceConfig;
 use crate::error::GraphtorError;
 
 /// Resolve an acquisition plan from a parsed source configuration.
 ///
-/// Examines each source in the config, checks whether a local directory
-/// already exists for Git sources, and produces a plan with per-source actions.
+/// Examines each source in the config and produces a plan with per-source actions.
 /// Auto-creates `data_root` if it does not yet exist (FR-021).
 ///
 /// # Errors
@@ -44,32 +42,21 @@ pub fn plan(
         crate::path::canonicalize_clean(&pre_validated).map_err(GraphtorError::Io)?;
 
     let mut sources: Vec<PlannedSource> = Vec::new();
-    let mut total_clone: usize = 0;
-    let mut total_skip: usize = 0;
     let mut total_scan: usize = 0;
-    let mut total_crawl: usize = 0;
 
     for source in &config.sources {
-        let (action, target_dir) =
-            resolve_source_action(source, &canonical_data_root, allowed_root)?;
-        match action {
-            SourceAction::CloneGit => total_clone += 1,
-            SourceAction::SkipGit => total_skip += 1,
-            SourceAction::ScanLocal => total_scan += 1,
-            SourceAction::CrawlUrl => total_crawl += 1,
-        }
+        let target_dir = resolve_source_dir(source, allowed_root)?;
+        total_scan += 1;
         sources.push(PlannedSource {
             source: source.clone(),
-            action,
+            action: SourceAction::ScanLocal,
             target_dir,
+            allow_internal_snapshot_scan: false,
         });
     }
 
     info!(
-        total_clone,
-        total_skip,
         total_scan,
-        total_crawl,
         data_root = %canonical_data_root.display(),
         "acquisition plan ready"
     );
@@ -82,17 +69,14 @@ pub fn plan(
         data_root: canonical_data_root,
         allowed_root: canonical_allowed_root,
         sources,
-        total_clone,
-        total_skip,
         total_scan,
-        total_crawl,
     })
 }
 
 /// Validate all source definitions without performing acquisition.
 ///
-/// Checks URL format (Git), path existence (local), and glob syntax.
-/// Collects ALL errors across all sources in a single pass.
+/// Checks path existence and glob syntax. Collects ALL errors across all sources
+/// in a single pass.
 ///
 /// This function is intentionally infallible — it returns a [`ValidationReport`]
 /// that may contain zero or more errors. Call [`ValidationReport::is_valid`] to
@@ -103,69 +87,30 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
     let total_count = config.sources.len();
 
     for source in &config.sources {
-        match source {
-            Source::Git(git) => {
-                // FR-011, FR-012: URL format
-                if !is_valid_git_url(&git.url) {
-                    errors.push(crate::acquire::result::ValidationError {
-                        source_id: git.id.clone(),
-                        field: "url".to_string(),
-                        message: format!("invalid URL format: '{}'", git.url),
-                    });
-                }
-                // FR-014: glob patterns
-                validate_globs(&git.id, "include", &git.include, &mut errors);
-                validate_globs(&git.id, "exclude", &git.exclude, &mut errors);
-                // FR-021.002: format allow-list
-                validate_format_list(&git.id, &git.formats, &mut errors);
+        let crate::config::Source::Local(local) = source;
+
+        if local.path.exists() {
+            // FR-017: path security — must be within allowed_root
+            if let Err(e) = crate::path::validate_path(&local.path, allowed_root) {
+                errors.push(crate::acquire::result::ValidationError {
+                    source_id: local.id.clone(),
+                    field: "path".to_string(),
+                    message: e.to_string(),
+                });
             }
-            Source::Local(local) => {
-                if local.path.exists() {
-                    // FR-017: path security — must be within allowed_root
-                    if let Err(e) = crate::path::validate_path(&local.path, allowed_root) {
-                        errors.push(crate::acquire::result::ValidationError {
-                            source_id: local.id.clone(),
-                            field: "path".to_string(),
-                            message: e.to_string(),
-                        });
-                    }
-                } else {
-                    // FR-013: path must exist on disk
-                    errors.push(crate::acquire::result::ValidationError {
-                        source_id: local.id.clone(),
-                        field: "path".to_string(),
-                        message: format!("path does not exist: '{}'", local.path.display()),
-                    });
-                }
-                // FR-014: glob patterns
-                validate_globs(&local.id, "include", &local.include, &mut errors);
-                validate_globs(&local.id, "exclude", &local.exclude, &mut errors);
-                // FR-021.002: format allow-list
-                validate_format_list(&local.id, &local.formats, &mut errors);
-            }
-            Source::Url(url_src) => {
-                // URL must use https:// or http://
-                if !url_src.url.starts_with("https://") && !url_src.url.starts_with("http://") {
-                    errors.push(crate::acquire::result::ValidationError {
-                        source_id: url_src.id.clone(),
-                        field: "url".to_string(),
-                        message: format!("url must use https:// or http://: '{}'", url_src.url),
-                    });
-                }
-                if url_src.max_pages == 0 {
-                    errors.push(crate::acquire::result::ValidationError {
-                        source_id: url_src.id.clone(),
-                        field: "max_pages".to_string(),
-                        message: "max_pages must be greater than 0".to_string(),
-                    });
-                }
-                // FR-014: glob patterns
-                validate_globs(&url_src.id, "include", &url_src.include, &mut errors);
-                validate_globs(&url_src.id, "exclude", &url_src.exclude, &mut errors);
-                // FR-021.002: format allow-list
-                validate_format_list(&url_src.id, &url_src.formats, &mut errors);
-            }
+        } else {
+            // FR-013: path must exist on disk
+            errors.push(crate::acquire::result::ValidationError {
+                source_id: local.id.clone(),
+                field: "path".to_string(),
+                message: format!("path does not exist: '{}'", local.path.display()),
+            });
         }
+        // FR-014: glob patterns
+        validate_globs(&local.id, "include", &local.include, &mut errors);
+        validate_globs(&local.id, "exclude", &local.exclude, &mut errors);
+        // FR-021.002: format allow-list (md/markdown only after docline pivot)
+        validate_format_list(&local.id, &local.formats, &mut errors);
     }
 
     // A source is "valid" if it produced no errors
@@ -182,68 +127,13 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
 
 // ── Private helpers ────────────────────────────────────────────────────────────
 
-/// Determine the [`SourceAction`] and resolved target directory for one source.
-fn resolve_source_action(
-    source: &Source,
-    canonical_data_root: &Path,
+/// Determine the resolved target directory for a local source.
+fn resolve_source_dir(
+    source: &crate::config::Source,
     allowed_root: &Path,
-) -> Result<(SourceAction, PathBuf), GraphtorError> {
-    match source {
-        Source::Git(git) => {
-            // Security: validate and use the canonical form so IDs containing `..` or
-            // path separators resolve to a deterministic, auditable location (RI-002).
-            let target_dir =
-                crate::path::validate_path(&canonical_data_root.join(&git.id), allowed_root)?;
-            let action = if target_dir.join(".git").exists() {
-                SourceAction::SkipGit
-            } else {
-                SourceAction::CloneGit
-            };
-            Ok((action, target_dir))
-        }
-        Source::Local(local) => {
-            let canonical_local = crate::path::validate_path(&local.path, allowed_root)?;
-            Ok((SourceAction::ScanLocal, canonical_local))
-        }
-        Source::Url(url_src) => {
-            let target_dir =
-                crate::path::validate_path(&canonical_data_root.join(&url_src.id), allowed_root)?;
-            Ok((SourceAction::CrawlUrl, target_dir))
-        }
-    }
-}
-
-/// Return `true` if `url` is a valid Git remote URL (HTTPS or SSH format).
-///
-/// Accepts:
-/// - `https://...` — HTTPS URLs with a scheme and host (FR-011)
-/// - `git@host:path` — SSH URLs (FR-012)
-fn is_valid_git_url(url: &str) -> bool {
-    is_valid_https_url(url) || is_valid_ssh_url(url)
-}
-
-/// Return `true` if `url` is a valid HTTPS URL with host present (FR-011).
-fn is_valid_https_url(url: &str) -> bool {
-    if let Some(rest) = url.strip_prefix("https://") {
-        !rest.is_empty() && !rest.starts_with('/')
-    } else {
-        false
-    }
-}
-
-/// Return `true` if `url` matches the `git@host:path` SSH format (FR-012).
-fn is_valid_ssh_url(url: &str) -> bool {
-    if let Some(rest) = url.strip_prefix("git@") {
-        if let Some(colon_pos) = rest.find(':') {
-            let host = &rest[..colon_pos];
-            let path = &rest[colon_pos + 1..];
-            !host.is_empty() && !path.is_empty()
-        } else {
-            false
-        }
-    } else {
-        false
-    }
+) -> Result<PathBuf, GraphtorError> {
+    let crate::config::Source::Local(local) = source;
+    crate::path::validate_path(&local.path, allowed_root)
 }
 
 /// Collect [`ValidationError`]s for any invalid glob patterns in `patterns`.
@@ -264,16 +154,15 @@ fn validate_globs(
     }
 }
 
-/// Collect [`ValidationError`]s for any format strings that are not in the
-/// supported extension list (`md`, `pdf`, `docx`, `markdown`).
+/// Collect [`ValidationError`]s for any format strings not in the supported Markdown list.
 ///
-/// Comparison is case-insensitive to match the pipeline's runtime behaviour.
+/// Only `"md"` and `"markdown"` are valid after the docline pivot.
 fn validate_format_list(
     source_id: &str,
     formats: &[String],
     errors: &mut Vec<crate::acquire::result::ValidationError>,
 ) {
-    const VALID: &[&str] = &["md", "pdf", "docx", "markdown"];
+    const VALID: &[&str] = &["md", "markdown"];
     for fmt in formats {
         let normalised = fmt.to_ascii_lowercase();
         if !VALID.contains(&normalised.as_str()) {

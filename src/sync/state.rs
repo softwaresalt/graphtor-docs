@@ -19,21 +19,40 @@ use crate::path::validate_path;
 /// Per-source incremental sync tracking data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SourceSyncState {
-    /// SHA-1 commit hash of the last fully processed git commit.
-    ///
-    /// `None` if this source has never been synced or is not a git source.
-    pub last_commit: Option<String>,
-
     /// Map of source-root-relative file path → Unix mtime (seconds).
     ///
     /// Used for local directory sources to detect changed files. Keys use
     /// forward-slash separators on all platforms.
     pub file_mtimes: HashMap<String, u64>,
 
+    /// Map of source-root-relative fs path → last-known contract `source_path`.
+    ///
+    /// Populated on each successful re-ingest after the docline pivot.
+    /// The value is the canonical `source_path` field from the validated docline
+    /// frontmatter contract — it may differ from the fs-relative path.
+    ///
+    /// Used by the delete path so stale records are removed by their contract
+    /// identity rather than the filesystem path, preventing orphaned rows when a
+    /// file's `source_path` changes between syncs.
+    ///
+    /// Absent for files that were last ingested before this field was added
+    /// (pre-pivot state): the fs-relative path is used as a fallback in that case.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub file_contract_paths: HashMap<String, String>,
+
     /// Unix-epoch seconds string (decimal) recording when this source was last synced.
     ///
     /// `None` if this source has never been synced.
     pub last_sync: Option<String>,
+
+    /// Contract epoch recorded at the time of the last sync.
+    ///
+    /// When the stored epoch differs from [`crate::ingest_contract::CONTRACT_EPOCH`],
+    /// the source forces a full re-ingest on the next sync cycle.
+    ///
+    /// A `None` value indicates pre-pivot state and is treated as a mismatch,
+    /// forcing a full re-ingest to prevent stale pre-pivot data from being used.
+    pub contract_epoch: Option<String>,
 }
 
 /// Top-level sync state container keyed by source identifier.
@@ -145,7 +164,6 @@ mod tests {
         let mut state = SyncState::default();
         {
             let src = state.source_mut("my-source");
-            src.last_commit = Some("abc123".to_string());
             src.last_sync = Some("2026-01-01T00:00:00Z".to_string());
             src.file_mtimes
                 .insert("docs/intro.md".to_string(), 1_700_000_000);
@@ -163,14 +181,14 @@ mod tests {
         let path = dir.path().join(".sync_state.json");
 
         let mut state = SyncState::default();
-        state.source_mut("s1").last_commit = Some("aa".to_string());
+        state.source_mut("s1").last_sync = Some("aa".to_string());
 
         state.save(&path, dir.path()).expect("save 1");
         state.save(&path, dir.path()).expect("save 2");
 
         let loaded = SyncState::load(&path, dir.path()).expect("load");
         assert_eq!(
-            loaded.source("s1").and_then(|s| s.last_commit.as_deref()),
+            loaded.source("s1").and_then(|s| s.last_sync.as_deref()),
             Some("aa")
         );
     }
@@ -179,8 +197,62 @@ mod tests {
     fn source_mut_creates_default_entry() {
         let mut state = SyncState::default();
         let entry = state.source_mut("new-source");
-        assert!(entry.last_commit.is_none());
+        assert!(entry.last_sync.is_none());
         assert!(entry.file_mtimes.is_empty());
+        assert!(entry.file_contract_paths.is_empty());
+    }
+
+    #[test]
+    fn file_contract_paths_round_trips() {
+        let dir = temp_dir();
+        let path = dir.path().join(".sync_state.json");
+
+        let mut state = SyncState::default();
+        {
+            let src = state.source_mut("cp-test");
+            src.file_contract_paths
+                .insert("docs/guide.md".to_string(), "guide.md".to_string());
+            src.file_contract_paths
+                .insert("docs/api.md".to_string(), "api/reference.md".to_string());
+        }
+
+        state.save(&path, dir.path()).expect("save");
+        let loaded = SyncState::load(&path, dir.path()).expect("load");
+
+        let src = loaded.source("cp-test").expect("source exists");
+        assert_eq!(
+            src.file_contract_paths
+                .get("docs/guide.md")
+                .map(String::as_str),
+            Some("guide.md"),
+            "contract path round-trip mismatch"
+        );
+        assert_eq!(
+            src.file_contract_paths
+                .get("docs/api.md")
+                .map(String::as_str),
+            Some("api/reference.md"),
+            "renamed contract path round-trip mismatch"
+        );
+    }
+
+    #[test]
+    fn missing_contract_epoch_is_treated_as_pre_pivot() {
+        // Simulate legacy state: stored epoch is None (pre-pivot).
+        let stored = SourceSyncState {
+            file_mtimes: [("docs/a.md".to_string(), 1_000u64)].into_iter().collect(),
+            file_contract_paths: HashMap::new(),
+            last_sync: Some("100".to_string()),
+            contract_epoch: None, // pre-pivot — no epoch stored
+        };
+
+        let current_epoch = crate::ingest_contract::CONTRACT_EPOCH;
+        // A None epoch must not equal the current epoch.
+        assert_ne!(
+            stored.contract_epoch.as_deref(),
+            Some(current_epoch),
+            "None epoch must not match current epoch (would skip forced rebuild)"
+        );
     }
 
     #[test]

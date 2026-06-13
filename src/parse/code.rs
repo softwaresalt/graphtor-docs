@@ -33,7 +33,7 @@ pub fn extract(nodes: &[AstNode], chunk_id: &str) -> Result<Vec<CodeSnippet>, Gr
                 "{chunk_id}\0{}\0{content}",
                 language.as_deref().unwrap_or("")
             );
-            let id = generate_chunk_id(&composite_key, chunk_id)?;
+            let id = generate_chunk_id(&composite_key, "code-snippet", chunk_id)?;
             snippets.push(CodeSnippet {
                 id,
                 chunk_id: chunk_id.to_string(),

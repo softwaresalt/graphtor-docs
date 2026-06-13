@@ -90,3 +90,67 @@ fn test_content_starting_with_heading_has_no_frontmatter() {
     assert!(fm.is_none());
     assert_eq!(body, md);
 }
+
+// ── CRLF regression tests ─────────────────────────────────────────────────────
+
+/// CRLF opening delimiter is detected correctly.
+#[test]
+fn test_crlf_frontmatter_detected() {
+    let md =
+        "---\r\ntitle: CRLF Doc\r\ndescription: Windows checkout\r\n---\r\n# Title\r\n\r\nBody.\r\n";
+    let (fm, body) = strip(md);
+    let fm = fm.expect("CRLF frontmatter must be detected");
+    assert_eq!(fm.title.as_deref(), Some("CRLF Doc"));
+    assert_eq!(fm.description.as_deref(), Some("Windows checkout"));
+    // Body starts immediately after the closing delimiter.
+    assert!(
+        body.starts_with("# Title"),
+        "body should start after closing delimiter, got: {body:?}"
+    );
+}
+
+/// CRLF `raw_yaml` is LF-normalised before storage.
+#[test]
+fn test_crlf_raw_yaml_is_lf_normalised() {
+    let md = "---\r\ntitle: Norm\r\n---\r\nbody\r\n";
+    let (fm, _) = strip(md);
+    let fm = fm.expect("should detect frontmatter");
+    assert!(
+        !fm.raw_yaml.contains('\r'),
+        "raw_yaml must not contain CR after normalisation; got: {:?}",
+        fm.raw_yaml
+    );
+    assert!(fm.raw_yaml.contains("title: Norm"));
+}
+
+/// CRLF document with YAML end-of-document marker (`...`) is handled.
+#[test]
+fn test_crlf_yaml_eod_marker() {
+    let md = "---\r\ntitle: EOD\r\n...\r\n# Body\r\n";
+    let (fm, body) = strip(md);
+    let fm = fm.expect("CRLF ... delimiter must be accepted");
+    assert_eq!(fm.title.as_deref(), Some("EOD"));
+    assert!(body.starts_with("# Body"));
+}
+
+/// CRLF document with no closing delimiter is treated as malformed.
+#[test]
+fn test_crlf_malformed_no_closing_delimiter() {
+    let md = "---\r\ntitle: Broken\r\nno closing delimiter\r\n";
+    let (fm, body) = strip(md);
+    assert!(
+        fm.is_none(),
+        "malformed CRLF frontmatter should return None"
+    );
+    assert_eq!(body, md);
+}
+
+/// LF content is still parsed correctly after CRLF detection changes.
+#[test]
+fn test_lf_frontmatter_still_works_after_crlf_support() {
+    let md = "---\ntitle: LF Doc\n---\nBody text.\n";
+    let (fm, body) = strip(md);
+    let fm = fm.expect("LF frontmatter must still be detected");
+    assert_eq!(fm.title.as_deref(), Some("LF Doc"));
+    assert_eq!(body, "Body text.\n");
+}

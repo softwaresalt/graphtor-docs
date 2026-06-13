@@ -25,6 +25,24 @@ pub fn scan_local_source(
     source: &LocalSource,
     allowed_root: &Path,
 ) -> Result<Vec<PathBuf>, GraphtorError> {
+    scan_local_source_with_ignored_root(source, allowed_root, None)
+}
+
+/// Recursively scan a local directory and return all regular file paths,
+/// excluding a reserved internal subtree when `ignored_root` is provided.
+///
+/// This is used by CLI-facing acquisition paths to keep internal workspace
+/// artifacts (such as frozen v4 migration snapshots) out of normal source
+/// discovery.
+///
+/// # Errors
+///
+/// Returns the same errors as [`scan_local_source`].
+pub fn scan_local_source_with_ignored_root(
+    source: &LocalSource,
+    allowed_root: &Path,
+    ignored_root: Option<&Path>,
+) -> Result<Vec<PathBuf>, GraphtorError> {
     let canonical_path = crate::path::validate_path(&source.path, allowed_root)?;
 
     if !canonical_path.is_dir() {
@@ -46,7 +64,11 @@ pub fn scan_local_source(
 
     let mut files: Vec<PathBuf> = Vec::new();
 
-    for entry in walkdir::WalkDir::new(&canonical_path).follow_links(false) {
+    for entry in walkdir::WalkDir::new(&canonical_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| !ignored_root.is_some_and(|root| entry.path().starts_with(root)))
+    {
         match entry {
             Ok(e) => {
                 if e.file_type().is_file() {

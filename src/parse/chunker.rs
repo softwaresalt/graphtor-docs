@@ -17,6 +17,7 @@ use crate::parse::types::{AstNode, Chunk};
 /// - H4–H6 headings and their content remain inside the enclosing H1/H2/H3
 ///   chunk.
 /// - The `source_path` is attached to every chunk as provenance.
+/// - The `source_id` namespaces the chunk ID to prevent cross-source collisions.
 ///
 /// # Errors
 ///
@@ -25,7 +26,11 @@ use crate::parse::types::{AstNode, Chunk};
 /// # Panics
 ///
 /// Does not panic.
-pub fn chunk(nodes: &[AstNode], source_path: &str) -> Result<Vec<Chunk>, GraphtorError> {
+pub fn chunk(
+    nodes: &[AstNode],
+    source_id: &str,
+    source_path: &str,
+) -> Result<Vec<Chunk>, GraphtorError> {
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut current_lines: Vec<String> = Vec::new();
     let mut heading_hierarchy: Vec<String> = Vec::new();
@@ -40,6 +45,7 @@ pub fn chunk(nodes: &[AstNode], source_path: &str) -> Result<Vec<Chunk>, Graphto
                     heading_hierarchy.clone(),
                     char_offset,
                     chunks.len(),
+                    source_id,
                     source_path,
                 )?;
                 if let Some(c) = flushed {
@@ -92,6 +98,7 @@ pub fn chunk(nodes: &[AstNode], source_path: &str) -> Result<Vec<Chunk>, Graphto
         heading_hierarchy,
         char_offset,
         chunks.len(),
+        source_id,
         source_path,
     )? {
         chunks.push(c);
@@ -106,13 +113,14 @@ fn flush_chunk(
     heading_hierarchy: Vec<String>,
     char_offset: usize,
     position: usize,
+    source_id: &str,
     source_path: &str,
 ) -> Result<Option<Chunk>, GraphtorError> {
     let content = lines.join("\n").trim_end().to_string();
     if content.is_empty() {
         return Ok(None);
     }
-    let chunk_id = generate_chunk_id(&content, source_path)?;
+    let chunk_id = generate_chunk_id(&content, source_id, source_path)?;
     Ok(Some(Chunk {
         chunk_id,
         content,

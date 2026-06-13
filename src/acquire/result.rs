@@ -12,23 +12,14 @@ use crate::config::Source;
 /// Determines what the executor must do with each source entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceAction {
-    /// Git source needs to be cloned — no valid local directory exists.
-    CloneGit,
-    /// Git source already cloned — local directory with `.git` exists.
-    SkipGit,
     /// Local source needs to be recursively scanned.
     ScanLocal,
-    /// URL source needs to be crawled via HTTP and converted to Markdown.
-    CrawlUrl,
 }
 
 impl std::fmt::Display for SourceAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CloneGit => f.write_str("CloneGit"),
-            Self::SkipGit => f.write_str("SkipGit"),
             Self::ScanLocal => f.write_str("ScanLocal"),
-            Self::CrawlUrl => f.write_str("CrawlUrl"),
         }
     }
 }
@@ -36,20 +27,14 @@ impl std::fmt::Display for SourceAction {
 /// Distinguishes the kind of documentation source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceType {
-    /// Cloned from a remote Git repository.
-    Git,
     /// Scanned from a local filesystem directory.
     Local,
-    /// Crawled from a web URL.
-    Url,
 }
 
 impl std::fmt::Display for SourceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Git => f.write_str("Git"),
             Self::Local => f.write_str("Local"),
-            Self::Url => f.write_str("Url"),
         }
     }
 }
@@ -67,6 +52,12 @@ pub struct PlannedSource {
     pub action: SourceAction,
     /// Resolved local filesystem path for this source.
     pub target_dir: PathBuf,
+    /// Whether this planned source may intentionally scan the internal
+    /// `data_root/v4-migration-snapshots` subtree.
+    ///
+    /// Normal configured sources must leave this disabled. Only the staged v4
+    /// migration rebuild plan enables it for its frozen snapshot inputs.
+    pub allow_internal_snapshot_scan: bool,
 }
 
 /// The full plan of actions across all configured sources.
@@ -80,14 +71,8 @@ pub struct AcquisitionPlan {
     pub allowed_root: PathBuf,
     /// Ordered list of sources with their resolved actions.
     pub sources: Vec<PlannedSource>,
-    /// Number of sources that will be cloned.
-    pub total_clone: usize,
-    /// Number of sources that will be skipped (already cloned).
-    pub total_skip: usize,
     /// Number of local sources that will be scanned.
     pub total_scan: usize,
-    /// Number of URL sources that will be crawled.
-    pub total_crawl: usize,
 }
 
 /// A single source after successful acquisition.
@@ -97,7 +82,7 @@ pub struct AcquisitionPlan {
 pub struct AcquiredSource {
     /// Source identifier from the configuration.
     pub source_id: String,
-    /// Whether this source is Git or local.
+    /// Source kind — always `Local` after the docline pivot.
     pub source_type: SourceType,
     /// Local directory containing the acquired files.
     pub local_dir: PathBuf,
@@ -130,11 +115,6 @@ pub struct FilteredFileSet {
 pub enum SourceOutcome {
     /// Source was acquired and filtered successfully.
     Success(FilteredFileSet),
-    /// Git source was skipped because it was already cloned.
-    Skipped {
-        /// The source identifier that was skipped.
-        source_id: String,
-    },
     /// Acquisition failed — other sources continued.
     Failed {
         /// The source identifier that failed.
@@ -150,7 +130,7 @@ impl SourceOutcome {
     pub fn source_id(&self) -> &str {
         match self {
             Self::Success(f) => &f.source_id,
-            Self::Skipped { source_id } | Self::Failed { source_id, .. } => source_id,
+            Self::Failed { source_id, .. } => source_id,
         }
     }
 }
@@ -164,10 +144,8 @@ pub struct AcquisitionResult {
     pub outcomes: Vec<SourceOutcome>,
     /// Total number of sources attempted.
     pub total_sources: usize,
-    /// Sources successfully acquired (cloned or scanned).
+    /// Sources successfully acquired (scanned).
     pub succeeded: usize,
-    /// Sources skipped because they were already cloned.
-    pub skipped: usize,
     /// Sources that failed with an error.
     pub failed: usize,
     /// Total files available after filtering across all successful sources.
@@ -179,7 +157,7 @@ pub struct AcquisitionResult {
 pub struct ValidationError {
     /// Source identifier that has the error.
     pub source_id: String,
-    /// Field name that failed validation (e.g., `"url"`, `"path"`, `"include"`).
+    /// Field name that failed validation (e.g., `"path"`, `"include"`).
     pub field: String,
     /// Human-readable description of the validation failure.
     pub message: String,
@@ -224,42 +202,16 @@ mod tests {
     // ── SourceAction display and equality ────────────────────────────────
 
     #[test]
-    fn source_action_crawl_url_display() {
-        assert_eq!(SourceAction::CrawlUrl.to_string(), "CrawlUrl");
-    }
-
-    #[test]
-    fn source_action_clone_git_display() {
-        assert_eq!(SourceAction::CloneGit.to_string(), "CloneGit");
-    }
-
-    #[test]
-    fn source_action_skip_git_display() {
-        assert_eq!(SourceAction::SkipGit.to_string(), "SkipGit");
-    }
-
-    #[test]
     fn source_action_scan_local_display() {
         assert_eq!(SourceAction::ScanLocal.to_string(), "ScanLocal");
     }
 
     #[test]
     fn source_action_equality() {
-        assert_eq!(SourceAction::CloneGit, SourceAction::CloneGit);
-        assert_ne!(SourceAction::CloneGit, SourceAction::SkipGit);
+        assert_eq!(SourceAction::ScanLocal, SourceAction::ScanLocal);
     }
 
     // ── SourceType display and equality ──────────────────────────────────
-
-    #[test]
-    fn source_type_url_display() {
-        assert_eq!(SourceType::Url.to_string(), "Url");
-    }
-
-    #[test]
-    fn source_type_git_display() {
-        assert_eq!(SourceType::Git.to_string(), "Git");
-    }
 
     #[test]
     fn source_type_local_display() {
@@ -268,8 +220,7 @@ mod tests {
 
     #[test]
     fn source_type_equality() {
-        assert_eq!(SourceType::Git, SourceType::Git);
-        assert_ne!(SourceType::Git, SourceType::Local);
+        assert_eq!(SourceType::Local, SourceType::Local);
     }
 
     // ── SourceOutcome::source_id ─────────────────────────────────────────
@@ -283,14 +234,6 @@ mod tests {
             files: vec![],
         };
         let outcome = SourceOutcome::Success(ffs);
-        assert_eq!(outcome.source_id(), "docs-azure");
-    }
-
-    #[test]
-    fn source_outcome_skipped_returns_source_id() {
-        let outcome = SourceOutcome::Skipped {
-            source_id: "docs-azure".to_string(),
-        };
         assert_eq!(outcome.source_id(), "docs-azure");
     }
 
@@ -309,13 +252,13 @@ mod tests {
     fn validation_error_display_includes_all_fields() {
         let e = ValidationError {
             source_id: "my-source".to_string(),
-            field: "url".to_string(),
-            message: "invalid scheme".to_string(),
+            field: "path".to_string(),
+            message: "path not found".to_string(),
         };
         let s = e.to_string();
         assert!(s.contains("my-source"), "missing source_id: {s}");
-        assert!(s.contains("url"), "missing field: {s}");
-        assert!(s.contains("invalid scheme"), "missing message: {s}");
+        assert!(s.contains("path"), "missing field: {s}");
+        assert!(s.contains("path not found"), "missing message: {s}");
     }
 
     #[test]
@@ -346,8 +289,8 @@ mod tests {
         let report = ValidationReport {
             errors: vec![ValidationError {
                 source_id: "s".to_string(),
-                field: "url".to_string(),
-                message: "bad url".to_string(),
+                field: "path".to_string(),
+                message: "bad path".to_string(),
             }],
             valid_count: 2,
             total_count: 3,
@@ -378,12 +321,11 @@ mod tests {
         let result = AcquisitionResult {
             outcomes: vec![],
             total_sources: 5,
-            succeeded: 3,
-            skipped: 1,
+            succeeded: 4,
             failed: 1,
             total_files: 150,
         };
         assert_eq!(result.total_sources, 5);
-        assert_eq!(result.succeeded + result.skipped + result.failed, 5);
+        assert_eq!(result.succeeded + result.failed, 5);
     }
 }

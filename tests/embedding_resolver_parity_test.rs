@@ -18,8 +18,19 @@ fn graphtor_bin() -> std::path::PathBuf {
 fn no_embed_skips_resolution_in_sync_and_prewarm() {
     for cmd in &["sync", "prewarm"] {
         let workspace = tempfile::tempdir().expect("tempdir");
-        std::fs::write(workspace.path().join("guide.md"), "# Guide\n\nbody.\n")
-            .expect("write guide");
+        let docs_dir = workspace.path().join("docs");
+        std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+        std::fs::write(docs_dir.join("guide.md"), b"---\ntitle: Guide\nsource: /test/source\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nbody.\n").expect("write guide");
+
+        // Provide a minimal sources.yaml so the binary does not fail closed.
+        let config_dir = workspace.path().join(".graphtor").join("config");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("sources.yaml"),
+            "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
+        )
+        .expect("write sources.yaml");
+
         let db_path = workspace.path().join("graph.db");
 
         let output = Command::new(graphtor_bin())

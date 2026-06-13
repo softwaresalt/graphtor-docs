@@ -207,6 +207,61 @@ pub fn list_chunks_by_path(
     Ok(chunks)
 }
 
+/// Delete all chunks associated with the given `source_id` and `path`.
+///
+/// Unlike [`delete_chunks_by_path`], this variant scopes the deletion to a
+/// specific source so cross-source records at identical paths are not affected.
+///
+/// Returns the list of deleted `chunk_id` values so callers can cascade the
+/// deletion to `doc_edges` and `doc_code`.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Database`] on query or mutation failure.
+pub fn delete_chunks_by_source_and_path(
+    store: &DataStore,
+    source_id: &str,
+    path: &str,
+) -> Result<Vec<String>, GraphtorError> {
+    // Collect chunk_ids for this (source_id, path) pair first.
+    let select = r"
+        ?[chunk_id] := *doc_chunks{ chunk_id, source_id, path },
+                       source_id = $sid,
+                       path = $path
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("sid".to_string(), DataValue::Str(source_id.into()));
+    params.insert("path".to_string(), DataValue::Str(path.into()));
+    let rows = store.query(select, params)?;
+
+    let ids: Vec<String> = rows
+        .rows
+        .iter()
+        .filter_map(|row| row.first().and_then(|v| v.get_str()).map(str::to_owned))
+        .collect();
+
+    if ids.is_empty() {
+        return Ok(ids);
+    }
+
+    // Delete by primary key, scoped to this source.
+    let rm = r"
+        ?[chunk_id] := *doc_chunks{ chunk_id, source_id, path },
+                       source_id = $sid,
+                       path = $path
+        :rm doc_chunks { chunk_id }
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("sid".to_string(), DataValue::Str(source_id.into()));
+    params.insert("path".to_string(), DataValue::Str(path.into()));
+    store.mutate(rm, params)?;
+    debug!(
+        count = ids.len(),
+        source_id, path, "deleted doc_chunks records by source and path"
+    );
+    Ok(ids)
+}
+
 /// Delete all chunks associated with the given source-root-relative `path`.
 ///
 /// Returns the list of deleted `chunk_id` values so callers can cascade the

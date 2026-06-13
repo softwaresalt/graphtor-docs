@@ -37,7 +37,10 @@ pub use edges::{
     upsert_edge, CodeRecord, EdgeRecord,
 };
 pub use nodes::{get_source, list_sources, upsert_source, SourceRecord};
-pub use schema::ensure_schema;
+pub use schema::{
+    apply_v4_prune, ensure_schema, mark_v4_migration_complete, needs_v4_migration,
+    prune_v4_data_for_rebuild,
+};
 pub use search::{search_by_text, search_similar, SearchResult};
 pub use store::{DataStore, DbStatus};
 pub use traverse::{find_related_chunks, TraversalResult};

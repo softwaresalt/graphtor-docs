@@ -3,6 +3,10 @@
 //! Provides [`find_related_chunks`], which performs a breadth-first search
 //! starting from a seed `chunk_id`, following outgoing `doc_edges` links to
 //! discover related chunks up to a configurable depth.
+//!
+//! Traversal is **source-scoped**: links are resolved within the same
+//! `source_id` as the seed chunk.  This prevents identical `source_path`
+//! values from different sources from being incorrectly cross-linked.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
@@ -29,6 +33,11 @@ pub struct TraversalResult {
 /// The seed chunk itself is excluded from the results. If a target document
 /// path resolves to multiple chunks, all of them are included.
 ///
+/// Traversal is **source-scoped**: only chunks belonging to the same
+/// `source_id` as the seed are considered when resolving `target_path`
+/// values.  Multi-source databases with identical `source_path` values will
+/// not cause cross-source link pollution.
+///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Database`] on any query failure.
@@ -37,6 +46,10 @@ pub fn find_related_chunks(
     start_chunk_id: &str,
     max_depth: usize,
 ) -> Result<Vec<TraversalResult>, GraphtorError> {
+    // Resolve the source_id of the seed chunk so we can scope all path
+    // lookups to the same source.
+    let source_id = source_id_for_chunk(store, start_chunk_id)?.unwrap_or_default();
+
     let mut results: Vec<TraversalResult> = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
     visited.insert(start_chunk_id.to_owned());
@@ -51,7 +64,8 @@ pub fn find_related_chunks(
         }
         let target_paths = edges_from(store, &current_id)?;
         for target_path in target_paths {
-            let chunks = chunks_at_path(store, &target_path)?;
+            // Resolve only within the same source to avoid cross-source pollution.
+            let chunks = chunks_at_path(store, &source_id, &target_path)?;
             for (chunk_id, path) in chunks {
                 if visited.contains(&chunk_id) {
                     continue;
@@ -72,6 +86,22 @@ pub fn find_related_chunks(
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+/// Return the `source_id` for the given `chunk_id`, or `None` when not found.
+fn source_id_for_chunk(store: &DataStore, chunk_id: &str) -> Result<Option<String>, GraphtorError> {
+    let script = r"
+        ?[source_id] := *doc_chunks{ chunk_id: $cid, source_id }
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("cid".to_string(), DataValue::Str(chunk_id.into()));
+    let rows = store.query(script, params)?;
+    Ok(rows
+        .rows
+        .into_iter()
+        .next()
+        .and_then(|row| row.into_iter().next())
+        .and_then(|v| v.get_str().map(str::to_owned)))
+}
+
 /// Return all `target_path` values for outgoing edges from `chunk_id`.
 fn edges_from(store: &DataStore, chunk_id: &str) -> Result<Vec<String>, GraphtorError> {
     let script = r"
@@ -87,15 +117,22 @@ fn edges_from(store: &DataStore, chunk_id: &str) -> Result<Vec<String>, Graphtor
         .collect()
 }
 
-/// Return all `(chunk_id, path)` pairs where `path` matches `target_path`.
+/// Return all `(chunk_id, path)` pairs where `source_id` and `path` match.
+///
+/// Scoping by `source_id` ensures that chunks from different sources with
+/// identical paths do not cross-pollinate during traversal.
 fn chunks_at_path(
     store: &DataStore,
+    source_id: &str,
     target_path: &str,
 ) -> Result<Vec<(String, String)>, GraphtorError> {
     let script = r"
-        ?[chunk_id, path] := *doc_chunks{ chunk_id, path }, path = $path
+        ?[chunk_id, path] := *doc_chunks{ chunk_id, source_id, path },
+                             source_id = $sid,
+                             path = $path
     ";
     let mut params = BTreeMap::new();
+    params.insert("sid".to_string(), DataValue::Str(source_id.into()));
     params.insert("path".to_string(), DataValue::Str(target_path.into()));
     let rows = store.query(script, params)?;
     rows.rows

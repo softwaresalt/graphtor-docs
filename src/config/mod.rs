@@ -1,9 +1,9 @@
 //! Configuration parsing and validation for `sources.yaml`.
 //!
-//! This module provides [`SourceConfig`], [`Source`], [`GitSource`], and
-//! [`LocalSource`] types for reading and validating the documentation source
-//! registry. Configuration is parsed from a YAML file and validated before
-//! any pipeline stage begins.
+//! This module provides [`SourceConfig`], [`Source`], and [`LocalSource`] types
+//! for reading and validating the documentation source registry.
+//! Configuration is parsed from a YAML file and validated before any pipeline
+//! stage begins.
 //!
 //! # Multi-file discovery
 //!
@@ -16,58 +16,12 @@
 pub mod source;
 pub(crate) mod validation;
 
-pub use source::{GitSource, LocalSource, Source, SourceConfig};
+pub use source::{LocalSource, Source, SourceConfig};
 pub use validation::{resolve_source_db_path, DuplicateIntakeReport};
 
 use std::path::{Path, PathBuf};
 
-use tracing::info;
-
 use crate::error::GraphtorError;
-
-/// Auto-generate a minimal `sources.yaml` stub when an existing database file
-/// is found but no source configuration exists in `config_dir`.
-///
-/// The stub contains `sources: []\n`, which declares an empty source registry.
-/// This prevents workspace auto-discovery from triggering background sync when
-/// loading configuration for a database that was imported without a source
-/// configuration. The function is called from `load_source_config`, so it runs
-/// on every command that loads configuration, not only `serve`.
-///
-/// # Behaviour
-///
-/// * When `db_path` exists AND [`discover_source_files`] finds no config files
-///   in `config_dir` (neither `sources.yaml` nor any `*.sources.yaml` pattern
-///   file) → creates the parent directory if needed, writes
-///   `sources: []\n` to `config_dir/sources.yaml`, logs an `info!` message,
-///   and returns `Ok(Some(path_to_stub))`.
-/// * When `db_path` does not exist → no-op (returns `Ok(None)`).
-/// * When any source config already exists in `config_dir` → no-op (returns
-///   `Ok(None)`; never overwrites existing configuration).
-///
-/// # Errors
-///
-/// Returns [`GraphtorError::Io`] when directory enumeration, directory
-/// creation, or file write fails.
-pub fn ensure_sources_stub(
-    config_dir: &Path,
-    db_path: &Path,
-) -> Result<Option<PathBuf>, GraphtorError> {
-    if !db_path.exists() {
-        return Ok(None);
-    }
-    if !discover_source_files(config_dir)?.is_empty() {
-        return Ok(None);
-    }
-    std::fs::create_dir_all(config_dir)?;
-    let stub_path = config_dir.join("sources.yaml");
-    std::fs::write(&stub_path, "sources: []\n")?;
-    info!(
-        path = %stub_path.display(),
-        "generated empty sources stub (no source config found for existing database)"
-    );
-    Ok(Some(stub_path))
-}
 
 fn collect_pattern_source_files<I>(entries: I) -> Result<Vec<PathBuf>, GraphtorError>
 where
@@ -187,6 +141,25 @@ pub fn load_multi_file_config(files: &[PathBuf]) -> Result<SourceConfig, Graphto
     Ok(merged)
 }
 
+/// Load and validate a single source configuration file.
+///
+/// Unlike [`load_multi_file_config`], this function always operates in
+/// **single-file mode**: the `database` field is optional, matching the
+/// behaviour of the legacy `sources.yaml` fallback.  This is the correct
+/// loader for an explicit `--config` override where only one file is
+/// provided and there is no ambiguity about routing.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Io`] if the file cannot be read.
+/// Returns [`GraphtorError::Config`] if the file contains invalid YAML or
+/// fails semantic validation (e.g. duplicate source IDs).
+pub fn load_single_file_config(path: &Path) -> Result<SourceConfig, GraphtorError> {
+    let cfg = load_source_config_file(path)?;
+    validation::validate(&cfg)?;
+    Ok(cfg)
+}
+
 fn load_source_config_file(path: &Path) -> Result<SourceConfig, GraphtorError> {
     let content = std::fs::read_to_string(path).map_err(|error| {
         GraphtorError::Io(std::io::Error::new(
@@ -208,103 +181,6 @@ fn load_source_config_file(path: &Path) -> Result<SourceConfig, GraphtorError> {
 mod tests {
     use super::*;
     use std::io::Write as _;
-
-    // ── T041.001: ensure_sources_stub ─────────────────────────────────────
-
-    #[test]
-    fn ensure_sources_stub_creates_file_when_db_exists_and_yaml_absent() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let config_dir = dir.path().join("config");
-        let db_path = dir.path().join("graph.db");
-
-        std::fs::write(&db_path, b"").expect("create db file");
-
-        let result = ensure_sources_stub(&config_dir, &db_path).expect("ensure_sources_stub");
-        assert!(
-            result.is_some(),
-            "should return Some(path) when stub is written"
-        );
-
-        let stub_path = config_dir.join("sources.yaml");
-        assert!(stub_path.exists(), "stub file should have been created");
-        let content = std::fs::read_to_string(&stub_path).expect("read stub");
-        assert_eq!(content, "sources: []\n");
-    }
-
-    #[test]
-    fn ensure_sources_stub_does_not_overwrite_existing_yaml() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let config_dir = dir.path().join("config");
-        std::fs::create_dir_all(&config_dir).expect("create config dir");
-        let db_path = dir.path().join("graph.db");
-
-        std::fs::write(&db_path, b"").expect("create db file");
-
-        let stub_path = config_dir.join("sources.yaml");
-        let existing = "sources:\n  - type: local\n    id: docs\n    path: /docs\n";
-        std::fs::write(&stub_path, existing).expect("write existing yaml");
-
-        let result = ensure_sources_stub(&config_dir, &db_path).expect("ensure_sources_stub");
-        assert!(
-            result.is_none(),
-            "should return None when sources.yaml already exists"
-        );
-
-        let content = std::fs::read_to_string(&stub_path).expect("read stub");
-        assert_eq!(
-            content, existing,
-            "existing sources.yaml should not be overwritten"
-        );
-    }
-
-    #[test]
-    fn ensure_sources_stub_is_noop_when_pattern_file_exists() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let config_dir = dir.path().join("config");
-        std::fs::create_dir_all(&config_dir).expect("create config dir");
-        let db_path = dir.path().join("graph.db");
-
-        std::fs::write(&db_path, b"").expect("create db file");
-
-        // A *.sources.yaml pattern file is already present — no stub should be written.
-        let pattern_file = config_dir.join("graph.sources.yaml");
-        let existing =
-            "sources:\n  - type: local\n    id: docs\n    path: /docs\n    database: graph.db\n";
-        std::fs::write(&pattern_file, existing).expect("write pattern file");
-
-        let result = ensure_sources_stub(&config_dir, &db_path).expect("ensure_sources_stub");
-        assert!(
-            result.is_none(),
-            "should return None when a *.sources.yaml pattern file exists"
-        );
-
-        // The pattern file must be unchanged.
-        let content = std::fs::read_to_string(&pattern_file).expect("read pattern file");
-        assert_eq!(
-            content, existing,
-            "existing *.sources.yaml should not be overwritten"
-        );
-        // No stub sources.yaml should have been created.
-        assert!(
-            !config_dir.join("sources.yaml").exists(),
-            "stub sources.yaml must not be created when a pattern file exists"
-        );
-    }
-
-    #[test]
-    fn ensure_sources_stub_is_noop_when_db_absent() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let config_dir = dir.path().join("config");
-        let db_path = dir.path().join("graph.db"); // does not exist
-
-        let result = ensure_sources_stub(&config_dir, &db_path).expect("ensure_sources_stub");
-        assert!(result.is_none(), "should return None when db is absent");
-
-        assert!(
-            !config_dir.exists(),
-            "config dir should not be created when db is absent"
-        );
-    }
 
     fn write_yaml(dir: &Path, name: &str, content: &str) -> PathBuf {
         let path = dir.join(name);

@@ -33,7 +33,7 @@ More content. See [details](details.md#anchor).
 
 Deep content.
 ";
-    let doc = parse_document(md, "docs/guide.md").expect("parse should succeed");
+    let doc = parse_document(md, "test-src", "docs/guide.md").expect("parse should succeed");
 
     assert_eq!(doc.path, "docs/guide.md");
     assert!(
@@ -81,7 +81,7 @@ Deep content.
 #[test]
 fn test_document_without_frontmatter() {
     let md = "# Title\n\nSome content.\n";
-    let doc = parse_document(md, "docs/simple.md").expect("parse should succeed");
+    let doc = parse_document(md, "test-src", "docs/simple.md").expect("parse should succeed");
     assert!(doc.frontmatter.is_none());
     assert_eq!(doc.path, "docs/simple.md");
     assert!(!doc.chunks.is_empty());
@@ -91,7 +91,7 @@ fn test_document_without_frontmatter() {
 #[test]
 fn test_document_with_no_headings() {
     let md = "Just some plain text.\n";
-    let doc = parse_document(md, "docs/plain.md").expect("parse should succeed");
+    let doc = parse_document(md, "test-src", "docs/plain.md").expect("parse should succeed");
     assert_eq!(doc.chunks.len(), 1);
     assert!(doc.references.is_empty());
     assert!(doc.code_snippets.is_empty());
@@ -101,7 +101,7 @@ fn test_document_with_no_headings() {
 #[test]
 fn test_provenance_propagated_to_all_records() {
     let md = "## Section\n\nSee [ref](ref.md).\n\n```bash\necho hi\n```\n";
-    let doc = parse_document(md, "docs/prov.md").expect("parse should succeed");
+    let doc = parse_document(md, "test-src", "docs/prov.md").expect("parse should succeed");
 
     for c in &doc.chunks {
         assert_eq!(c.source_path, "docs/prov.md");
@@ -125,14 +125,14 @@ fn test_provenance_propagated_to_all_records() {
 #[test]
 fn test_title_from_h1_when_no_frontmatter() {
     let md = "# Document Title\n\n## Section\n\nContent.\n";
-    let doc = parse_document(md, "docs/h1.md").expect("parse should succeed");
+    let doc = parse_document(md, "test-src", "docs/h1.md").expect("parse should succeed");
     assert_eq!(doc.title.as_deref(), Some("Document Title"));
 }
 
 /// Empty document does not panic and returns empty collections.
 #[test]
 fn test_empty_document_does_not_panic() {
-    let doc = parse_document("", "docs/empty.md").expect("parse should succeed");
+    let doc = parse_document("", "test-src", "docs/empty.md").expect("parse should succeed");
     assert!(doc.chunks.is_empty());
     assert!(doc.references.is_empty());
     assert!(doc.code_snippets.is_empty());

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use cozo::{DataValue, DbInstance, NamedRows, ScriptMutability};
@@ -44,6 +44,7 @@ enum AccessMode {
 pub struct DataStore {
     pub(crate) db: Arc<DbInstance>,
     access_mode: AccessMode,
+    backing_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for DataStore {
@@ -73,6 +74,7 @@ impl DataStore {
         Ok(Self {
             db: Arc::new(db),
             access_mode: AccessMode::ReadWrite,
+            backing_path: None,
         })
     }
 
@@ -96,6 +98,7 @@ impl DataStore {
         Ok(Self {
             db: Arc::new(db),
             access_mode: AccessMode::ReadWrite,
+            backing_path: Some(safe_path),
         })
     }
 
@@ -126,7 +129,16 @@ impl DataStore {
         Ok(Self {
             db: Arc::new(db),
             access_mode: AccessMode::ReadOnly,
+            backing_path: Some(safe_path),
         })
+    }
+
+    /// Return the canonical filesystem path for a file-backed database.
+    ///
+    /// In-memory stores return `None`.
+    #[must_use]
+    pub fn database_path(&self) -> Option<&Path> {
+        self.backing_path.as_deref()
     }
 
     /// Return the names of all stored relations present in the database.
@@ -220,6 +232,82 @@ impl DataStore {
             }
         }
         Ok(0)
+    }
+
+    /// Return `true` if the database contains pre-v4 data that has not yet
+    /// been rebuilt through the docline ingestion pipeline.
+    ///
+    /// Delegates to [`crate::db::schema::needs_v4_migration`]. Read-only —
+    /// safe to call on any open store, including read-only handles.
+    ///
+    /// Query surfaces (`serve`, `status`) MUST check this and gate with an
+    /// actionable error before exposing index data to callers.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`GraphtorError::Database`] from the schema-version query.
+    pub fn needs_v4_migration(&self) -> Result<bool, GraphtorError> {
+        crate::db::schema::needs_v4_migration(self)
+    }
+
+    /// Return `true` when staged v4 retries must reuse the persisted frozen
+    /// snapshot instead of refreezing from live input.
+    ///
+    /// This becomes `true` immediately before the destructive staged prune and
+    /// clears after [`Self::mark_v4_migration_complete`] succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`GraphtorError::Database`] from the lock-state query.
+    pub fn v4_migration_snapshot_locked(&self) -> Result<bool, GraphtorError> {
+        crate::db::schema::v4_migration_snapshot_locked(self)
+    }
+
+    /// Prune all pre-v4 ingested data without clearing the migration gate.
+    ///
+    /// Delegates to [`crate::db::schema::prune_v4_data_for_rebuild`]. Callers
+    /// MUST follow this with [`Self::mark_v4_migration_complete`] only after a
+    /// clean rebuild has finished.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`GraphtorError::Database`] from the prune operation.
+    pub fn prune_v4_data_for_rebuild(&self) -> Result<(), GraphtorError> {
+        crate::db::schema::prune_v4_data_for_rebuild(self)
+    }
+
+    /// Mark a staged v4 rebuild as complete by stamping schema version 4.
+    ///
+    /// Delegates to [`crate::db::schema::mark_v4_migration_complete`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`GraphtorError::Database`] from the version-stamp
+    /// operation.
+    pub fn mark_v4_migration_complete(&self) -> Result<(), GraphtorError> {
+        crate::db::schema::mark_v4_migration_complete(self)
+    }
+
+    /// Prune all pre-v4 ingested data and stamp the schema version as 4.
+    ///
+    /// Delegates to [`crate::db::schema::apply_v4_prune`]. This compatibility
+    /// helper immediately marks the migration complete; new write paths SHOULD
+    /// prefer the staged prune + completion methods instead.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`GraphtorError::Database`] from the migration operations.
+    pub fn apply_v4_prune(&self) -> Result<(), GraphtorError> {
+        crate::db::schema::apply_v4_prune(self)
+    }
+
+    /// Force-set the schema version stored in `doc_schema_ver`.
+    ///
+    /// Intended only for test use — use to simulate pre-v4 database state
+    /// for migration regression tests.  Not part of the stable public API.
+    #[doc(hidden)]
+    pub fn set_schema_version_for_test(&self, ver: i64) -> Result<(), GraphtorError> {
+        crate::db::schema::set_schema_version_for_test(self, ver)
     }
 
     /// Execute a read-only `CozoScript` query.

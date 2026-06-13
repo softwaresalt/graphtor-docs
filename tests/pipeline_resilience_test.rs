@@ -26,10 +26,10 @@ fn pipeline_skips_invalid_utf8_and_processes_valid_files() {
     let docs_dir = root.join("docs");
     fs::create_dir_all(&docs_dir).expect("create docs dir");
 
-    // Two valid markdown files.
-    fs::write(docs_dir.join("valid_a.md"), "# Valid A\n\nContent of A.\n")
+    // Two valid docline markdown files.
+    fs::write(docs_dir.join("valid_a.md"), b"---\ntitle: Valid A\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: valid_a.md\n---\n# Valid A\n\nContent of A.\n")
         .expect("write valid_a.md");
-    fs::write(docs_dir.join("valid_b.md"), "# Valid B\n\nContent of B.\n")
+    fs::write(docs_dir.join("valid_b.md"), b"---\ntitle: Valid B\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: valid_b.md\n---\n# Valid B\n\nContent of B.\n")
         .expect("write valid_b.md");
 
     // One file with invalid UTF-8 bytes — will fail `read_to_string`.

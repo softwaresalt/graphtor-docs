@@ -242,6 +242,58 @@ pub fn run(
                     .get(ffs.source_id.as_str())
                     .map_or(&[], |ps| ps.source.formats());
 
+                // ── Pre-scan: fail-closed {source_id, source_path} duplicate detection ──
+                // If two or more files in this source declare the same `source_path` in
+                // their docline frontmatter, a future sync cycle would clobber one of them
+                // via delete-before-insert.  Detect collisions upfront, push errors for
+                // every conflicting file, and skip them all during the load phase.
+                let rejected_by_duplicate: std::collections::HashSet<std::path::PathBuf> = {
+                    let mut sp_to_files: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+                    for file in &ffs.files {
+                        let ext = normalized_document_extension(file).unwrap_or_default();
+                        // Only markdown files carry docline frontmatter; non-markdown files
+                        // and format-excluded files will be handled (skipped) in process_batch.
+                        if ext.as_str() != "md" || !is_format_allowed(source_formats, &ext) {
+                            continue;
+                        }
+                        if let Ok(sp) = crate::ingest_contract::extract_source_path_from_file(file)
+                        {
+                            sp_to_files.entry(sp).or_default().push(file.clone());
+                        }
+                        // Files that fail the lightweight pre-scan (no frontmatter, invalid
+                        // path, etc.) are left out of the map; they fail again during parse
+                        // with a full-context FileError.
+                    }
+                    let mut rejected = std::collections::HashSet::new();
+                    for (sp, files) in &sp_to_files {
+                        if files.len() > 1 {
+                            for file in files {
+                                warn!(
+                                    source_id = %ffs.source_id,
+                                    source_path = %sp,
+                                    file = %file.display(),
+                                    conflict_count = files.len(),
+                                    "duplicate source_path within source; \
+                                     all conflicting files rejected to prevent data clobbering"
+                                );
+                                errors_encountered.push(FileError {
+                                    path: file.clone(),
+                                    error: format!(
+                                        "duplicate source_path '{sp}' within source '{}': \
+                                         {n} files claim the same canonical identity; \
+                                         all are rejected (fail-closed) to prevent \
+                                         delete-before-insert data loss on future sync",
+                                        ffs.source_id,
+                                        n = files.len()
+                                    ),
+                                });
+                            }
+                            rejected.extend(files.iter().cloned());
+                        }
+                    }
+                    rejected
+                };
+
                 for batch in ffs.files.chunks(effective_batch_size) {
                     let result = process_batch(
                         batch,
@@ -250,6 +302,7 @@ pub fn run(
                         model,
                         &plan.allowed_root,
                         source_formats,
+                        &rejected_by_duplicate,
                     );
                     source_docs += result.docs_processed;
                     source_chunks += result.chunks_loaded;
@@ -268,9 +321,6 @@ pub fn run(
                 documents_processed += source_docs;
                 total_chunks += source_chunks;
                 skipped_by_format += source_skipped;
-            }
-            SourceOutcome::Skipped { source_id } => {
-                info!(source_id, "source skipped during acquisition");
             }
             SourceOutcome::Failed { source_id, error } => {
                 warn!(source_id, error, "source acquisition failed; skipping");
@@ -313,6 +363,7 @@ fn process_batch(
     model: Option<&EmbeddingModel>,
     allowed_root: &Path,
     formats: &[String],
+    rejected_by_duplicate: &std::collections::HashSet<std::path::PathBuf>,
 ) -> BatchResult {
     let mut docs_ok = 0_usize;
     let mut chunks_ok = 0_usize;
@@ -322,9 +373,19 @@ fn process_batch(
     // ── Parse ──────────────────────────────────────────────────────────────
     let mut parsed = Vec::new();
     for file in files {
+        // Skip files pre-rejected by the duplicate source_path check in `run()`.
+        // Errors were already pushed by the caller; we simply skip here to avoid
+        // double-counting and to prevent loading data under a colliding identity.
+        if rejected_by_duplicate.contains(file) {
+            debug!(
+                path = %file.display(),
+                "skipping file: pre-rejected by duplicate source_path check"
+            );
+            continue;
+        }
         // `file` is the absolute path used for filesystem I/O and log context.
-        // `path_str` is the source-root-relative path used for chunk IDs and DB
-        // provenance — it must be portable across checkout locations.
+        // The canonical document path (source_path) is now derived from the
+        // validated docline frontmatter contract, not from the filesystem path.
         let display_path = file.to_string_lossy();
         debug!(path = %display_path, "parsing file");
 
@@ -339,30 +400,10 @@ fn process_batch(
             continue;
         }
 
-        // Derive a source-root-relative path for stable chunk IDs.
-        // Normalize to forward slashes so chunk IDs and MCP path-matching are
-        // platform-independent; on Windows, strip_prefix produces backslash paths.
-        let path_str = match file.strip_prefix(allowed_root) {
-            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
-            Err(e) => {
-                warn!(
-                    path = %display_path,
-                    root = %allowed_root.to_string_lossy(),
-                    error = %e,
-                    "failed to derive source-relative path; skipping file"
-                );
-                errors.push(FileError {
-                    path: file.clone(),
-                    error: format!("failed to derive source-relative path: {e}"),
-                });
-                continue;
-            }
-        };
-
         // Detect extension for format filtering and parse dispatch.
-        // Canonicalise `.markdown` → `md` so the default allow-list
-        // `["md", "pdf", "docx"]` correctly accepts both `.md` and `.markdown`
-        // files without requiring users to enumerate both spellings.
+        // Canonicalise `.markdown` → `md` so the format allow-list
+        // correctly accepts both `.md` and `.markdown` files without
+        // requiring users to enumerate both spellings.
         let ext = normalized_document_extension(file).unwrap_or_default();
 
         // Format allow-list filtering: non-empty `formats` acts as an allow-list.
@@ -377,20 +418,22 @@ fn process_batch(
             continue;
         }
 
-        let parse_result = match ext.as_str() {
-            "md" | "pdf" | "docx" => parse_file(file, &path_str),
-            _ => {
-                debug!(
-                    path = %display_path,
-                    extension = %ext,
-                    "unsupported file extension; skipping"
-                );
-                continue;
-            }
+        let parse_result = if ext.as_str() == "md" {
+            parse_file(file, source_id)
+        } else {
+            debug!(
+                path = %display_path,
+                extension = %ext,
+                "unsupported file extension; skipping"
+            );
+            continue;
         };
 
         match parse_result {
-            Ok(doc) => parsed.push((path_str, doc)),
+            Ok(doc) => {
+                let doc_path = doc.path.clone();
+                parsed.push((doc_path, doc));
+            }
             Err(e) => {
                 warn!(path = %display_path, error = %e, "parse failed; skipping file");
                 errors.push(FileError {
@@ -477,12 +520,16 @@ fn process_batch(
 ///
 /// An empty `formats` list means "no restriction — allow all extensions".
 /// A non-empty `formats` list acts as an allow-list: only extensions listed
-/// are accepted.  The comparison is case-insensitive.
+/// are accepted.  The comparison is case-insensitive and `"markdown"` is
+/// treated as an alias for `"md"` (matching the normalisation applied by
+/// [`crate::parse::normalized_document_extension`]).
 fn is_format_allowed(formats: &[String], ext: &str) -> bool {
     if formats.is_empty() {
         return true;
     }
-    formats.iter().any(|f| f.eq_ignore_ascii_case(ext))
+    formats
+        .iter()
+        .any(|f| crate::config::source::canonicalize_format_ext(f).eq_ignore_ascii_case(ext))
 }
 
 /// Compute embeddings for all chunks in a parsed batch.
@@ -528,36 +575,13 @@ fn compute_embeddings(
 /// Extracts kind, URL, and display name from the original source configuration
 /// rather than using the source identifier as a placeholder.
 fn build_source_record(ps: &PlannedSource) -> SourceRecord {
-    match &ps.source {
-        Source::Git(git) => {
-            let id = git.id.clone();
-            SourceRecord {
-                url: git.url.clone(),
-                kind: "git".to_string(),
-                name: id.clone(),
-                source_id: id,
-                synced_at: None,
-            }
-        }
-        Source::Local(local) => {
-            let id = local.id.clone();
-            SourceRecord {
-                url: local.path.to_string_lossy().into_owned(),
-                kind: "local".to_string(),
-                name: id.clone(),
-                source_id: id,
-                synced_at: None,
-            }
-        }
-        Source::Url(url_src) => {
-            let id = url_src.id.clone();
-            SourceRecord {
-                url: url_src.url.clone(),
-                kind: "url".to_string(),
-                name: id.clone(),
-                source_id: id,
-                synced_at: None,
-            }
-        }
+    let Source::Local(local) = &ps.source;
+    let id = local.id.clone();
+    SourceRecord {
+        url: local.path.to_string_lossy().into_owned(),
+        kind: "local".to_string(),
+        name: id.clone(),
+        source_id: id,
+        synced_at: None,
     }
 }

@@ -11,25 +11,14 @@ use graphtor_core::GraphtorError;
 
 /// Default template content for a new `sources.yaml`.
 const SOURCES_YAML_TEMPLATE: &str = r#"# graphtor-docs sources.yaml
-# Documentation source registry. Add sources below to index them.
+# Documentation source registry. Add local Markdown sources below.
+# Only docline-emitted standardized Markdown is accepted.
 # Run `graphtor-docs sync` to ingest all sources.
 #
 # Supported source types:
-#   git   — shallow-clone a Git repository
-#   local — scan a local directory
+#   local — scan a local directory for standardized Markdown files
 
 sources: []
-
-# Example Git source:
-# sources:
-#   - id: azure-docs
-#     type: git
-#     url: https://github.com/MicrosoftDocs/azure-docs.git
-#     branch: main
-#     include:
-#       - "**/*.md"
-#     exclude:
-#       - "**/node_modules/**"
 
 # Example local source:
 # sources:
@@ -38,6 +27,8 @@ sources: []
 #     path: /absolute/or/relative/path/to/docs
 #     include:
 #       - "**/*.md"
+#     exclude:
+#       - "**/drafts/**"
 "#;
 
 /// Initialise the `sources.yaml` in the workspace config directory.

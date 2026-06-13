@@ -31,16 +31,7 @@ sha2 = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 globset = "0.4"
-git2 = "0.19"
 walkdir = "2"
-pdf-extract = "0.10"
-# Enable rayon for lopdf (pdf-extract's backend) to parallelize per-page object
-# decompression.  Note: this does NOT help the serial xref index parsing
-# (the bottleneck for very large PDFs — see pdfium dual backend for that).
-# pdf-extract pins lopdf with default-features = false which disables rayon;
-# adding the same version here with the rayon feature lets Cargo's
-# feature-unification activate parallel decompression globally.
-lopdf = { version = "0.38", default-features = false, features = ["rayon"] }
 pulldown-cmark = "0.12"
 cozo = { version = "0.7", default-features = false, features = ["storage-sqlite", "rayon"] }
 sqlite = "0.32"
@@ -58,26 +49,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 schemars = "1"
 clap = { version = "4", features = ["derive", "env"] }
 indicatif = "0.17"
-ureq = "2"
-htmd = "0.5"
-scraper = "0.22"
-texting_robots = "0.2"
-docx-rs = "0.4"
-url = "2"
-# PDFium-based PDF backend for large files.  pdfium-render wraps the PDFium
-# C library via dynamic loading (no native compile-time deps).  The DLL is
-# located at runtime — when absent, the system falls back to pdf-extract.
-pdfium-render = { version = "0.9", default-features = false, features = ["thread_safe", "pdfium_latest"] }
 sysinfo = "0.30"
 
 [dev-dependencies]
 tempfile = "3"
-git2 = "0.19"
 candle-core = { version = "0.8" }
-
-# When cross-compiling for x86_64-apple-darwin (from an ARM64 macOS runner),
-# openssl-sys cannot find system x86_64 OpenSSL headers.  Force vendored mode
-# so OpenSSL is compiled from source for that target only.  macOS ships Perl,
-# which is required by the vendored build.
-[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
