@@ -6,9 +6,12 @@ created: 2026-05-24
 
 ## Overview
 
-The source registry tells graphtor-docs which documentation sources to acquire,
-how to filter them, and which database to route each source into. You declare
-sources in YAML files under `.graphtor/config/`.
+The source registry tells graphtor-docs which local docline output directories
+to index, how to filter them, and which database to route each source into. You
+declare sources in YAML files under `.graphtor/config/`.
+
+Only `type: local` sources are supported. Each source directory must contain
+docline-emitted standardized Markdown files with valid v1 frontmatter.
 
 Two layouts are supported:
 
@@ -24,14 +27,13 @@ Place a single file at `.graphtor/config/sources.yaml`:
 
 ```yaml
 sources:
-  - type: git
-    id: azure-docs
-    url: https://github.com/MicrosoftDocs/azure-docs.git
-    branch: main
+  - type: local
+    id: product-docs
+    path: ./out/product-docs
     include: ["**/*.md"]
   - type: local
     id: internal-api
-    path: ./docs/api
+    path: ./out/api-docs
     include: ["**/*.md"]
 ```
 
@@ -47,7 +49,7 @@ Split sources across files named `<prefix>.sources.yaml` under
 
 ```text
 .graphtor/config/
-  azure.sources.yaml
+  graph.sources.yaml
   internal.sources.yaml
   powerbi.sources.yaml
 ```
@@ -62,13 +64,12 @@ field**. This prevents ambiguous routing when multiple files contribute to
 the merged registry.
 
 ```yaml
-# azure.sources.yaml
+# graph.sources.yaml
 sources:
-  - type: git
-    id: azure-docs
-    url: https://github.com/MicrosoftDocs/azure-docs.git
-    branch: main
-    database: azure.db
+  - type: local
+    id: graph-docs
+    path: ./out/graph-docs
+    database: graph.db
     include: ["**/*.md"]
 ```
 
@@ -77,7 +78,7 @@ sources:
 sources:
   - type: local
     id: internal-api
-    path: ./docs/api
+    path: ./out/api-docs
     database: internal.db
     include: ["**/*.md"]
 ```
@@ -86,16 +87,15 @@ Omitting `database` in multi-file mode produces a validation error at
 startup.
 
 > [!NOTE]
-> The `database` field value must be a plain filename (e.g. `azure.db`).
+> The `database` field value must be a plain filename (e.g. `graph.db`).
 > It must not contain path separators or `..` components.
 
 ---
 
 ## Cross-database duplicate-intake detection
 
-When two sources from different databases point at the same acquisition
-target — the same Git URL or the same local directory — graphtor-docs
-detects the conflict before sync begins.
+When two sources from different databases point at the same local directory
+path, graphtor-docs detects the conflict before sync begins.
 
 **Default behaviour (no `--force`):** sync exits with code 2 and prints a
 report to stderr:
@@ -103,7 +103,7 @@ report to stderr:
 ```text
 error: cross-database duplicate intakes detected:
 1 cross-database duplicate intake(s) detected:
-  intake: https://github.com/example/shared.git
+  intake: ./out/shared-docs
     - source 'shared-a' -> database 'alpha.db'
     - source 'shared-b' -> database 'beta.db'
 use --force to proceed anyway
@@ -114,7 +114,7 @@ use --force to proceed anyway
 ```text
 warning: cross-database duplicate intakes detected (proceeding due to --force):
 1 cross-database duplicate intake(s) detected:
-  intake: https://github.com/example/shared.git
+  intake: ./out/shared-docs
     ...
 ```
 
@@ -204,8 +204,9 @@ sources.
 | Config field | Required in multi-file mode | Description |
 |---|---|---|
 | `id` | yes | Unique source identifier |
-| `type` | yes | `git`, `local`, or `url` |
-| `database` | **yes** | Target database filename (e.g. `azure.db`) |
+| `type` | yes | Must be `local` |
+| `path` | yes | Path to the local docline output directory |
+| `database` | **yes** | Target database filename (e.g. `graph.db`) |
 | `include` | no | Glob patterns to include |
 | `exclude` | no | Glob patterns to exclude |
-| `formats` | no | File extension allow-list (default: `md`, `pdf`, `docx`) |
+| `formats` | no | File extension allow-list (only `md` and `markdown` accepted; default: `["md"]`) |

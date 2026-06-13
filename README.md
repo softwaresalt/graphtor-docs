@@ -13,14 +13,18 @@ No cloud services. No external databases. One binary.
 
 ## Features
 
-- **Three source types** — Git repositories (shallow-cloned), local
-  directories, and web URLs
+- **Standardized-Markdown only** — indexes local directories of
+  [docline](https://github.com/softwaresalt/docline)-emitted Markdown files;
+  no git clone, web crawl, PDF, or DOCX ingestion
+- **Docline v1 frontmatter contract** — every file is validated against the
+  v1 contract (required fields: `title`, `source`, `ingested_at`, `doc_type`,
+  `source_path`); malformed or missing frontmatter fails deterministically
 - **Unified graph + vector store** — CozoDB (SQLite backend) with
-  deterministic SHA-256 chunk IDs
+  deterministic SHA-256 chunk IDs and inline HNSW-indexed embeddings
 - **Semantic search** — `all-MiniLM-L6-v2` embeddings via Candle (384-dim,
   in-process Rust ML inference; no external model server)
 - **Graph traversal** — follow document link graphs with BFS traversal
-- **Incremental sync** — re-ingest only changed files (git diff or mtime)
+- **Incremental sync** — re-ingest only changed files (mtime-based)
 - **Per-source database routing** — send selected sources to separate `.db`
   files with automatic multi-database `serve`, `status`, and `prewarm` support
 - **8 MCP tools** — search, traverse, research, retrieve, status — for AI agents
@@ -75,26 +79,27 @@ cargo build --release
 
 ### 2. Configure sources
 
-```sh
-# Generate a starter sources.yaml
-graphtor-docs init
-```
-
-Edit `.graphtor/config/sources.yaml`:
+Create `.graphtor/config/sources.yaml` pointing at your local docline output
+directories:
 
 ```yaml
 sources:
-  - type: git
-    id: my-docs
-    url: https://github.com/example/my-docs.git
-    database: primary.db
+  - type: local
+    id: product-docs
+    path: ./out/product-docs     # directory of docline-emitted .md files
     include: ["**/*.md"]
+    database: product.db
 
   - type: local
-    id: local-notes
-    path: ./notes
-    database: notes.db
+    id: team-runbooks
+    path: ./out/runbooks
+    include: ["**/*.md"]
 ```
+
+Every `.md` file in these directories must contain a valid docline v1
+frontmatter block. Files that are missing required frontmatter fields or whose
+`content_sha256` digest mismatches are rejected and reported — they do not
+silently propagate partial data.
 
 See the [Configuration Guide](docs/configuration.md) for all options.
 
@@ -110,7 +115,7 @@ graphtor-docs sync
 ```
 
 First sync downloads the embedding model (~80 MB) from HuggingFace Hub and
-ingests all configured sources. Subsequent syncs are incremental.
+ingests all configured sources. Subsequent syncs are incremental (mtime-based).
 
 ### 4. Serve to your AI agent
 

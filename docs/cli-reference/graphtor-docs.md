@@ -45,9 +45,9 @@ Run the ingestion pipeline.
 graphtor-docs sync [FLAGS]
 ```
 
-By default, detects changes since the last sync (via git diff or file mtime)
-and re-processes only added, modified, and deleted files. Use `--full` to
-force a complete acquire → parse → embed → load cycle.
+By default, detects changes since the last sync (via file mtime) and
+re-processes only added, modified, and deleted files. Use `--full` to
+force a complete acquire → validate → parse → embed → load cycle.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -118,7 +118,7 @@ Print database statistics.
 graphtor-docs status [FLAGS]
 ```
 
-Reports registered sources, their kind (git/local), URL, and last-sync
+Reports registered sources, their kind (`local`), path, and last-sync
 timestamp. If the database does not exist, prints a helpful message and exits
 with code `0`.
 
@@ -131,8 +131,8 @@ with code `0`.
 ```text
 database: .graphtor/graph.db
 sources:  2
-  [git]   azure-docs — https://github.com/MicrosoftDocs/azure-docs.git (last sync: never)
-  [local] team-runbooks — ./runbooks (last sync: never)
+  [local] product-docs — ./out/product-docs (last sync: never)
+  [local] team-runbooks — ./out/runbooks (last sync: never)
 ```
 
 > **Note:** `last sync` shows `never` until a future release populates `synced_at`
@@ -149,10 +149,10 @@ sources:  2
     "database": ".graphtor/graph.db",
     "sources": [
       {
-        "id": "azure-docs",
-        "name": "azure-docs",
-        "kind": "git",
-        "url": "https://github.com/MicrosoftDocs/azure-docs.git",
+        "id": "product-docs",
+        "name": "product-docs",
+        "kind": "local",
+        "url": "./out/product-docs",
         "synced_at": null
       }
     ]
@@ -174,16 +174,16 @@ Generate a template `sources.yaml`.
 graphtor-docs init [FLAGS]
 ```
 
-Creates `.graphtor/config/sources.yaml` with commented examples for Git and
-local sources. Does **not** overwrite an existing file unless `--force` is
+Creates `.graphtor/config/sources.yaml` with commented examples for local
+docline sources. Does **not** overwrite an existing file unless `--force` is
 passed.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--force` | off | Overwrite an existing `sources.yaml` |
 
-After running `init`, edit the generated file to add your documentation
-sources, then run `graphtor-docs sync`.
+After running `init`, edit the generated file to add your local docline output
+directories, then run `graphtor-docs sync`.
 
 ---
 
@@ -200,9 +200,8 @@ Creates the `.graphtor/` workspace directory scaffold:
 ```text
 .graphtor/
   bin/        ← installed binary copy
-  data/       ← acquired source files (git clones and url crawl cache)
   cache/      ← directory scaffold only; HuggingFace model cache is at ~/.cache/huggingface/hub/
-  config/     ← sources.yaml
+  config/     ← sources.yaml (local docline source registrations)
   logs/       ← transient log files
   graph.db    ← primary CozoDB SQLite database
   *.db        ← optional routed database files from `sources.yaml`

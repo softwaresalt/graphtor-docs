@@ -15,10 +15,11 @@ Organize MCP server code following the standard layout:
 ```text
 src/
   main.rs           # Entry point, MCP server initialization
-  acquire/          # Source acquisition (git clone, local copy, web crawl)
+  acquire/          # Local source directory scanning
   chunk/            # pulldown-cmark AST parsing, heading-based chunking
   config/           # sources.yaml loading, CLI args
   error/            # thiserror error types
+  ingest_contract/  # Docline v1 frontmatter contract validation
   logging/          # tracing subscriber setup
   path/             # Path normalization and resolution
 ```

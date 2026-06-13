@@ -13,7 +13,7 @@ model servers. The entire system compiles to a single Rust binary.
 |---|---|
 | **Local-first** | Embedded CozoDB (SQLite backend); Candle ML inference in-process |
 | **Lightweight footprint** | ~80 MB embedding model; single binary; no runtime dependencies |
-| **Data pipeline integrity** | SHA-256 chunk IDs; deterministic AST parsing; idempotent upserts |
+| **Data pipeline integrity** | SHA-256 chunk IDs; docline v1 frontmatter contract; idempotent upserts |
 | **MCP-native interface** | All capabilities exposed via 8 MCP tools; STDIO transport |
 | **Automation & reproducibility** | Incremental sync; single `sync` command; re-runnable without intervention |
 
@@ -48,17 +48,24 @@ sources.yaml
     ▼
 ┌──────────────────────────────────────────────────────┐
 │ Acquire                                              │
-│  Git  → git2 shallow clone → .graphtor/data/{id}/   │
 │  Local → directory scan   → (in-place; no copy)     │
-│  URL  → ureq BFS crawl    → .graphtor/data/{id}/    │
 └──────────────────────┬───────────────────────────────┘
-                       │ files on disk
+                       │ .md files on disk
+                       ▼
+┌──────────────────────────────────────────────────────┐
+│ Validate (docline v1 frontmatter contract)           │
+│  YAML frontmatter between --- delimiters             │
+│  Required: title, source, ingested_at, doc_type,    │
+│            source_path                               │
+│  content_sha256 verified when present                │
+│  schema_version major must be 1                      │
+│  Fail-closed: invalid files are rejected with error  │
+└──────────────────────┬───────────────────────────────┘
+                       │ ValidatedFrontmatter + body
                        ▼
 ┌──────────────────────────────────────────────────────┐
 │ Parse                                                │
 │  .md   → pulldown-cmark AST → chunks + edges        │
-│  .pdf  → pdf-extract / PDFium → chunks               │
-│  .docx → docx parser → chunks                        │
 │  Output: ParsedDocument { chunks, edges }            │
 └──────────────────────┬───────────────────────────────┘
                        │ ParsedDocument
@@ -75,16 +82,15 @@ sources.yaml
 ┌──────────────────────────────────────────────────────┐
 │ Load (CozoDB upserts)                                │
 │  doc_sources  — source registry                      │
-│  doc_chunks   — chunk content + metadata             │
+│  doc_chunks   — chunk content + inline embedding     │
 │  doc_edges    — document link graph                  │
 │  doc_code     — extracted code snippets              │
-│  doc_vectors  — embedding vectors                    │
 └──────────────────────────────────────────────────────┘
                        │
                        ▼
                MCP Server (serve)
           search_local_docs  ─── text search via doc_chunks
-          search_semantic    ─── vector cosine similarity
+          search_semantic    ─── HNSW vector cosine similarity
           traverse_doc_links ─── BFS over doc_edges
           research_topic     ─── combined search + graph traversal
           list_sources       ─── doc_sources registry
@@ -99,11 +105,9 @@ sources.yaml
 |---|---|---|
 | Language | Rust (stable, 1.75+, edition 2021) | `#![forbid(unsafe_code)]` enforced |
 | Unified store | CozoDB (`cozo` crate, SQLite backend) | Embedded; Datalog queries; property-graph traversal |
-| Embeddings | `all-MiniLM-L6-v2` via Candle | ~80 MB model; 384-dim; pure Rust inference |
+| Embeddings | `all-MiniLM-L6-v2` via Candle | ~80 MB model; 384-dim; pure Rust inference; HNSW index |
 | Graph extraction | `pulldown-cmark` | AST-based; deterministic; 100% precision |
 | MCP interface | `rmcp` crate | Async STDIO JSON-RPC via tokio |
-| Git operations | `git2` crate | Native bindings; shallow clones; no shell-out |
-| URL crawling | `ureq` (sync) | Avoids tokio nested-runtime issues |
 | Configuration | `serde_yaml` + `serde_json` | Type-safe YAML/JSON deserialization |
 | CLI | `clap` (derive) | Subcommands; global flags |
 | Async runtime | `tokio` | MCP server; async acquire |
@@ -117,8 +121,6 @@ sources.yaml
   bin/                      ← installed binary
   config/
     sources.yaml            ← documentation source registry
-  data/
-    {source_id}/            ← acquired files (git clones and url crawl cache)
   cache/                    ← HuggingFace model cache (see ~/.cache/huggingface/hub/)
   logs/                     ← transient output files
   graph.db                  ← primary CozoDB SQLite database
@@ -132,21 +134,24 @@ sources.yaml
 Every chunk has a stable **chunk ID** — the SHA-256 hash of its content,
 a NUL byte separator (`\0`), and its source-relative path (using
 forward-slash separators on all platforms). This ID is the correlation key
-across `doc_chunks`,
-`doc_vectors`, and `doc_edges`. Upserts by chunk ID are safe to re-run: the
-same input always produces the same ID and the same stored record.
+across `doc_chunks`, `doc_edges`, and `doc_code`. Upserts by chunk ID are
+safe to re-run: the same input always produces the same ID and the same
+stored record.
+
+The **logical identity** of a document is the combination of its
+`source_id` (from `sources.yaml`) and the `source_path` field from its
+docline v1 frontmatter. `source_path` is a workspace-relative, forward-slash
+normalized path that uniquely identifies the origin artifact within its
+source namespace. Duplicate-intake detection uses this `(source_id,
+source_path)` key before the pipeline begins loading any chunks.
 
 ## Incremental Sync
 
-The sync engine tracks change at the source level:
+The sync engine tracks change at the source level for local sources:
 
-- **Git sources**: compares HEAD commit SHA-1 to the `last_commit` stored in
-  the database-specific `*.sync_state.json` file; re-ingests only files that
-  appear in the diff
 - **Local sources**: compares current file `mtime` to the stored mtime map;
-  re-ingests only modified or new files
-- **URL sources**: always re-crawls (no stable diff signal); `max_pages`
-  caps the crawl scope
+  re-ingests only modified or new files. Files that no longer exist are pruned
+  from the database.
 
 When a source sets `database`, sync, serve, status, and prewarm route that
 source through the matching `.db` file and aggregate results across all loaded

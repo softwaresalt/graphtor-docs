@@ -4,7 +4,9 @@ description: "Complete sources.yaml reference for Git, local, and URL source typ
 ---
 
 graphtor-docs is configured via a single YAML file, `sources.yaml`, which
-defines the documentation sources to acquire, index, and serve.
+defines the local documentation sources to validate, index, and serve.
+Every source must be a local directory of docline-emitted standardized
+Markdown files. Git, URL, and web-crawl source types are not supported.
 
 ## Config File Location
 
@@ -14,7 +16,8 @@ graphtor-docs resolves the config path in this order:
 2. `GRAPHTOR_SOURCES` environment variable
 3. `.graphtor/config/sources.yaml` relative to the **current working directory**
 
-Run `graphtor-docs init` to generate a starter file at the default location.
+If no config file is found at the resolved path, graphtor-docs exits with a
+fatal error. No stub file is created automatically.
 
 ## Multi-file layout
 
@@ -24,9 +27,9 @@ You can split your source registry across multiple files by using the
 
 ```text
 .graphtor/config/
-  azure.sources.yaml
-  internal-runbooks.sources.yaml
-  web.sources.yaml
+  graph.sources.yaml
+  powerbi.sources.yaml
+  runbooks.sources.yaml
 ```
 
 graphtor-docs discovers all `*.sources.yaml` files in that directory,
@@ -41,82 +44,33 @@ an explicit `database` field so routing is unambiguous.
 > Use multi-file layout when separate teams or products own different
 > source groups. Each file is independently editable and reviewable.
 
-## Auto-generated stub
-
-When any command loads config via `load_source_config` and finds an existing
-database file but no source configuration, graphtor-docs writes a minimal stub
-at `.graphtor/config/sources.yaml` containing only `sources: []`.
-
-This prevents background sync from triggering on a database that was
-imported without a configuration. The stub is written only when:
-
-* The database file exists, **and**
-* Neither `sources.yaml` nor any `*.sources.yaml` file is present in
-  `.graphtor/config/`
-
-The stub is never overwritten once any source configuration exists.
-
 ## File Format
 
 ```yaml
 sources:
-  - type: git         # or "local" or "url"
-    id: my-source-id  # unique identifier for this source
-    # … type-specific fields …
+  - type: local         # only supported type
+    id: my-source-id   # unique identifier for this source
+    # … fields …
 ```
 
 The top-level key is `sources`, containing an ordered list of source entries.
-Each entry must have a `type` field (`git`, `local`, or `url`) and a unique
-`id` string.
+Each entry must have `type: local` and a unique `id` string.
 
-## Source Types
+## Source Type: Local (`type: local`)
 
-### Git source (`type: git`)
-
-Shallow-clones a remote Git repository and indexes its documentation files.
-
-```yaml
-sources:
-  - type: git
-    id: azure-docs                          # required; unique ID
-    url: https://github.com/MicrosoftDocs/azure-docs.git  # required
-    branch: main                            # optional; default: "main"
-    database: primary.db                    # optional; default: primary --db-path
-    include:                                # optional; glob allow-list
-      - "**/*.md"
-    exclude:                                # optional; glob deny-list
-      - "**/drafts/**"
-      - "**/CONTRIBUTING.md"
-    formats:                                # optional; extension allow-list
-      - md
-      - pdf
-```
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `id` | string | **yes** | — | Unique source identifier (used as directory name and DB key) |
-| `url` | string | **yes** | — | Git clone URL (HTTPS or SSH) |
-| `branch` | string | no | `"main"` | Branch to clone |
-| `database` | string | no | primary `--db-path` | Route this source into a specific database file |
-| `include` | list\<string\> | no | (all files) | Glob patterns — only matching files are indexed |
-| `exclude` | list\<string\> | no | (none) | Glob patterns — matching files are skipped |
-| `formats` | list\<string\> | no | `["md","pdf","docx"]` | Extension allow-list (see [Formats](#formats)) |
-
-### Local source (`type: local`)
-
-Indexes files from a local filesystem directory.
+Indexes docline-emitted Markdown files from a local filesystem directory.
 
 ```yaml
 sources:
   - type: local
     id: internal-api-docs                   # required
-    path: ./docs/api                        # required; path to directory
-    database: runbooks.db                   # optional; default: primary --db-path
+    path: ./out/api-docs                    # required; path to directory
+    database: api.db                        # optional; default: primary --db-path
     include:                                # optional
       - "**/*.md"
     exclude:                                # optional
-      - "**/private/**"
-    formats:                                # optional
+      - "**/drafts/**"
+    formats:                                # optional; only "md" and "markdown" accepted
       - md
 ```
 
@@ -127,44 +81,12 @@ sources:
 | `database` | string | no | primary `--db-path` | Route this source into a specific database file |
 | `include` | list\<string\> | no | (all files) | Glob patterns — only matching files are indexed |
 | `exclude` | list\<string\> | no | (none) | Glob patterns — matching files are skipped |
-| `formats` | list\<string\> | no | `["md","pdf","docx"]` | Extension allow-list |
+| `formats` | list\<string\> | no | `["md"]` | Extension allow-list; only `md` and `markdown` are accepted |
 
-### URL source (`type: url`)
-
-Crawls a web URL via BFS and indexes each page (converted to Markdown via
-`htmd`).
-
-```yaml
-sources:
-  - type: url
-    id: ms-learn-dotnet                     # required
-    url: https://learn.microsoft.com/en-us/dotnet/  # required; start URL
-    max_depth: 3                            # optional; default: 3
-    max_pages: 100                          # optional; default: 100
-    domain_lock: true                       # optional; default: true
-    rate_limit_ms: 500                      # optional; default: 500
-    database: web.db                        # optional; default: primary --db-path
-    include: []                             # optional
-    exclude: []                             # optional
-    formats:                                # optional
-      - md
-```
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `id` | string | **yes** | — | Unique source identifier |
-| `url` | string | **yes** | — | Start URL for BFS crawl (https:// or http://) |
-| `max_depth` | integer | no | `3` | Maximum BFS depth relative to `url` |
-| `max_pages` | integer | no | `100` | Maximum number of pages to crawl |
-| `domain_lock` | boolean | no | `true` | When true, crawler stays within `url`'s registered domain |
-| `rate_limit_ms` | integer | no | `500` | Minimum milliseconds between consecutive HTTP requests |
-| `database` | string | no | primary `--db-path` | Route this source into a specific database file |
-| `include` | list\<string\> | no | (all pages) | Glob patterns applied to the crawled page path |
-| `exclude` | list\<string\> | no | (none) | Glob patterns applied to the crawled page path |
-| `formats` | list\<string\> | no | `["md","pdf","docx"]` | Extension allow-list |
-
-URL sources always re-crawl on each `sync` run (no stable diff signal).
-Use `max_pages` to cap the crawl scope.
+Every `.md` file in the directory must contain a valid docline v1 frontmatter
+block. Files that fail contract validation (missing required fields, bad
+`content_sha256`, unsupported `schema_version` major) are rejected with a
+deterministic error. See [Pipeline Reference](pipeline.md) for details.
 
 ## Database Routing
 
@@ -173,15 +95,15 @@ SQLite file instead of the primary `--db-path` target.
 
 ```yaml
 sources:
-  - type: git
+  - type: local
     id: product-docs
-    url: https://github.com/example/product-docs.git
+    path: ./out/product-docs
     database: product.db
 
   - type: local
-    id: team-notes
-    path: ./notes
-    database: notes.db
+    id: team-runbooks
+    path: ./out/runbooks
+    database: runbooks.db
 ```
 
 `database` is resolved relative to the parent directory of `--db-path`. With
@@ -199,31 +121,22 @@ contain `/` or `\`, and must not contain parent-directory components such as
 ## Formats
 
 The `formats` field is an **extension allow-list** applied after glob
-filtering. Values are file extensions without the leading dot, compared
-case-insensitively.
+filtering. Only Markdown extensions are accepted.
 
 | Value | Parser used |
 |---|---|
 | `md` or `markdown` | `pulldown-cmark` (Markdown AST) |
-| `pdf` | `pdf-extract` (with optional PDFium backend for files ≥ 20 MiB) |
-| `docx` | ZIP/XML docx parser |
 
-**Empty list** means no restriction — all extensions supported by the pipeline
-are processed.
+**Defaults to `["md"]`** when the field is absent from YAML.
 
-**Non-empty list** is a strict allow-list — only files whose extension
-matches one of the listed strings are passed to the parse stage.
+Specifying `pdf`, `docx`, `html`, or any other extension is a validation
+error — graphtor-docs will refuse to start with an unsupported format.
 
 ```yaml
-# Index only Markdown files (ignore PDFs and DOCX)
+# Index Markdown files (all valid variants)
 formats:
   - md
-
-# Index Markdown and PDF (default behaviour)
-formats:
-  - md
-  - pdf
-  - docx
+  - markdown   # alias for md; both accepted
 ```
 
 ## Glob Patterns
@@ -247,51 +160,32 @@ Common validation errors:
 | Error | Cause |
 |---|---|
 | `duplicate source ID` | Two sources share the same `id` value |
-| `missing required field` | `id` or `url`/`path` is absent |
+| `missing required field` | `id` or `path` is absent |
 | `invalid glob pattern` | A pattern in `include` or `exclude` is malformed |
 | `invalid database name` | `database` is empty or contains path traversal characters |
+| `invalid format` | A `formats` value is not `md` or `markdown` |
 
 Run `graphtor-docs doctor` to validate the config file without running a sync.
 
 ## Annotated Full Example
 
 ```yaml
+# ── Local: index a docline output directory ──────────────────────────────────
 sources:
-  # ── Git: shallow-clone a public GitHub docs repo ─────────────────────────
-  - type: git
-    id: azure-docs
-    url: https://github.com/MicrosoftDocs/azure-docs.git
-    branch: main
-    database: azure.db
+  - type: local
+    id: product-docs
+    path: ./out/product-docs
+    database: product.db
     include:
-      - "articles/**/*.md"
+      - "**/*.md"
     exclude:
-      - "**/includes/**"
-      - "**/media/**"
-    formats:
-      - md
+      - "**/drafts/**"
 
-  # ── Local: index files from a local directory ─────────────────────────────
+  # ── Local: separate source routed to its own database ───────────────────────
   - type: local
     id: team-runbooks
-    path: /home/user/runbooks
+    path: /home/user/runbooks/out
     database: runbooks.db
     include:
       - "**/*.md"
-      - "**/*.pdf"
-    formats:
-      - md
-      - pdf
-
-  # ── URL: crawl a documentation website ───────────────────────────────────
-  - type: url
-    id: ms-learn-azure-functions
-    url: https://learn.microsoft.com/en-us/azure/azure-functions/
-    max_depth: 2
-    max_pages: 50
-    domain_lock: true
-    rate_limit_ms: 1000
-    database: web.db
-    formats:
-      - md
 ```

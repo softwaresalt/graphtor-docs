@@ -29,8 +29,7 @@ graphtor-docs --verbose sync
 
 **Symptom:**
 ```text
-error: sources.yaml not found at .graphtor/config/sources.yaml;
-       run `graphtor-docs init` first
+error: sources.yaml not found at .graphtor/config/sources.yaml
 ```
 
 **Cause:** The `.graphtor/` workspace has not been initialised, or `sync` is
@@ -38,7 +37,7 @@ being run from a different directory than where `install` was run.
 
 **Resolution:**
 1. Run `graphtor-docs init` to create a starter `sources.yaml`
-2. Edit `.graphtor/config/sources.yaml` to add your documentation sources
+2. Edit `.graphtor/config/sources.yaml` to add your local docline output directories
 3. Run `graphtor-docs sync`
 
 Or use a custom config location:
@@ -63,41 +62,6 @@ only happens once.
   is available
 - To check the model cache location: `echo $HF_HOME` (defaults to
   `~/.cache/huggingface`)
-
----
-
-### PDF extraction failures or poor quality
-
-**Symptom:** PDF files are skipped, produce garbled text, or timeout on large
-files.
-
-**Cause:** The pure-Rust `pdf-extract` backend has known limitations with
-complex PDFs. For files ≥ 20 MiB, graphtor-docs routes through PDFium if
-available.
-
-**Resolution — install PDFium:**
-1. Download the pre-built PDFium shared library from
-   [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries)
-   for your platform
-2. Place it in the same directory as the `graphtor-docs` binary, **or** set
-   the environment variable:
-
-   **Linux / macOS:**
-   ```sh
-   export GRAPHTOR_PDFIUM_PATH=/path/to/libpdfium.so
-   ```
-   **Windows (PowerShell):**
-   ```powershell
-   $env:GRAPHTOR_PDFIUM_PATH = 'C:\libs\pdfium.dll'
-   ```
-   **Windows (cmd):**
-   ```cmd
-   set GRAPHTOR_PDFIUM_PATH=C:\libs\pdfium.dll
-   ```
-3. Re-run sync: `graphtor-docs sync --full`
-
-Without PDFium, large PDFs fall back to `pdf-extract` — slower and lower
-quality but functional.
 
 ---
 
@@ -153,34 +117,10 @@ permissions are wrong.
 
 ### Git clone failures
 
-**Symptom:**
-```text
-acquisition had failures; affected sources may be skipped
-```
-Or authentication errors during clone.
-
-**Cause:** Network access issues, SSH key not configured, HTTPS credentials
-not available, or firewall/proxy blocking git traffic.
-
-**Resolution:**
-- **HTTPS sources:** configure a [git credential helper](https://git-scm.com/docs/gitcredentials)
-  so that git can authenticate without embedding credentials in URLs:
-  ```sh
-  git config --global credential.helper store   # Linux/macOS (stores in ~/.git-credentials)
-  ```
-  ```powershell
-  git config --global credential.helper wincred  # Windows Credential Manager
-  ```
-  For CI environments, use the `GIT_ASKPASS` or `GH_TOKEN` / `GITHUB_TOKEN`
-  environment variables instead of embedding tokens in clone URLs.
-- **SSH sources:** ensure `ssh-agent` is running and has your key loaded:
-  ```sh
-  eval $(ssh-agent)
-  ssh-add ~/.ssh/id_ed25519
-  ```
-- **Proxy:** set `https_proxy` / `http_proxy` environment variables before
-  running `sync`
-- **Firewall:** ensure outbound port 443 (HTTPS) or 22 (SSH) is allowed
+> **Note:** Git source ingestion was removed in the docline pivot. If you are
+> seeing git-related errors, you may be using an outdated configuration with
+> `type: git` sources. Replace them with `type: local` pointing at docline
+> output directories. See the [Configuration Guide](configuration.md).
 
 ---
 
@@ -189,8 +129,11 @@ not available, or firewall/proxy blocking git traffic.
 **Symptom:** `graphtor-docs status` shows sources but 0 chunks, or search
 returns no results for content you know is in the source.
 
-**Cause:** The `formats` or `include`/`exclude` glob patterns are filtering out
-all files, or the source directory is empty.
+**Cause 1 — Glob or format filter:** The `include`/`exclude` glob patterns or
+`formats` are filtering out all files.
+
+**Cause 2 — Invalid frontmatter:** Files have missing or malformed docline v1
+frontmatter and were rejected during validation.
 
 **Resolution:**
 1. Check `sources.yaml` — verify `include` globs match your file extensions:
@@ -198,16 +141,18 @@ all files, or the source directory is empty.
    include:
      - "**/*.md"   # not "*.md" (would only match root-level files)
    ```
-2. Check `formats` — ensure the file extensions you want are listed (or omit
-   `formats` entirely to allow all supported types)
-3. Run with `--verbose` to see per-file processing decisions:
+2. Run with `--verbose` to see per-file processing decisions:
    ```sh
    graphtor-docs --verbose sync
    ```
-4. Check that the source directory actually contains files:
+3. Check that the source directory actually contains `.md` files:
    ```sh
-   ls .graphtor/data/{source-id}/
+   ls ./out/your-source-id/
    ```
+4. Verify that each `.md` file has a valid docline v1 frontmatter block with
+   the required fields: `title`, `source`, `ingested_at`, `doc_type`, and
+   `source_path`. Files that fail frontmatter validation are skipped and
+   reported in sync output.
 
 ---
 
@@ -225,15 +170,15 @@ be downloaded and cached. After the first successful startup with the model,
 subsequent starts use the local cache.
 
 **Cause 2 — Sync ran with `--no-embed`:** If `graphtor-docs sync --no-embed`
-was used, no vectors were stored in `doc_vectors`. Even with the model loaded,
-`search_semantic` will return empty results.
+was used, no embeddings were stored in `doc_chunks.embedding`. Even with the
+model loaded, `search_semantic` will return empty results.
 
-**Resolution:** Re-run sync without the flag to populate vectors:
+**Resolution:** Re-run sync without the flag to populate embeddings:
 ```sh
 graphtor-docs sync --full
 ```
 
-**Cause 3 — Empty `doc_vectors`:** First sync only partially completed before
+**Cause 3 — Empty embeddings:** First sync only partially completed before
 being interrupted.
 
 **Resolution:** Run `graphtor-docs sync --full` to force a complete rebuild.
@@ -285,21 +230,24 @@ output.
 
 **Symptom:**
 ```text
-[✗] database: schema version mismatch (expected 2, found 1)
+[✗] database: schema version mismatch (expected 4, found 1)
 ```
 
-**Cause:** The database was created by an older version of graphtor-docs with
-a different schema. Currently there is no automatic migration path.
+**Cause:** The database was created by an older version of graphtor-docs.
+Upgrading from v1–v3 triggers an automatic data migration; upgrading from
+a pre-pivot build to the current version (v4) prunes pre-pivot ingested data
+so the docline pipeline can re-ingest from scratch.
 
-**Resolution:** Delete the database and re-run sync to rebuild it:
+**Resolution:** If the automatic migration did not run (or you are starting
+fresh), delete the database and re-run sync to rebuild it:
 ```sh
 del .graphtor\graph.db        # Windows
 rm .graphtor/graph.db         # Linux/macOS
 graphtor-docs sync --full
 ```
 
-This deletes all indexed content. Re-indexing will re-download nothing (source
-files are already in `.graphtor/data/`) but will re-run parse and embed.
+This deletes all indexed content. Re-indexing will re-run parse and embed
+against your configured local source directories.
 
 ---
 
