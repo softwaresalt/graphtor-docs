@@ -30,7 +30,7 @@ and closure evidence, and captured audit follow-up work for later planning.
 | `.backlogit/stash.jsonl` | Added follow-up stash `964597B1` for unmaintained dependency triage |
 | `docs/closure/2026-06-14-042-s-runtime-verification.md` | Added runtime verification record |
 | `docs/closure/2026-06-14-042-s-post-merge-closure.md` | Added operational closure record |
-| `docs/memory/2026-06-14-ship-042-s-post-merge-closure.md` | Added this session memory |
+| `docs/memory/2026-06-14/ship-042-s-post-merge-closure.md` | Added this session memory |
 
 ## Key Decisions
 
