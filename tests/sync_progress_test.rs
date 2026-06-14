@@ -1,4 +1,4 @@
-//! Integration tests for `graphtor-docs sync` progress reporting (041.005-T, 041.007-T).
+﻿//! Integration tests for `graphtor-docs sync` progress reporting (041.005-T, 041.007-T).
 //!
 //! These tests verify the contract introduced by shipment 032-S:
 //!
@@ -20,11 +20,18 @@ fn graphtor_bin() -> std::path::PathBuf {
 #[test]
 fn sync_incremental_emits_stderr_progress() {
     let workspace = tempfile::tempdir().expect("tempdir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("guide.md"), b"---\ntitle: Guide\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nHello world.\n").expect("write guide");
+
+    let config_dir = workspace.path().join(".graphtor").join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
     std::fs::write(
-        workspace.path().join("guide.md"),
-        "# Guide\n\nHello world.\n",
+        config_dir.join("sources.yaml"),
+        "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
     )
-    .expect("write guide");
+    .expect("write sources.yaml");
+
     let db_path = workspace.path().join("graph.db");
 
     let output = Command::new(graphtor_bin())
@@ -67,11 +74,18 @@ fn sync_incremental_emits_stderr_progress() {
 #[test]
 fn sync_incremental_metrics_preserved_alongside_stderr_progress() {
     let workspace = tempfile::tempdir().expect("tempdir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("guide.md"), b"---\ntitle: Guide\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nHello world.\n").expect("write guide");
+
+    let config_dir = workspace.path().join(".graphtor").join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
     std::fs::write(
-        workspace.path().join("guide.md"),
-        "# Guide\n\nHello world.\n",
+        config_dir.join("sources.yaml"),
+        "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
     )
-    .expect("write guide");
+    .expect("write sources.yaml");
+
     let db_path = workspace.path().join("graph.db");
 
     let output = Command::new(graphtor_bin())
@@ -103,11 +117,18 @@ fn sync_incremental_metrics_preserved_alongside_stderr_progress() {
 #[test]
 fn sync_full_emits_stage_announcements_on_stderr() {
     let workspace = tempfile::tempdir().expect("tempdir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("guide.md"), b"---\ntitle: Guide\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nHello world.\n").expect("write guide");
+
+    let config_dir = workspace.path().join(".graphtor").join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
     std::fs::write(
-        workspace.path().join("guide.md"),
-        "# Guide\n\nHello world.\n",
+        config_dir.join("sources.yaml"),
+        "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
     )
-    .expect("write guide");
+    .expect("write sources.yaml");
+
     let db_path = workspace.path().join("graph.db");
 
     let output = Command::new(graphtor_bin())

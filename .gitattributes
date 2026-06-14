@@ -1,2 +1,8 @@
 # Binary file declarations — prevent git line-ending conversion
 tests/fixtures/*.pdf binary
+
+# Normalise all text line endings to LF in the repository.
+# This ensures content_sha256 hashes in docline-emitted files remain
+# stable regardless of the git checkout line-ending setting, and keeps
+# frontmatter detection consistent across platforms.
+* text=auto eol=lf

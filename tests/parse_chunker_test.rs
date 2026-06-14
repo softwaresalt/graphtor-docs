@@ -9,7 +9,7 @@ const SRC: &str = "docs/guide.md";
 fn test_no_headings_produces_single_intro_chunk() {
     let md = "Some intro text.\n\nMore text here.\n";
     let nodes = parse_ast(md);
-    let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
+    let chunks = chunk(&nodes, "test-src", SRC).expect("chunk should not fail");
     assert_eq!(chunks.len(), 1);
     assert!(
         chunks[0].heading_hierarchy.is_empty(),
@@ -24,7 +24,7 @@ fn test_no_headings_produces_single_intro_chunk() {
 fn test_h2_headings_split_into_chunks() {
     let md = "# Doc Title\n\nIntro paragraph.\n\n## Section One\n\nContent A.\n\n## Section Two\n\nContent B.\n";
     let nodes = parse_ast(md);
-    let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
+    let chunks = chunk(&nodes, "test-src", SRC).expect("chunk should not fail");
     // Expect: intro (before first H2), Section One, Section Two
     assert_eq!(chunks.len(), 3, "expected 3 chunks, got {}", chunks.len());
     assert!(chunks[1].content.contains("Section One"));
@@ -36,7 +36,7 @@ fn test_h2_headings_split_into_chunks() {
 fn test_h3_headings_also_split() {
     let md = "## Overview\n\nIntro.\n\n### Details\n\nDetail text.\n";
     let nodes = parse_ast(md);
-    let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
+    let chunks = chunk(&nodes, "test-src", SRC).expect("chunk should not fail");
     assert_eq!(chunks.len(), 2);
     assert!(chunks[0].content.contains("Overview"));
     assert!(chunks[1].content.contains("Details"));
@@ -47,7 +47,7 @@ fn test_h3_headings_also_split() {
 fn test_h4_and_deeper_folded_into_parent_chunk() {
     let md = "## Section\n\nIntro.\n\n#### Deep Heading\n\nDeep content.\n";
     let nodes = parse_ast(md);
-    let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
+    let chunks = chunk(&nodes, "test-src", SRC).expect("chunk should not fail");
     // H4 should NOT split — everything stays in one chunk.
     assert_eq!(
         chunks.len(),
@@ -64,7 +64,7 @@ fn test_h4_and_deeper_folded_into_parent_chunk() {
 fn test_chunks_have_stable_ids() {
     let md = "## Alpha\n\nContent.\n\n## Beta\n\nMore.\n";
     let nodes = parse_ast(md);
-    let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
+    let chunks = chunk(&nodes, "test-src", SRC).expect("chunk should not fail");
     for c in &chunks {
         assert_eq!(c.chunk_id.len(), 64, "chunk_id must be 64 hex chars");
         assert!(
@@ -82,8 +82,8 @@ fn test_chunks_have_stable_ids() {
 fn test_chunk_ids_are_deterministic() {
     let md = "## Section\n\nContent.\n";
     let nodes = parse_ast(md);
-    let chunks1 = chunk(&nodes, SRC).expect("first call");
-    let chunks2 = chunk(&nodes, SRC).expect("second call");
+    let chunks1 = chunk(&nodes, "test-src", SRC).expect("first call");
+    let chunks2 = chunk(&nodes, "test-src", SRC).expect("second call");
     assert_eq!(
         chunks1[0].chunk_id, chunks2[0].chunk_id,
         "chunk_id must be deterministic"
@@ -95,7 +95,7 @@ fn test_chunk_ids_are_deterministic() {
 fn test_heading_hierarchy_populated() {
     let md = "# Doc\n\n## Section\n\nText.\n\n### Sub\n\nMore.\n";
     let nodes = parse_ast(md);
-    let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
+    let chunks = chunk(&nodes, "test-src", SRC).expect("chunk should not fail");
     // Chunk at H2 "Section": hierarchy = [Doc, Section]
     let section = chunks
         .iter()
@@ -116,7 +116,7 @@ fn test_heading_hierarchy_populated() {
 fn test_chunk_positions_are_ordered() {
     let md = "## A\n\nContent A.\n\n## B\n\nContent B.\n\n## C\n\nContent C.\n";
     let nodes = parse_ast(md);
-    let chunks = chunk(&nodes, SRC).expect("chunk should not fail");
+    let chunks = chunk(&nodes, "test-src", SRC).expect("chunk should not fail");
     assert_eq!(chunks.len(), 3);
     assert!(chunks[0].position < chunks[1].position);
     assert!(chunks[1].position < chunks[2].position);

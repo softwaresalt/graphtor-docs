@@ -108,3 +108,73 @@ fn traversal_cycle_does_not_loop_forever() {
     assert!(ids.contains(&"cyc-b"));
     assert!(!ids.contains(&"cyc-a"), "cycle should not re-visit seed");
 }
+
+// ── Multi-source namespace isolation ─────────────────────────────────────────
+
+/// Two sources both contain a chunk whose `path` is `"shared.md"`.
+/// An edge from source-A's chunk pointing to `"shared.md"` must NOT
+/// resolve to source-B's chunk — traversal must be source-scoped.
+#[test]
+fn traversal_does_not_cross_link_different_sources_with_identical_paths() {
+    let s = store();
+
+    // Source A: chunk-a1 (index.md) → shared.md
+    upsert_chunk(&s, "src-a", &chunk("chunk-a1", "index.md")).unwrap();
+    upsert_chunk(&s, "src-a", &chunk("chunk-a2", "shared.md")).unwrap();
+
+    // Source B: chunk-b1 also lives at "shared.md"
+    upsert_chunk(&s, "src-b", &chunk("chunk-b1", "shared.md")).unwrap();
+
+    // Edge from chunk-a1 → "shared.md"
+    upsert_edge(&s, &edge("chunk-a1", "shared.md")).unwrap();
+
+    // Traverse from source-A's seed.
+    let results = find_related_chunks(&s, "chunk-a1", 2).expect("traversal should succeed");
+
+    let ids: Vec<&str> = results.iter().map(|r| r.chunk_id.as_str()).collect();
+
+    // Must reach source-A's "shared.md" chunk.
+    assert!(
+        ids.contains(&"chunk-a2"),
+        "should follow edge to source-A's shared.md chunk; got: {ids:?}"
+    );
+
+    // Must NOT reach source-B's "shared.md" chunk.
+    assert!(
+        !ids.contains(&"chunk-b1"),
+        "must not cross-link to source-B's chunk with the same path; got: {ids:?}"
+    );
+}
+
+/// Isolated chunk in a second source at the same path must not appear in
+/// traversal results that start from the first source.
+#[test]
+fn traversal_from_source_b_does_not_see_source_a_chunks() {
+    let s = store();
+
+    upsert_chunk(&s, "src-a", &chunk("a-root", "root.md")).unwrap();
+    upsert_chunk(&s, "src-a", &chunk("a-shared", "shared.md")).unwrap();
+    upsert_chunk(&s, "src-b", &chunk("b-root", "root.md")).unwrap();
+    upsert_chunk(&s, "src-b", &chunk("b-shared", "shared.md")).unwrap();
+
+    // Both sources have an edge root.md → shared.md.
+    upsert_edge(&s, &edge("a-root", "shared.md")).unwrap();
+    upsert_edge(&s, &edge("b-root", "shared.md")).unwrap();
+
+    // Traverse from source-B's root.
+    let results = find_related_chunks(&s, "b-root", 2).expect("traversal should succeed");
+    let ids: Vec<&str> = results.iter().map(|r| r.chunk_id.as_str()).collect();
+
+    assert!(
+        ids.contains(&"b-shared"),
+        "source-B traversal must reach b-shared; got: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"a-shared"),
+        "source-B traversal must not reach a-shared; got: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"a-root"),
+        "source-B traversal must not reach a-root; got: {ids:?}"
+    );
+}

@@ -1,4 +1,4 @@
-//! Integration test: sync routes sources to separate database files.
+﻿//! Integration test: sync routes sources to separate database files.
 
 use std::process::Command;
 
@@ -15,8 +15,8 @@ fn sync_routes_sources_to_separate_database_files() {
     let src_b = ws.join("docs_b");
     std::fs::create_dir_all(&src_a).unwrap();
     std::fs::create_dir_all(&src_b).unwrap();
-    std::fs::write(src_a.join("a.md"), "# A\n\nContent A.\n").unwrap();
-    std::fs::write(src_b.join("b.md"), "# B\n\nContent B.\n").unwrap();
+    std::fs::write(src_a.join("a.md"), b"---\ntitle: A\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: a.md\n---\n# A\n\nContent A.\n").unwrap();
+    std::fs::write(src_b.join("b.md"), b"---\ntitle: B\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: b.md\n---\n# B\n\nContent B.\n").unwrap();
 
     let graphtor_dir = ws.join(".graphtor");
     let config_dir = graphtor_dir.join("config");
@@ -71,7 +71,7 @@ fn sync_fails_gracefully_when_database_lock_is_held() {
 
     let src = ws.join("docs");
     std::fs::create_dir_all(&src).expect("create docs");
-    std::fs::write(src.join("a.md"), "# A\n\nContent A.\n").expect("write a");
+    std::fs::write(src.join("a.md"), b"---\ntitle: A\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: a.md\n---\n# A\n\nContent A.\n").expect("write a");
 
     let graphtor_dir = ws.join(".graphtor");
     let config_dir = graphtor_dir.join("config");
@@ -117,7 +117,17 @@ fn sync_fails_gracefully_when_database_lock_is_held() {
 fn sync_creates_missing_parent_directories_for_custom_database_path() {
     let workspace = tempfile::tempdir().expect("tempdir");
     let ws = workspace.path();
-    std::fs::write(ws.join("guide.md"), "# Guide\n\nHello world.\n").expect("write guide");
+    let docs_dir = ws.join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("guide.md"), b"---\ntitle: Guide\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nHello world.\n").expect("write guide");
+
+    let config_dir = ws.join(".graphtor").join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
+    std::fs::write(
+        config_dir.join("sources.yaml"),
+        "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
+    )
+    .expect("write sources.yaml");
 
     let custom_db = std::path::PathBuf::from(".graphtor")
         .join("nested")
@@ -148,7 +158,17 @@ fn sync_creates_missing_parent_directories_for_custom_database_path() {
 fn sync_rejects_custom_database_path_escaping_workspace_root() {
     let workspace = tempfile::tempdir().expect("tempdir");
     let ws = workspace.path();
-    std::fs::write(ws.join("guide.md"), "# Guide\n\nHello world.\n").expect("write guide");
+    let docs_dir = ws.join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("guide.md"), b"---\ntitle: Guide\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nHello world.\n").expect("write guide");
+
+    let config_dir = ws.join(".graphtor").join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
+    std::fs::write(
+        config_dir.join("sources.yaml"),
+        "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
+    )
+    .expect("write sources.yaml");
 
     let escaped_db = std::path::PathBuf::from("..")
         .join("escaped")

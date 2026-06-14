@@ -3,9 +3,9 @@ title: Pipeline, Schema, and Embeddings Reference
 description: "Four-stage ingestion pipeline (Acquire → Parse → Embed → Load), CozoDB schema, embedding model details, and Datalog query examples"
 ---
 
-graphtor-docs processes documentation through four sequential pipeline stages:
-**Acquire → Parse → Embed → Load**. Each stage has a defined input contract,
-output contract, and idempotency guarantee.
+graphtor-docs processes documentation through five sequential pipeline stages:
+**Acquire → Validate → Parse → Embed → Load**. Each stage has a defined input
+contract, output contract, and idempotency guarantee.
 
 ## Stage Overview
 
@@ -15,22 +15,30 @@ sources.yaml
      ▼
 ┌─────────────────────────────────────────────────┐
 │ 1. Acquire                                      │
-│ Input:  source definitions (git/local/url)       │
-│ Output: files on disk (.graphtor/data/ or local) │
-│ Idempotent: yes — skips existing git/url clones  │
+│ Input:  local source definitions                 │
+│ Output: .md file paths from directory scan       │
+│ Idempotent: yes — reads files in-place           │
 └───────────────────────┬─────────────────────────┘
-                        │ files on disk
+                        │ .md file paths
                         ▼
 ┌─────────────────────────────────────────────────┐
-│ 2. Parse                                        │
-│ Input:  file path + content                     │
+│ 2. Validate (docline v1 frontmatter contract)   │
+│ Input:  .md file content                         │
+│ Output: ValidatedFrontmatter + body text         │
+│ Idempotent: yes — deterministic from file bytes  │
+└───────────────────────┬─────────────────────────┘
+                        │ ValidatedFrontmatter + body
+                        ▼
+┌─────────────────────────────────────────────────┐
+│ 3. Parse                                        │
+│ Input:  validated body text                      │
 │ Output: ParsedDocument { chunks, edges }         │
 │ Idempotent: yes — deterministic from file bytes  │
 └───────────────────────┬─────────────────────────┘
                         │ ParsedDocument
                         ▼
 ┌─────────────────────────────────────────────────┐
-│ 3. Embed (skippable with --no-embed)            │
+│ 4. Embed (skippable with --no-embed)            │
 │ Input:  chunk text                              │
 │ Output: Vec<f32> (384-dim vector per chunk)      │
 │ Idempotent: yes — deterministic from chunk text  │
@@ -38,7 +46,7 @@ sources.yaml
                         │ chunks + vectors
                         ▼
 ┌─────────────────────────────────────────────────┐
-│ 4. Load                                         │
+│ 5. Load                                         │
 │ Input:  ParsedDocument + vectors + source ID     │
 │ Output: upserts into CozoDB                     │
 │ Idempotent: yes — upserts by stable chunk ID     │
@@ -49,49 +57,72 @@ sources.yaml
 
 ## Stage 1: Acquire
 
-The acquire stage fetches documentation from each configured source and places
-files under `.graphtor/data/{source_id}/`.
-
-### Git sources
-
-Uses the `git2` crate to perform a shallow clone (`--depth 1`):
-
-- If the repository directory already exists, acquisition is **skipped** —
-  the local clone is not re-fetched. To pick up new upstream commits, pull
-  the repository manually before running `sync`.
-- Clone path: `.graphtor/data/{source_id}/`
-- Only the configured `branch` is fetched
-
-### Local sources
-
-Scans the local directory path. Files are read in-place (no copy to
-`.graphtor/data/`). The source directory is treated as the acquisition root.
-
-### URL sources
-
-Performs a BFS crawl using `ureq` (synchronous HTTP):
-
-- Starts at the configured `url`
-- Follows links up to `max_depth` hops
-- Stays within the registered domain when `domain_lock: true`
-- Waits `rate_limit_ms` milliseconds between requests
-- Converts each HTML page to Markdown via `htmd`
-- Stops when `max_pages` pages have been fetched
-- Crawled pages are cached under `.graphtor/data/{source_id}/`
+The acquire stage scans each configured local directory for Markdown files.
+Files are read in-place — no copy is made to a cache directory. The directory
+path configured in `sources.yaml` is the acquisition root.
 
 ---
 
-## Stage 2: Parse
+## Stage 2: Validate
 
-The parse stage reads each file and produces a `ParsedDocument` containing
-chunks and graph edges. The parser is dispatched by file extension.
+The validate stage reads each `.md` file and checks it against the docline v1
+frontmatter contract before any chunking or embedding work begins.
+
+### Docline v1 Frontmatter Contract
+
+Every indexed file must begin with a YAML frontmatter block delimited by
+`---`. The following fields are **required** and must be non-empty:
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | string | Human-readable document title |
+| `source` | string | Origin URI or path of the source document |
+| `ingested_at` | string | ISO-8601 timestamp when docline ingested the source |
+| `doc_type` | string | Document-type identifier |
+| `source_path` | string | Workspace-relative, forward-slash normalized path of the source artifact |
+
+The following fields are **optional**:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `description` | string | `""` | Short human-readable description |
+| `content_sha256` | string | `""` | SHA-256 hex digest of the Markdown body; verified when present |
+| `chunk_strategy` | string | `"h1-h2-h3"` | Chunk-boundary strategy identifier |
+| `schema_version` | string | `"1.0"` | Semver contract version; only major version `1` is accepted |
+| `docline` | object | `null` | Namespace for docline-only metadata; not promoted to the contract surface |
+
+### Validation rules (fail-closed)
+
+- Malformed YAML frontmatter → rejected
+- Missing or empty required field → rejected
+- `schema_version` major ≠ `1` → rejected
+- `source_path` is empty, absolute, drive-prefixed, or contains `.`/`..` components → rejected
+- `content_sha256` present and mismatches SHA-256(LF-normalised body) → rejected
+
+Files that fail validation are reported as errors and excluded from the
+pipeline. The sync continues with the remaining files; the run exits with
+code `1` when any file is rejected.
+
+### `source_path` as canonical identity
+
+`source_path` combined with the source's `id` (from `sources.yaml`) is the
+canonical logical identity for each document. The pipeline uses
+`(source_id, source_path)` for duplicate-intake detection before loading any
+chunks. `source_path` must be unique within a source.
+
+---
+
+## Stage 3: Parse
+
+The parse stage reads the validated Markdown body and produces a
+`ParsedDocument` containing chunks and graph edges.
 
 ### Markdown (`.md`, `.markdown`)
 
 Uses `pulldown-cmark`'s AST event stream:
 
 1. **Frontmatter stripping** — YAML frontmatter (between `---` delimiters) is
-   detected and removed before chunking
+   detected and removed before chunking (already validated in Stage 2)
 2. **Heading-based chunking** — the document is split at H1, H2, and H3 heading
    boundaries (`#`, `##`, `###`); H4–H6 headings are kept inside the enclosing
    chunk and do not start a new chunk
@@ -99,24 +130,6 @@ Uses `pulldown-cmark`'s AST event stream:
    `(src_chunk_id, target_path, link_text, anchor)`
 4. **Code block extraction** — fenced code blocks become `doc_code` entries
    with language tag
-
-### PDF (`.pdf`)
-
-Two-pass extraction using `pdf-extract`:
-
-1. **Sample scan** — samples the first few pages using `HeadingAwareOutput`
-   to build a font-size histogram
-2. **Heading detection** — if the histogram shows distinct font sizes,
-   larger font text is treated as section headings; otherwise, page-based
-   chunking is used
-3. **Large PDFs** (≥ 20 MiB) — routed to `PdfiumBackend` first if the
-   PDFium DLL is available; falls back to `PdfExtractBackend` if not
-
-### DOCX (`.docx`)
-
-Implemented using a ZIP/XML parser (`docx` crate). DOCX files are parsed by
-extracting paragraph text from `word/document.xml` within the ZIP archive and
-chunking the result using the same heading-boundary strategy as Markdown.
 
 ### Chunk ID Derivation
 
@@ -132,7 +145,7 @@ chunk_id = SHA-256(content + "\0" + forward_slash_normalized_path)
 - `path` is the source-relative file path with **forward-slash separators**
   on all platforms (including Windows)
 - The SHA-256 hex string is the chunk ID stored in `doc_chunks` and used as
-  the key in `doc_edges` and `doc_vectors`
+  the key in `doc_edges` and `doc_code`
 
 **Why forward-slash normalization matters:** On Windows, `Path::to_string_lossy()`
 produces backslash paths. Without normalization, the same file would produce
@@ -141,7 +154,7 @@ MCP search. All path strings stored in the database use forward slashes.
 
 ---
 
-## Stage 3: Embed
+## Stage 4: Embed
 
 The embed stage computes a 384-dimensional float32 vector for each chunk using
 the `all-MiniLM-L6-v2` model.
@@ -174,7 +187,7 @@ graphtor-docs sync --no-embed
 ```
 
 When embeddings are skipped:
-- No vectors are stored in `doc_vectors`
+- No embedding vectors are stored in `doc_chunks.embedding`
 - `search_semantic` in the MCP server returns empty results (no vectors stored;
   the model may still be loaded — it just has nothing to search)
 - All other tools (`search_local_docs`, `traverse_doc_links`, etc.) work normally
@@ -182,7 +195,7 @@ When embeddings are skipped:
 
 ---
 
-## Stage 4: Load
+## Stage 5: Load
 
 The load stage upserts parsed chunks and vectors into CozoDB. All writes use
 upsert semantics (`?[...] <- [...] :put ...`) keyed by chunk ID — safe to
@@ -194,13 +207,13 @@ pipeline continues with the next file and reports the error at the end
 
 ---
 
-## CozoDB Schema (v2)
+## CozoDB Schema (v4)
 
 The database uses CozoDB with a SQLite backend. By default, sync writes to
 `.graphtor/graph.db`. Sources can override that target with the `database`
 field in `sources.yaml`, which routes those sources into additional `.db`
 files under `.graphtor/`.
-Six stored relations form the schema:
+Four stored relations and one HNSW vector index form the schema:
 
 ### `doc_schema_ver`
 
@@ -212,7 +225,7 @@ Tracks the schema version. Used by `ensure_schema` to verify compatibility.
 
 | Column | Type | Description |
 |---|---|---|
-| `ver` | Int | Schema version (current: `2`) |
+| `ver` | Int | Schema version (current: `4`) |
 
 ---
 
@@ -231,23 +244,24 @@ Registry of indexed documentation sources.
 | Column | Type | Description |
 |---|---|---|
 | `source_id` | String (PK) | Unique source identifier (from `sources.yaml`) |
-| `url` | String | Clone URL, filesystem path, or start URL |
-| `kind` | String | `"git"`, `"local"`, or `"url"` |
+| `url` | String | Filesystem path of the local source directory |
+| `kind` | String | Always `"local"` |
 | `name` | String | Display name (same as `source_id` by default) |
-| `synced_at` | String? | ISO-8601 timestamp of last successful sync; currently not populated by the pipeline (always `null`); reserved for a future release |
+| `synced_at` | String? | ISO-8601 timestamp of last successful sync; reserved for a future release |
 
 ---
 
 ### `doc_chunks`
 
-Stores every indexed text chunk.
+Stores every indexed text chunk, including its embedding vector.
 
 ```datalog
 :create doc_chunks {
     chunk_id: String
     =>
     source_id: String, path: String, title: String?,
-    position: Int, char_offset: Int, headings: String, content: String
+    position: Int, char_offset: Int, headings: String, content: String,
+    embedding: <F32; 384>?
 }
 ```
 
@@ -261,6 +275,10 @@ Stores every indexed text chunk.
 | `char_offset` | Int | Character offset of this chunk's start within the raw file |
 | `headings` | String | JSON array of the heading hierarchy from H1 down to this chunk's heading |
 | `content` | String | Full text content of the chunk |
+| `embedding` | \<F32; 384\>? | 384-dim float32 embedding vector; `null` when `--no-embed` was used |
+
+A CozoDB HNSW vector index (`doc_chunks:embedding_idx`) is maintained over
+the `embedding` column for efficient approximate nearest-neighbour search.
 
 ---
 
@@ -306,30 +324,6 @@ Extracted code snippets from fenced code blocks.
 
 ---
 
-### `doc_vectors`
-
-Embedding vectors for semantic search.
-
-```datalog
-:create doc_vectors {
-    chunk_id: String
-    =>
-    embedding: String
-}
-```
-
-| Column | Type | Description |
-|---|---|---|
-| `chunk_id` | String (PK) | Chunk this vector corresponds to |
-| `embedding` | String | JSON-serialized `Vec<f32>` (384 floats) |
-
-> **Note:** Vectors are stored as JSON strings because CozoDB's SQLite backend
-> does not yet natively support float32 arrays. Cosine similarity is computed
-> in Rust after loading the vector. HNSW-accelerated vector search is planned
-> for a future release when CozoDB native vector support stabilises.
-
----
-
 ## Sample Datalog Queries
 
 These queries can be run via the CozoDB CLI or any client with access to a
@@ -340,7 +334,7 @@ graphtor-docs database file such as `.graphtor/graph.db`.
 ```datalog
 ?[chunk_id, path, title, position]
     := *doc_chunks{ chunk_id, source_id, path, title, position },
-       source_id = "azure-docs"
+       source_id = "product-docs"
 :order position
 ```
 

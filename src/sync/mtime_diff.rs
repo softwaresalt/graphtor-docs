@@ -11,8 +11,32 @@ use std::time::UNIX_EPOCH;
 use tracing::debug;
 use walkdir::WalkDir;
 
-use super::git_diff::ChangedFiles;
 use crate::error::GraphtorError;
+
+/// The set of files that changed between two filesystem mtime snapshots.
+#[derive(Debug, Clone, Default)]
+pub struct ChangedFiles {
+    /// Paths of files added since the last sync.
+    pub added: Vec<PathBuf>,
+    /// Paths of files modified since the last sync.
+    pub modified: Vec<PathBuf>,
+    /// Paths of files deleted since the last sync.
+    pub deleted: Vec<PathBuf>,
+}
+
+impl ChangedFiles {
+    /// Returns `true` if no files changed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.modified.is_empty() && self.deleted.is_empty()
+    }
+
+    /// Total count of changed files across all categories.
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.added.len() + self.modified.len() + self.deleted.len()
+    }
+}
 
 /// Compute which Markdown files in `source_root` changed relative to
 /// `stored_mtimes`.
@@ -82,8 +106,31 @@ pub fn diff_mtimes<C: std::hash::BuildHasher, S: std::hash::BuildHasher>(
 /// Returns [`GraphtorError::Pipeline`] if an entry cannot be stat'd or its
 /// mtime cannot be converted.
 pub fn scan_mtimes(root: &Path) -> Result<HashMap<String, u64>, GraphtorError> {
+    scan_mtimes_with_ignored_root(root, None)
+}
+
+/// Recursively scan `root` and return mtimes while skipping any entry under
+/// `ignored_root`.
+pub(crate) fn scan_mtimes_with_ignored_root(
+    root: &Path,
+    ignored_root: Option<&Path>,
+) -> Result<HashMap<String, u64>, GraphtorError> {
     let mut result = HashMap::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            !ignored_root.is_some_and(|ignored| entry.path().starts_with(ignored))
+        })
+    {
+        let entry = entry.map_err(|error| GraphtorError::Pipeline {
+            message: if let Some(path) = error.path() {
+                format!("failed to walk {}: {error}", path.display())
+            } else {
+                format!("failed to walk {}: {error}", root.display())
+            },
+            stage: "mtime_diff".to_string(),
+        })?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -192,6 +239,20 @@ mod tests {
         let diff = compute_mtime_diff(dir.path(), &current).expect("diff");
 
         assert!(diff.is_empty(), "expected empty diff for unchanged files");
+    }
+
+    #[test]
+    fn missing_root_scan_fails_closed() {
+        let dir = temp_dir();
+        let missing = dir.path().join("missing");
+
+        let error = scan_mtimes_with_ignored_root(&missing, None)
+            .expect_err("missing source root must fail closed");
+
+        assert!(
+            matches!(error, GraphtorError::Pipeline { .. }),
+            "expected Pipeline error for missing root, got: {error:?}"
+        );
     }
 
     #[test]

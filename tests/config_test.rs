@@ -1,7 +1,4 @@
-//! Integration tests for `graphtor_core::config` module.
-//!
-//! Tests end-to-end configuration parsing from YAML files on disk,
-//! verifying both successful parsing and error path handling.
+//! Integration tests for `graphtor_core::config` module — local-only after docline pivot.
 
 use graphtor_core::config::{Source, SourceConfig};
 use graphtor_core::GraphtorError;
@@ -15,19 +12,11 @@ fn write_yaml(content: &str) -> NamedTempFile {
     file
 }
 
-/// Valid sources.yaml with one Git and one local source parses cleanly.
+/// Valid sources.yaml with one local source parses cleanly.
 #[test]
-fn parse_valid_mixed_sources_yaml() {
+fn parse_valid_local_source_yaml() {
     let yaml = r#"
 sources:
-  - type: git
-    id: ms-azure-docs
-    url: https://github.com/MicrosoftDocs/azure-docs.git
-    branch: main
-    include:
-      - "**/*.md"
-    exclude:
-      - "**/drafts/**"
   - type: local
     id: internal-wiki
     path: /workspace/wiki
@@ -37,24 +26,31 @@ sources:
     let file = write_yaml(yaml);
     let config = SourceConfig::parse(file.path()).expect("should parse valid yaml");
 
-    assert_eq!(config.sources.len(), 2);
+    assert_eq!(config.sources.len(), 1);
 
-    let Source::Git(git) = &config.sources[0] else {
-        panic!("first source should be Git");
-    };
-    assert_eq!(git.id, "ms-azure-docs");
-    assert_eq!(git.branch, "main");
-
-    let Source::Local(local) = &config.sources[1] else {
-        panic!("second source should be Local");
-    };
+    let Source::Local(local) = &config.sources[0];
     assert_eq!(local.id, "internal-wiki");
+}
+
+/// Git-type sources are rejected by the YAML deserializer.
+#[test]
+fn parse_git_source_type_is_rejected() {
+    let yaml = r"
+sources:
+  - type: git
+    id: ms-azure-docs
+    url: https://github.com/MicrosoftDocs/azure-docs.git
+    branch: main
+";
+    let file = write_yaml(yaml);
+    let result = SourceConfig::parse(file.path());
+    assert!(result.is_err(), "git source type must be rejected");
 }
 
 /// Malformed YAML produces a `GraphtorError::Config` with a `[config]` prefix.
 #[test]
 fn parse_malformed_yaml_returns_config_error() {
-    let bad_yaml = "sources:\n  - type: git\n    id: [unclosed\n";
+    let bad_yaml = "sources:\n  - type: local\n    id: [unclosed\n";
     let file = write_yaml(bad_yaml);
     let result = SourceConfig::parse(file.path());
     assert!(result.is_err());
@@ -70,13 +66,13 @@ fn parse_malformed_yaml_returns_config_error() {
 fn parse_duplicate_ids_returns_config_error() {
     let yaml = r#"
 sources:
-  - type: git
+  - type: local
     id: duplicate-id
-    url: https://github.com/example/repo.git
+    path: /docs-a
     include: ["**/*.md"]
   - type: local
     id: duplicate-id
-    path: /docs
+    path: /docs-b
     include: ["**/*.md"]
 "#;
     let file = write_yaml(yaml);

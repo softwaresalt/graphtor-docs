@@ -25,11 +25,8 @@ fn pipeline_run_twice_does_not_double_chunk_count() {
     let docs_dir = root.join("docs");
     fs::create_dir_all(&docs_dir).expect("create docs dir");
 
-    fs::write(
-        docs_dir.join("idempotent.md"),
-        "# Idempotent Doc\n\nThis content must not be duplicated.\n\n## Section\n\nMore content.\n",
-    )
-    .expect("write idempotent.md");
+    let idmd = "---\ntitle: Idempotent Doc\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: idempotent.md\n---\n# Idempotent Doc\n\nThis content must not be duplicated.\n\n## Section\n\nMore content.\n";
+    fs::write(docs_dir.join("idempotent.md"), idmd.as_bytes()).expect("write idempotent.md");
 
     let data_root = root.join("data");
     let config = SourceConfig {

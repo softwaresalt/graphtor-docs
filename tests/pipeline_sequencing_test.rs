@@ -1,4 +1,4 @@
-//! Integration tests: pipeline sequencing — acquire → parse → embed → load.
+﻿//! Integration tests: pipeline sequencing — acquire → parse → embed → load.
 //!
 //! Verifies that a basic pipeline run with three markdown documents:
 //! - processes all documents successfully
@@ -38,21 +38,12 @@ fn pipeline_processes_three_docs_and_populates_db() {
     let docs_dir = root.join("docs");
     fs::create_dir_all(&docs_dir).expect("create docs dir");
 
-    fs::write(
-        docs_dir.join("alpha.md"),
-        "# Alpha\n\nFirst document.\n\n## Details\n\nSome details here.\n",
-    )
-    .expect("write alpha.md");
-    fs::write(
-        docs_dir.join("beta.md"),
-        "# Beta\n\nSecond document.\n\n## Overview\n\nAn overview.\n",
-    )
-    .expect("write beta.md");
-    fs::write(
-        docs_dir.join("gamma.md"),
-        "# Gamma\n\nThird document.\n\n## Notes\n\nSome notes.\n",
-    )
-    .expect("write gamma.md");
+    let alpha = "---\ntitle: Alpha\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: alpha.md\n---\n# Alpha\n\nFirst document.\n\n## Details\n\nSome details here.\n";
+    let beta = "---\ntitle: Beta\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: beta.md\n---\n# Beta\n\nSecond document.\n\n## Overview\n\nAn overview.\n";
+    let gamma = "---\ntitle: Gamma\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: gamma.md\n---\n# Gamma\n\nThird document.\n\n## Notes\n\nSome notes.\n";
+    fs::write(docs_dir.join("alpha.md"), alpha.as_bytes()).expect("write alpha.md");
+    fs::write(docs_dir.join("beta.md"), beta.as_bytes()).expect("write beta.md");
+    fs::write(docs_dir.join("gamma.md"), gamma.as_bytes()).expect("write gamma.md");
 
     let data_root = root.join("data");
     let config = make_config(docs_dir);

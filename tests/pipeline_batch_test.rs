@@ -1,4 +1,4 @@
-//! Integration tests: pipeline batch processing.
+﻿//! Integration tests: pipeline batch processing.
 //!
 //! Verifies that:
 //! - `batch_size=2` with 5 files processes all files correctly
@@ -18,12 +18,15 @@ fn make_store() -> DataStore {
 }
 
 fn write_five_docs(docs_dir: &std::path::Path) {
-    for i in 1..=5 {
-        fs::write(
-            docs_dir.join(format!("doc{i:02}.md")),
-            format!("# Document {i}\n\nContent of document {i}.\n"),
-        )
-        .unwrap_or_else(|_| panic!("write doc{i:02}.md"));
+    for i in 1_usize..=5 {
+        let sp = format!("docs/doc{i:02}.md");
+        let ti = format!("Document {i}");
+        let body = format!("# Document {i}\n\nContent of document {i}.\n");
+        let md = format!(
+            "---\ntitle: {ti}\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: {sp}\n---\n{body}"
+        );
+        fs::write(docs_dir.join(format!("doc{i:02}.md")), md.as_bytes())
+            .unwrap_or_else(|_| panic!("write doc{i:02}.md"));
     }
 }
 

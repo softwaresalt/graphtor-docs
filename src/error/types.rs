@@ -98,6 +98,19 @@ pub enum GraphtorError {
         source_id: String,
     },
 
+    /// Docline frontmatter contract validation failure.
+    ///
+    /// Returned when a document's frontmatter does not satisfy the v1 ingestion
+    /// contract: missing required fields, unsupported schema major version,
+    /// invalid `source_path`, or `content_sha256` mismatch.
+    #[error("[contract] {message}{}", .field.as_deref().map(|f| format!(": field '{f}'")).unwrap_or_default())]
+    Contract {
+        /// Human-readable description of the validation failure.
+        message: String,
+        /// The frontmatter field that caused the failure, if applicable.
+        field: Option<String>,
+    },
+
     /// Filesystem I/O error.
     #[error("[io] {0}")]
     Io(#[from] std::io::Error),
@@ -356,6 +369,10 @@ mod tests {
                 message: "m".to_string(),
                 source_id: "s".to_string(),
             },
+            GraphtorError::Contract {
+                message: "m".to_string(),
+                field: None,
+            },
             GraphtorError::Io(std::io::Error::other("e")),
         ];
         for e in &errors {
@@ -407,6 +424,11 @@ mod tests {
             }
             .to_string(),
             GraphtorError::Io(std::io::Error::other("e")).to_string(),
+            GraphtorError::Contract {
+                message: "m".to_string(),
+                field: None,
+            }
+            .to_string(),
         ];
 
         let categories: std::collections::HashSet<&str> = errors
@@ -415,8 +437,8 @@ mod tests {
             .collect();
         assert_eq!(
             categories.len(),
-            9,
-            "expected 9 distinct error categories, got {}: {categories:?}",
+            10,
+            "expected 10 distinct error categories, got {}: {categories:?}",
             categories.len()
         );
     }
