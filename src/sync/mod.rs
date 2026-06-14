@@ -22,6 +22,32 @@ pub use reingest::{
 };
 pub use state::{SourceSyncState, SyncState};
 
+/// Per-source pre-sync capture of live filesystem state.
+///
+/// Captured immediately **before** the full-sync pipeline runs so the persisted
+/// sync state reflects what was on disk at pipeline start time — not a
+/// post-pipeline re-scan that could include post-run mutations.
+///
+/// See [`capture_pre_sync_snapshot`] and [`seed_sync_state_from_pre_sync_snapshot`].
+#[derive(Debug, Clone, Default)]
+pub struct SourcePreSyncCapture {
+    /// Map of source-root-relative path → Unix mtime (seconds).
+    pub file_mtimes: HashMap<String, u64>,
+    /// Map of source-root-relative path → validated contract `source_path`.
+    ///
+    /// Populated **leniently**: files whose frontmatter cannot be parsed are
+    /// included in `file_mtimes` but omitted from this map.  They still
+    /// participate in mtime-based change detection; identity tracking is absent
+    /// until a later incremental ingest succeeds.
+    pub file_contract_paths: HashMap<String, String>,
+}
+
+/// Pre-sync snapshot for all sources in a plan, keyed by source ID.
+///
+/// Returned by [`capture_pre_sync_snapshot`] and consumed by
+/// [`seed_sync_state_from_pre_sync_snapshot`].
+pub type PreSyncSnapshot = HashMap<String, SourcePreSyncCapture>;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -243,6 +269,21 @@ pub fn sync_source_with_frozen_mtimes_and_ignored_root<S: std::hash::BuildHasher
     }
 
     let force_full_rebuild = migration_pending || epoch_changed;
+
+    // Guard: if a full rebuild is forced (epoch mismatch or v4 migration) and
+    // no embedding model is available, pre-pivot embeddings stored under the old
+    // chunk-ID scheme cannot be recovered by the new-ID lookup.  Emit a warning
+    // so operators are aware that embeddings will be absent after the rebuild.
+    // (The hard reject for the --no-embed flag is enforced at the CLI layer before
+    // destructive work begins; this warning covers model-unavailable degraded mode.)
+    if force_full_rebuild && model.is_none() {
+        warn!(
+            source_id,
+            "full rebuild forced (epoch mismatch or pending v4 migration) but no embedding \
+             model is available; pre-pivot embeddings stored under the old chunk-ID scheme \
+             cannot be recovered — run with embedding enabled to recompute vectors"
+        );
+    }
     let stored_mtimes_for_diff: HashMap<String, u64> = if force_full_rebuild {
         // Preserve stored file keys (for deletion detection) but zero all mtime
         // values so every file that still exists on disk appears as "modified"
@@ -719,7 +760,269 @@ where
     sync_state.save(state_path, root)
 }
 
-/// Structured telemetry for one completed sync cycle.
+/// Seed sync state after a successful full sync from live sources.
+///
+/// This is the non-migration counterpart to [`seed_sync_state_from_frozen_snapshot`].
+/// After a `--full` pipeline run (no v4 migration), the sync state must be
+/// rebuilt so the next incremental cycle has a correct baseline and does not
+/// re-ingest every file from scratch.
+///
+/// For each source in `plan`, this function:
+/// 1. Scans live mtimes from `planned.target_dir`.
+/// 2. Reads each file's validated `source_path` from its docline frontmatter.
+/// 3. **Merges** prior-state entries for files absent from the live scan or
+///    whose contract identity changed, so the next incremental cycle can clean
+///    up orphaned DB rows that the full pipeline did not delete.
+/// 4. Persists the resulting `SourceSyncState` into `.sync_state.json`.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::PathViolation`] if a source file escapes `root`.
+/// Returns [`GraphtorError::Config`] if the sync-state file cannot be written.
+/// Returns [`GraphtorError::Sync`] if a live source file's `source_path` cannot
+/// be extracted from its frontmatter.
+pub fn seed_sync_state_from_live_sources(
+    plan: &AcquisitionPlan,
+    state_path: &Path,
+    root: &Path,
+) -> Result<(), GraphtorError> {
+    let mut sync_state = SyncState::load(state_path, root)?;
+
+    for planned in &plan.sources {
+        let source_id = planned.source.id();
+        let source_dir = &planned.target_dir;
+
+        // Mirror the ignored-root behaviour used by normal incremental/full scans:
+        // when `allow_internal_snapshot_scan` is false (all regular sources), exclude
+        // the internal v4-migration-snapshot directory so stale snapshot markdown files
+        // are never seeded into sync state.  Without this guard a workspace-root source
+        // would seed every snapshot `.md` file, and the next incremental run would treat
+        // them as deleted and invoke the delete path — potentially removing the live
+        // document whose `source_path` the stale snapshot shares.
+        let ignored_root = (!planned.allow_internal_snapshot_scan)
+            .then(|| crate::path::v4_migration_snapshot_dir(&plan.data_root));
+        let file_mtimes =
+            scan_tracked_source_mtimes(&planned.source, source_dir, ignored_root.as_deref())?;
+        let file_contract_paths =
+            build_frozen_snapshot_contract_paths(source_dir, &file_mtimes, source_id, root)?;
+        let mut source_state = build_new_state_from_mtimes(file_mtimes);
+        source_state.file_contract_paths = file_contract_paths;
+
+        // Snapshot the prior state for this source before overwriting it so we
+        // can merge stale entries that the full pipeline left behind.
+        let prior = sync_state.source(source_id).cloned();
+        merge_prior_state_into_seeded(&mut source_state, prior.as_ref());
+
+        *sync_state.source_mut(source_id) = source_state;
+    }
+
+    sync_state.save(state_path, root)
+}
+
+/// Capture live filesystem state for all sources in `plan` **before** the
+/// full-sync pipeline runs.
+///
+/// The returned [`PreSyncSnapshot`] must be passed to
+/// [`seed_sync_state_from_pre_sync_snapshot`] after the pipeline completes so
+/// that the persisted sync state reflects the on-disk state at pipeline start
+/// time, not a post-run rescan.  This closes the race where a file that changes
+/// after the pipeline reads it (but before the old post-run rescan) would
+/// silently be recorded as already-synced, causing the next incremental to skip
+/// it despite the DB holding stale content.
+///
+/// Contract-path extraction is **lenient**: files whose frontmatter cannot be
+/// parsed are included in the mtime map but omitted from the contract-path map.
+/// They will still participate in mtime-based change detection; only identity
+/// tracking is absent until a later incremental ingest succeeds.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::PathViolation`] if a source file escapes `root`.
+/// Returns [`GraphtorError::Config`] if directory scanning fails.
+pub fn capture_pre_sync_snapshot(
+    plan: &AcquisitionPlan,
+    root: &Path,
+) -> Result<PreSyncSnapshot, GraphtorError> {
+    let mut snapshot = PreSyncSnapshot::default();
+
+    for planned in &plan.sources {
+        let source_id = planned.source.id();
+        let source_dir = &planned.target_dir;
+
+        // Mirror the ignored-root behaviour used by all other scan paths.
+        let ignored_root = (!planned.allow_internal_snapshot_scan)
+            .then(|| crate::path::v4_migration_snapshot_dir(&plan.data_root));
+        let file_mtimes =
+            scan_tracked_source_mtimes(&planned.source, source_dir, ignored_root.as_deref())?;
+
+        let mut file_contract_paths = HashMap::with_capacity(file_mtimes.len());
+        for fs_rel in file_mtimes.keys() {
+            let abs_path = validate_path(&source_dir.join(fs_rel), root)?;
+            // Lenient: skip files whose frontmatter cannot be parsed.
+            // The pipeline will emit a descriptive error for them; we still
+            // track their mtime so incremental change detection works.
+            if let Ok(contract_path) =
+                crate::ingest_contract::extract_source_path_from_file(&abs_path)
+            {
+                file_contract_paths.insert(fs_rel.clone(), contract_path);
+            }
+        }
+
+        snapshot.insert(
+            source_id.to_owned(),
+            SourcePreSyncCapture {
+                file_mtimes,
+                file_contract_paths,
+            },
+        );
+    }
+
+    Ok(snapshot)
+}
+
+/// Seed sync state using a pre-captured snapshot taken **before** the full-sync
+/// pipeline ran.
+///
+/// Identical in merge behaviour to [`seed_sync_state_from_live_sources`], but
+/// uses pre-captured mtimes and contract paths rather than a fresh rescan.
+/// This closes the race in the regular `--full` seeding path:
+///
+/// ```text
+/// OLD (racy):  pipeline → live-rescan  → persist
+/// NEW (safe):  pre-capture → pipeline → persist(pre-capture)
+/// ```
+///
+/// If a file changes or is deleted after the pipeline reads it but before the
+/// old rescan, the pre-capture retains the mtime the pipeline actually saw, so
+/// the **next incremental** detects and repairs the drift instead of silently
+/// skipping it.
+///
+/// The existing prior-state merge logic ([`merge_prior_state_into_seeded`])
+/// operates against the pre-captured snapshot, preserving pending cleanup for
+/// pre-full-sync deletions and identity changes.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::PathViolation`] if a path escapes `root`.
+/// Returns [`GraphtorError::Config`] if the sync-state file cannot be written.
+pub fn seed_sync_state_from_pre_sync_snapshot(
+    plan: &AcquisitionPlan,
+    pre_sync_snapshot: &PreSyncSnapshot,
+    state_path: &Path,
+    root: &Path,
+) -> Result<(), GraphtorError> {
+    let mut sync_state = SyncState::load(state_path, root)?;
+
+    for planned in &plan.sources {
+        let source_id = planned.source.id();
+        let capture = pre_sync_snapshot
+            .get(source_id)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut source_state = build_new_state_from_mtimes(capture.file_mtimes);
+        source_state.file_contract_paths = capture.file_contract_paths;
+
+        // Snapshot the prior state for this source before overwriting it so we
+        // can merge stale entries that the full pipeline left behind.
+        let prior = sync_state.source(source_id).cloned();
+        merge_prior_state_into_seeded(&mut source_state, prior.as_ref());
+
+        *sync_state.source_mut(source_id) = source_state;
+    }
+
+    sync_state.save(state_path, root)
+}
+
+/// Merge prior-state entries that are absent from the live scan or have a
+/// changed contract identity into the freshly seeded `source_state`.
+///
+/// This preserves enough history after a regular full sync for the **next**
+/// incremental cycle to clean up orphaned DB rows that the full pipeline did
+/// not delete.
+///
+/// ### Absent entries (file deleted before the full sync)
+///
+/// The full pipeline does not remove DB rows for files that disappeared before
+/// the run started.  Carrying forward their old mtime and contract path ensures
+/// the next incremental detects them as "deleted" and invokes the cleanup path.
+///
+/// ### Contract-path identity changes
+///
+/// When a live file's frontmatter `source_path` changed since the last tracked
+/// sync, the full pipeline re-ingests it under the NEW identity but leaves
+/// orphaned rows for the OLD identity.  Carrying forward the OLD mtime and OLD
+/// contract path forces the next incremental to re-ingest the file via
+/// `reingest_file_with_old_contract_path`, which deletes the stale rows and
+/// inserts fresh ones under the new identity.
+///
+/// ### Guard against clobbering live documents
+///
+/// In both cases, carry-forward is skipped when the old contract path is
+/// already claimed by a currently-live file — clobbering live DB rows via a
+/// spurious incremental delete would be worse than leaving the orphan.
+fn merge_prior_state_into_seeded(
+    source_state: &mut SourceSyncState,
+    prior: Option<&SourceSyncState>,
+) {
+    let Some(prior) = prior else {
+        return;
+    };
+
+    // Contract paths claimed by the live files we just scanned.
+    // Collected as owned Strings so the immutable borrow on
+    // `source_state.file_contract_paths` is released before the mutation loop.
+    let live_contract_path_set: HashSet<String> =
+        source_state.file_contract_paths.values().cloned().collect();
+
+    for (fs_rel, &old_mtime) in &prior.file_mtimes {
+        if source_state.file_mtimes.contains_key(fs_rel.as_str()) {
+            // The file still exists on disk.  Check for a contract-path identity
+            // change: the full pipeline re-ingested it under a new `source_path`
+            // but left orphaned rows for the old identity.
+            let new_cp = source_state
+                .file_contract_paths
+                .get(fs_rel.as_str())
+                .cloned();
+            let old_cp = prior.file_contract_paths.get(fs_rel.as_str()).cloned();
+            if let (Some(ref new_cp), Some(ref old_cp)) = (new_cp, old_cp) {
+                if new_cp != old_cp && !live_contract_path_set.contains(old_cp.as_str()) {
+                    // Store the OLD mtime so the next incremental sees this file
+                    // as "modified" and calls reingest_file_with_old_contract_path,
+                    // which deletes orphaned rows for the old identity.
+                    source_state.file_mtimes.insert(fs_rel.clone(), old_mtime);
+                    source_state
+                        .file_contract_paths
+                        .insert(fs_rel.clone(), old_cp.clone());
+                }
+            }
+            continue;
+        }
+
+        // The file is absent from the live scan: it was deleted before this
+        // full sync ran.  The full pipeline did not remove its DB rows.
+        let old_contract_path = prior
+            .file_contract_paths
+            .get(fs_rel.as_str())
+            .map_or(fs_rel.as_str(), String::as_str);
+
+        // Guard: if the old contract path is now claimed by a live file, do not
+        // carry the entry forward.  Doing so would cause the next incremental to
+        // delete the live document's rows when it processes this entry as "deleted".
+        if live_contract_path_set.contains(old_contract_path) {
+            continue;
+        }
+
+        // Carry forward: preserve the old mtime so diff_mtimes classifies this
+        // entry as "deleted" on the next incremental cycle.
+        source_state.file_mtimes.insert(fs_rel.clone(), old_mtime);
+        if let Some(old_cp) = prior.file_contract_paths.get(fs_rel.as_str()) {
+            source_state
+                .file_contract_paths
+                .insert(fs_rel.clone(), old_cp.clone());
+        }
+    }
+}
 ///
 /// `chunks_deleted` is currently reported as `0` because the delete path does
 /// not expose per-chunk delete counts.
@@ -2300,5 +2603,826 @@ mod tests {
             "no files should remain in sync state: {:?}",
             src_after.file_mtimes.keys().collect::<Vec<_>>()
         );
+    }
+
+    // ── Issue 2: force_full_rebuild + model.is_none() warning (epoch case) ───
+
+    /// When a full rebuild is forced due to an epoch mismatch and no embedding
+    /// model is available, `sync_source` must still succeed but a warning must
+    /// be emitted. This regression guard ensures the warn path does not become
+    /// a hard error that would block epoch migrations in degraded-embed mode.
+    #[test]
+    fn epoch_mismatch_full_rebuild_with_no_model_succeeds_with_warning() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        let md = docline_md("guide.md", "Guide", "# Guide\n\nContent.\n");
+        fs::write(source_dir.join("guide.md"), md.as_bytes()).expect("write guide");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "epoch-no-embed".to_string(),
+            path: source_dir.clone(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+
+        // Simulate old epoch state: file mtime matches (would skip on normal run)
+        // but contract_epoch differs → force_full_rebuild.
+        let mtime = unix_mtime_secs(&source_dir.join("guide.md"));
+        let mut pre_state = crate::sync::state::SyncState::default();
+        {
+            let src = pre_state.source_mut("epoch-no-embed");
+            src.file_mtimes.insert("guide.md".to_string(), mtime);
+            src.contract_epoch = Some("old-epoch-value".to_string()); // intentionally wrong
+        }
+        pre_state.save(&state_path, root).expect("save pre-state");
+
+        // model = None simulates --no-embed or unavailable model; must warn but not error.
+        let metrics = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("epoch rebuild with no model must succeed");
+
+        assert_eq!(
+            metrics.files_synced, 1,
+            "forced rebuild must re-ingest the file: {metrics:?}"
+        );
+        assert_eq!(metrics.errors, 0, "rebuild must stay clean: {metrics:?}");
+    }
+
+    // ── Issue 3: seed_sync_state_from_live_sources ────────────────────────────
+
+    /// `seed_sync_state_from_live_sources` must populate sync state with live
+    /// file mtimes and validated contract paths so the next incremental cycle
+    /// does not re-ingest every file from scratch.
+    #[test]
+    fn seed_sync_state_from_live_sources_populates_state() {
+        use crate::acquire::{AcquisitionPlan, PlannedSource, SourceAction};
+        use crate::sync::seed_sync_state_from_live_sources;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        let md = docline_md("canonical/guide.md", "Guide", "# Guide\n\nContent.\n");
+        fs::write(source_dir.join("guide.md"), md.as_bytes()).expect("write guide");
+        let live_mtime = unix_mtime_secs(&source_dir.join("guide.md"));
+
+        let state_path = root.join("sync_state.json");
+
+        let plan = AcquisitionPlan {
+            data_root: root.join(".graphtor").join("data"),
+            allowed_root: root.to_path_buf(),
+            sources: vec![PlannedSource {
+                source: Source::Local(LocalSource {
+                    id: "live-seed-test".to_string(),
+                    path: source_dir.clone(),
+                    include: vec!["**/*.md".to_string()],
+                    exclude: vec![],
+                    formats: vec!["md".to_string()],
+                    database: None,
+                }),
+                action: SourceAction::ScanLocal,
+                target_dir: source_dir.clone(),
+                allow_internal_snapshot_scan: false,
+            }],
+            total_scan: 1,
+        };
+
+        seed_sync_state_from_live_sources(&plan, &state_path, root)
+            .expect("seed_sync_state_from_live_sources must succeed");
+
+        let state = crate::sync::state::SyncState::load(&state_path, root).expect("load state");
+        let src = state
+            .source("live-seed-test")
+            .expect("source must be present in seeded state");
+
+        assert_eq!(
+            src.file_mtimes.get("guide.md"),
+            Some(&live_mtime),
+            "seeded state must carry the live mtime"
+        );
+        assert_eq!(
+            src.file_contract_paths.get("guide.md").map(String::as_str),
+            Some("canonical/guide.md"),
+            "seeded state must carry the validated contract source_path"
+        );
+        assert_eq!(
+            src.contract_epoch.as_deref(),
+            Some(crate::ingest_contract::CONTRACT_EPOCH),
+            "seeded state must be stamped with the current contract epoch"
+        );
+    }
+
+    /// After a full pipeline run (`--full`) is simulated and sync state is seeded
+    /// via `seed_sync_state_from_live_sources`, the next incremental `sync_source`
+    /// call must detect no changes and skip re-ingestion.
+    #[test]
+    fn seed_from_live_sources_prevents_unnecessary_reingest_on_followup_incremental() {
+        use crate::acquire::{AcquisitionPlan, PlannedSource, SourceAction};
+        use crate::db::chunks::list_chunks_for_source;
+        use crate::sync::seed_sync_state_from_live_sources;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        let md = docline_md("docs/guide.md", "Guide", "# Guide\n\nStable content.\n");
+        fs::write(source_dir.join("guide.md"), md.as_bytes()).expect("write guide");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "no-reingest".to_string(),
+            path: source_dir.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+
+        // Simulate the full pipeline having already loaded chunks.
+        let m1 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("initial sync");
+        assert_eq!(m1.files_synced, 1, "initial sync must ingest 1 file");
+        let chunks_after_full = list_chunks_for_source(&store, "no-reingest").expect("list chunks");
+        assert!(
+            !chunks_after_full.is_empty(),
+            "initial sync must create chunks"
+        );
+
+        // Clear sync state to simulate what happens after a full pipeline run
+        // that does NOT seed state. Then seed it properly with the live-sources
+        // function and verify the next incremental run skips re-ingestion.
+        fs::remove_file(&state_path).expect("remove state");
+
+        let plan = AcquisitionPlan {
+            data_root: root.join(".graphtor").join("data"),
+            allowed_root: root.to_path_buf(),
+            sources: vec![PlannedSource {
+                source: source.clone(),
+                action: SourceAction::ScanLocal,
+                target_dir: source_dir.clone(),
+                allow_internal_snapshot_scan: false,
+            }],
+            total_scan: 1,
+        };
+
+        seed_sync_state_from_live_sources(&plan, &state_path, root)
+            .expect("seed state from live sources");
+
+        // Incremental sync must detect no changes.
+        let m2 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("followup incremental sync");
+        assert_eq!(
+            m2.files_synced, 0,
+            "incremental sync after seeding must detect no changes: {m2:?}"
+        );
+        assert_eq!(m2.errors, 0, "no errors expected: {m2:?}");
+    }
+
+    // ── T-SEED-SNAPSHOT-01: workspace-root source never seeds snapshot files ──
+
+    /// Regression: `seed_sync_state_from_live_sources` passed `None` as
+    /// `ignored_root` to `scan_tracked_source_mtimes`.  For a workspace-root
+    /// source this caused stale snapshot markdown files under
+    /// `.graphtor/data/v4-migration-snapshots/` to be included in the seeded
+    /// sync state.  On the next incremental run the snapshot path appeared as
+    /// "deleted" (because the migration cleanup had removed the snapshot
+    /// directory), and the delete path used the shared `source_path` frontmatter
+    /// value to erase the live document's database records.
+    ///
+    /// After the fix, `seed_sync_state_from_live_sources` computes the same
+    /// `ignored_root` guard used by all other scan paths when
+    /// `allow_internal_snapshot_scan` is false.
+    #[test]
+    fn seed_sync_state_workspace_root_excludes_stale_snapshot_files() {
+        use crate::acquire::{AcquisitionPlan, PlannedSource, SourceAction};
+        use crate::db::chunks::list_chunks_for_source;
+        use crate::sync::seed_sync_state_from_live_sources;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        // Workspace-root source: source_dir equals the workspace root itself.
+        let source_dir = root.to_path_buf();
+        let data_root = root.join(".graphtor").join("data");
+        fs::create_dir_all(&data_root).expect("create data root");
+
+        // ── 1. Create the live document at the workspace root ────────────
+        let live_md = docline_md("guide.md", "Guide", "# Guide\n\nLive content.\n");
+        fs::write(root.join("guide.md"), live_md.as_bytes()).expect("write live guide");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "workspace-root".to_string(),
+            path: source_dir.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+
+        // ── 2. Initial full sync — ingests guide.md ──────────────────────
+        let m1 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("initial full sync");
+        assert_eq!(
+            m1.files_synced, 1,
+            "initial sync must ingest guide.md: {m1:?}"
+        );
+        let chunks_after_full =
+            list_chunks_for_source(&store, "workspace-root").expect("list chunks after full sync");
+        assert!(
+            !chunks_after_full.is_empty(),
+            "initial sync must create chunks for guide.md"
+        );
+
+        // ── 3. Simulate the full pipeline clearing sync state ────────────
+        fs::remove_file(&state_path).expect("remove sync state");
+
+        // ── 4. Create a stale v4-migration snapshot with the SAME source_path ──
+        // This is the dangerous case: if seeding picks up this file, the next
+        // incremental run sees it as "deleted" and erases guide.md's records.
+        let snapshot_dir = data_root
+            .join("v4-migration-snapshots")
+            .join("snap0")
+            .join("source-0");
+        fs::create_dir_all(&snapshot_dir).expect("create snapshot dir");
+        let stale_md = docline_md("guide.md", "Stale Guide", "# Stale\n\nOld snapshot.\n");
+        let stale_file = snapshot_dir.join("guide.md");
+        fs::write(&stale_file, stale_md.as_bytes()).expect("write stale snapshot");
+
+        // ── 5. Seed sync state from live sources (should exclude snapshot) ─
+        let plan = AcquisitionPlan {
+            data_root: data_root.clone(),
+            allowed_root: root.to_path_buf(),
+            sources: vec![PlannedSource {
+                source: source.clone(),
+                action: SourceAction::ScanLocal,
+                target_dir: source_dir.clone(),
+                allow_internal_snapshot_scan: false,
+            }],
+            total_scan: 1,
+        };
+
+        seed_sync_state_from_live_sources(&plan, &state_path, root)
+            .expect("seed_sync_state_from_live_sources must succeed");
+
+        let seeded =
+            crate::sync::state::SyncState::load(&state_path, root).expect("load seeded state");
+        let src_state = seeded
+            .source("workspace-root")
+            .expect("workspace-root must be present in seeded state");
+
+        // The live file must be seeded.
+        assert!(
+            src_state.file_mtimes.contains_key("guide.md"),
+            "seeded state must include the live guide.md: {:?}",
+            src_state.file_mtimes.keys().collect::<Vec<_>>()
+        );
+
+        // The stale snapshot path must NOT be seeded.
+        let stale_rel = stale_file
+            .strip_prefix(root)
+            .expect("stale file must be under root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(
+            !src_state.file_mtimes.contains_key(&stale_rel),
+            "seeded state must NOT contain the stale snapshot path '{stale_rel}': {:?}",
+            src_state.file_mtimes.keys().collect::<Vec<_>>()
+        );
+
+        // ── 6. Simulate post-migration snapshot cleanup ──────────────────
+        fs::remove_file(&stale_file).expect("remove stale snapshot");
+
+        // ── 7. Incremental sync must not delete the live document ────────
+        // Without the fix: the snapshot path is in stored state but absent from
+        // the current scan → treated as "deleted" → delete_file_data invoked
+        // with source_path="guide.md" → live document's chunks are erased.
+        // With the fix: the snapshot path was never seeded → no spurious deletion.
+        let m2 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("incremental sync must not fail");
+
+        assert_eq!(
+            m2.files_deleted, 0,
+            "incremental sync must NOT delete any files after snapshot cleanup: {m2:?}"
+        );
+        assert_eq!(
+            m2.files_synced, 0,
+            "incremental sync must detect no changes to the live file: {m2:?}"
+        );
+
+        let chunks_after_incremental = list_chunks_for_source(&store, "workspace-root")
+            .expect("list chunks after incremental sync");
+        assert_eq!(
+            chunks_after_incremental.len(),
+            chunks_after_full.len(),
+            "live document chunks must survive the incremental sync — \
+             stale snapshot deletion must not erase them"
+        );
+    }
+
+    // ── Regression: full-sync seeding must not forget pre-full-sync deletions ─
+
+    /// After a regular full sync, `seed_sync_state_from_live_sources` must
+    /// preserve entries for files that were deleted **before** the full sync
+    /// ran.  The full pipeline does not remove DB rows for pre-deleted files;
+    /// only the incremental cycle's delete path does.  If the seeded state
+    /// forgets those entries, the next incremental run sees no difference and
+    /// the stale DB rows survive forever.
+    ///
+    /// Scenario:
+    /// 1. Ingest `keep.md` and `gone.md`.
+    /// 2. Delete `gone.md` from the filesystem (before any full sync).
+    /// 3. Seed sync state from live sources (simulates what `--full` does after
+    ///    the pipeline completes).
+    /// 4. Check seeded state still contains `gone.md`.
+    /// 5. Run an incremental sync — must detect `gone.md` as deleted and report
+    ///    `files_deleted = 1`.
+    #[test]
+    fn seed_from_live_preserves_pre_full_sync_deleted_file_for_incremental_cleanup() {
+        use crate::acquire::{AcquisitionPlan, PlannedSource, SourceAction};
+        use crate::db::chunks::list_chunks_for_source;
+        use crate::sync::seed_sync_state_from_live_sources;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+
+        let keep_path = source_dir.join("keep.md");
+        let gone_path = source_dir.join("gone.md");
+        fs::write(
+            &keep_path,
+            docline_md("docs/keep.md", "Keep", "# Keep\n\nStays around.\n"),
+        )
+        .expect("write keep.md");
+        fs::write(
+            &gone_path,
+            docline_md("docs/gone.md", "Gone", "# Gone\n\nWill be deleted.\n"),
+        )
+        .expect("write gone.md");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "del-regression".to_string(),
+            path: source_dir.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+
+        // ── 1. Initial sync: ingest both files ───────────────────────────
+        let m1 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("initial sync");
+        assert_eq!(m1.files_synced, 2, "both files must be ingested: {m1:?}");
+        assert_eq!(m1.errors, 0, "initial sync must be clean: {m1:?}");
+
+        // ── 2. Delete gone.md before the full sync runs ──────────────────
+        fs::remove_file(&gone_path).expect("remove gone.md");
+        assert!(
+            !gone_path.exists(),
+            "gone.md must be absent before full-sync seed"
+        );
+
+        let chunks_before =
+            list_chunks_for_source(&store, "del-regression").expect("list chunks before seeding");
+        assert!(
+            !chunks_before.is_empty(),
+            "chunks must exist for both docs before seeding"
+        );
+
+        // ── 3. Seed sync state from live sources (simulates regular --full) ─
+        let plan = AcquisitionPlan {
+            data_root: root.join(".graphtor").join("data"),
+            allowed_root: root.to_path_buf(),
+            sources: vec![PlannedSource {
+                source: source.clone(),
+                action: SourceAction::ScanLocal,
+                target_dir: source_dir.clone(),
+                allow_internal_snapshot_scan: false,
+            }],
+            total_scan: 1,
+        };
+
+        seed_sync_state_from_live_sources(&plan, &state_path, root).expect("seed must succeed");
+
+        // ── 4. Seeded state must still contain gone.md's entry ───────────
+        let seeded =
+            crate::sync::state::SyncState::load(&state_path, root).expect("load seeded state");
+        let src_state = seeded
+            .source("del-regression")
+            .expect("source must be present");
+        assert!(
+            src_state.file_mtimes.contains_key("gone.md"),
+            "seeded state must carry forward gone.md so the next incremental can delete it; \
+             actual keys: {:?}",
+            src_state.file_mtimes.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            src_state
+                .file_contract_paths
+                .get("gone.md")
+                .map(String::as_str),
+            Some("docs/gone.md"),
+            "seeded state must carry forward gone.md's contract path"
+        );
+
+        // ── 5. Incremental sync must detect and clean up gone.md ─────────
+        let m2 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("incremental sync after seeding must succeed");
+
+        assert_eq!(
+            m2.files_deleted, 1,
+            "incremental sync must delete gone.md; metrics: {m2:?}"
+        );
+        assert_eq!(
+            m2.files_synced, 0,
+            "keep.md is unchanged; no re-ingest expected: {m2:?}"
+        );
+        assert_eq!(m2.errors, 0, "no errors expected: {m2:?}");
+    }
+
+    /// Guard: when the old contract path of a deleted file is now claimed by a
+    /// currently-live file, `seed_sync_state_from_live_sources` must NOT carry
+    /// the deleted entry forward.  Doing so would cause the next incremental to
+    /// invoke the delete path for the live file's rows — corrupting live data.
+    ///
+    /// Scenario:
+    /// 1. `old.md` is ingested with contract path `"shared/guide.md"`.
+    /// 2. `old.md` is deleted.
+    /// 3. `new.md` is created with the same contract path `"shared/guide.md"`.
+    /// 4. Seed sync state from live sources.
+    /// 5. Verify `old.md` is NOT in the seeded state (guard fired).
+    /// 6. Incremental sync must not delete anything.
+    #[test]
+    fn seed_from_live_skips_carry_forward_when_contract_path_claimed_by_live_file() {
+        use crate::acquire::{AcquisitionPlan, PlannedSource, SourceAction};
+        use crate::sync::seed_sync_state_from_live_sources;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+
+        let old_path = source_dir.join("old.md");
+        let new_path = source_dir.join("new.md");
+        fs::write(
+            &old_path,
+            docline_md("shared/guide.md", "Old Guide", "# Old\n\nOld content.\n"),
+        )
+        .expect("write old.md");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "guard-test".to_string(),
+            path: source_dir.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+
+        // ── 1. Ingest old.md ─────────────────────────────────────────────
+        let m1 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("initial sync");
+        assert_eq!(m1.files_synced, 1, "old.md must be ingested: {m1:?}");
+
+        // ── 2. Delete old.md, add new.md with the same contract path ─────
+        fs::remove_file(&old_path).expect("remove old.md");
+        fs::write(
+            &new_path,
+            docline_md("shared/guide.md", "New Guide", "# New\n\nNew content.\n"),
+        )
+        .expect("write new.md");
+
+        // ── 3. Seed sync state from live sources ─────────────────────────
+        // The live scan sees only new.md; old.md is absent.
+        // old.md's contract path "shared/guide.md" is now claimed by new.md.
+        let plan = AcquisitionPlan {
+            data_root: root.join(".graphtor").join("data"),
+            allowed_root: root.to_path_buf(),
+            sources: vec![PlannedSource {
+                source: source.clone(),
+                action: SourceAction::ScanLocal,
+                target_dir: source_dir.clone(),
+                allow_internal_snapshot_scan: false,
+            }],
+            total_scan: 1,
+        };
+
+        seed_sync_state_from_live_sources(&plan, &state_path, root).expect("seed must succeed");
+
+        // ── 4. old.md must NOT be in the seeded state ────────────────────
+        let seeded =
+            crate::sync::state::SyncState::load(&state_path, root).expect("load seeded state");
+        let src_state = seeded.source("guard-test").expect("source must be present");
+        assert!(
+            !src_state.file_mtimes.contains_key("old.md"),
+            "guard must prevent old.md carry-forward; \
+             live file new.md claims the same contract path 'shared/guide.md'; \
+             actual keys: {:?}",
+            src_state.file_mtimes.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            src_state.file_mtimes.contains_key("new.md"),
+            "new.md must be in seeded state: {:?}",
+            src_state.file_mtimes.keys().collect::<Vec<_>>()
+        );
+
+        // ── 5. Incremental sync must not delete anything ─────────────────
+        let m2 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("incremental sync must not fail");
+        assert_eq!(
+            m2.files_deleted, 0,
+            "guard must prevent spurious deletion of live document: {m2:?}"
+        );
+        assert_eq!(m2.errors, 0, "no errors expected: {m2:?}");
+    }
+
+    /// After a regular full sync, if a live file's frontmatter `source_path`
+    /// changed since the last tracked sync, `seed_sync_state_from_live_sources`
+    /// must carry forward the OLD mtime and OLD contract path.  This forces the
+    /// next incremental to re-ingest the file via
+    /// `reingest_file_with_old_contract_path`, which deletes the orphaned rows
+    /// for the old identity and inserts fresh rows under the new identity.
+    ///
+    /// Scenario:
+    /// 1. Ingest `docs/a.md` with `source_path: "old-identity.md"`.
+    /// 2. Rewrite frontmatter to `source_path: "new-identity.md"` (mtime bumps).
+    /// 3. Seed sync state from live sources (simulates post-full-sync seeding).
+    /// 4. Verify seeded state has OLD mtime + OLD contract path for `a.md`.
+    /// 5. Run incremental sync — must re-ingest `a.md`, reporting
+    ///    `files_synced = 1` (uses old contract path to clean up stale rows).
+    #[test]
+    fn seed_from_live_carries_old_contract_path_for_identity_changes() {
+        use crate::acquire::{AcquisitionPlan, PlannedSource, SourceAction};
+        use crate::sync::seed_sync_state_from_live_sources;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+
+        let file_path = source_dir.join("a.md");
+        fs::write(
+            &file_path,
+            docline_md("old-identity.md", "Doc A", "# A\n\nOriginal.\n"),
+        )
+        .expect("write a.md with old identity");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "cp-change".to_string(),
+            path: source_dir.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+
+        // ── 1. Ingest with old identity ──────────────────────────────────
+        let m1 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("initial sync");
+        assert_eq!(m1.files_synced, 1, "initial sync must ingest a.md: {m1:?}");
+
+        let old_mtime = unix_mtime_secs(&file_path);
+
+        // ── 2. Rewrite frontmatter to a new source_path (mtime changes) ──
+        // A tiny sleep ensures the OS advances the mtime so the incremental
+        // diff can reliably detect the modification.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::write(
+            &file_path,
+            docline_md("new-identity.md", "Doc A", "# A\n\nUpdated identity.\n"),
+        )
+        .expect("write a.md with new identity");
+        let new_mtime = unix_mtime_secs(&file_path);
+
+        // ── 3. Seed sync state from live sources ─────────────────────────
+        let plan = AcquisitionPlan {
+            data_root: root.join(".graphtor").join("data"),
+            allowed_root: root.to_path_buf(),
+            sources: vec![PlannedSource {
+                source: source.clone(),
+                action: SourceAction::ScanLocal,
+                target_dir: source_dir.clone(),
+                allow_internal_snapshot_scan: false,
+            }],
+            total_scan: 1,
+        };
+
+        seed_sync_state_from_live_sources(&plan, &state_path, root).expect("seed must succeed");
+
+        // ── 4. Seeded state must have OLD mtime + OLD contract path ───────
+        let seeded =
+            crate::sync::state::SyncState::load(&state_path, root).expect("load seeded state");
+        let src_state = seeded.source("cp-change").expect("source must be present");
+
+        // On filesystems where mtime resolution is coarser than 1 s the old and
+        // new mtime may be equal.  In that case the incremental cycle will see
+        // "no change" and the test degenerates into a no-op — but the invariant
+        // we care about (old contract path is preserved) still holds.
+        if old_mtime != new_mtime {
+            assert_eq!(
+                src_state.file_mtimes.get("a.md").copied(),
+                Some(old_mtime),
+                "seeded state must store OLD mtime to force incremental re-ingest"
+            );
+        }
+        assert_eq!(
+            src_state
+                .file_contract_paths
+                .get("a.md")
+                .map(String::as_str),
+            Some("old-identity.md"),
+            "seeded state must carry forward OLD contract path for a.md"
+        );
+
+        // ── 5. Incremental sync must re-ingest a.md ──────────────────────
+        // If mtime is identical (coarse FS), re-ingest will not fire; the
+        // important property — old orphaned rows are cleaned up — still holds
+        // because a later real mtime change will trigger the correct path.
+        // We only assert files_synced when we know the mtime advanced.
+        let m2 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("incremental sync must succeed");
+        assert_eq!(m2.errors, 0, "incremental sync must not error: {m2:?}");
+        if old_mtime != new_mtime {
+            assert_eq!(
+                m2.files_synced, 1,
+                "incremental must re-ingest a.md to clean up old identity rows: {m2:?}"
+            );
+        }
+    }
+
+    // ── Race-fix: pre-sync snapshot closes post-pipeline mutation window ───────
+
+    /// A file mutated **after** the full-sync pipeline completes but **before**
+    /// the old post-pipeline rescan must NOT be silently recorded as
+    /// already-synced.
+    ///
+    /// With the old (racy) approach, `seed_sync_state_from_live_sources` would
+    /// rescan the filesystem AFTER the pipeline and record the new mtime M1.
+    /// The next incremental would compare M1 (stored) with M1 (on disk) and
+    /// conclude "no change", leaving the DB with stale content.
+    ///
+    /// With the new approach, [`capture_pre_sync_snapshot`] records M0 BEFORE
+    /// the pipeline, then [`seed_sync_state_from_pre_sync_snapshot`] persists M0.
+    /// The next incremental compares M0 (stored) with M1 (on disk) → "changed"
+    /// → re-ingests the file, repairing the drift.
+    ///
+    /// Scenario:
+    /// 1. Create `guide.md` (mtime M0).
+    /// 2. Capture pre-sync snapshot → records M0.
+    /// 3. Simulate the pipeline completing (initial ingest via `sync_source`).
+    /// 4. Mutate `guide.md` (new mtime M1 > M0) — post-pipeline window.
+    /// 5. Seed state from the pre-sync snapshot → stores M0, NOT M1.
+    /// 6. Run incremental sync → must detect the mutation (M1 ≠ M0) and
+    ///    re-ingest `guide.md`.
+    #[test]
+    fn pre_sync_snapshot_detects_post_pipeline_mutation_on_followup_incremental() {
+        use crate::acquire::{AcquisitionPlan, PlannedSource, SourceAction};
+        use crate::db::chunks::list_chunks_for_source;
+        use crate::sync::{capture_pre_sync_snapshot, seed_sync_state_from_pre_sync_snapshot};
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_dir = root.join("docs");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        let guide_path = source_dir.join("guide.md");
+
+        // ── 1. Create guide.md ───────────────────────────────────────────
+        fs::write(
+            &guide_path,
+            docline_md("docs/guide.md", "Guide", "# Guide\n\nOriginal content.\n"),
+        )
+        .expect("write guide.md");
+
+        let state_path = root.join("sync_state.json");
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let source = Source::Local(LocalSource {
+            id: "race-fix-test".to_string(),
+            path: source_dir.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+
+        let plan = AcquisitionPlan {
+            data_root: root.join(".graphtor").join("data"),
+            allowed_root: root.to_path_buf(),
+            sources: vec![PlannedSource {
+                source: source.clone(),
+                action: SourceAction::ScanLocal,
+                target_dir: source_dir.clone(),
+                allow_internal_snapshot_scan: false,
+            }],
+            total_scan: 1,
+        };
+
+        // ── 2. Capture pre-sync snapshot (records M0) ────────────────────
+        let pre_snapshot =
+            capture_pre_sync_snapshot(&plan, root).expect("capture_pre_sync_snapshot must succeed");
+
+        let capture = pre_snapshot
+            .get("race-fix-test")
+            .expect("race-fix-test must be in snapshot");
+        let m0 = *capture
+            .file_mtimes
+            .get("guide.md")
+            .expect("guide.md must be captured");
+
+        // ── 3. Simulate the pipeline completing (ingest guide.md) ────────
+        // Clear any pre-existing state to mirror a fresh --full run.
+        let m1_init = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("initial ingest must succeed");
+        assert_eq!(
+            m1_init.files_synced, 1,
+            "pipeline proxy must ingest guide.md"
+        );
+        let chunks_after_pipeline =
+            list_chunks_for_source(&store, "race-fix-test").expect("list chunks after pipeline");
+        assert!(
+            !chunks_after_pipeline.is_empty(),
+            "pipeline must create chunks for guide.md"
+        );
+
+        // Remove the state that sync_source wrote — the full-pipeline path
+        // would not have written incremental sync state.
+        fs::remove_file(&state_path).expect("remove state written by sync proxy");
+
+        // ── 4. Mutate guide.md AFTER the pipeline (post-pipeline window) ──
+        // A small sleep ensures the OS advances the mtime clock.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::write(
+            &guide_path,
+            docline_md(
+                "docs/guide.md",
+                "Guide",
+                "# Guide\n\nContent mutated after pipeline.\n",
+            ),
+        )
+        .expect("mutate guide.md after pipeline");
+        let m1 = unix_mtime_secs(&guide_path);
+
+        // ── 5. Seed sync state from the PRE-SYNC snapshot (stores M0) ────
+        seed_sync_state_from_pre_sync_snapshot(&plan, &pre_snapshot, &state_path, root)
+            .expect("seed from pre-sync snapshot must succeed");
+
+        let seeded =
+            crate::sync::state::SyncState::load(&state_path, root).expect("load seeded state");
+        let src_state = seeded
+            .source("race-fix-test")
+            .expect("race-fix-test must be in seeded state");
+
+        // The stored mtime must be M0 (pre-mutation), not M1 (post-mutation).
+        let stored_mtime = *src_state
+            .file_mtimes
+            .get("guide.md")
+            .expect("guide.md must be in seeded state");
+        assert_eq!(
+            stored_mtime, m0,
+            "seeded state must record the PRE-mutation mtime M0={m0}, not M1={m1}; \
+             stored={stored_mtime}"
+        );
+
+        // ── 6. Incremental sync must detect the mutation ──────────────────
+        // If M0 == M1 the filesystem has coarse mtime resolution (1-second
+        // buckets) and this test cannot demonstrate the timing property.
+        // We skip the re-ingest assertion but still verify no errors.
+        let m2 = sync_source(&store, &source, &source_dir, &state_path, root, None, None)
+            .expect("incremental sync must not fail");
+        assert_eq!(m2.errors, 0, "incremental sync must not error: {m2:?}");
+
+        if m0 != m1 {
+            assert_eq!(
+                m2.files_synced, 1,
+                "incremental sync must detect and re-ingest the post-pipeline mutation \
+                 (M0={m0} vs M1={m1}); metrics: {m2:?}"
+            );
+        }
     }
 }

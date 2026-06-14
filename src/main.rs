@@ -56,8 +56,8 @@ use graphtor_core::{
     pipeline::FileError,
     resolve_source_db_path,
     sync::{
-        elapsed_millis, seed_sync_state_from_frozen_snapshot,
-        sync_source_with_frozen_mtimes_and_ignored_root,
+        capture_pre_sync_snapshot, elapsed_millis, seed_sync_state_from_frozen_snapshot,
+        seed_sync_state_from_pre_sync_snapshot, sync_source_with_frozen_mtimes_and_ignored_root,
         validate_and_begin_v4_migration_for_sources, MigrationPreflightCandidate, SyncMetrics,
         SyncProgressEvent, SyncProgressStatus, SyncState,
     },
@@ -396,6 +396,7 @@ fn handle_empty_sync_registry(
     Ok(0)
 }
 
+#[allow(clippy::too_many_lines)]
 fn cmd_sync(
     cwd: &std::path::Path,
     db_path: &std::path::Path,
@@ -455,24 +456,63 @@ fn cmd_sync(
     for (target_db_path, grouped_plan) in split_plan_by_database(db_path, &source_config, &plan) {
         let (database_metrics, database_errors) =
             with_locked_database_store(&target_db_path, cwd, |store| {
+                // Guard: --no-embed cannot be used when the database requires a v4
+                // migration rebuild or when a stored epoch mismatch forces a full
+                // re-ingest.  Reject early — before prepare_v4_migration_if_needed
+                // prunes existing data — so the database remains intact.
+                guard_no_embed_before_v4_rebuild(
+                    args.no_embed,
+                    store,
+                    &grouped_plan,
+                    &target_db_path,
+                    cwd,
+                )?;
+
                 let prepared = prepare_v4_migration_if_needed(store, grouped_plan)?;
                 let frozen_source_mtimes = (!prepared.frozen_source_mtimes.is_empty())
                     .then_some(&prepared.frozen_source_mtimes);
 
                 if args.full {
+                    // Capture live-source state BEFORE the pipeline runs so that
+                    // any file mutation in the post-pipeline window cannot silently
+                    // be recorded as already-synced.  The v4 migration path uses
+                    // its own frozen snapshot (captured before the prune), so we
+                    // only capture for regular (non-migration) full syncs.
+                    let pre_sync_snapshot = (!prepared.migration_started)
+                        .then(|| {
+                            capture_pre_sync_snapshot(&prepared.rebuild_plan, cwd)
+                                .context("failed to capture pre-sync snapshot before full sync")
+                        })
+                        .transpose()?;
+
                     let full_result =
                         cmd_sync_full(store, &prepared.rebuild_plan, model.as_ref(), args)?;
-                    if prepared.migration_started && full_result.metrics.errors == 0 {
+
+                    // After any successful full sync, seed sync state so the next
+                    // incremental cycle has a correct baseline.  For v4 migration
+                    // rebuilds use the frozen source mtimes captured before the
+                    // prune; for regular full syncs use the pre-pipeline snapshot.
+                    if full_result.metrics.errors == 0 {
                         let state_path = sync_state_path(&target_db_path);
-                        seed_sync_state_from_frozen_snapshot(
-                            &prepared.rebuild_plan,
-                            &prepared.frozen_source_mtimes,
-                            &state_path,
-                            cwd,
-                        )
-                        .context(
-                            "failed to persist sync state after successful frozen v4 rebuild",
-                        )?;
+                        if prepared.migration_started {
+                            seed_sync_state_from_frozen_snapshot(
+                                &prepared.rebuild_plan,
+                                &prepared.frozen_source_mtimes,
+                                &state_path,
+                                cwd,
+                            )
+                            .context(
+                                "failed to persist sync state after successful frozen v4 rebuild",
+                            )?;
+                        } else if let Some(ref snapshot) = pre_sync_snapshot {
+                            seed_sync_state_from_pre_sync_snapshot(
+                                &prepared.rebuild_plan,
+                                snapshot,
+                                &state_path,
+                                cwd,
+                            )
+                            .context("failed to persist sync state after successful full sync")?;
+                        }
                     }
                     finalize_v4_migration_if_clean(
                         store,
@@ -1147,6 +1187,75 @@ fn finalize_v4_migration_if_clean(
         warn!(
             rebuild_errors,
             "v4 rebuild had errors; database remains gated as pre-v4"
+        );
+    }
+
+    Ok(())
+}
+
+/// Rejects `--no-embed` when the database requires a v4 migration rebuild or
+/// when any planned source has a stored `contract_epoch` that differs from
+/// [`graphtor_core::ingest_contract::CONTRACT_EPOCH`] (epoch-mismatch rebuild).
+///
+/// Both conditions force a full re-ingest that produces new chunk IDs.
+/// Pre-pivot embeddings stored under old chunk IDs cannot be recovered after
+/// either rebuild, so allowing `--no-embed` would permanently destroy vectors.
+///
+/// This guard must be called **before** `prepare_v4_migration_if_needed` so
+/// the database is not pruned if the caller cannot supply embeddings for the
+/// rebuilt index.
+///
+/// Note: the warning-only degraded-mode path for `model = None` (when the
+/// flag was never explicitly set) lives in the library and is intentionally
+/// kept; this guard only applies to the explicit CLI `--no-embed` flag.
+fn guard_no_embed_before_v4_rebuild(
+    no_embed: bool,
+    store: &DataStore,
+    grouped_plan: &AcquisitionPlan,
+    target_db_path: &std::path::Path,
+    root: &std::path::Path,
+) -> anyhow::Result<()> {
+    if !no_embed {
+        return Ok(());
+    }
+
+    // Check 1: database requires a v4 migration rebuild.
+    if store
+        .needs_v4_migration()
+        .context("failed to determine whether database needs v4 migration")?
+    {
+        anyhow::bail!(
+            "--no-embed cannot be used when the database requires a v4 migration \
+             rebuild; pre-pivot embeddings stored under the old chunk-ID scheme \
+             cannot be recovered after the rebuild — run without --no-embed to \
+             recompute embeddings under the new scheme"
+        );
+    }
+
+    // Check 2: stored contract epoch mismatch forces a full re-ingest.
+    // Mirror the same `epoch_changed` condition used in `sync_source` so any
+    // source that would trigger a forced rebuild is caught here at the CLI layer.
+    let state_path = sync_state_path(target_db_path);
+    let sync_state = SyncState::load(&state_path, root).with_context(|| {
+        format!(
+            "failed to load sync state at {} for --no-embed epoch check",
+            state_path.display()
+        )
+    })?;
+    let has_epoch_mismatch = grouped_plan.sources.iter().any(|planned| {
+        let source_id = match &planned.source {
+            Source::Local(local) => local.id.as_str(),
+        };
+        sync_state.source(source_id).is_some_and(|s| {
+            s.contract_epoch.as_deref() != Some(graphtor_core::ingest_contract::CONTRACT_EPOCH)
+        })
+    });
+    if has_epoch_mismatch {
+        anyhow::bail!(
+            "--no-embed cannot be used when a stored contract epoch mismatch \
+             forces a full re-ingest; pre-pivot embeddings cannot be recovered \
+             after the epoch rebuild — run without --no-embed to recompute \
+             embeddings under the current contract epoch"
         );
     }
 
@@ -2968,6 +3077,17 @@ fn cmd_prewarm(
 
     for (target_db_path, grouped_plan) in split_plan_by_database(db_path, &source_config, &plan) {
         let database_metrics = with_locked_database_store(&target_db_path, cwd, |store| {
+            // Guard: --no-embed cannot be used when the database requires a v4
+            // migration rebuild or when a stored epoch mismatch forces a full
+            // re-ingest.  Reject early — before prepare_v4_migration_if_needed
+            // prunes existing data — so the database remains intact.
+            guard_no_embed_before_v4_rebuild(
+                args.no_embed,
+                store,
+                &grouped_plan,
+                &target_db_path,
+                cwd,
+            )?;
             let prepared = prepare_v4_migration_if_needed(store, grouped_plan)?;
             let acq_result = acquire_execute(&prepared.rebuild_plan, false);
             if acq_result.failed > 0 {
@@ -3953,7 +4073,7 @@ mod tests {
 
         let args = cli::SyncArgs {
             batch_size: 20,
-            no_embed: true,
+            no_embed: false, // must not use --no-embed during v4 migration rebuild
             data_root: None,
             full: true,
             metrics: false,
@@ -4006,7 +4126,7 @@ mod tests {
 
         let full_args = cli::SyncArgs {
             batch_size: 20,
-            no_embed: true,
+            no_embed: false, // must not use --no-embed during v4 migration rebuild
             data_root: None,
             full: true,
             metrics: false,
@@ -4063,7 +4183,7 @@ mod tests {
 
         let full_args = cli::SyncArgs {
             batch_size: 20,
-            no_embed: true,
+            no_embed: false, // must not use --no-embed during v4 migration rebuild
             data_root: None,
             full: true,
             metrics: false,
@@ -4153,7 +4273,7 @@ mod tests {
 
         let args = cli::SyncArgs {
             batch_size: 20,
-            no_embed: true,
+            no_embed: false, // must not use --no-embed during v4 migration rebuild
             data_root: None,
             full: false,
             metrics: false,
@@ -4212,7 +4332,7 @@ mod tests {
         fs::remove_dir_all(&docs_dir).expect("remove live source after snapshot persists");
 
         let args = cli::prewarm::PrewarmArgs {
-            no_embed: true,
+            no_embed: false, // guard rejects --no-embed on pre-v4 DB; test frozen-retry behavior
             data_root: None,
             quiet: true,
         };
@@ -4244,7 +4364,7 @@ mod tests {
         seed_store_at_v3(&db_path, root);
 
         let args = cli::prewarm::PrewarmArgs {
-            no_embed: true,
+            no_embed: false, // guard rejects --no-embed on pre-v4 DB; test frozen-snapshot behavior
             data_root: None,
             quiet: true,
         };
@@ -4256,6 +4376,451 @@ mod tests {
 
         assert_eq!(exit_code, 0, "prewarm should exit successfully");
         assert_source_loaded(root, &db_path, "guide-source");
+    }
+
+    // ── Issue 2: --no-embed + v4 migration must be rejected before destructive prune ──
+
+    /// `--no-embed` must be rejected when the database requires a v4 migration
+    /// rebuild (full path).  The guard must fire BEFORE `prepare_v4_migration_if_needed`
+    /// would prune the database so existing data is preserved.
+    #[test]
+    fn cmd_sync_full_v4_migration_rejects_no_embed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::write(
+            docs_dir.join("guide.md"),
+            docline_md("guide.md", "Guide", "# Guide\n\nContent.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        let db_path = root.join("graph.db");
+        seed_store_at_v3(&db_path, root);
+
+        let args = cli::SyncArgs {
+            batch_size: 20,
+            no_embed: true,
+            data_root: None,
+            full: true,
+            metrics: false,
+            force: false,
+        };
+
+        let result = cmd_sync(root, &db_path, None, &args, OutputFormat::Human);
+        assert!(
+            result.is_err(),
+            "--no-embed with v4 migration full sync must return Err, got: {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("--no-embed"),
+            "error must mention --no-embed: {msg}"
+        );
+        assert!(
+            msg.contains("v4 migration"),
+            "error must mention v4 migration: {msg}"
+        );
+
+        // The database must NOT have been pruned: the pre-v4 gate must still be active.
+        let store = DataStore::open_sqlite(&db_path, root).expect("reopen sqlite store");
+        assert!(
+            store.needs_v4_migration().expect("check migration gate"),
+            "pre-v4 gate must remain active after rejected --no-embed run"
+        );
+    }
+
+    /// `--no-embed` must be rejected when the database requires a v4 migration
+    /// rebuild (incremental path).
+    #[test]
+    fn cmd_sync_incremental_v4_migration_rejects_no_embed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::write(
+            docs_dir.join("guide.md"),
+            docline_md("guide.md", "Guide", "# Guide\n\nContent.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        let db_path = root.join("graph.db");
+        seed_store_at_v3(&db_path, root);
+
+        let args = cli::SyncArgs {
+            batch_size: 20,
+            no_embed: true,
+            data_root: None,
+            full: false,
+            metrics: false,
+            force: false,
+        };
+
+        let result = cmd_sync(root, &db_path, None, &args, OutputFormat::Human);
+        assert!(
+            result.is_err(),
+            "--no-embed with v4 migration incremental sync must return Err, got: {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("--no-embed"),
+            "error must mention --no-embed: {msg}"
+        );
+        // Database must remain intact.
+        let store = DataStore::open_sqlite(&db_path, root).expect("reopen sqlite store");
+        assert!(
+            store.needs_v4_migration().expect("check migration gate"),
+            "pre-v4 gate must remain active after rejected --no-embed incremental run"
+        );
+    }
+
+    // ── Issue 2 (prewarm): --no-embed + v4 migration must be rejected before destructive prune ──
+
+    /// `prewarm --no-embed` must be rejected when the database requires a v4
+    /// migration rebuild.  The guard must fire BEFORE `prepare_v4_migration_if_needed`
+    /// would prune the database so existing data is preserved.
+    #[test]
+    fn cmd_prewarm_v4_migration_rejects_no_embed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::write(
+            docs_dir.join("guide.md"),
+            docline_md("guide.md", "Guide", "# Guide\n\nContent.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        let db_path = root.join("graph.db");
+        seed_store_at_v3(&db_path, root);
+
+        let args = cli::prewarm::PrewarmArgs {
+            no_embed: true,
+            data_root: None,
+            quiet: true,
+        };
+
+        let result = cmd_prewarm(root, &db_path, None, &args);
+        assert!(
+            result.is_err(),
+            "--no-embed with v4 migration prewarm must return Err, got: {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("--no-embed"),
+            "error must mention --no-embed: {msg}"
+        );
+        assert!(
+            msg.contains("v4 migration"),
+            "error must mention v4 migration: {msg}"
+        );
+
+        // The database must NOT have been pruned: the pre-v4 gate must still be active.
+        let store = DataStore::open_sqlite(&db_path, root).expect("reopen sqlite store");
+        assert!(
+            store.needs_v4_migration().expect("check migration gate"),
+            "pre-v4 gate must remain active after rejected --no-embed prewarm"
+        );
+        // Pre-v4 source data must survive the rejected run.
+        let sources = graphtor_core::db::list_sources(&store).expect("list sources");
+        assert_eq!(
+            sources.len(),
+            1,
+            "pre-v4 source data must survive rejected --no-embed prewarm; \
+             expected 1 source, got {}",
+            sources.len()
+        );
+    }
+
+    /// `prewarm --no-embed` on a v4 database must succeed: the guard only fires
+    /// when a destructive rebuild is imminent.
+    #[test]
+    fn cmd_prewarm_no_embed_accepted_on_v4_database() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::write(
+            docs_dir.join("guide.md"),
+            docline_md("guide.md", "Guide", "# Guide\n\nContent.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        // Use a fresh (v4) database — no migration needed.
+        let db_path = root.join("graph.db");
+        let store = DataStore::open_sqlite(&db_path, root).expect("open sqlite store");
+        store.ensure_schema().expect("ensure schema");
+        drop(store);
+
+        let args = cli::prewarm::PrewarmArgs {
+            no_embed: true,
+            data_root: None,
+            quiet: true,
+        };
+
+        let result = cmd_prewarm(root, &db_path, None, &args);
+        assert!(
+            result.is_ok(),
+            "--no-embed must be accepted on a v4 database; got: {result:?}"
+        );
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "prewarm --no-embed on v4 database must exit successfully"
+        );
+    }
+
+    // ── Issue 2b: --no-embed + epoch-mismatch rebuild must be rejected ────────
+
+    /// Helper: write sync state with a stale contract epoch for `source_id`.
+    ///
+    /// Simulates a source previously synced under an old contract epoch, so the
+    /// next sync would detect an epoch mismatch and force a full re-ingest.
+    fn seed_stale_epoch_sync_state(root: &Path, db_path: &Path, source_id: &str) {
+        let mut state = SyncState::default();
+        let src = state.source_mut(source_id);
+        src.file_mtimes
+            .insert("guide.md".to_string(), 1_700_000_000u64);
+        src.last_sync = Some("2026-01-01T00:00:00Z".to_string());
+        // Use an epoch string that is not the current CONTRACT_EPOCH to trigger
+        // the epoch-mismatch forced-rebuild path in sync_source.
+        src.contract_epoch = Some("stale-epoch-0".to_string());
+        state
+            .save(&sync_state_path(db_path), root)
+            .expect("seed stale epoch sync state");
+    }
+
+    /// `sync --no-embed` must be rejected when a stored epoch mismatch would
+    /// force a full re-ingest, before any destructive rebuild begins.
+    #[test]
+    fn cmd_sync_epoch_mismatch_rejects_no_embed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::write(
+            docs_dir.join("guide.md"),
+            docline_md("guide.md", "Guide", "# Guide\n\nContent.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        // v4 database (no migration needed) — the trigger is the epoch mismatch.
+        let db_path = root.join("graph.db");
+        {
+            let store = DataStore::open_sqlite(&db_path, root).expect("open sqlite store");
+            store.ensure_schema().expect("ensure schema");
+        }
+
+        // Seed sync state with a stale epoch so the next sync detects a mismatch.
+        seed_stale_epoch_sync_state(root, &db_path, "guide-source");
+
+        let args = cli::SyncArgs {
+            batch_size: 20,
+            no_embed: true,
+            data_root: None,
+            full: false,
+            metrics: false,
+            force: false,
+        };
+
+        let result = cmd_sync(root, &db_path, None, &args, OutputFormat::Human);
+        assert!(
+            result.is_err(),
+            "sync --no-embed with epoch mismatch must return Err, got: {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("--no-embed"),
+            "error must mention --no-embed: {msg}"
+        );
+        assert!(msg.contains("epoch"), "error must mention epoch: {msg}");
+    }
+
+    /// `prewarm --no-embed` must be rejected when a stored epoch mismatch would
+    /// force a full re-ingest, before any destructive rebuild begins.
+    #[test]
+    fn cmd_prewarm_epoch_mismatch_rejects_no_embed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::write(
+            docs_dir.join("guide.md"),
+            docline_md("guide.md", "Guide", "# Guide\n\nContent.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        // v4 database (no migration needed) — the trigger is the epoch mismatch.
+        let db_path = root.join("graph.db");
+        {
+            let store = DataStore::open_sqlite(&db_path, root).expect("open sqlite store");
+            store.ensure_schema().expect("ensure schema");
+        }
+
+        // Seed sync state with a stale epoch so the next sync detects a mismatch.
+        seed_stale_epoch_sync_state(root, &db_path, "guide-source");
+
+        let args = cli::prewarm::PrewarmArgs {
+            no_embed: true,
+            data_root: None,
+            quiet: true,
+        };
+
+        let result = cmd_prewarm(root, &db_path, None, &args);
+        assert!(
+            result.is_err(),
+            "prewarm --no-embed with epoch mismatch must return Err, got: {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("--no-embed"),
+            "error must mention --no-embed: {msg}"
+        );
+        assert!(msg.contains("epoch"), "error must mention epoch: {msg}");
+    }
+
+    /// `sync --no-embed` must be accepted when sync state carries the current
+    /// contract epoch — no epoch-mismatch rebuild is needed.
+    #[test]
+    fn cmd_sync_no_embed_accepted_when_epoch_current() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        let live_file = docs_dir.join("guide.md");
+        fs::write(
+            &live_file,
+            docline_md("guide.md", "Guide", "# Guide\n\nContent.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        // v4 database.
+        let db_path = root.join("graph.db");
+        {
+            let store = DataStore::open_sqlite(&db_path, root).expect("open sqlite store");
+            store.ensure_schema().expect("ensure schema");
+        }
+
+        // Seed sync state with the CURRENT epoch — no mismatch.
+        seed_current_sync_state(root, &db_path, "guide-source", "guide.md", 1_700_000_000);
+
+        let args = cli::SyncArgs {
+            batch_size: 20,
+            no_embed: true,
+            data_root: None,
+            full: false,
+            metrics: false,
+            force: false,
+        };
+
+        let result = cmd_sync(root, &db_path, None, &args, OutputFormat::Human);
+        assert!(
+            result.is_ok(),
+            "sync --no-embed with current epoch must succeed; got: {result:?}"
+        );
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "sync --no-embed with current epoch must exit with code 0"
+        );
+    }
+
+    // ── Issue 3: full sync (non-migration) must seed sync state ──────────────
+
+    /// After a regular `--full` sync (no v4 migration), sync state must be
+    /// seeded from the live source files so the next incremental cycle does not
+    /// re-ingest every file from scratch.
+    #[test]
+    fn cmd_sync_full_regular_seeds_sync_state_for_incremental_followup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs_dir = root.join("docs");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        let live_file = docs_dir.join("guide.md");
+        fs::write(
+            &live_file,
+            docline_md("docs/guide.md", "Guide", "# Guide\n\nStable content.\n"),
+        )
+        .expect("write guide.md");
+        write_single_source_config(root, "guide-source", &docs_dir);
+
+        let db_path = root.join("graph.db");
+        // Use a fresh (non-v3) database so no v4 migration is needed.
+        {
+            let store = DataStore::open_sqlite(&db_path, root).expect("open sqlite store");
+            store.ensure_schema().expect("ensure schema");
+        }
+
+        let full_args = cli::SyncArgs {
+            batch_size: 20,
+            no_embed: true,
+            data_root: None,
+            full: true,
+            metrics: false,
+            force: false,
+        };
+
+        let full_exit_code = cmd_sync(root, &db_path, None, &full_args, OutputFormat::Human)
+            .expect("full sync should succeed");
+        assert_eq!(full_exit_code, 0, "full sync should exit successfully");
+
+        // Sync state must be seeded after the full sync.
+        let state = SyncState::load(&sync_state_path(&db_path), root).expect("load sync state");
+        let source_state = state
+            .source("guide-source")
+            .expect("guide-source state must exist after full sync");
+        assert!(
+            source_state.file_mtimes.contains_key("guide.md"),
+            "sync state must record the live mtime for guide.md after full sync: {source_state:?}"
+        );
+        assert_eq!(
+            source_state
+                .file_contract_paths
+                .get("guide.md")
+                .map(String::as_str),
+            Some("docs/guide.md"),
+            "sync state must record the contract source_path for guide.md after full sync"
+        );
+        assert_eq!(
+            source_state.contract_epoch.as_deref(),
+            Some(graphtor_core::ingest_contract::CONTRACT_EPOCH),
+            "sync state must carry the current contract epoch after full sync"
+        );
+
+        // The follow-up incremental sync must detect no changes.
+        let incremental_args = cli::SyncArgs {
+            batch_size: 20,
+            no_embed: true,
+            data_root: None,
+            full: false,
+            metrics: false,
+            force: false,
+        };
+
+        let incremental_exit_code =
+            cmd_sync(root, &db_path, None, &incremental_args, OutputFormat::Human)
+                .expect("follow-up incremental sync should succeed");
+        assert_eq!(
+            incremental_exit_code, 0,
+            "follow-up incremental sync should exit successfully"
+        );
+
+        // After the incremental sync, the chunks count should equal the full sync count
+        // (no duplication, no re-ingestion since files did not change).
+        let store = DataStore::open_sqlite(&db_path, root).expect("reopen sqlite store");
+        let chunks =
+            graphtor_core::db::list_chunks_for_source(&store, "guide-source").expect("list chunks");
+        assert!(
+            !chunks.is_empty(),
+            "chunks must remain after follow-up incremental sync"
+        );
     }
 
     #[test]

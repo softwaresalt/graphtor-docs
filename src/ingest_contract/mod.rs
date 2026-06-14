@@ -239,11 +239,24 @@ fn validate_source_path(raw: impl Into<String>) -> Result<String, GraphtorError>
         }
     }
 
-    // Reject `.` and `..` path components.
+    // Reject `.`, `..`, and empty path components.
+    //
+    // Empty components arise from consecutive slashes (`docs//guide.md`) or a
+    // trailing slash (`docs/guide.md/`). Neither form is canonical; rejecting
+    // them ensures the persisted identity is unique and consistent.
     for component in path.split('/') {
         if component == "." || component == ".." {
             return Err(GraphtorError::Contract {
                 message: format!("source_path must not contain '.' or '..' components: '{path}'"),
+                field: Some("source_path".to_string()),
+            });
+        }
+        if component.is_empty() {
+            return Err(GraphtorError::Contract {
+                message: format!(
+                    "source_path must not contain empty path segments \
+                     (consecutive or trailing slashes are not canonical): '{path}'"
+                ),
                 field: Some("source_path".to_string()),
             });
         }
@@ -537,6 +550,33 @@ mod tests {
         let yaml = valid_yaml("../escape.md");
         let err = validate(&yaml, valid_body()).expect_err("leading '..' source_path must fail");
         assert!(err.to_string().contains("source_path"), "{err}");
+    }
+
+    #[test]
+    fn double_slash_in_source_path_fails_closed() {
+        // `docs//guide.md` splits into ["docs", "", "guide.md"]: the empty
+        // component is non-canonical and must be rejected.
+        let yaml = valid_yaml("docs//guide.md");
+        let err = validate(&yaml, valid_body())
+            .expect_err("double-slash source_path must be rejected as non-canonical");
+        assert!(err.to_string().contains("source_path"), "{err}");
+        assert!(
+            err.to_string().contains("empty path segment"),
+            "error should describe empty segment: {err}"
+        );
+    }
+
+    #[test]
+    fn trailing_slash_in_source_path_fails_closed() {
+        // `docs/guide.md/` has a trailing empty component and must be rejected.
+        let yaml = valid_yaml("docs/guide.md/");
+        let err = validate(&yaml, valid_body())
+            .expect_err("trailing-slash source_path must be rejected as non-canonical");
+        assert!(err.to_string().contains("source_path"), "{err}");
+        assert!(
+            err.to_string().contains("empty path segment"),
+            "error should describe empty segment: {err}"
+        );
     }
 
     // ── CRLF body hash normalization ──────────────────────────────────────
