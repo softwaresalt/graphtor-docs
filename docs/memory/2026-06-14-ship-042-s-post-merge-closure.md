@@ -24,9 +24,9 @@ and closure evidence, and captured audit follow-up work for later planning.
 |------|--------|
 | `.backlogit/archive/042-S.md` | Archived shipment with merge traceability |
 | `.backlogit/archive/042-F.md` | Archived feature with merge traceability |
-| `.backlogit/archive/042.001-T` → `.backlogit/archive/042.023-T` | Archived all shipped task artifacts |
+| `.backlogit/archive/042.001-T.md` → `.backlogit/archive/042.023-T.md` | Archived all shipped task artifacts |
 | `.backlogit/queue/042-S.md` and `042*` task/feature queue items | Removed from active queue |
-| `.backlogit/hooks_queue.jsonl` | Recorded shipment archival hook event |
+| `.backlogit/hooks_queue.jsonl` | Recorded `ship_shipment` hook event for `042-S` |
 | `.backlogit/stash.jsonl` | Added follow-up stash `964597B1` for unmaintained dependency triage |
 | `docs/closure/2026-06-14-042-s-runtime-verification.md` | Added runtime verification record |
 | `docs/closure/2026-06-14-042-s-post-merge-closure.md` | Added operational closure record |
@@ -36,8 +36,9 @@ and closure evidence, and captured audit follow-up work for later planning.
 
 1. **Fresh Copilot review on current HEAD before merge**: the earlier Copilot
    review covered an older commit. The CLI fallback could not re-request the
-   reviewer directly, so GraphQL `requestReviews` with `botIds` was used to
-   obtain a current-head review and satisfy the pre-merge readiness gate.
+   reviewer directly, so GraphQL `requestReviewsByLogin` with
+   `botLogins: ["copilot-pull-request-reviewer"]` was used to obtain a
+   current-head review and satisfy the pre-merge readiness gate.
 
 2. **Admin merge override with explicit approval**: `gh pr merge --admin --merge`
    was required because the base-branch policy blocked a normal merge. The
