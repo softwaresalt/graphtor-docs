@@ -13,6 +13,10 @@ status: "active"
 * Pivoted graphtor-docs to local standardized-Markdown ingestion with embedded contract validation
 * Removed legacy PDF, DOCX, Git, URL, and HTML ingestion/runtime branches
 * Added migration gates, namespaced logical document identity, explicit registry behavior, and updated regression coverage
+* Remediated the adversarial-review findings on PR #69 and pushed:
+  * `4e5e40905fdaf925e4775ca62798a3613e735157` — `fix(sync): use map_or for legacy-state mtime`
+  * `d01fab7d76d300812ce164f11c53f642a9e9c109` — `fix(sync): harden pivot rebuild safety`
+* Hardened the docline pivot by rejecting non-canonical `source_path` values, blocking `--no-embed` during destructive pivot-era rebuilds, and persisting sync state after successful regular full syncs
 * Committed the feature branch as:
   * `49bbce136b3354ff69ee431605ac83f23ab4c807` — `feat(ingest): pivot graphtor-docs to docline markdown`
   * `85dda9a82814db6ce9f69ce6268f1819c6bac576` — `docs: document docline markdown ingestion pivot`
@@ -31,18 +35,19 @@ status: "active"
 * `cargo fmt --all -- --check` passed
 * `cargo clippy --all-targets -- -D warnings -D clippy::pedantic` passed
 * `cargo test --all-targets` passed
-* `cargo audit` still reports the pre-existing unrelated advisory `RUSTSEC-2026-0041` through `cozo -> lz4_flex`
+* `cargo audit --ignore RUSTSEC-2026-0041 --ignore RUSTSEC-2026-0008` passed with only pre-existing upstream unmaintained warnings
+* `gh pr checks 69` reports `build` passing on commit `d01fab7d76d300812ce164f11c53f642a9e9c109`
 
 ## Branch and backlog state
 
 * Current branch: `feat/042-docline-markdown-ingestion-pivot`
-* Worktree was clean before this memory checkpoint
+* PR #69 remains open against `main`
+* Worktree is clean after pushing the hardening fixes
 * `042-F` is marked `done`
-* `042-S` remains `active` because the work is committed locally but not yet PR'd or merged
+* `042-S` remains `active` because the PR is not yet merged
 * `stash@{0}` remains preserved and untouched
 
 ## Next steps
 
-* Commit this memory checkpoint on the feature branch
-* Push `feat/042-docline-markdown-ingestion-pivot` to the remote
-* Open a PR for shipment `042-S` when ready for review
+* Keep PR #69 in review until merge approval is granted
+* Track the remaining upstream `cozo` dependency advisories separately from the docline pivot shipment
