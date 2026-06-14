@@ -65,7 +65,7 @@ and closure evidence, and captured audit follow-up work for later planning.
   * `cargo clippy --all-targets -- -D warnings -D clippy::pedantic`
   * `cargo test --all-targets`
 * Advisory scan:
-  * `cargo audit` still fails on `RUSTSEC-2026-0041` via `lz4_flex`
+  * raw local `cargo audit` (without CI `--ignore` suppressions) still reports `RUSTSEC-2026-0041` via `lz4_flex`
   * unmaintained dependency warnings captured in stash `964597B1`
 
 ## Remaining Work

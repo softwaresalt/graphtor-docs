@@ -69,7 +69,7 @@ Closure verification on the post-merge branch produced:
 | `cargo fmt --all -- --check` | ✅ | pass |
 | `cargo clippy --all-targets -- -D warnings -D clippy::pedantic` | ✅ | pass |
 | `cargo test --all-targets` | ✅ | pass |
-| `cargo audit` | ⚠️ | fails on existing `RUSTSEC-2026-0041` via `cozo -> swapvec -> lz4_flex`; also reports unmaintained transitive dependencies captured in stash `964597B1` |
+| `cargo audit` | ⚠️ | raw local scan (without CI `--ignore` suppressions) still reports existing `RUSTSEC-2026-0041` via `cozo -> swapvec -> lz4_flex`; also reports unmaintained transitive dependencies captured in stash `964597B1` |
 
 ## Runtime Verification Handoff
 

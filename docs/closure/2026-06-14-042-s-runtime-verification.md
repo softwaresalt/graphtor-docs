@@ -76,10 +76,11 @@ Additional closure validation also passed:
 
 ## Advisory Note
 
-`cargo audit` still reports the existing high-severity `RUSTSEC-2026-0041`
-`lz4_flex` path already tracked by blocked backlog task `013.008-T`. It also
-reported unmaintained transitive dependency warnings, which were captured for
-later triage in stash entry `964597B1`.
+Raw local `cargo audit` (without CI's `--ignore` suppressions) still reports
+the existing high-severity `RUSTSEC-2026-0041` path via `lz4_flex`, already
+tracked by blocked backlog task `013.008-T`. It also reported unmaintained
+transitive dependency warnings, which were captured for later triage in stash
+entry `964597B1`.
 
 ## Verdict
 
