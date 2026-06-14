@@ -1315,16 +1315,12 @@ mod tests {
         {
             let src = pre_state.source_mut("epoch-test");
             // Pretend the file was ingested with the current mtime (no change).
-            let mtime = source_dir
-                .join("guide.md")
-                .metadata()
-                .map(|m| {
-                    m.modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map_or(0, |d| d.as_secs())
-                })
-                .unwrap_or(0);
+            let mtime = source_dir.join("guide.md").metadata().map_or(0, |m| {
+                m.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs())
+            });
             src.file_mtimes.insert("guide.md".to_string(), mtime);
             // Explicitly no contract_epoch (pre-pivot legacy state).
             src.contract_epoch = None;
