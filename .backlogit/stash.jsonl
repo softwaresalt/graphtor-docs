@@ -1,0 +1,1 @@
+{"id":"964597B1","priority":"medium","kind":"task","text":"Triage cargo audit unmaintained transitive dependencies after 042-S closure: RUSTSEC-2025-0056 adler, RUSTSEC-2025-0141 bincode, RUSTSEC-2025-0057 fxhash, RUSTSEC-2025-0119 number_prefix, and RUSTSEC-2024-0436 paste via cozo/tokenizers/indicatif","created_at":"2026-06-14T22:23:25.0639161Z"}
