@@ -53,8 +53,9 @@ jobs:
 
       - name: audit
         run: |
-          # Pin to the cargo-audit 0.22 line so the audit gate stays reproducible and
-          # aligned with the 0.22-specific behavior documented in audit.toml.
+          # Pin cargo-audit to the 0.22 minor line so a breaking 0.23+ release cannot
+          # silently change the audit gate's behavior. This still allows 0.22.x patch
+          # updates and keeps CI aligned with the 0.22-specific behavior in audit.toml.
           cargo install cargo-audit --version "^0.22" --locked
           # Advisory allowlist — see audit.toml for full rationale and review dates.
           # --deny warnings makes the --ignore set an explicit allowlist: any NEW
