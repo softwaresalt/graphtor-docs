@@ -90,3 +90,15 @@ includes archived items, so this catches queue-vs-archive collisions.
 - `.backlogit/config.yaml` — `queue_layout` level-1 types include `feature` and
   `chore`, both with `allowed_children: [task, review]`.
 - `docs/memory/2026-06-19-ship-043-S-audit-advisory-suppression.md`
+
+## Resolution (confirmed 2026-06-19)
+
+The mis-numbered chore was renumbered `035-C → 043-C` (children `043.001-T`,
+`043.002-T`) — the correct shared next number per `max(feature/chore/spike) +
+1`. After the renumber, the detection scan returned **zero rows**. Shipment
+`043-S` then closed cleanly: `backlogit shipment ship 043-S` (merge `5441384`,
+PR #71) archived all four items (`043-C`, `043.001-T`, `043.002-T`, `043-S`)
+with no archive clobbering — a post-ship queue/archive collision scan and the
+P-007 archive-deletion guard both came back clean. This validates prevention
+rule #3 (recreate at the correct shared number) and rule #5 (gate
+`shipment ship` on a clean scan).
