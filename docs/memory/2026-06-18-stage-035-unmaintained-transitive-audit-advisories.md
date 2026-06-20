@@ -1,14 +1,28 @@
 ---
 session_type: stage
 date: 2026-06-18
-chore_id: 035-C
+chore_id: 043-C
 shipment_id: 043-S
 deliberation_id: 002-DL
 source_stash_id: 964597B1
 status: complete
 ---
 
-# Stage Memory — 035-C Post-042-S Unmaintained Transitive Audit Advisory Triage
+# Stage Memory — 043-C Post-042-S Unmaintained Transitive Audit Advisory Triage
+
+## ID Correction (2026-06-19)
+
+> This Stage session minted the chore as `035-C`, which collided with the
+> already-archived feature `035-F` ("Remove non-functional Editor::Copilot MCP
+> config path", shipped via `026-S`) because backlogit's per-type level-1 counter
+> handed `chore` a number the `feature` namespace already owned. During the 043-S
+> Ship session the collision was detected and the chore + its two task children
+> were renumbered to the collision-free shared number `043` via direct file edits
+> + `backlogit sync` (bare-ID CLI mutations are unsafe while a duplicate exists).
+> The references below have been updated to the corrected IDs:
+> `035-C → 043-C`, `035.001-T → 043.001-T`, `035.002-T → 043.002-T`. The archived
+> `035-F` feature and its children are unrelated and were left untouched. See
+> `docs/compound/backlogit-level1-id-collision-across-parent-types.md` for the RCA.
 
 ## Step Checklist
 
@@ -37,10 +51,10 @@ status: complete
 - [x] Step 4 — Plan review  Scope Boundary Auditor (independent) + inline persona
   lenses → **PASS** (all findings P3; 2 P3 refinements applied: git2 out-of-scope
   wording, Unit 1 cascade ceiling). `plan-review-attempt: 1 PASS`.
-- [x] Step 5 — Harvest  Chore `035-C` → tasks `035.001-T`, `035.002-T`. Dependency
-  edge `035.002-T → 035.001-T (blocks)` recorded.
+- [x] Step 5 — Harvest  Chore `043-C` → tasks `043.001-T`, `043.002-T`. Dependency
+  edge `043.002-T → 043.001-T (blocks)` recorded.
 - [x] Step 5.5 — Shipment assembly  `043-S` queued; items parent-first/dep-order
-  `[035-C, 035.001-T, 035.002-T]`. Verified via `shipment get`.
+  `[043-C, 043.001-T, 043.002-T]`. Verified via `shipment get`.
 - [x] Step 5.6 — Archive consumed stash  `964597B1` → archived. Stash now empty.
 - [x] Step 6 — Summary  Presented to Orchestrator.
 
