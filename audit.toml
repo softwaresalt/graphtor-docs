@@ -3,24 +3,65 @@
 #
 # NOTE: cargo-audit 0.22 does not auto-discover workspace-local audit.toml for
 # suppression; the [advisories] ignore list below has no runtime effect. Suppression
-# is applied via --ignore flags in .github/workflows/ci.yml. This file is kept as
-# authoritative documentation for what is suppressed and why.
+# is enforced via --ignore flags in .github/workflows/ci.yml, where a matching
+# --deny warnings turns that ignore list into an explicit allowlist: any NEW
+# unmaintained/unsound advisory not listed here fails CI and forces a re-triage.
+# This file is the authoritative human-readable record of what is suppressed and why.
 #
 # If cargo-audit adds workspace config support in a future release, or if this project
 # migrates to cargo-deny (which does support workspace config), the section below is
 # ready to activate.
+#
+# Every unmaintained entry below carries a Review date. On that date, re-check whether
+# the named upstream blocker has released a fix so the suppression can be dropped.
 
 [advisories]
 ignore = [
+    # --- Vulnerability (owned and tracked separately by task 013.008-T) ---
+
     # RUSTSEC-2026-0041: lz4_flex 0.10.0 — uninitialised memory on bad decompression input
     # Transitive: cozo 0.7.6 → swapvec 0.3.0 → lz4_flex ^0.10 (semver-locked)
     # Cannot upgrade lz4_flex without cozo releasing swapvec 0.4+.
     # lz4_flex used only for cozo's internal disk-swap buffers, not for user input.
-    # Backlogit stash 94D655D7 tracks the upstream upgrade.
+    # Backlogit stash 94D655D7 tracks the upstream upgrade; owned by task 013.008-T.
     "RUSTSEC-2026-0041",
 
-    # RUSTSEC-2026-0008: git2 0.19.0 — potential UB when dereferencing Buf struct
-    # Direct dependency. Upgrade path is clear once git2 0.20 releases.
-    # Backlogit stash 94D655D7 also tracks this upgrade.
-    "RUSTSEC-2026-0008",
+    # --- Unmaintained-crate advisories (informational; suppressed post-042-S) ---
+    # None is a vulnerability. Each is reached only transitively through cozo,
+    # candle/tokenizers, or indicatif, whose upstreams pin the unmaintained crate.
+    # Upgrade-vs-suppress was evaluated per the 035-C deliberation; number_prefix
+    # got a dedicated upgrade spike (035.001-T) that proved infeasible.
+
+    # RUSTSEC-2025-0056: adler 1.0.2 — crate unmaintained
+    # Transitive: cozo 0.7.6 → swapvec 0.3.0 → miniz_oxide 0.7.4 → adler
+    # Upstream blocker: cozo pins swapvec 0.3.0.
+    # Review: 2026-09-18
+    "RUSTSEC-2025-0056",
+
+    # RUSTSEC-2025-0141: bincode 1.3.3 — crate unmaintained (1.x line)
+    # Transitive: cozo 0.7.6 → {swapvec 0.3.0, fast2s 0.3.1} → bincode 1.x
+    # Upstream blocker: cozo pins swapvec/fast2s, both on bincode 1.x.
+    # Review: 2026-09-18
+    "RUSTSEC-2025-0141",
+
+    # RUSTSEC-2025-0057: fxhash 0.2.1 — crate unmaintained
+    # Transitive: cozo 0.7.6 → jieba-rs 0.6.8 → fxhash
+    # Upstream blocker: cozo pins jieba-rs 0.6.8.
+    # Review: 2026-09-18
+    "RUSTSEC-2025-0057",
+
+    # RUSTSEC-2025-0119: number_prefix 0.4.0 — crate unmaintained
+    # Transitive: indicatif 0.17.11 → number_prefix, reached via the direct
+    # indicatif 0.17 dependency AND via hf-hub 0.3.2 → indicatif 0.17.
+    # Upgrade spike 035.001-T: indicatif 0.18 drops number_prefix, but hf-hub 0.4.3
+    # still pins indicatif ^0.17 (both its ureq and tokio API features force
+    # dep:indicatif), so the advisory survives any in-scope manifest-only bump.
+    # Review: 2026-09-18 — re-check when hf-hub ships a release off indicatif 0.17.
+    "RUSTSEC-2025-0119",
+
+    # RUSTSEC-2024-0436: paste 1.0.15 — crate no longer maintained
+    # Transitive: tokenizers 0.20.4 → paste, and gemm-* → candle-core 0.8.4 → paste.
+    # Upstream blocker: candle/tokenizers/gemm pin paste 1.x.
+    # Review: 2026-09-18
+    "RUSTSEC-2024-0436",
 ]
