@@ -720,3 +720,5 @@
 {"seq":720,"timestamp":"2026-06-20T01:28:39.4457821Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"chore","changed_fields":["status"],"item_id":"035-C","schema_version":1}}
 {"seq":721,"timestamp":"2026-06-20T01:28:40.3811729Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["status"],"item_id":"035.001-T","schema_version":1}}
 {"seq":722,"timestamp":"2026-06-20T01:34:41.148694Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["description"],"item_id":"035.001-T","schema_version":1}}
+{"seq":723,"timestamp":"2026-06-20T05:48:10.8622284Z","event_type":"move_shipment_status","payload":{"actor":"backlogit","artifact_type":"shipment","changed_fields":["status"],"item_id":"043-S","schema_version":1,"status_delta":{"from":"queued","to":"active"}}}
+{"seq":724,"timestamp":"2026-06-20T05:48:23.3553976Z","event_type":"ship_shipment","payload":{"actor":"backlogit","artifact_type":"shipment","changed_fields":["status"],"item_id":"043-S","schema_version":1,"status_delta":{"from":"active","to":"shipped"}}}
