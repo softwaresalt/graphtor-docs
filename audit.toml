@@ -1,8 +1,9 @@
 # cargo-audit advisory suppressions — documentation and rationale
 # https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
 #
-# NOTE: cargo-audit 0.22 does not auto-discover workspace-local audit.toml for
-# suppression; the [advisories] ignore list below has no runtime effect. Suppression
+# NOTE: cargo-audit (pinned to the 0.22 line in .github/workflows/ci.yml) does not
+# auto-discover workspace-local audit.toml for suppression; the [advisories] ignore
+# list below has no runtime effect. Suppression
 # is enforced via --ignore flags in .github/workflows/ci.yml, where a matching
 # --deny warnings turns that ignore list into an explicit allowlist: any NEW
 # unmaintained/unsound advisory not listed here fails CI and forces a re-triage.

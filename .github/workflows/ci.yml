@@ -53,7 +53,9 @@ jobs:
 
       - name: audit
         run: |
-          cargo install cargo-audit --locked
+          # Pin to the cargo-audit 0.22 line so the audit gate stays reproducible and
+          # aligned with the 0.22-specific behavior documented in audit.toml.
+          cargo install cargo-audit --version "^0.22" --locked
           # Advisory allowlist — see audit.toml for full rationale and review dates.
           # --deny warnings makes the --ignore set an explicit allowlist: any NEW
           # unmaintained/unsound advisory not listed below fails CI and forces re-triage.
