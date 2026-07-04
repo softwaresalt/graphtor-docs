@@ -8,15 +8,17 @@ use std::fs;
 use std::path::Path;
 
 use crate::workspace::gitignore::remove_gitignore_entry;
-use crate::workspace::mcp_config::remove_mcp_config;
+use crate::workspace::mcp_config::{remove_mcp_config, McpConfigAction};
 use crate::workspace::paths::GRAPHTOR_DIR;
 use graphtor_core::GraphtorError;
 
 /// Result of an uninstall operation.
 #[derive(Debug)]
 pub struct UninstallResult {
-    /// Files and directories removed.
+    /// Files and directories deleted.
     pub removed: Vec<String>,
+    /// Shared MCP configs updated in place (graphtor-docs entry pruned, file kept).
+    pub updated: Vec<String>,
 }
 
 /// Uninstall graphtor-docs from the workspace.
@@ -78,11 +80,17 @@ pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResu
     // Clean .gitignore.
     remove_gitignore_entry(project_root)?;
 
-    // Remove MCP client configs.
-    let mcp_removed = remove_mcp_config(project_root)?;
-    removed.extend(mcp_removed);
+    // Prune the graphtor-docs entry from MCP client configs.
+    let mut updated: Vec<String> = Vec::new();
+    for outcome in remove_mcp_config(project_root)? {
+        match outcome.action {
+            McpConfigAction::Removed => removed.push(outcome.path),
+            McpConfigAction::Updated => updated.push(outcome.path),
+            McpConfigAction::Created => {}
+        }
+    }
 
-    Ok(UninstallResult { removed })
+    Ok(UninstallResult { removed, updated })
 }
 
 #[cfg(test)]

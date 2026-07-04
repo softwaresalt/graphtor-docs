@@ -2766,8 +2766,8 @@ fn cmd_install(
         workspace::gitignore::add_gitignore_entry(cwd).context("failed to update .gitignore")?;
     }
 
-    // Generate the workspace-root .mcp.json config.
-    let written =
+    // Generate or merge the graphtor-docs entry in the workspace-root .mcp.json.
+    let mcp_outcome =
         workspace::mcp_config::generate_mcp_config(cwd).context("failed to generate MCP config")?;
 
     if fmt == OutputFormat::Json {
@@ -2800,8 +2800,16 @@ fn cmd_install(
         println!("updated: .gitignore (added .graphtor/)");
     }
 
-    for path in &written {
-        println!("created: {path}");
+    if let Some(outcome) = &mcp_outcome {
+        match outcome.action {
+            workspace::mcp_config::McpConfigAction::Created => {
+                println!("created: {} (registered graphtor-docs)", outcome.path);
+            }
+            workspace::mcp_config::McpConfigAction::Updated => {
+                println!("updated: {} (registered graphtor-docs)", outcome.path);
+            }
+            workspace::mcp_config::McpConfigAction::Removed => {}
+        }
     }
 
     println!("\ninstallation complete. next steps:");
@@ -2959,6 +2967,7 @@ fn cmd_uninstall(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
                 "removed": result.removed,
+                "updated": result.updated,
             }))
         );
         return Ok(0);
@@ -2966,6 +2975,9 @@ fn cmd_uninstall(
 
     for item in &result.removed {
         println!("removed: {item}");
+    }
+    for item in &result.updated {
+        println!("updated: {item} (removed graphtor-docs entry)");
     }
     println!("uninstall complete");
     Ok(0)
