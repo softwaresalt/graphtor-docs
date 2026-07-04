@@ -2771,12 +2771,19 @@ fn cmd_install(
         workspace::mcp_config::generate_mcp_config(cwd).context("failed to generate MCP config")?;
 
     if fmt == OutputFormat::Json {
+        let mcp_config = mcp_outcome.as_ref().map(|outcome| {
+            serde_json::json!({
+                "path": outcome.path,
+                "action": outcome.action.as_str(),
+            })
+        });
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
                 "created": result.created,
                 "workspace_dir": result.workspace_dir.display().to_string(),
                 "binary_path": result.binary_path.display().to_string(),
+                "mcp_config": mcp_config,
             }))
         );
         return Ok(0);

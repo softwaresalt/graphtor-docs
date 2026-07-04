@@ -47,6 +47,18 @@ pub enum McpConfigAction {
     Removed,
 }
 
+impl McpConfigAction {
+    /// Lowercase string form for structured (JSON) output.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Updated => "updated",
+            Self::Removed => "removed",
+        }
+    }
+}
+
 /// A per-file outcome of an MCP config mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpConfigOutcome {
