@@ -1,10 +1,11 @@
 //! MCP client configuration generation.
 //!
-//! Generates editor-specific MCP client configuration files that point
-//! to the installed `graphtor-docs` binary for VS Code and Cursor. All
-//! generated paths are relative to the project root. Uninstall also
-//! removes the legacy GitHub Copilot config path if it contains the
-//! `graphtor-docs` marker.
+//! Generates a single workspace-root `.mcp.json` configuration file that
+//! registers the installed `graphtor-docs` binary as an MCP server. This is
+//! the editor-agnostic standard understood by MCP clients; graphtor-docs no
+//! longer writes editor-specific config files. Uninstall also removes legacy
+//! editor-specific config paths (`.vscode/mcp.json`, `.cursor/mcp.json`,
+//! `.github/copilot/mcp.json`) when they contain the `graphtor-docs` marker.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -12,131 +13,66 @@ use std::path::Path;
 
 use graphtor_core::GraphtorError;
 
-const LEGACY_COPILOT_CONFIG_PATH: &str = ".github/copilot/mcp.json";
-const SUPPORTED_EDITOR_NAMES: &str = "vscode, cursor";
+/// Workspace-root MCP client config path (the current standard).
+const MCP_CONFIG_PATH: &str = ".mcp.json";
 
-/// A supported MCP client editor target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Editor {
-    /// VS Code — writes `.vscode/mcp.json`.
-    VsCode,
-    /// Cursor — writes `.cursor/mcp.json`.
-    Cursor,
-}
+/// Legacy editor-specific config paths cleaned up on uninstall.
+const LEGACY_CONFIG_PATHS: &[&str] = &[
+    ".vscode/mcp.json",
+    ".cursor/mcp.json",
+    ".github/copilot/mcp.json",
+];
 
-impl Editor {
-    /// Parse an editor name from a command-line string (case-insensitive).
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "vscode" | "vs-code" | "code" => Some(Self::VsCode),
-            "cursor" => Some(Self::Cursor),
-            _ => None,
-        }
-    }
+/// Managed marker identifying graphtor-docs-generated config files.
+const GRAPHTOR_MARKER: &str = "graphtor-docs";
 
-    /// Return the config file path relative to the project root.
-    fn config_path(&self) -> &'static str {
-        match self {
-            Self::VsCode => ".vscode/mcp.json",
-            Self::Cursor => ".cursor/mcp.json",
-        }
-    }
-}
-
-/// Parse CLI editor arguments into supported editor targets.
+/// Generate the workspace-root `.mcp.json` MCP client config.
 ///
-/// Returns an error when any editor name is unknown.
-pub(crate) fn parse_editors<S: AsRef<str>>(editors: &[S]) -> Result<Vec<Editor>, GraphtorError> {
-    editors
-        .iter()
-        .map(|editor| {
-            let name = editor.as_ref();
-            Editor::from_str(name).ok_or_else(|| GraphtorError::Config {
-                message: format!("unknown editor '{name}' (supported: {SUPPORTED_EDITOR_NAMES})"),
-                field: Some("editor".to_string()),
-            })
-        })
-        .collect()
-}
-
-/// Generate MCP client config files for the given editors.
-///
-/// For each editor, creates the parent directory if needed and writes
-/// a JSON config that registers `graphtor-docs` as an MCP server. If
-/// the config file already exists it is left unchanged (idempotent).
-///
-/// Pass an empty `editors` slice to generate configs for all supported
-/// editors.
+/// Writes a `.mcp.json` file at the project root that registers
+/// `graphtor-docs` as an MCP server. If the config file already exists it is
+/// left unchanged (idempotent). Returns the relative paths written — empty
+/// when the file already existed.
 ///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure.
-pub fn generate_mcp_configs(
-    project_root: &Path,
-    editors: &[Editor],
-) -> Result<Vec<String>, GraphtorError> {
-    let all_editors = [Editor::VsCode, Editor::Cursor];
-    let targets: &[Editor] = if editors.is_empty() {
-        &all_editors
-    } else {
-        editors
-    };
+pub fn generate_mcp_config(project_root: &Path) -> Result<Vec<String>, GraphtorError> {
+    let dest = project_root.join(MCP_CONFIG_PATH);
 
-    let binary_path = format!(".graphtor/bin/graphtor-docs{}", binary_ext());
-    let mut written: Vec<String> = Vec::new();
-
-    for editor in targets {
-        let rel_path = editor.config_path();
-        let dest = project_root.join(rel_path);
-
-        if dest.exists() {
-            // Already configured; skip.
-            continue;
-        }
-
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| GraphtorError::Config {
-                message: format!("failed to create {}: {e}", parent.display()),
-                field: None,
-            })?;
-        }
-
-        let config = mcp_config_json(&binary_path);
-        fs::write(&dest, config).map_err(|e| GraphtorError::Config {
-            message: format!("failed to write {rel_path}: {e}"),
-            field: None,
-        })?;
-
-        written.push(rel_path.to_string());
+    if dest.exists() {
+        // Already configured; leave it unchanged.
+        return Ok(Vec::new());
     }
 
-    Ok(written)
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| GraphtorError::Config {
+            message: format!("failed to create {}: {e}", parent.display()),
+            field: None,
+        })?;
+    }
+
+    let binary_path = format!(".graphtor/bin/graphtor-docs{}", binary_ext());
+    let config = mcp_config_json(&binary_path);
+    fs::write(&dest, config).map_err(|e| GraphtorError::Config {
+        message: format!("failed to write {MCP_CONFIG_PATH}: {e}"),
+        field: None,
+    })?;
+
+    Ok(vec![MCP_CONFIG_PATH.to_string()])
 }
 
 /// Remove MCP client config files generated by graphtor-docs.
 ///
-/// Only removes files that contain the graphtor-docs managed marker.
+/// Removes the workspace-root `.mcp.json` and any legacy editor-specific
+/// config files (`.vscode/mcp.json`, `.cursor/mcp.json`,
+/// `.github/copilot/mcp.json`) that contain the graphtor-docs managed marker.
 ///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure.
-pub fn remove_mcp_configs(
-    project_root: &Path,
-    editors: &[Editor],
-) -> Result<Vec<String>, GraphtorError> {
-    let all_editors = [Editor::VsCode, Editor::Cursor];
-    let targets: &[Editor] = if editors.is_empty() {
-        &all_editors
-    } else {
-        editors
-    };
-
+pub fn remove_mcp_config(project_root: &Path) -> Result<Vec<String>, GraphtorError> {
     let mut removed: Vec<String> = Vec::new();
-    for rel_path in targets
-        .iter()
-        .map(Editor::config_path)
-        .chain(std::iter::once(LEGACY_COPILOT_CONFIG_PATH))
-    {
+    for rel_path in std::iter::once(MCP_CONFIG_PATH).chain(LEGACY_CONFIG_PATHS.iter().copied()) {
         let dest = project_root.join(rel_path);
         let content = match fs::read_to_string(&dest) {
             Ok(s) => s,
@@ -148,7 +84,7 @@ pub fn remove_mcp_configs(
                 })
             }
         };
-        if content.contains("graphtor-docs") {
+        if content.contains(GRAPHTOR_MARKER) {
             fs::remove_file(&dest).map_err(|e| GraphtorError::Config {
                 message: format!("failed to remove {rel_path}: {e}"),
                 field: None,
@@ -190,61 +126,75 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generate_creates_files() {
+    fn generate_creates_root_mcp_json() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let written = generate_mcp_configs(tmp.path(), &[Editor::VsCode]).expect("generate");
-        assert_eq!(written.len(), 1);
-        let content = fs::read_to_string(tmp.path().join(".vscode/mcp.json")).expect("read");
+        let written = generate_mcp_config(tmp.path()).expect("generate");
+        assert_eq!(written, vec![".mcp.json".to_string()]);
+        let content = fs::read_to_string(tmp.path().join(".mcp.json")).expect("read");
         assert!(content.contains("graphtor-docs"));
     }
 
     #[test]
     fn generate_is_idempotent() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        generate_mcp_configs(tmp.path(), &[Editor::VsCode]).expect("first");
-        let second = generate_mcp_configs(tmp.path(), &[Editor::VsCode]).expect("second");
+        generate_mcp_config(tmp.path()).expect("first");
+        let second = generate_mcp_config(tmp.path()).expect("second");
         assert!(second.is_empty(), "second run should produce no writes");
     }
 
     #[test]
-    fn from_str_rejects_copilot() {
-        assert_eq!(Editor::from_str("copilot"), None);
-    }
-
-    #[test]
-    fn parse_editors_rejects_unknown_editor() {
-        let error = parse_editors(&["copilot"]).expect_err("copilot should be rejected");
-
-        assert!(error.to_string().contains("unknown editor 'copilot'"));
-        assert!(error.to_string().contains(SUPPORTED_EDITOR_NAMES));
-    }
-
-    #[test]
-    fn generate_default_editors_exclude_copilot() {
+    fn generate_does_not_write_editor_configs() {
         let tmp = tempfile::tempdir().expect("tempdir");
-
-        let written = generate_mcp_configs(tmp.path(), &[]).expect("generate");
-
-        assert_eq!(
-            written,
-            vec![
-                ".vscode/mcp.json".to_string(),
-                ".cursor/mcp.json".to_string()
-            ]
-        );
+        generate_mcp_config(tmp.path()).expect("generate");
+        assert!(!tmp.path().join(".vscode/mcp.json").exists());
+        assert!(!tmp.path().join(".cursor/mcp.json").exists());
         assert!(!tmp.path().join(".github/copilot/mcp.json").exists());
     }
 
     #[test]
-    fn remove_mcp_configs_removes_legacy_copilot_file() {
+    fn remove_removes_root_mcp_json() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let legacy_path = tmp.path().join(".github/copilot/mcp.json");
-        fs::create_dir_all(legacy_path.parent().expect("parent")).expect("mkdir");
-        fs::write(&legacy_path, mcp_config_json(".graphtor/bin/graphtor-docs")).expect("write");
+        generate_mcp_config(tmp.path()).expect("generate");
+        let removed = remove_mcp_config(tmp.path()).expect("remove");
+        assert_eq!(removed, vec![".mcp.json".to_string()]);
+        assert!(!tmp.path().join(".mcp.json").exists());
+    }
 
-        let removed = remove_mcp_configs(tmp.path(), &[]).expect("remove");
+    #[test]
+    fn remove_removes_legacy_editor_configs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for legacy in [
+            ".vscode/mcp.json",
+            ".cursor/mcp.json",
+            ".github/copilot/mcp.json",
+        ] {
+            let path = tmp.path().join(legacy);
+            fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            fs::write(&path, mcp_config_json(".graphtor/bin/graphtor-docs")).expect("write");
+        }
 
-        assert_eq!(removed, vec![".github/copilot/mcp.json".to_string()]);
-        assert!(!legacy_path.exists());
+        let removed = remove_mcp_config(tmp.path()).expect("remove");
+
+        assert_eq!(
+            removed,
+            vec![
+                ".vscode/mcp.json".to_string(),
+                ".cursor/mcp.json".to_string(),
+                ".github/copilot/mcp.json".to_string(),
+            ]
+        );
+        assert!(!tmp.path().join(".vscode/mcp.json").exists());
+        assert!(!tmp.path().join(".cursor/mcp.json").exists());
+        assert!(!tmp.path().join(".github/copilot/mcp.json").exists());
+    }
+
+    #[test]
+    fn remove_ignores_unmanaged_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        fs::write(&path, "{\"mcpServers\": {}}").expect("write");
+        let removed = remove_mcp_config(tmp.path()).expect("remove");
+        assert!(removed.is_empty(), "unmanaged file should be left in place");
+        assert!(path.exists());
     }
 }

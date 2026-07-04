@@ -216,12 +216,11 @@ Also:
 - Copies the currently running binary to `.graphtor/bin/graphtor-docs`
 - Runs `init` to generate a starter `sources.yaml` (non-destructive)
 - Adds `.graphtor/` to `.gitignore` (unless `--no-gitignore`)
-- Generates MCP client config files for configured editors
+- Generates a workspace-root `.mcp.json` MCP client config (non-destructive)
 
 | Flag | Default | Description |
 |---|---|---|
 | `--no-gitignore` | off | Skip updating `.gitignore` |
-| `--editor <EDITOR>` | (all) | Comma-separated editor names for MCP config generation (`vscode`, `cursor`, `copilot`) |
 | `--force-unlock` | off | Force-release the workspace lock before installing (use when a stale lock exists) |
 
 ---

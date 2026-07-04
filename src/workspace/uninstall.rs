@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::workspace::gitignore::remove_gitignore_entry;
-use crate::workspace::mcp_config::remove_mcp_configs;
+use crate::workspace::mcp_config::remove_mcp_config;
 use crate::workspace::paths::GRAPHTOR_DIR;
 use graphtor_core::GraphtorError;
 
@@ -79,7 +79,7 @@ pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResu
     remove_gitignore_entry(project_root)?;
 
     // Remove MCP client configs.
-    let mcp_removed = remove_mcp_configs(project_root, &[])?;
+    let mcp_removed = remove_mcp_config(project_root)?;
     removed.extend(mcp_removed);
 
     Ok(UninstallResult { removed })

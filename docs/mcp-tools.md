@@ -17,8 +17,10 @@ on the same machine (localhost only).
 graphtor-docs install
 ```
 
-This generates MCP client config files for all supported editors (`vscode`,
-`cursor`, `copilot`). Use `--editor` to target specific editors only.
+This generates a workspace-root `.mcp.json` config file that registers
+`graphtor-docs` as an MCP server. This single file is the editor-agnostic
+standard understood by MCP clients — no editor-specific config files are
+written.
 
 ### 2. Configure your MCP client
 

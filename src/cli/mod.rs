@@ -229,13 +229,6 @@ pub struct InstallArgs {
     #[arg(long)]
     pub no_gitignore: bool,
 
-    /// Target editor(s) for MCP client config generation.
-    ///
-    /// Comma-separated values. Supported: `vscode`, `cursor`.
-    /// Defaults to all supported editors.
-    #[arg(long, value_delimiter = ',', value_name = "EDITOR")]
-    pub editor: Vec<String>,
-
     /// Force-release the workspace lock before installing.
     ///
     /// Use when a previous invocation left a stale lock file.
@@ -281,13 +274,14 @@ mod tests {
     use clap::CommandFactory;
 
     #[test]
-    fn install_help_does_not_list_copilot() {
+    fn install_help_does_not_offer_editor_flag() {
         let mut command = Cli::command();
         let install = command
             .find_subcommand_mut("install")
             .expect("install subcommand");
         let help = install.render_long_help().to_string();
 
+        assert!(!help.contains("--editor"));
         assert!(!help.contains("copilot"));
     }
 }
