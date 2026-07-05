@@ -52,10 +52,21 @@ pub fn format_search_results(results: &[SearchResult]) -> String {
     out
 }
 
+/// Render a cross-source annotation for a traversal result, or an empty string
+/// for an intra-source result.
+fn cross_source_marker(r: &TraversalResult) -> String {
+    if r.cross_source {
+        format!(" _(cross-source: `{}`)_", r.source_id)
+    } else {
+        String::new()
+    }
+}
+
 /// Format a slice of [`TraversalResult`]s as markdown for LLM consumption.
 ///
 /// Produces a depth-annotated list of related chunks discovered via BFS.
-/// Returns a no-results message when the slice is empty.
+/// Cross-source hops are annotated with the target source. Returns a
+/// no-results message when the slice is empty.
 #[must_use]
 pub fn format_traversal_results(start_id: &str, results: &[TraversalResult]) -> String {
     if results.is_empty() {
@@ -63,9 +74,10 @@ pub fn format_traversal_results(start_id: &str, results: &[TraversalResult]) -> 
     }
     let mut out = format!("## Related Chunks\n\nStarting from chunk `{start_id}`:\n\n");
     for r in results {
+        let marker = cross_source_marker(r);
         writeln!(
             out,
-            "- **Depth {depth}** — `{path}` (chunk ID: `{chunk_id}`)",
+            "- **Depth {depth}** — `{path}` (chunk ID: `{chunk_id}`){marker}",
             depth = r.depth,
             path = r.path,
             chunk_id = r.chunk_id,
@@ -196,9 +208,10 @@ pub fn format_research_results(
     if !related.is_empty() {
         out.push_str("### Related Context\n\n");
         for tr in related {
+            let marker = cross_source_marker(tr);
             writeln!(
                 out,
-                "- **Depth {depth}** — `{path}` (chunk ID: `{chunk_id}`)",
+                "- **Depth {depth}** — `{path}` (chunk ID: `{chunk_id}`){marker}",
                 depth = tr.depth,
                 path = tr.path,
                 chunk_id = tr.chunk_id,
@@ -263,8 +276,10 @@ mod tests {
     fn traversal_result_contains_depth_and_path() {
         let result = TraversalResult {
             chunk_id: "c2".to_string(),
+            source_id: "src".to_string(),
             path: "docs/guide.md".to_string(),
             depth: 1,
+            cross_source: false,
         };
         let md = format_traversal_results("seed-chunk", &[result]);
         assert!(md.contains("seed-chunk"));
@@ -436,8 +451,10 @@ mod tests {
     fn format_research_results_includes_related_context() {
         let related = TraversalResult {
             chunk_id: "rel001".to_string(),
+            source_id: "src".to_string(),
             path: "docs/related.md".to_string(),
             depth: 1,
+            cross_source: false,
         };
         let md = format_research_results("topic", &[], &[related]);
         assert!(md.contains("rel001"), "related chunk id should appear");

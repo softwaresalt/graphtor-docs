@@ -67,6 +67,7 @@ struct FrontmatterRaw {
     source_path: Option<String>,
     chunk_strategy: Option<String>,
     schema_version: Option<String>,
+    canonical_url: Option<String>,
 }
 
 /// A fully validated docline v1 frontmatter record.
@@ -96,6 +97,11 @@ pub struct ValidatedFrontmatter {
     pub chunk_strategy: String,
     /// `SemVer` contract version string (defaults to `"1.0"`).
     pub schema_version: String,
+    /// Globally-unique published URL the document is served under, if docline
+    /// emitted one (e.g. `/fabric/admin/foo`). Optional — used as the
+    /// cross-source key for graph traversal. graphtor-docs does not derive this
+    /// value; it reads whatever docline provides.
+    pub canonical_url: Option<String>,
 }
 
 /// Validate the YAML frontmatter of a docline-emitted Markdown document.
@@ -191,7 +197,15 @@ pub fn validate(raw_yaml: &str, body: &str) -> Result<ValidatedFrontmatter, Grap
         source_path,
         chunk_strategy: raw.chunk_strategy.unwrap_or_else(|| "h1-h2-h3".to_string()),
         schema_version,
+        canonical_url: normalize_optional(raw.canonical_url),
     })
+}
+
+/// Trim an optional string and collapse empty values to `None`.
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Validate and normalise `source_path`.
@@ -353,6 +367,30 @@ mod tests {
         assert_eq!(fm.source_path, "docs/guide.md");
         assert_eq!(fm.schema_version, "1.0");
         assert_eq!(fm.chunk_strategy, "h1-h2-h3");
+    }
+
+    #[test]
+    fn canonical_url_is_none_when_absent() {
+        let yaml = valid_yaml("docs/guide.md");
+        let fm = validate(&yaml, valid_body()).expect("valid frontmatter should pass");
+        assert_eq!(fm.canonical_url, None);
+    }
+
+    #[test]
+    fn canonical_url_is_read_and_trimmed_when_present() {
+        let yaml = format!(
+            "{}canonical_url: \"  /fabric/admin/foo  \"\n",
+            valid_yaml("docs/guide.md")
+        );
+        let fm = validate(&yaml, valid_body()).expect("valid frontmatter should pass");
+        assert_eq!(fm.canonical_url.as_deref(), Some("/fabric/admin/foo"));
+    }
+
+    #[test]
+    fn canonical_url_blank_collapses_to_none() {
+        let yaml = format!("{}canonical_url: \"   \"\n", valid_yaml("docs/guide.md"));
+        let fm = validate(&yaml, valid_body()).expect("valid frontmatter should pass");
+        assert_eq!(fm.canonical_url, None);
     }
 
     #[test]

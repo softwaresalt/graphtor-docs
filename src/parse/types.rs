@@ -22,6 +22,18 @@ pub struct ParsedDocument {
     pub code_snippets: Vec<CodeSnippet>,
 }
 
+impl ParsedDocument {
+    /// The chunk that represents this document as a whole — its entry point.
+    ///
+    /// Used as the landing target when another document links to this one by
+    /// its `canonical_url`. Chunks are ordered by position, so the first chunk
+    /// (position 0) is the document's top. Returns `None` for an empty document.
+    #[must_use]
+    pub fn entry_chunk(&self) -> Option<&Chunk> {
+        self.chunks.first()
+    }
+}
+
 /// A self-contained content chunk split at an H1, H2, or H3 heading boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
@@ -84,6 +96,9 @@ pub struct FrontmatterData {
     pub title: Option<String>,
     /// `description:` field value.
     pub description: Option<String>,
+    /// Globally-unique published URL for the document, if present
+    /// (docline `canonical_url` field). Used as the cross-source traversal key.
+    pub canonical_url: Option<String>,
     /// Full raw YAML text between the `---` delimiters.
     pub raw_yaml: String,
 }

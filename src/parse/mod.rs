@@ -250,6 +250,7 @@ pub fn parse_markdown_with_contract(
         } else {
             Some(validated.description.clone())
         },
+        canonical_url: validated.canonical_url.clone(),
         raw_yaml: raw_yaml.to_string(),
     });
 
