@@ -55,9 +55,9 @@ pub struct TraversalResult {
 /// path resolves to multiple chunks, all of them are included.
 ///
 /// Resolution is **two-tier** (see the module docs): Tier 1 matches
-/// `target_path` intra-source; Tier 2 resolves absolute or otherwise-unmatched
-/// targets globally via `canonical_url`, re-scoping each hop to the resolved
-/// chunk's own source. Multi-source databases with identical `source_path`
+/// `target_path` intra-source; Tier 2 resolves **absolute** targets globally
+/// via `canonical_url`, re-scoping each hop to the resolved chunk's own source.
+/// Multi-source databases with identical `source_path`
 /// values do not cause cross-source link pollution, while genuine cross-product
 /// links resolve when a matching `canonical_url` exists.
 ///
