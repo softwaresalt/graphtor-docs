@@ -44,7 +44,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
-        run: bash scripts/detect-code-changes.sh
+        run: pwsh -File scripts/detect-code-changes.ps1
 
   build:
     name: build
