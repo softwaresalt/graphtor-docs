@@ -40,6 +40,7 @@ use crate::config::Source;
 use crate::db::chunks::upsert_chunk;
 use crate::db::edges::{upsert_code_snippet, upsert_edge};
 use crate::db::nodes::{upsert_source, SourceRecord};
+use crate::db::urls::register_document_url;
 use crate::db::vectors::upsert_vector;
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
@@ -501,6 +502,14 @@ fn process_batch(
             if let Err(e) = upsert_code_snippet(store, snippet) {
                 warn!(error = %e, "snippet upsert failed; continuing");
             }
+        }
+
+        // Register the document's canonical_url (the cross-source key) against
+        // its entry chunk, so absolute links from other sources can resolve to
+        // this document during graph traversal. Best-effort — a failure here
+        // does not fail the document load.
+        if let Err(e) = register_document_url(store, doc) {
+            warn!(error = %e, "url index registration failed; continuing");
         }
 
         if file_loaded_ok {

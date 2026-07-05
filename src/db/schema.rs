@@ -20,6 +20,13 @@
 //! | 2       | Added `doc_vectors` for embedding storage and semantic search |
 //! | 3       | Merged `embedding: <F32; 384>?` into `doc_chunks`; removed `doc_vectors`; added HNSW index |
 //! | 4       | Docline pivot: pruned all pre-pivot source/chunk/edge/code data; re-ingest required |
+//!
+//! The additive `doc_url_index` relation (cross-source `canonical_url` lookup)
+//! is created by `create_all_relations` self-heal without a schema-version bump:
+//! it is derived purely from chunk data and degrades gracefully (an absent entry
+//! resolves to `None`). Because `canonical_url` is read from docline frontmatter
+//! rather than stored on `doc_chunks`, it cannot be back-filled from an existing
+//! index — a full re-ingest is required to populate it on a pre-existing v4 DB.
 
 use std::collections::BTreeMap;
 
@@ -254,6 +261,11 @@ fn create_all_relations(store: &DataStore) -> Result<(), GraphtorError> {
         ":create doc_code { snippet_id: String => chunk_id: String, \
          language: String?, content: String }",
     )?;
+    create_if_missing(
+        store,
+        "doc_url_index",
+        ":create doc_url_index { canonical_url: String => chunk_id: String }",
+    )?;
     Ok(())
 }
 
@@ -304,6 +316,14 @@ fn migrate_to_v4(store: &DataStore) -> Result<(), GraphtorError> {
         store.mutate(
             "?[source_id] := *doc_sources{ source_id }
              :rm doc_sources { source_id }",
+            BTreeMap::new(),
+        )?;
+    }
+    // Remove all cross-source URL index entries (derived from chunk data).
+    if relation_exists(store, "doc_url_index")? {
+        store.mutate(
+            "?[canonical_url] := *doc_url_index{ canonical_url }
+             :rm doc_url_index { canonical_url }",
             BTreeMap::new(),
         )?;
     }

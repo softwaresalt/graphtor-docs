@@ -12,6 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::db::chunks::{delete_chunks_by_path, delete_chunks_by_source_and_path};
 use crate::db::edges::{delete_code_for_chunk, delete_edges_for_chunk};
+use crate::db::urls::{delete_url_index_for_chunks, register_document_url};
 use crate::db::vectors::{get_vector, upsert_vector};
 use crate::db::{upsert_chunk, upsert_code_snippet, upsert_edge};
 use crate::embed::{embed_text, EmbeddingModel};
@@ -25,6 +26,9 @@ fn delete_dependent_records(store: &DataStore, chunk_ids: &[String]) -> Result<(
         delete_edges_for_chunk(store, chunk_id)?;
         delete_code_for_chunk(store, chunk_id)?;
     }
+    // Remove any cross-source URL index entries that pointed at deleted chunks
+    // so stale absolute-link targets do not resolve to missing documents.
+    delete_url_index_for_chunks(store, chunk_ids)?;
     Ok(())
 }
 
@@ -224,6 +228,15 @@ pub fn reingest_file_with_old_contract_path(
         upsert_code_snippet(store, snippet)?;
     }
 
+    // Re-register the document's canonical_url against its entry chunk. The
+    // delete above removed the prior index entry, so cross-source resolution
+    // would regress on every incremental sync unless it is repopulated here —
+    // mirroring the full-sync pipeline. Best-effort: index failure does not
+    // fail the reingest.
+    if let Err(e) = register_document_url(store, &parsed) {
+        warn!(error = %e, "url index registration failed during reingest; continuing");
+    }
+
     // Optionally embed and persist vectors (chunks must already be in DB).
     if let Some(m) = model {
         for chunk in &parsed.chunks {
@@ -377,6 +390,57 @@ mod tests {
         assert_eq!(
             contract_path, "api/guide.md",
             "contract_path must come from the frontmatter source_path"
+        );
+    }
+
+    #[test]
+    fn reingest_preserves_canonical_url_index_across_incremental_sync() {
+        use crate::db::urls::resolve_canonical_url;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let source_root = root.join("docs");
+        fs::create_dir_all(&source_root).expect("create source root");
+
+        // Docline frontmatter carrying a canonical_url.
+        let md = "---\ntitle: Admin\nsource: /test/source\ningested_at: \
+                  2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: admin/foo.md\n\
+                  canonical_url: /fabric/admin/foo\n---\n# Admin\n\nBody.\n";
+        let file_path = source_root.join("admin-foo.md");
+        fs::write(&file_path, md.as_bytes()).expect("write file");
+
+        let store = DataStore::open_mem().expect("open mem db");
+        ensure_schema(&store).expect("ensure schema");
+
+        // First ingest registers the canonical_url.
+        reingest_file_with_old_contract_path(
+            &store,
+            "src",
+            &file_path,
+            &source_root,
+            root,
+            None,
+            None,
+        )
+        .expect("first reingest");
+        let first = resolve_canonical_url(&store, "/fabric/admin/foo").expect("resolve");
+        assert!(first.is_some(), "canonical_url indexed on first ingest");
+
+        // Incremental re-sync of the same file must NOT drop the index entry.
+        reingest_file_with_old_contract_path(
+            &store,
+            "src",
+            &file_path,
+            &source_root,
+            root,
+            None,
+            None,
+        )
+        .expect("second reingest");
+        let second = resolve_canonical_url(&store, "/fabric/admin/foo").expect("resolve");
+        assert_eq!(
+            second, first,
+            "canonical_url index must survive an incremental re-sync"
         );
     }
 

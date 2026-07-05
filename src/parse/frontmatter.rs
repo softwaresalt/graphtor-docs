@@ -13,6 +13,7 @@ use crate::parse::types::FrontmatterData;
 struct FrontmatterRaw {
     title: Option<String>,
     description: Option<String>,
+    canonical_url: Option<String>,
 }
 
 /// Detect and strip YAML frontmatter from `content`.
@@ -113,6 +114,10 @@ pub fn strip(content: &str) -> (Option<FrontmatterData>, &str) {
     let data = FrontmatterData {
         title: raw.title,
         description: raw.description,
+        canonical_url: raw
+            .canonical_url
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         // Store the LF-normalised YAML for downstream consumers.
         raw_yaml: yaml_normalized.into_owned(),
     };
