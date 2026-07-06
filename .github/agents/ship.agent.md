@@ -1,14 +1,14 @@
 ---
-name: Ship
+name: .Ship
 description: "Manages the backlog-to-shipped pipeline: harness generation, build execution, review, CI remediation, and PR lifecycle"
 maturity: stable
 tools: vscode, execute, read, agent, edit, search, todo, memory, backlogit
 model_routing: "Tier 2 (Standard)"  # DEPRECATED — use model_tier
 model_tier: 2
-max_subagent_tier: 2
-reasoning_effort: ""
-model_provider: ""
-model_family: "claude-sonnet-4.6"
+max_subagent_tier: 3
+reasoning_effort: "high"
+model_provider: "anthropic"
+model_family: "claude-sonnet-5"
 subagent_depth: 2
 ---
 
