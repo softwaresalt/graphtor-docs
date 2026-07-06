@@ -1,20 +1,20 @@
 {
   "mcpServers": {
-    "engram": {
-      "type": "stdio",
-      "command": "D:/Tools/engram.exe",
-      "args": ["shim"],
-      "env": {
-        "ENGRAM_WORKSPACE": "D:\\Source\\GitHub\\graphtor-docs"
-      },
-      "tools": ["*"]
-    },
     "backlogit": {
       "type": "stdio",
       "command": "backlogit",
       "args": ["mcp"],
       "env": {
-        "BACKLOGIT_WORKSPACE": "D:\\Source\\GitHub\\graphtor-docs"
+        "BACKLOGIT_WORKSPACE": "${workspaceFolder}"
+      },
+      "tools": ["*"]
+    },
+    "engram": {
+      "type": "stdio",
+      "command": "engram",
+      "args": ["shim"],
+      "env": {
+        "ENGRAM_WORKSPACE": "${workspaceFolder}"
       },
       "tools": ["*"]
     },
@@ -22,12 +22,6 @@
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp"],
-      "tools": ["*"]
-    },
-    "agent-intercom": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp?workspace_id=graphtor-docs"],
       "tools": ["*"]
     },
     "tavily": {

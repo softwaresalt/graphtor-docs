@@ -37,10 +37,13 @@ cover/
 celerybeat-schedule
 celerybeat.pid
 
-# Environments
+# Local environment files (secrets) — never commit. Only .env.example may be tracked.
 .env
+.env.local
+.env.*.local
 .envrc
 .venv
+.mcp.json
 .sandbox/
 env/
 venv/
@@ -71,8 +74,12 @@ venv.bak/
 # Ruff stuff:
 .ruff_cache/
 
-# engram plugin (workspace-local state)
+# Engram runtime data (keep templates/, registry.yaml, .version)
 .engram/
+!.engram/.version
+!.engram/.workspace-id
+!.engram/config.toml
+!.engram/registry.yaml
 
 # Logs and temp files
 *.log
