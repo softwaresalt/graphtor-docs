@@ -37,13 +37,16 @@ use tracing::{debug, info, warn};
 
 use crate::acquire::{execute as acquire_execute, AcquisitionPlan, PlannedSource, SourceOutcome};
 use crate::config::Source;
-use crate::db::chunks::upsert_chunk;
-use crate::db::edges::{upsert_code_snippet, upsert_edge};
+use crate::db::chunks::{get_vectors_for, upsert_chunk, upsert_chunks_batch};
+use crate::db::edges::{
+    upsert_code_snippet, upsert_code_snippets_batch, upsert_edge, upsert_edges_batch,
+};
 use crate::db::nodes::{upsert_source, SourceRecord};
-use crate::db::urls::register_document_url;
+use crate::db::urls::{upsert_url_index, upsert_url_index_batch};
 use crate::db::vectors::upsert_vector;
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
+use crate::parse::types::{Chunk, CodeSnippet, ParsedDocument, Reference};
 use crate::parse::{normalized_document_extension, parse_file};
 use crate::path::validate_path;
 use crate::DataStore;
@@ -354,8 +357,8 @@ pub fn run(
 ///
 /// All errors are per-file; a failure on one file does not abort other
 /// files in the same batch.
-// Extension dispatch adds slightly more than 100 lines — extracting further
-// would create additional indirection without readability gain.
+// The per-file parse/validate/dispatch loop keeps this over the 100-line
+// threshold; the Load stage is already extracted into `load_parsed_batch`.
 #[allow(clippy::too_many_lines)]
 fn process_batch(
     files: &[std::path::PathBuf],
@@ -366,8 +369,6 @@ fn process_batch(
     formats: &[String],
     rejected_by_duplicate: &std::collections::HashSet<std::path::PathBuf>,
 ) -> BatchResult {
-    let mut docs_ok = 0_usize;
-    let mut chunks_ok = 0_usize;
     let mut errors: Vec<FileError> = Vec::new();
     let mut skipped_by_format = 0_usize;
 
@@ -454,68 +455,13 @@ fn process_batch(
         .unwrap_or_default();
 
     // ── Load ───────────────────────────────────────────────────────────────
-    for (path_str, doc) in &parsed {
-        if doc.chunks.is_empty() {
-            debug!(path = %path_str, "document parsed with zero chunks; skipping load");
-        }
-
-        let mut file_loaded_ok = true;
-
-        for chunk in &doc.chunks {
-            match upsert_chunk(store, source_id, chunk) {
-                Ok(()) => {
-                    chunks_ok += 1;
-                    // Persist vector only after chunk upsert succeeds, so
-                    // `doc_vectors` never contains embeddings for absent chunks.
-                    if let Some(vec) = vectors.get(&chunk.chunk_id) {
-                        if let Err(e) = upsert_vector(store, &chunk.chunk_id, vec) {
-                            warn!(
-                                chunk_id = %chunk.chunk_id,
-                                error = %e,
-                                "vector upsert failed; chunk stored without embedding"
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        chunk_id = %chunk.chunk_id,
-                        error = %e,
-                        "chunk upsert failed; file marked with error"
-                    );
-                    errors.push(FileError {
-                        path: std::path::PathBuf::from(&path_str),
-                        error: e.to_string(),
-                    });
-                    file_loaded_ok = false;
-                }
-            }
-        }
-
-        for reference in &doc.references {
-            if let Err(e) = upsert_edge(store, reference) {
-                warn!(error = %e, "edge upsert failed; continuing");
-            }
-        }
-
-        for snippet in &doc.code_snippets {
-            if let Err(e) = upsert_code_snippet(store, snippet) {
-                warn!(error = %e, "snippet upsert failed; continuing");
-            }
-        }
-
-        // Register the document's canonical_url (the cross-source key) against
-        // its entry chunk, so absolute links from other sources can resolve to
-        // this document during graph traversal. Best-effort — a failure here
-        // does not fail the document load.
-        if let Err(e) = register_document_url(store, doc) {
-            warn!(error = %e, "url index registration failed; continuing");
-        }
-
-        if file_loaded_ok {
-            docs_ok += 1;
-        }
-    }
+    // Batched loads amortize CozoScript compilation and transaction commits:
+    // one multi-row `:put` per relation for the whole batch instead of one
+    // script per row. The happy path (no errors) is fully batched; on a batched
+    // failure the helper falls back to the per-row path so per-file error
+    // attribution and counts are preserved exactly.
+    let (chunks_ok, docs_ok, load_errors) = load_parsed_batch(store, source_id, &parsed, &vectors);
+    errors.extend(load_errors);
 
     BatchResult {
         docs_processed: docs_ok,
@@ -523,6 +469,182 @@ fn process_batch(
         errors,
         skipped_by_format,
     }
+}
+
+/// Load a fully parsed batch into the store, returning the load-stage deltas
+/// `(chunks_loaded, docs_processed, errors)`.
+///
+/// Batched multi-row `:put` mutations amortize `CozoScript` compilation and
+/// transaction commits across the whole batch. On a batched-chunk failure this
+/// falls back to the historical per-row load loop so that a single bad row is
+/// attributed to exactly its own file (`FileError`) and excluded from
+/// `docs_processed`, while sibling documents still load. Edges, code snippets,
+/// and url-index entries are best-effort: a batched failure falls back to
+/// per-row and any remaining error is warned-and-skipped.
+///
+/// `vectors` holds freshly computed embeddings keyed by `chunk_id`. Existing
+/// stored embeddings are read once via [`get_vectors_for`] and merged so a
+/// `model = None` re-sync preserves embeddings without a per-chunk query.
+#[allow(clippy::too_many_lines)]
+fn load_parsed_batch(
+    store: &DataStore,
+    source_id: &str,
+    parsed: &[(String, ParsedDocument)],
+    vectors: &HashMap<String, Vec<f32>>,
+) -> (usize, usize, Vec<FileError>) {
+    let mut chunks_ok = 0_usize;
+    let mut docs_ok = 0_usize;
+    let mut errors: Vec<FileError> = Vec::new();
+
+    // Collect batch-wide load inputs. Empty-chunk documents contribute no
+    // chunks, refs, or url entry (mirroring the per-doc rules): they still count
+    // as processed because "all zero of their chunks loaded" is trivially true.
+    let mut all_chunks: Vec<&Chunk> = Vec::new();
+    let mut all_refs: Vec<&Reference> = Vec::new();
+    let mut all_snippets: Vec<&CodeSnippet> = Vec::new();
+    let mut url_entries: Vec<(String, String)> = Vec::new();
+    for (path_str, doc) in parsed {
+        if doc.chunks.is_empty() {
+            debug!(path = %path_str, "document parsed with zero chunks; skipping load");
+        }
+        all_chunks.extend(doc.chunks.iter());
+        all_refs.extend(doc.references.iter());
+        all_snippets.extend(doc.code_snippets.iter());
+        // Register the document's canonical_url (the cross-source key) against
+        // its entry chunk — same rule as `register_document_url`.
+        if let Some(canonical) = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|f| f.canonical_url.as_deref())
+        {
+            if let Some(entry) = doc.entry_chunk() {
+                url_entries.push((canonical.to_owned(), entry.chunk_id.clone()));
+            }
+        }
+    }
+
+    // Merge freshly computed vectors with any previously stored ones via ONE
+    // batched read, so a `model = None` re-sync preserves embeddings without a
+    // per-chunk query. Rule: stored embedding = fresh vector if present, else
+    // the existing stored vector, else Null. Because the embedding column is
+    // written inline with each chunk row, a vector is only ever persisted for a
+    // chunk that is also being put — no orphaned embeddings.
+    let existing_vectors = if all_chunks.is_empty() {
+        Ok(HashMap::new())
+    } else {
+        let ids: Vec<&str> = all_chunks.iter().map(|c| c.chunk_id.as_str()).collect();
+        get_vectors_for(store, &ids)
+    };
+
+    // Attempt the batched chunk put. On any failure (including the batched
+    // embedding read), fall back to per-row loads for the whole batch so
+    // per-file `FileError` attribution and `docs_ok` are preserved exactly.
+    let batched_chunks_ok = match existing_vectors {
+        Ok(mut merged) => {
+            for (id, vec) in vectors {
+                merged.insert(id.clone(), vec.clone());
+            }
+            match upsert_chunks_batch(store, source_id, &all_chunks, &merged) {
+                Ok(()) => {
+                    chunks_ok += all_chunks.len();
+                    true
+                }
+                Err(e) => {
+                    warn!(error = %e, "batch chunk upsert failed; falling back to per-row loads");
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "batch embedding read failed; falling back to per-row loads");
+            false
+        }
+    };
+
+    if batched_chunks_ok {
+        // Every document's chunks were stored, so every document counts as
+        // processed (identical to the per-row path marking each file ok).
+        docs_ok += parsed.len();
+    } else {
+        // Per-row fallback: identical to the historical per-file load loop.
+        for (path_str, doc) in parsed {
+            let mut file_loaded_ok = true;
+            for chunk in &doc.chunks {
+                match upsert_chunk(store, source_id, chunk) {
+                    Ok(()) => {
+                        chunks_ok += 1;
+                        // Persist a freshly computed vector only after the chunk
+                        // upsert succeeds, so no embedding is stored for an
+                        // absent chunk.
+                        if let Some(vec) = vectors.get(&chunk.chunk_id) {
+                            if let Err(e) = upsert_vector(store, &chunk.chunk_id, vec) {
+                                warn!(
+                                    chunk_id = %chunk.chunk_id,
+                                    error = %e,
+                                    "vector upsert failed; chunk stored without embedding"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            chunk_id = %chunk.chunk_id,
+                            error = %e,
+                            "chunk upsert failed; file marked with error"
+                        );
+                        errors.push(FileError {
+                            path: std::path::PathBuf::from(path_str),
+                            error: e.to_string(),
+                        });
+                        file_loaded_ok = false;
+                    }
+                }
+            }
+            if file_loaded_ok {
+                docs_ok += 1;
+            }
+        }
+    }
+
+    // Edges, code snippets, and url-index entries are best-effort for the whole
+    // batch regardless of the chunk outcome (matching the historical per-doc
+    // behavior of attempting them even for a file whose chunk load failed). On a
+    // batched failure, fall back to per-row so a single bad row does not drop
+    // the rest — preserving today's "warn and continue" semantics.
+    if !all_refs.is_empty() {
+        if let Err(e) = upsert_edges_batch(store, &all_refs) {
+            warn!(error = %e, "batch edge upsert failed; falling back to per-row");
+            for reference in &all_refs {
+                if let Err(e) = upsert_edge(store, reference) {
+                    warn!(error = %e, "edge upsert failed; continuing");
+                }
+            }
+        }
+    }
+
+    if !all_snippets.is_empty() {
+        if let Err(e) = upsert_code_snippets_batch(store, &all_snippets) {
+            warn!(error = %e, "batch snippet upsert failed; falling back to per-row");
+            for snippet in &all_snippets {
+                if let Err(e) = upsert_code_snippet(store, snippet) {
+                    warn!(error = %e, "snippet upsert failed; continuing");
+                }
+            }
+        }
+    }
+
+    if !url_entries.is_empty() {
+        if let Err(e) = upsert_url_index_batch(store, &url_entries) {
+            warn!(error = %e, "batch url index upsert failed; falling back to per-row");
+            for (canonical, chunk_id) in &url_entries {
+                if let Err(e) = upsert_url_index(store, canonical, chunk_id) {
+                    warn!(error = %e, "url index registration failed; continuing");
+                }
+            }
+        }
+    }
+
+    (chunks_ok, docs_ok, errors)
 }
 
 /// Return `true` if `ext` should be processed given `formats`.
@@ -592,5 +714,247 @@ fn build_source_record(ps: &PlannedSource) -> SourceRecord {
         name: id.clone(),
         source_id: id,
         synced_at: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::fs;
+
+    use super::*;
+    use crate::db::{list_chunks_for_source, list_edges_from_chunk, resolve_canonical_url};
+
+    fn docline_md(source_path: &str, title: &str, body: &str) -> String {
+        format!(
+            "---\ntitle: {title}\nsource: /test/source\ningested_at: \
+             2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: {source_path}\n---\n{body}"
+        )
+    }
+
+    /// Same as [`docline_md`] but with a `canonical_url` frontmatter field so
+    /// the docline URL-index path is exercised.
+    fn docline_md_with_url(
+        source_path: &str,
+        title: &str,
+        canonical_url: &str,
+        body: &str,
+    ) -> String {
+        format!(
+            "---\ntitle: {title}\nsource: /test/source\ningested_at: \
+             2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: {source_path}\n\
+             canonical_url: {canonical_url}\n---\n{body}"
+        )
+    }
+
+    /// Build a minimal `Chunk` for hand-assembled `ParsedDocument` fixtures.
+    fn test_chunk(id: &str, path: &str, position: usize, content: &str) -> Chunk {
+        Chunk {
+            chunk_id: id.to_owned(),
+            content: content.to_owned(),
+            heading_hierarchy: vec!["H1".to_owned()],
+            position,
+            char_offset: 0,
+            source_path: path.to_owned(),
+        }
+    }
+
+    /// Build a `(path, ParsedDocument)` pair carrying only the given chunks.
+    fn parsed_doc(path: &str, chunks: Vec<Chunk>) -> (String, ParsedDocument) {
+        (
+            path.to_owned(),
+            ParsedDocument {
+                path: path.to_owned(),
+                title: Some("t".to_owned()),
+                frontmatter: None,
+                chunks,
+                references: Vec::new(),
+                code_snippets: Vec::new(),
+            },
+        )
+    }
+
+    /// A batch containing one valid docline file and one file that fails to
+    /// parse must: record a `FileError` for the bad file, load the good file's
+    /// chunks, and count exactly one processed document. This exercises the
+    /// mixed-good/bad batch resilience of the batched Load stage.
+    #[test]
+    fn process_batch_loads_good_doc_and_records_bad_doc_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs = root.join("docs");
+        fs::create_dir_all(&docs).expect("create docs dir");
+
+        let good = docs.join("good.md");
+        fs::write(
+            &good,
+            docline_md("good.md", "Good", "# Good\n\nGood body text.\n").as_bytes(),
+        )
+        .expect("write good.md");
+
+        // Invalid UTF-8 bytes make `parse_file` fail at read time.
+        let bad = docs.join("bad.md");
+        fs::write(&bad, b"\xFF\xFE not valid utf-8").expect("write bad.md");
+
+        let store = DataStore::open_mem().expect("open_mem");
+        store.ensure_schema().expect("ensure_schema");
+
+        let files = vec![good.clone(), bad.clone()];
+        let result = process_batch(
+            &files,
+            "mixed-source",
+            &store,
+            None,
+            root,
+            &[],
+            &HashSet::new(),
+        );
+
+        assert_eq!(result.docs_processed, 1, "only the good doc is processed");
+        assert!(result.chunks_loaded >= 1, "good doc chunks were loaded");
+        assert_eq!(result.errors.len(), 1, "exactly one file error recorded");
+        assert!(
+            result.errors[0].path.to_string_lossy().contains("bad.md"),
+            "error must reference bad.md, got {:?}",
+            result.errors[0].path
+        );
+
+        let stored = list_chunks_for_source(&store, "mixed-source").expect("list chunks");
+        assert!(!stored.is_empty(), "good document chunks must be persisted");
+        assert!(
+            stored.iter().all(|c| c.path == "good.md"),
+            "only good.md chunks should be present"
+        );
+    }
+
+    /// The per-row fallback must preserve exact per-file attribution. When the
+    /// batched chunk `:put` fails, the helper falls back to per-row loads: the
+    /// file carrying the offending chunk gets a `FileError` and is excluded from
+    /// `docs_processed`, while sibling good documents still load and increment
+    /// `chunks_loaded`/`docs_processed`. The batched put and the per-row
+    /// fallback fail identically on a chunk whose `position` exceeds `i64`
+    /// range (the same trigger as the db-layer consistency test).
+    #[test]
+    fn load_parsed_batch_fallback_attributes_bad_chunk_and_loads_good_docs() {
+        // Skip on targets where usize cannot exceed i64::MAX (e.g. 32-bit),
+        // where the crafted position would not overflow and the batch succeeds.
+        let Ok(big) = usize::try_from(u64::try_from(i64::MAX).expect("i64::MAX >= 0") + 1) else {
+            return;
+        };
+
+        let store = DataStore::open_mem().expect("open_mem");
+        store.ensure_schema().expect("ensure_schema");
+
+        let good = parsed_doc(
+            "good.md",
+            vec![test_chunk("good-0", "good.md", 0, "good body")],
+        );
+        let mut bad_chunk = test_chunk("bad-0", "bad.md", 0, "bad body");
+        bad_chunk.position = big; // out of i64 range → both batch and per-row fail
+        let bad = parsed_doc("bad.md", vec![bad_chunk]);
+
+        let parsed = vec![good, bad];
+        let (chunks_ok, docs_ok, errors) =
+            load_parsed_batch(&store, "fallback-source", &parsed, &HashMap::new());
+
+        assert_eq!(docs_ok, 1, "only the good doc counts as processed");
+        assert_eq!(chunks_ok, 1, "only the good doc's chunk loaded");
+        assert_eq!(
+            errors.len(),
+            1,
+            "the bad doc recorded exactly one FileError"
+        );
+        assert!(
+            errors[0].path.to_string_lossy().contains("bad.md"),
+            "error must reference bad.md, got {:?}",
+            errors[0].path
+        );
+
+        let stored = list_chunks_for_source(&store, "fallback-source").expect("list chunks");
+        assert_eq!(stored.len(), 1, "only the good chunk is persisted");
+        assert_eq!(
+            stored[0].chunk_id, "good-0",
+            "the persisted chunk is the good one"
+        );
+    }
+
+    /// The all-batched happy path must persist chunks, edges, code snippets, and
+    /// the canonical-url index for every document, and count them all.
+    #[test]
+    fn process_batch_happy_path_loads_all_relations() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs = root.join("docs");
+        fs::create_dir_all(&docs).expect("create docs dir");
+
+        let body = "# Heading\n\nSee [other](b.md).\n\n```rust\nfn x() {}\n```\n";
+        // a.md carries a canonical_url so the URL-index path is exercised.
+        fs::write(
+            docs.join("a.md"),
+            docline_md_with_url("a.md", "Doc A", "https://example.com/a", body).as_bytes(),
+        )
+        .expect("write a.md");
+        fs::write(
+            docs.join("b.md"),
+            docline_md("b.md", "Doc B", body).as_bytes(),
+        )
+        .expect("write b.md");
+
+        let store = DataStore::open_mem().expect("open_mem");
+        store.ensure_schema().expect("ensure_schema");
+
+        let files = vec![docs.join("a.md"), docs.join("b.md")];
+        let result = process_batch(
+            &files,
+            "happy-source",
+            &store,
+            None,
+            root,
+            &[],
+            &HashSet::new(),
+        );
+
+        assert_eq!(result.docs_processed, 2, "both docs processed");
+        assert_eq!(result.errors.len(), 0, "no errors on the happy path");
+
+        // Chunks.
+        let stored = list_chunks_for_source(&store, "happy-source").expect("list chunks");
+        assert_eq!(stored.len(), result.chunks_loaded, "chunk count consistent");
+        assert!(stored.len() >= 2, "each doc contributes at least one chunk");
+
+        // Edges: each doc has a `[other](b.md)` link, so at least two edges
+        // exist across the batch's chunks.
+        let edge_count: usize = stored
+            .iter()
+            .map(|c| {
+                list_edges_from_chunk(&store, &c.chunk_id)
+                    .expect("list edges")
+                    .len()
+            })
+            .sum();
+        assert!(
+            edge_count >= 2,
+            "batched edges must be persisted, got {edge_count}"
+        );
+
+        // Code snippets: each doc has one ```rust``` fence.
+        let code_rows = store
+            .query(
+                r"?[snippet_id] := *doc_code{ snippet_id }",
+                std::collections::BTreeMap::new(),
+            )
+            .expect("query doc_code");
+        assert!(
+            code_rows.rows.len() >= 2,
+            "batched code snippets must be persisted, got {}",
+            code_rows.rows.len()
+        );
+
+        // URL index: a.md's canonical_url round-trips to one of its chunks.
+        let resolution = resolve_canonical_url(&store, "https://example.com/a")
+            .expect("resolve canonical url")
+            .expect("canonical url must be registered");
+        assert_eq!(resolution.source_id, "happy-source");
+        assert_eq!(resolution.path, "a.md", "canonical url resolves to a.md");
     }
 }

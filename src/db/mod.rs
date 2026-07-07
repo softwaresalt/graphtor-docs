@@ -32,12 +32,12 @@ pub mod urls;
 pub mod vectors;
 
 pub use chunks::{
-    delete_chunks_by_path, get_chunk, list_chunks_by_path, list_chunks_for_source, upsert_chunk,
-    ChunkRecord,
+    delete_chunks_by_path, get_chunk, get_vectors_for, list_chunks_by_path, list_chunks_for_source,
+    upsert_chunk, upsert_chunks_batch, ChunkRecord,
 };
 pub use edges::{
     delete_code_for_chunk, delete_edges_for_chunk, list_edges_from_chunk, upsert_code_snippet,
-    upsert_edge, CodeRecord, EdgeRecord,
+    upsert_code_snippets_batch, upsert_edge, upsert_edges_batch, CodeRecord, EdgeRecord,
 };
 pub use nodes::{get_source, list_sources, upsert_source, SourceRecord};
 pub use schema::{
@@ -49,6 +49,6 @@ pub use store::{DataStore, DbStatus};
 pub use traverse::{find_related_chunks, TraversalResult};
 pub use urls::{
     delete_url_index_for_chunks, register_document_url, resolve_canonical_url, upsert_url_index,
-    UrlResolution,
+    upsert_url_index_batch, UrlResolution,
 };
 pub use vectors::{delete_vectors_by_chunk_ids, search_by_vector, upsert_vector};
