@@ -143,9 +143,12 @@ pub fn upsert_chunk(
 /// already merges freshly computed vectors with any previously stored ones
 /// (see [`get_vectors_for`]) so a model-less re-sync does not erase embeddings.
 ///
-/// When two rows in `chunks` share a `chunk_id`, `CozoDB` applies
-/// last-writer-wins by key — identical to calling [`upsert_chunk`] once per
-/// chunk in slice order.
+/// When two rows in `chunks` share a `chunk_id`, only the **last** slice
+/// occurrence is written. A raw multi-row `:put` resolves duplicate keys by
+/// `CozoDB`'s sorted tuple order (not slice order), so this function first
+/// collapses duplicates in Rust — keeping the last occurrence — making the
+/// batch provably identical to calling [`upsert_chunk`] once per chunk in
+/// slice order.
 ///
 /// # Errors
 ///
@@ -163,8 +166,16 @@ pub fn upsert_chunks_batch(
     if chunks.is_empty() {
         return Ok(());
     }
-    let mut rows: Vec<DataValue> = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
+    // De-duplicate by `chunk_id`, keeping the LAST slice occurrence. A raw
+    // multi-row `:put` resolves duplicate keys by CozoDB's sorted tuple order,
+    // not slice order, so collapsing here first makes the batch provably
+    // identical to calling `upsert_chunk` once per chunk in slice order.
+    let mut by_key: HashMap<&str, &Chunk> = HashMap::with_capacity(chunks.len());
+    for &chunk in chunks {
+        by_key.insert(chunk.chunk_id.as_str(), chunk);
+    }
+    let mut rows: Vec<DataValue> = Vec::with_capacity(by_key.len());
+    for chunk in by_key.into_values() {
         rows.push(chunk_row_value(source_id, chunk, embeddings)?);
     }
     let script = r"
@@ -173,9 +184,10 @@ pub fn upsert_chunks_batch(
         :put doc_chunks { chunk_id => source_id, path, title, position, char_offset, headings, content, embedding }
     ";
     let mut params = BTreeMap::new();
+    let row_count = rows.len();
     params.insert("rows".to_string(), DataValue::List(rows));
     store.mutate(script, params)?;
-    debug!(count = chunks.len(), "batch-upserted doc_chunks records");
+    debug!(count = row_count, "batch-upserted doc_chunks records");
     Ok(())
 }
 
@@ -652,5 +664,29 @@ mod tests {
             upsert_chunks_batch(&s, "src", &[&bad], &HashMap::new()).is_err(),
             "batch upsert must reject out-of-range position too"
         );
+    }
+
+    #[test]
+    fn batch_put_duplicate_chunk_id_keeps_last_occurrence() {
+        // Two rows sharing a chunk_id within one batch must resolve to the LAST
+        // slice occurrence's columns, matching per-row slice-order semantics.
+        // (A raw multi-row `:put` would otherwise resolve dup keys by CozoDB's
+        // sorted tuple order, so the batch path de-duplicates in Rust first.)
+        let s = store();
+        let first = chunk("dup", "first.md", 3, "first body");
+        let second = chunk("dup", "second.md", 7, "second body");
+
+        upsert_chunks_batch(&s, "src", &[&first, &second], &HashMap::new()).expect("batch put");
+
+        let stored = list_chunks_for_source(&s, "src").expect("list");
+        assert_eq!(stored.len(), 1, "duplicate chunk_id collapses to one row");
+
+        let row = get_chunk(&s, "dup")
+            .expect("query")
+            .expect("row present after batch put");
+        assert_eq!(row.path, "second.md", "last occurrence's path wins");
+        assert_eq!(row.position, 7, "last occurrence's position wins");
+        assert_eq!(row.char_offset, 70, "last occurrence's char_offset wins");
+        assert_eq!(row.content, "second body", "last occurrence's content wins");
     }
 }

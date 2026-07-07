@@ -153,12 +153,10 @@ pub fn upsert_url_index_batch(
         :put doc_url_index { canonical_url => chunk_id }
     ";
     let mut params = BTreeMap::new();
+    let row_count = seen.len();
     params.insert("rows".to_string(), DataValue::List(rows));
     store.mutate(script, params)?;
-    debug!(
-        count = entries.len(),
-        "batch-upserted doc_url_index entries"
-    );
+    debug!(count = row_count, "batch-upserted doc_url_index entries");
     Ok(())
 }
 

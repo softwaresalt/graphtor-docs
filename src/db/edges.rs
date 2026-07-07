@@ -119,9 +119,10 @@ pub fn upsert_edges_batch(store: &DataStore, refs: &[&Reference]) -> Result<(), 
         :put doc_edges { src_chunk_id, target_path => link_text, anchor }
     ";
     let mut params = BTreeMap::new();
+    let row_count = rows.len();
     params.insert("rows".to_string(), DataValue::List(rows));
     store.mutate(script, params)?;
-    debug!(count = refs.len(), "batch-upserted doc_edges records");
+    debug!(count = row_count, "batch-upserted doc_edges records");
     Ok(())
 }
 
