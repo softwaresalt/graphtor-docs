@@ -11,7 +11,7 @@
 //! entry chunk of each document that carries a `canonical_url`, and pruned when
 //! the referenced chunks are deleted or the database is rebuilt.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use cozo::DataValue;
 use tracing::{debug, warn};
@@ -78,6 +78,90 @@ pub fn upsert_url_index(
     Ok(())
 }
 
+/// Upsert many `canonical_url → chunk_id` index entries in a **single**
+/// multi-row `:put` mutation.
+///
+/// This is the batch counterpart to [`upsert_url_index`]. It amortizes
+/// `CozoScript` compilation and the transaction commit across the whole slice
+/// and, crucially, replaces the per-entry `current_owner` collision pre-check
+/// with **one** batched read of the existing owners for every `canonical_url`
+/// in `entries`.
+///
+/// Collision handling preserves [`upsert_url_index`]'s observable behavior:
+/// whenever a `canonical_url` is about to be overwritten by a *different*
+/// chunk — whether the prior owner is an existing DB entry or an earlier entry
+/// in this same batch — a warning is emitted so operators can see the
+/// collision. `canonical_url` is the primary key, so `CozoDB` applies
+/// last-writer-wins; within a batch the last entry in slice order wins,
+/// matching sequential [`upsert_url_index`] calls.
+///
+/// `entries` is `(canonical_url, chunk_id)`.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Database`] on query or mutation failure.
+pub fn upsert_url_index_batch(
+    store: &DataStore,
+    entries: &[(String, String)],
+) -> Result<(), GraphtorError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    // One batched read of existing owners, so collision detection costs a
+    // single query instead of one per entry as the single-row path would.
+    let existing = current_owners(store, entries.iter().map(|(url, _)| url.as_str()))?;
+
+    // Warn on any overwrite by a different chunk. `seen` tracks the winning
+    // owner as we walk the batch in slice order; the pre-existing DB owner is
+    // used until an entry in this batch supersedes it. After the walk, `seen`
+    // holds each canonical_url's last-in-slice-order owner, which we put with
+    // unique keys — this both preserves slice-order last-writer-wins (a raw
+    // multi-row `:put` would otherwise resolve dup keys by CozoDB's sorted
+    // tuple order) and avoids a per-entry query.
+    let mut seen: HashMap<&str, &str> = HashMap::with_capacity(entries.len());
+    for (url, chunk_id) in entries {
+        let prior = seen
+            .get(url.as_str())
+            .copied()
+            .or_else(|| existing.get(url.as_str()).map(String::as_str));
+        if let Some(prior_chunk) = prior {
+            if prior_chunk != chunk_id {
+                warn!(
+                    canonical_url = %url,
+                    existing_chunk_id = %prior_chunk,
+                    new_chunk_id = %chunk_id,
+                    "canonical_url collision: overwriting an existing owner — \
+                     canonical_url must be globally unique across sources"
+                );
+            }
+        }
+        seen.insert(url.as_str(), chunk_id.as_str());
+    }
+
+    let rows: Vec<DataValue> = seen
+        .iter()
+        .map(|(url, chunk_id)| {
+            DataValue::List(vec![
+                DataValue::Str((*url).into()),
+                DataValue::Str((*chunk_id).into()),
+            ])
+        })
+        .collect();
+    let script = r"
+        ?[canonical_url, chunk_id] <- $rows
+        :put doc_url_index { canonical_url => chunk_id }
+    ";
+    let mut params = BTreeMap::new();
+    params.insert("rows".to_string(), DataValue::List(rows));
+    store.mutate(script, params)?;
+    debug!(
+        count = entries.len(),
+        "batch-upserted doc_url_index entries"
+    );
+    Ok(())
+}
+
 /// Return the chunk id currently registered for `canonical_url`, if any.
 fn current_owner(store: &DataStore, canonical_url: &str) -> Result<Option<String>, GraphtorError> {
     let script = r"?[chunk_id] := *doc_url_index{ canonical_url: $url, chunk_id }";
@@ -90,6 +174,40 @@ fn current_owner(store: &DataStore, canonical_url: &str) -> Result<Option<String
         .next()
         .and_then(|r| r.into_iter().next())
         .and_then(|v| v.get_str().map(str::to_owned)))
+}
+
+/// Read the current owners for many `canonical_url`s in a **single** query.
+///
+/// Batched counterpart to [`current_owner`]; returns a map of
+/// `canonical_url → chunk_id` containing only the URLs that currently have an
+/// owner. Used by [`upsert_url_index_batch`] to detect collisions without a
+/// per-entry query.
+fn current_owners<'a, I>(
+    store: &DataStore,
+    urls: I,
+) -> Result<HashMap<String, String>, GraphtorError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let list: Vec<DataValue> = urls.map(|u| DataValue::Str(u.into())).collect();
+    if list.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let script = r"?[canonical_url, chunk_id] :=
+        *doc_url_index{ canonical_url, chunk_id }, is_in(canonical_url, $urls)";
+    let mut params = BTreeMap::new();
+    params.insert("urls".to_string(), DataValue::List(list));
+    let rows = store.query(script, params)?;
+    let mut map: HashMap<String, String> = HashMap::with_capacity(rows.rows.len());
+    for row in rows.rows {
+        let mut cols = row.into_iter();
+        if let (Some(url_val), Some(chunk_val)) = (cols.next(), cols.next()) {
+            if let (Some(url), Some(chunk)) = (url_val.get_str(), chunk_val.get_str()) {
+                map.insert(url.to_owned(), chunk.to_owned());
+            }
+        }
+    }
+    Ok(map)
 }
 
 /// Resolve a `canonical_url` to its owning source, chunk, and path.
@@ -278,5 +396,102 @@ mod tests {
         let resolved = resolve_canonical_url(&s, "/dup").expect("resolve").unwrap();
         assert_eq!(resolved.chunk_id, "chunk-b");
         assert_eq!(resolved.source_id, "src-b");
+    }
+
+    #[test]
+    fn batch_upsert_roundtrips_multiple_entries() {
+        let s = store();
+        put_chunk(&s, "chunk-1", "fabric", "admin/foo.md");
+        put_chunk(&s, "chunk-2", "fabric", "admin/bar.md");
+        upsert_url_index_batch(
+            &s,
+            &[
+                ("/fabric/admin/foo".to_owned(), "chunk-1".to_owned()),
+                ("/fabric/admin/bar".to_owned(), "chunk-2".to_owned()),
+            ],
+        )
+        .expect("batch upsert");
+
+        assert_eq!(
+            resolve_canonical_url(&s, "/fabric/admin/foo")
+                .expect("resolve foo")
+                .expect("some")
+                .chunk_id,
+            "chunk-1"
+        );
+        assert_eq!(
+            resolve_canonical_url(&s, "/fabric/admin/bar")
+                .expect("resolve bar")
+                .expect("some")
+                .chunk_id,
+            "chunk-2"
+        );
+    }
+
+    #[test]
+    fn batch_upsert_matches_sequential_single_row() {
+        let batched = store();
+        let single = store();
+        for s in [&batched, &single] {
+            put_chunk(s, "chunk-1", "fabric", "a.md");
+            put_chunk(s, "chunk-2", "fabric", "b.md");
+        }
+        let entries = [
+            ("/u/a".to_owned(), "chunk-1".to_owned()),
+            ("/u/b".to_owned(), "chunk-2".to_owned()),
+        ];
+        upsert_url_index_batch(&batched, &entries).expect("batch");
+        for (url, chunk) in &entries {
+            upsert_url_index(&single, url, chunk).expect("single");
+        }
+        for url in ["/u/a", "/u/b"] {
+            assert_eq!(
+                resolve_canonical_url(&batched, url).expect("batch resolve"),
+                resolve_canonical_url(&single, url).expect("single resolve"),
+            );
+        }
+    }
+
+    #[test]
+    fn batch_upsert_last_writer_wins_within_batch() {
+        // Two entries in the same batch claim the same canonical_url; the last
+        // one in slice order must win, matching sequential single-row upserts.
+        let s = store();
+        put_chunk(&s, "chunk-old", "src-a", "old.md");
+        put_chunk(&s, "chunk-new", "src-b", "new.md");
+        upsert_url_index_batch(
+            &s,
+            &[
+                ("/dup".to_owned(), "chunk-old".to_owned()),
+                ("/dup".to_owned(), "chunk-new".to_owned()),
+            ],
+        )
+        .expect("batch");
+        let resolved = resolve_canonical_url(&s, "/dup").expect("resolve").unwrap();
+        assert_eq!(resolved.chunk_id, "chunk-new");
+        assert_eq!(resolved.source_id, "src-b");
+    }
+
+    #[test]
+    fn batch_upsert_overwrites_existing_db_owner() {
+        let s = store();
+        put_chunk(&s, "chunk-old", "src-a", "old.md");
+        put_chunk(&s, "chunk-new", "src-b", "new.md");
+        upsert_url_index(&s, "/u", "chunk-old").expect("seed");
+        upsert_url_index_batch(&s, &[("/u".to_owned(), "chunk-new".to_owned())]).expect("batch");
+        assert_eq!(
+            resolve_canonical_url(&s, "/u")
+                .expect("resolve")
+                .unwrap()
+                .chunk_id,
+            "chunk-new"
+        );
+    }
+
+    #[test]
+    fn batch_upsert_empty_is_noop() {
+        let s = store();
+        upsert_url_index_batch(&s, &[]).expect("empty batch");
+        assert_eq!(resolve_canonical_url(&s, "/nope").expect("resolve"), None);
     }
 }
