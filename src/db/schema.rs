@@ -18,7 +18,7 @@
 //! |---------|--------|
 //! | 1       | Initial schema: `doc_sources`, `doc_chunks`, `doc_edges`, `doc_code` |
 //! | 2       | Added `doc_vectors` for embedding storage and semantic search |
-//! | 3       | Merged `embedding: <F32; 384>?` into `doc_chunks`; removed `doc_vectors`; added HNSW index |
+//! | 3       | Merged `embedding: <F32; 384>?` into `doc_chunks`; removed `doc_vectors`; the HNSW index that originally shipped with v3 was later dropped in favour of exact brute-force cosine search (see [`crate::db::vectors`]) — the stored data shape is unchanged |
 //! | 4       | Docline pivot: pruned all pre-pivot source/chunk/edge/code data; re-ingest required |
 //!
 //! The additive `doc_url_index` relation (cross-source `canonical_url` lookup)
@@ -112,8 +112,11 @@ pub fn ensure_schema(store: &DataStore) -> Result<(), GraphtorError> {
     // Always create any missing base relations (idempotent self-heal).
     create_all_relations(store)?;
     create_internal_relations(store)?;
-    // Always ensure the HNSW index is present (idempotent self-heal).
-    create_hnsw_index_if_missing(store)?;
+    // Search is exact brute-force cosine k-NN (see `crate::db::vectors`); no
+    // vector index is maintained. Drop any legacy HNSW index left over from
+    // databases created before the brute-force switch so per-`:put` index
+    // maintenance no longer slows ingest.
+    drop_hnsw_index_if_exists(store)?;
 
     debug!("database schema verified at version {SCHEMA_VERSION}");
     Ok(())
@@ -303,7 +306,9 @@ fn migrate_to_v4(store: &DataStore) -> Result<(), GraphtorError> {
             BTreeMap::new(),
         )?;
     }
-    // Remove all chunks (drop and recreate to also reset the HNSW index).
+    // Remove all chunks. Drop any legacy HNSW index first so `::remove` on the
+    // base relation succeeds; the recreated `doc_chunks` is not re-indexed
+    // (search is exact brute-force cosine k-NN — see `crate::db::vectors`).
     if relation_exists(store, "doc_chunks:embedding_idx")? {
         store.mutate("::hnsw drop doc_chunks:embedding_idx", BTreeMap::new())?;
     }
@@ -350,7 +355,9 @@ fn migrate_to_v3(store: &DataStore, from_ver: i64) -> Result<(), GraphtorError> 
     )?;
     let rows = saved.rows;
 
-    // Drop the HNSW index before removing the base relation (defensive guard).
+    // Drop any legacy HNSW index before removing the base relation (defensive
+    // guard — search is now exact brute-force cosine k-NN, so no index is
+    // recreated afterward).
     if relation_exists(store, "doc_chunks:embedding_idx")? {
         store.mutate("::hnsw drop doc_chunks:embedding_idx", BTreeMap::new())?;
     }
@@ -395,21 +402,22 @@ fn migrate_to_v3(store: &DataStore, from_ver: i64) -> Result<(), GraphtorError> 
     Ok(())
 }
 
-/// Create the HNSW vector index on `doc_chunks.embedding` if it does not
-/// already exist.
-fn create_hnsw_index_if_missing(store: &DataStore) -> Result<(), GraphtorError> {
+/// Drop the legacy `doc_chunks:embedding_idx` HNSW index if it exists.
+///
+/// Search is now exact brute-force cosine k-NN (see [`crate::db::vectors`]), so
+/// no vector index is maintained. Databases created before that switch may
+/// still carry the index, and every `:put` into `doc_chunks` would otherwise
+/// pay HNSW maintenance cost — dropping it here restores fast ingest.
+///
+/// Returns `true` when an index was present and dropped, `false` otherwise.
+/// Idempotent: safe to call on every startup.
+fn drop_hnsw_index_if_exists(store: &DataStore) -> Result<bool, GraphtorError> {
     if relation_exists(store, "doc_chunks:embedding_idx")? {
-        debug!("HNSW index doc_chunks:embedding_idx already exists, skipping");
-        return Ok(());
+        store.mutate("::hnsw drop doc_chunks:embedding_idx", BTreeMap::new())?;
+        debug!("dropped legacy HNSW index doc_chunks:embedding_idx (brute-force search)");
+        return Ok(true);
     }
-    store.mutate(
-        "::hnsw create doc_chunks:embedding_idx { \
-         dim: 384, m: 16, dtype: F32, fields: [embedding], \
-         distance: Cosine, ef_construction: 200 }",
-        BTreeMap::new(),
-    )?;
-    debug!("created HNSW index doc_chunks:embedding_idx");
-    Ok(())
+    Ok(false)
 }
 
 /// Create a stored relation only if it does not already exist.
@@ -509,11 +517,6 @@ mod tests {
         set_v4_migration_snapshot_locked(&store, true)
             .expect("lock persisted snapshot reuse for staged retry");
 
-        if relation_exists(&store, "doc_chunks:embedding_idx").expect("check HNSW index") {
-            store
-                .mutate("::hnsw drop doc_chunks:embedding_idx", BTreeMap::new())
-                .expect("drop HNSW index before simulating interrupted prune");
-        }
         store
             .mutate("::remove doc_chunks", BTreeMap::new())
             .expect("simulate crash after dropping doc_chunks");
@@ -538,9 +541,47 @@ mod tests {
             "ensure_schema should recreate doc_chunks after an interrupted staged prune"
         );
         assert!(
-            relation_exists(&store, "doc_chunks:embedding_idx")
-                .expect("check recreated HNSW index"),
-            "ensure_schema should recreate the HNSW index after an interrupted staged prune"
+            !relation_exists(&store, "doc_chunks:embedding_idx").expect("check HNSW index absence"),
+            "ensure_schema must not recreate the HNSW index — search is now brute-force"
+        );
+    }
+
+    #[test]
+    fn ensure_schema_does_not_create_hnsw_index_on_fresh_db() {
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        assert!(
+            !relation_exists(&store, "doc_chunks:embedding_idx").expect("check HNSW index absence"),
+            "brute-force search must not create the HNSW index on a fresh database"
+        );
+    }
+
+    #[test]
+    fn ensure_schema_drops_pre_existing_hnsw_index() {
+        let store = DataStore::open_mem().expect("open in-memory store");
+        ensure_schema(&store).expect("ensure schema");
+
+        // Simulate a database created before the brute-force switch by manually
+        // recreating the legacy HNSW index.
+        store
+            .mutate(
+                "::hnsw create doc_chunks:embedding_idx { \
+                 dim: 384, m: 16, dtype: F32, fields: [embedding], \
+                 distance: Cosine, ef_construction: 200 }",
+                BTreeMap::new(),
+            )
+            .expect("create legacy HNSW index");
+        assert!(
+            relation_exists(&store, "doc_chunks:embedding_idx").expect("check HNSW index present"),
+            "legacy HNSW index should exist before re-running ensure_schema"
+        );
+
+        ensure_schema(&store).expect("ensure schema drops legacy index");
+
+        assert!(
+            !relation_exists(&store, "doc_chunks:embedding_idx").expect("check HNSW index absence"),
+            "ensure_schema must drop a pre-existing HNSW index"
         );
     }
 }

@@ -1,22 +1,25 @@
-//! HNSW vector search via the native `CozoDB` index on `doc_chunks`.
+//! Exact brute-force cosine k-nearest-neighbour vector search over `doc_chunks`.
 //!
 //! Stores 384-dimensional embeddings produced by `all-MiniLM-L6-v2` directly
 //! in the `doc_chunks` relation as the `embedding: <F32; 384>?` column and
-//! exposes approximate nearest-neighbour lookup via the `doc_chunks:embedding_idx`
-//! HNSW index maintained automatically by `CozoDB`.
+//! exposes **exact** nearest-neighbour lookup by scanning every stored
+//! embedding at query time. No vector index is maintained.
 //!
 //! # Storage
 //!
 //! [`upsert_vector`] performs a join-put: it reads the existing `doc_chunks`
-//! row and writes it back with the new embedding.  The HNSW index is updated
-//! automatically on every `:put`.  The chunk **must** already exist in
-//! `doc_chunks` before `upsert_vector` is called.
+//! row and writes it back with the new embedding.  The chunk **must** already
+//! exist in `doc_chunks` before `upsert_vector` is called.  Because there is no
+//! auxiliary index, writes pay no per-`:put` index-maintenance cost — this is
+//! what keeps embedded ingest fast.
 //!
 //! # Search
 //!
-//! [`search_by_vector`] issues a tilde-query against the HNSW index and joins
-//! the results with `doc_chunks` metadata.  Approximate k-nearest-neighbour
-//! lookup scales to millions of vectors with sub-millisecond latency.
+//! [`search_by_vector`] computes `cos_dist` between the query vector and every
+//! non-null stored embedding, orders by distance, and takes the top `limit`.
+//! The scan is `O(N)` in the number of embedded chunks and returns 100% recall
+//! (the true nearest neighbours). This is well suited to corpora up to a few
+//! hundred thousand vectors; beyond that, query latency grows linearly.
 
 use std::collections::BTreeMap;
 
@@ -31,7 +34,8 @@ use crate::error::GraphtorError;
 /// Persist or update the embedding for an existing chunk.
 ///
 /// Reads the current `doc_chunks` row for `chunk_id` and writes it back with
-/// the supplied `embedding`.  The HNSW index is updated automatically.
+/// the supplied `embedding`.  No auxiliary vector index is maintained, so the
+/// write pays no index-maintenance cost.
 ///
 /// The chunk **must** already exist in `doc_chunks` — call
 /// [`crate::db::upsert_chunk`] before calling this function.  If the chunk
@@ -139,12 +143,14 @@ pub fn get_vector(store: &DataStore, chunk_id: &str) -> Result<Option<Vec<f32>>,
     }
 }
 
-/// Search for the `limit` most similar stored chunks to `query_vec` using the
-/// `CozoDB` HNSW index on `doc_chunks`.
+/// Search for the `limit` most similar stored chunks to `query_vec` using an
+/// **exact** brute-force cosine k-nearest-neighbour scan over `doc_chunks`.
 ///
-/// Issues a tilde-query against `doc_chunks:embedding_idx` and joins results
-/// with chunk metadata.  Returns an empty [`Vec`] when `limit == 0` or no
-/// embeddings are indexed.
+/// Computes `cos_dist` between the query vector and every non-null stored
+/// embedding, orders by ascending distance, and returns the top `limit` rows
+/// joined with chunk metadata.  The scan is `O(N)` in the number of embedded
+/// chunks and yields the true nearest neighbours (100% recall).  Returns an
+/// empty [`Vec`] when `limit == 0` or no embeddings are stored.
 ///
 /// # Errors
 ///
@@ -170,10 +176,13 @@ pub fn search_by_vector(
     })?;
 
     let script = format!(
-        "?[chunk_id, source_id, path, headings, content] \
+        "?[chunk_id, source_id, path, headings, content, dist] \
          := q = vec($query), \
-            ~doc_chunks:embedding_idx{{ chunk_id | query: q, k: {limit_i64}, ef: 50 }}, \
-            *doc_chunks{{ chunk_id, source_id, path, headings, content }}"
+            *doc_chunks{{ chunk_id, source_id, path, headings, content, embedding }}, \
+            !is_null(embedding), \
+            dist = cos_dist(q, embedding) \
+         :order dist \
+         :limit {limit_i64}"
     );
     let mut params = BTreeMap::new();
     params.insert("query".to_string(), query_val);
@@ -217,4 +226,61 @@ fn require_str(row: &[DataValue], idx: usize, field: &str) -> Result<String, Gra
             message: format!("missing or non-string field '{field}' at column {idx}"),
             operation: "row_decode".to_string(),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::upsert_chunk;
+    use crate::parse::types::Chunk;
+
+    /// Open an in-memory store with schema applied.
+    fn store() -> DataStore {
+        let s = DataStore::open_mem().expect("open_mem");
+        s.ensure_schema().expect("ensure_schema");
+        s
+    }
+
+    /// Build a 384-dimensional unit vector with `1.0` at `pos`, `0.0` elsewhere.
+    fn unit_vec(pos: usize) -> Vec<f32> {
+        let mut v = vec![0.0_f32; 384];
+        v[pos] = 1.0;
+        v
+    }
+
+    /// Insert a minimal chunk so `upsert_vector`'s join-put finds a row.
+    fn insert_chunk(store: &DataStore, chunk_id: &str, path: &str) {
+        let chunk = Chunk {
+            chunk_id: chunk_id.to_owned(),
+            content: format!("content for {chunk_id}"),
+            heading_hierarchy: vec!["Heading".to_owned()],
+            position: 0,
+            char_offset: 0,
+            source_path: path.to_owned(),
+        };
+        upsert_chunk(store, "test-src", &chunk).expect("chunk upsert");
+    }
+
+    #[test]
+    fn brute_force_search_returns_exact_nearest_first() {
+        let s = store();
+
+        // Three orthogonal unit vectors in 384-D.
+        insert_chunk(&s, "chunk-a", "docs/a.md");
+        insert_chunk(&s, "chunk-b", "docs/b.md");
+        insert_chunk(&s, "chunk-c", "docs/c.md");
+
+        upsert_vector(&s, "chunk-a", &unit_vec(0)).expect("upsert a");
+        upsert_vector(&s, "chunk-b", &unit_vec(1)).expect("upsert b");
+        upsert_vector(&s, "chunk-c", &unit_vec(2)).expect("upsert c");
+
+        // Query exactly matches chunk-b — the exact nearest neighbour.
+        let results = search_by_vector(&s, &unit_vec(1), 3).expect("search should succeed");
+
+        assert_eq!(results.len(), 3, "all three embeddings should be scanned");
+        assert_eq!(
+            results[0].chunk_id, "chunk-b",
+            "brute-force scan must return the exact nearest neighbour first"
+        );
+    }
 }

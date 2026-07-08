@@ -49,14 +49,15 @@ fn all_expected_relations_exist_after_schema() {
 }
 
 #[test]
-fn hnsw_index_exists_after_schema() {
+fn hnsw_index_absent_after_schema() {
+    // Search is exact brute-force cosine k-NN; no vector index is maintained.
     let s = store();
     let names = s
         .relation_names()
         .expect("relation_names query should succeed");
     assert!(
-        names.iter().any(|n| n == "doc_chunks:embedding_idx"),
-        "HNSW index 'doc_chunks:embedding_idx' should exist; found: {names:?}"
+        !names.iter().any(|n| n == "doc_chunks:embedding_idx"),
+        "no HNSW index should exist after ensure_schema (brute-force search); found: {names:?}"
     );
 }
 
