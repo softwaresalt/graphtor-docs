@@ -216,6 +216,13 @@ at startup, so both the CLI you invoke and the MCP server the client launches
 inherit the value. This is the recommended way to make configuration behave
 identically in CLI and MCP mode.
 
+> [!NOTE]
+> Automatic `.env.local` loading is specific to the PowerShell harness
+> (`start.ps1`). The Bash harness (`start.sh`) does not load `.env.local`; under
+> Bash or any other launch method, export `GRAPHTOR_EMBED_MODEL_DIR` yourself
+> (for example `export GRAPHTOR_EMBED_MODEL_DIR=/abs/path` or via your own
+> dotenv loader) before invoking graphtor-docs.
+
 ## Annotated Full Example
 
 ```yaml
