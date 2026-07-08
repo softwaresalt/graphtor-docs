@@ -125,6 +125,63 @@ fn search_human_and_json_return_seeded_chunk() {
 }
 
 #[test]
+fn search_top_k_is_clamped_to_max() {
+    // Seed more matching docs than the clamp, then request an absurd --top-k.
+    // The CLI must not exceed the shared MAX_SEARCH_TOP_K — the same upper bound
+    // the MCP tools enforce — proving the clamp is centralized in `query::*`.
+    let doc_count = graphtor_core::query::MAX_SEARCH_TOP_K + 10;
+
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+    let docs = ws.join("docs");
+    std::fs::create_dir_all(&docs).expect("create docs dir");
+    for i in 0..doc_count {
+        let name = format!("clamp-{i}.md");
+        let body = format!("# Doc {i}\n\nThe clampkeyword appears in document {i}.\n");
+        std::fs::write(
+            docs.join(&name),
+            docline_md(&name, &format!("Doc {i}"), &body),
+        )
+        .expect("write clamp doc");
+    }
+    let config_dir = ws.join(".graphtor").join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
+    std::fs::write(
+        config_dir.join("sources.yaml"),
+        "sources:\n  - type: local\n    id: docs\n    path: docs\n    include:\n      - \"**/*.md\"\n",
+    )
+    .expect("write sources.yaml");
+
+    let sync = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .arg("sync")
+        .arg("--no-embed")
+        .output()
+        .expect("run graphtor-docs sync");
+    assert!(
+        sync.status.success(),
+        "sync failed: {}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let (ok, stdout, stderr) = run_query(
+        ws,
+        &["--json", "search", "clampkeyword", "--top-k", "100000"],
+    );
+    assert!(ok, "search --top-k failed: {stderr}");
+    let parsed: Value = serde_json::from_str(stdout.trim()).expect("valid json");
+    let results = parsed["result"]["results"]
+        .as_array()
+        .expect("result.results array");
+    assert_eq!(
+        results.len(),
+        graphtor_core::query::MAX_SEARCH_TOP_K,
+        "over-large CLI --top-k must be clamped to MAX_SEARCH_TOP_K, got {}",
+        results.len()
+    );
+}
+
+#[test]
 fn search_no_match_exits_zero_with_empty_results() {
     let workspace = seed_workspace();
     let ws = workspace.path();

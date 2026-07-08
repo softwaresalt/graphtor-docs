@@ -285,8 +285,9 @@ impl DocServer {
             return Err(ErrorData::invalid_params("query cannot be empty", None));
         }
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        // The top_k maximum is clamped centrally in `query::search_text`.
         #[allow(clippy::cast_possible_truncation)]
-        let limit = params.top_k.unwrap_or(10).min(50) as usize;
+        let limit = params.top_k.unwrap_or(10) as usize;
         let page = query::search_text(
             &self.stores,
             &params.query,
@@ -321,8 +322,9 @@ impl DocServer {
             return Err(ErrorData::invalid_params("chunk_id cannot be empty", None));
         }
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        // The max_depth maximum is clamped centrally in `query::traverse`.
         #[allow(clippy::cast_possible_truncation)]
-        let depth = params.max_depth.unwrap_or(2).min(5) as usize;
+        let depth = params.max_depth.unwrap_or(2) as usize;
         let results = query::traverse(&self.stores, &params.chunk_id, depth)
             .map_err(|e| into_tool_err(&e))?;
         let md = format_traversal_results(&params.chunk_id, &results);
@@ -365,8 +367,9 @@ impl DocServer {
             )
         })?;
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        // The top_k maximum is clamped centrally in `query::search_semantic`.
         #[allow(clippy::cast_possible_truncation)]
-        let limit = params.top_k.unwrap_or(10).min(50) as usize;
+        let limit = params.top_k.unwrap_or(10) as usize;
         let results = query::search_semantic(&self.stores, model, &params.query, limit)
             .map_err(|e| into_tool_err(&e))?;
         let md = format_search_results(&results);
@@ -489,10 +492,11 @@ impl DocServer {
         }
 
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
+        // The top_k and max_depth maxima are clamped centrally in `query::research`.
         #[allow(clippy::cast_possible_truncation)]
-        let search_k = params.top_k.unwrap_or(5).min(20) as usize;
+        let search_k = params.top_k.unwrap_or(5) as usize;
         #[allow(clippy::cast_possible_truncation)]
-        let depth = params.max_depth.unwrap_or(1).min(3) as usize;
+        let depth = params.max_depth.unwrap_or(1) as usize;
 
         // Prefer semantic (ranked) search when the embedding model is available;
         // fall back to unranked text search so seed selection is deterministic.

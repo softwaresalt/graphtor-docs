@@ -31,7 +31,11 @@
 //! - [`status`] — aggregate [`DbStatus`] counts summed across all stores.
 //!
 //! Callers remain responsible for input validation (rejecting empty queries),
-//! parameter defaulting/clamping, and output formatting.
+//! parameter defaulting, and output formatting. Result-size limits, however,
+//! are clamped *internally* to the shared maxima [`MAX_SEARCH_TOP_K`],
+//! [`MAX_RESEARCH_TOP_K`], [`MAX_RESEARCH_DEPTH`], and [`MAX_TRAVERSE_DEPTH`],
+//! so the CLI and MCP query surfaces enforce identical upper bounds from a
+//! single source of truth.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -45,6 +49,30 @@ use crate::db::{
 };
 use crate::embed::EmbeddingModel;
 use crate::error::GraphtorError;
+
+/// Maximum number of results returned by [`search_text`] and
+/// [`search_semantic`].
+///
+/// Requests larger than this are clamped down. This is the single source of
+/// truth for the keyword/semantic result cap shared by the MCP tools and the
+/// CLI subcommands.
+pub const MAX_SEARCH_TOP_K: usize = 50;
+
+/// Maximum initial-search breadth (`top_k`) for [`research`].
+///
+/// Requests larger than this are clamped down, keeping the MCP `research_topic`
+/// tool and the CLI `research` command in lockstep.
+pub const MAX_RESEARCH_TOP_K: usize = 20;
+
+/// Maximum BFS traversal depth (`max_depth`) for [`research`].
+///
+/// Requests larger than this are clamped down.
+pub const MAX_RESEARCH_DEPTH: usize = 3;
+
+/// Maximum BFS traversal depth (`max_depth`) for [`traverse`].
+///
+/// Requests larger than this are clamped down.
+pub const MAX_TRAVERSE_DEPTH: usize = 5;
 
 /// Combined output of [`research`]: initial search hits plus BFS-discovered
 /// related chunks.
@@ -154,8 +182,9 @@ fn list_chunks_by_path_all(
 ///
 /// Runs [`search_by_text`] against every store, merges the results round-robin
 /// (deduplicating by `chunk_id`), applies an optional `source_id` filter
-/// (a blank/whitespace-only `source_id` is treated as no filter), and finally
-/// truncates to at most `top_k` results.
+/// (a blank/whitespace-only `source_id` is treated as no filter; surrounding
+/// whitespace is trimmed before comparison), and finally truncates to at most
+/// `top_k` results. `top_k` is clamped to [`MAX_SEARCH_TOP_K`].
 ///
 /// # Errors
 ///
@@ -166,14 +195,17 @@ pub fn search_text(
     source_id: Option<&str>,
     top_k: usize,
 ) -> Result<Vec<SearchResult>, GraphtorError> {
+    let top_k = top_k.min(MAX_SEARCH_TOP_K);
     let per_store_results = stores
         .iter()
         .map(|store| search_by_text(store, query))
         .collect::<Result<Vec<_>, _>>()?;
     let merged = merge_search_results(&per_store_results, None);
 
-    // Normalize empty source_id to None (treat the same as no filter).
-    let sid_filter = source_id.and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+    // Normalize source_id: trim surrounding whitespace and treat blank as no
+    // filter. Compare against the trimmed value so a padded id (e.g. "docs ")
+    // behaves identically to `get_document`.
+    let sid_filter = source_id.map(str::trim).filter(|s| !s.is_empty());
     let filtered: Vec<SearchResult> = if let Some(sid) = sid_filter {
         merged.into_iter().filter(|r| r.source_id == sid).collect()
     } else {
@@ -187,7 +219,7 @@ pub fn search_text(
 ///
 /// Runs [`search_similar`] against every store (each limited to `top_k`) and
 /// merges the ranked results round-robin with an early-stopping limit of
-/// `top_k`.
+/// `top_k`. `top_k` is clamped to [`MAX_SEARCH_TOP_K`].
 ///
 /// # Errors
 ///
@@ -199,6 +231,7 @@ pub fn search_semantic(
     query: &str,
     top_k: usize,
 ) -> Result<Vec<SearchResult>, GraphtorError> {
+    let top_k = top_k.min(MAX_SEARCH_TOP_K);
     let per_store_results = stores
         .iter()
         .map(|store| search_similar(store, model, query, top_k))
@@ -213,7 +246,8 @@ pub fn search_semantic(
 /// selection stays deterministic). At most `min(top_k, 3)` of the top results
 /// seed the graph traversal, which follows document link edges up to
 /// `max_depth` hops. Related chunks are deduplicated globally against the
-/// initial hits and one another.
+/// initial hits and one another. `top_k` is clamped to [`MAX_RESEARCH_TOP_K`]
+/// and `max_depth` to [`MAX_RESEARCH_DEPTH`].
 ///
 /// # Errors
 ///
@@ -225,6 +259,8 @@ pub fn research(
     top_k: usize,
     max_depth: usize,
 ) -> Result<ResearchResults, GraphtorError> {
+    let top_k = top_k.min(MAX_RESEARCH_TOP_K);
+    let max_depth = max_depth.min(MAX_RESEARCH_DEPTH);
     let seed_k = top_k.min(3);
 
     // Prefer semantic (ranked) search when the embedding model is available;
@@ -257,7 +293,7 @@ pub fn research(
 ///
 /// Resolves the store that owns `chunk_id` and delegates to
 /// [`find_related_chunks`]. Returns an empty vector when no store contains the
-/// seed chunk.
+/// seed chunk. `max_depth` is clamped to [`MAX_TRAVERSE_DEPTH`].
 ///
 /// # Errors
 ///
@@ -267,6 +303,7 @@ pub fn traverse(
     chunk_id: &str,
     max_depth: usize,
 ) -> Result<Vec<TraversalResult>, GraphtorError> {
+    let max_depth = max_depth.min(MAX_TRAVERSE_DEPTH);
     if let Some(store) = store_for_chunk_id(stores, chunk_id)? {
         find_related_chunks(store, chunk_id, max_depth)
     } else {
@@ -505,6 +542,63 @@ mod tests {
         assert!(results.is_empty());
     }
 
+    #[test]
+    fn search_text_padded_source_filter_matches() {
+        let s = store();
+        upsert_chunk(
+            &s,
+            "source-alpha",
+            &chunk("ca", "docs/a.md", "padded filter content"),
+        )
+        .expect("upsert a");
+        upsert_chunk(
+            &s,
+            "source-beta",
+            &chunk("cb", "docs/b.md", "padded filter content"),
+        )
+        .expect("upsert b");
+
+        let stores = vec![s];
+        // A padded source_id must be trimmed before comparison and still match,
+        // matching `get_document`'s behaviour (regression: previously compared
+        // against the untrimmed value and returned nothing).
+        let results =
+            search_text(&stores, "padded filter", Some("source-alpha "), 10).expect("search");
+        assert_eq!(
+            results.len(),
+            1,
+            "padded source_id must match after trimming"
+        );
+        assert_eq!(results[0].source_id, "source-alpha");
+    }
+
+    #[test]
+    fn search_text_clamps_top_k_to_max_search_top_k() {
+        let s = store();
+        // Insert more matching chunks than the clamp so an over-large top_k
+        // cannot exceed MAX_SEARCH_TOP_K.
+        for i in 0..(MAX_SEARCH_TOP_K + 10) {
+            upsert_chunk(
+                &s,
+                "src-clamp",
+                &chunk(
+                    &format!("clamp-{i}"),
+                    &format!("docs/clamp-{i}.md"),
+                    "clampsearchkeyword shared body",
+                ),
+            )
+            .expect("upsert");
+        }
+
+        let stores = vec![s];
+        let results = search_text(&stores, "clampsearchkeyword", None, 100_000).expect("search");
+        assert_eq!(
+            results.len(),
+            MAX_SEARCH_TOP_K,
+            "over-large top_k must be clamped to MAX_SEARCH_TOP_K"
+        );
+    }
+
     // ── traverse ─────────────────────────────────────────────────────────────
 
     #[test]
@@ -527,6 +621,43 @@ mod tests {
         let stores = vec![store()];
         let results = traverse(&stores, "does-not-exist", 2).expect("traverse");
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn traverse_clamps_max_depth_to_max_traverse_depth() {
+        let s = store();
+        // Build a linear chain node0 -> node1 -> ... -> node6 so the deepest
+        // node sits at depth 6, beyond MAX_TRAVERSE_DEPTH (5).
+        let chain_len = MAX_TRAVERSE_DEPTH + 2;
+        for i in 0..chain_len {
+            upsert_chunk(
+                &s,
+                "src-chain",
+                &chunk(&format!("node{i}"), &format!("p{i}.md"), "chain body"),
+            )
+            .expect("upsert node");
+        }
+        for i in 0..(chain_len - 1) {
+            upsert_edge(&s, &edge(&format!("node{i}"), &format!("p{}.md", i + 1))).expect("edge");
+        }
+
+        let stores = vec![s];
+        let clamped = traverse(&stores, "node0", MAX_TRAVERSE_DEPTH).expect("traverse clamped");
+        let over_large = traverse(&stores, "node0", 100_000).expect("traverse over-large");
+
+        assert_eq!(
+            over_large, clamped,
+            "an over-large max_depth must behave identically to MAX_TRAVERSE_DEPTH"
+        );
+        assert!(
+            over_large.iter().all(|r| r.depth <= MAX_TRAVERSE_DEPTH),
+            "no result may exceed MAX_TRAVERSE_DEPTH, got {over_large:?}"
+        );
+        let last = format!("node{}", chain_len - 1);
+        assert!(
+            !over_large.iter().any(|r| r.chunk_id == last),
+            "the node beyond the clamp ({last}) must not be reached"
+        );
     }
 
     // ── list_sources ─────────────────────────────────────────────────────────
@@ -713,6 +844,75 @@ mod tests {
             !result.related.iter().any(|r| r.chunk_id == "other"),
             "related must not duplicate an initial hit, got {:?}",
             result.related
+        );
+    }
+
+    #[test]
+    fn research_clamps_top_k_to_max_research_top_k() {
+        let s = store();
+        // More matching chunks than the research breadth clamp.
+        for i in 0..(MAX_RESEARCH_TOP_K + 5) {
+            upsert_chunk(
+                &s,
+                "src-rk",
+                &chunk(
+                    &format!("rk-{i}"),
+                    &format!("docs/rk-{i}.md"),
+                    "researchbreadthkeyword body",
+                ),
+            )
+            .expect("upsert");
+        }
+
+        let stores = vec![s];
+        let result =
+            research(&stores, None, "researchbreadthkeyword", 100_000, 1).expect("research");
+        assert_eq!(
+            result.initial.len(),
+            MAX_RESEARCH_TOP_K,
+            "over-large research top_k must be clamped to MAX_RESEARCH_TOP_K"
+        );
+    }
+
+    #[test]
+    fn research_clamps_max_depth_to_max_research_depth() {
+        let s = store();
+        // Only rd-0 matches the query, so it is the sole seed. A linear chain
+        // rd-0 -> rd-1 -> ... places rd-(MAX_RESEARCH_DEPTH+1) beyond the clamp.
+        let chain_len = MAX_RESEARCH_DEPTH + 2;
+        upsert_chunk(
+            &s,
+            "src-rd",
+            &chunk("rd-0", "docs/rd-0.md", "researchdepthkeyword seed body"),
+        )
+        .expect("upsert seed");
+        for i in 1..chain_len {
+            upsert_chunk(
+                &s,
+                "src-rd",
+                &chunk(&format!("rd-{i}"), &format!("docs/rd-{i}.md"), "chain body"),
+            )
+            .expect("upsert chain node");
+        }
+        for i in 0..(chain_len - 1) {
+            upsert_edge(
+                &s,
+                &edge(&format!("rd-{i}"), &format!("docs/rd-{}.md", i + 1)),
+            )
+            .expect("edge");
+        }
+
+        let stores = vec![s];
+        let result = research(&stores, None, "researchdepthkeyword", 5, 100_000).expect("research");
+        assert!(
+            result.related.iter().all(|r| r.depth <= MAX_RESEARCH_DEPTH),
+            "related depth must be clamped to MAX_RESEARCH_DEPTH, got {:?}",
+            result.related
+        );
+        let beyond = format!("rd-{}", chain_len - 1);
+        assert!(
+            !result.related.iter().any(|r| r.chunk_id == beyond),
+            "the node beyond the clamp ({beyond}) must not be reached"
         );
     }
 
