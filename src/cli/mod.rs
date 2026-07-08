@@ -154,6 +154,52 @@ pub enum Command {
     /// emits a single JSONL telemetry record to stdout on completion.  Pass
     /// `--quiet` to suppress stderr progress while preserving stdout telemetry.
     Prewarm(prewarm::PrewarmArgs),
+
+    /// Full-text keyword search across all indexed documentation sources.
+    ///
+    /// CLI equivalent of the `search_local_docs` MCP tool. Opens the configured
+    /// databases read-only and prints matching chunks. Use `--json` for a
+    /// structured JSON-RPC envelope suitable for agent consumption.
+    Search(SearchArgs),
+
+    /// Semantic (vector-similarity) search across all indexed documentation.
+    ///
+    /// CLI equivalent of the `search_semantic` MCP tool. Requires the embedding
+    /// model; the command fails when the model is unavailable. Use `--json` for
+    /// a structured JSON-RPC envelope.
+    SearchSemantic(SearchSemanticArgs),
+
+    /// In-depth topic research: search plus document-graph traversal.
+    ///
+    /// CLI equivalent of the `research_topic` MCP tool. Combines keyword or
+    /// semantic search with BFS traversal from the top results to surface
+    /// related context. Use `--json` for a structured JSON-RPC envelope.
+    Research(ResearchArgs),
+
+    /// Traverse the document link graph starting from a chunk ID.
+    ///
+    /// CLI equivalent of the `traverse_doc_links` MCP tool. Follows outgoing
+    /// document links via BFS. Use `--json` for a structured JSON-RPC envelope.
+    Traverse(TraverseArgs),
+
+    /// List all registered documentation sources.
+    ///
+    /// CLI equivalent of the `list_sources` MCP tool. Use `--json` for a
+    /// structured JSON-RPC envelope.
+    ListSources,
+
+    /// Retrieve a single documentation chunk by its stable chunk ID.
+    ///
+    /// CLI equivalent of the `get_chunk_by_id` MCP tool. Use `--json` for a
+    /// structured JSON-RPC envelope.
+    GetChunk(GetChunkArgs),
+
+    /// Retrieve all chunks for a document path, in reading order.
+    ///
+    /// CLI equivalent of the `get_document` MCP tool. Provide `--source-id` to
+    /// scope to one source, or omit it to retrieve across all sources. Use
+    /// `--json` for a structured JSON-RPC envelope.
+    GetDocument(GetDocumentArgs),
 }
 
 /// Arguments for the `sync` subcommand.
@@ -266,6 +312,84 @@ pub struct UninstallArgs {
     /// Use when a previous invocation left a stale lock file.
     #[arg(long)]
     pub force_unlock: bool,
+}
+
+/// Arguments for the `search` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct SearchArgs {
+    /// Keyword or phrase to search documentation chunks for.
+    #[arg(value_name = "QUERY")]
+    pub query: String,
+
+    /// Restrict results to a specific documentation source ID.
+    #[arg(long, value_name = "ID")]
+    pub source_id: Option<String>,
+
+    /// Maximum number of results to return.
+    #[arg(long, default_value = "10", value_name = "N")]
+    pub top_k: usize,
+}
+
+/// Arguments for the `search-semantic` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct SearchSemanticArgs {
+    /// Natural-language query to embed and search semantically.
+    #[arg(value_name = "QUERY")]
+    pub query: String,
+
+    /// Maximum number of results to return.
+    #[arg(long, default_value = "10", value_name = "N")]
+    pub top_k: usize,
+}
+
+/// Arguments for the `research` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct ResearchArgs {
+    /// Natural-language or keyword query for the research topic.
+    #[arg(value_name = "QUERY")]
+    pub query: String,
+
+    /// Maximum number of initial search results to retrieve.
+    ///
+    /// At most `min(top_k, 3)` of the top results seed the graph traversal.
+    #[arg(long, default_value = "5", value_name = "N")]
+    pub top_k: usize,
+
+    /// BFS traversal depth from each seed chunk.
+    #[arg(long, default_value = "1", value_name = "N")]
+    pub max_depth: usize,
+}
+
+/// Arguments for the `traverse` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct TraverseArgs {
+    /// Stable SHA-256 chunk identifier to start BFS traversal from.
+    #[arg(value_name = "CHUNK_ID")]
+    pub chunk_id: String,
+
+    /// Maximum BFS traversal depth.
+    #[arg(long, default_value = "2", value_name = "N")]
+    pub max_depth: usize,
+}
+
+/// Arguments for the `get-chunk` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct GetChunkArgs {
+    /// Stable SHA-256 chunk identifier to retrieve.
+    #[arg(value_name = "CHUNK_ID")]
+    pub chunk_id: String,
+}
+
+/// Arguments for the `get-document` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct GetDocumentArgs {
+    /// Relative document path within the source (e.g. `articles/intro.md`).
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// Restrict the lookup to a specific documentation source ID.
+    #[arg(long, value_name = "ID")]
+    pub source_id: Option<String>,
 }
 
 #[cfg(test)]

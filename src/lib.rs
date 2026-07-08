@@ -35,6 +35,8 @@ pub mod parse;
 pub mod path;
 /// End-to-end ingestion pipeline orchestrator (acquire → parse → embed → load).
 pub mod pipeline;
+/// Reusable multi-store query layer shared by the MCP server and the CLI.
+pub mod query;
 /// Incremental sync state tracking and change-detection utilities.
 pub mod sync;
 
