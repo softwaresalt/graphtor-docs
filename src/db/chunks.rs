@@ -5,8 +5,9 @@
 //! `chunk_id` and linked to their source via `source_id`.
 //!
 //! The `doc_chunks` relation includes an `embedding: <F32; 384>?` column
-//! that is indexed by the `doc_chunks:embedding_idx` HNSW index for
-//! semantic search. [`upsert_chunk`] preserves any existing non-null
+//! used for exact brute-force cosine k-NN semantic search (see
+//! [`crate::db::vectors`]); no auxiliary vector index is maintained.
+//! [`upsert_chunk`] preserves any existing non-null
 //! embedding — call [`crate::db::vectors::upsert_vector`] to store or
 //! update embeddings explicitly.
 

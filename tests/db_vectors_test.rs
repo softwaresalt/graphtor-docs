@@ -1,8 +1,8 @@
-//! Integration tests for HNSW vector search via `doc_chunks`.
+//! Integration tests for exact brute-force cosine vector search via `doc_chunks`.
 //!
 //! These tests exercise [`graphtor_core::db::vectors`] functions directly
 //! using synthetic 384-dimensional unit vectors — no real ML model is loaded.
-//! All vectors must be 384-dim to match the HNSW index dimensionality.
+//! All vectors must be 384-dim to match the stored `embedding` column.
 
 use graphtor_core::db::{
     upsert_chunk,
@@ -25,7 +25,7 @@ fn unit_vec(pos: usize) -> Vec<f32> {
     v
 }
 
-/// Insert a minimal chunk so the HNSW join-put can find the row.
+/// Insert a minimal chunk so the join-put can find the row.
 ///
 /// `upsert_vector` requires the chunk to exist in `doc_chunks` first.
 fn insert_chunk(store: &DataStore, chunk_id: &str, path: &str) {
@@ -99,7 +99,7 @@ fn get_vector_returns_none_for_missing_chunk() {
     assert!(result.is_none());
 }
 
-// ── T016.004: search_by_vector returns top-k by HNSW similarity ──────────────
+// ── T016.004: search_by_vector returns top-k by cosine similarity ────────────
 
 #[test]
 fn search_by_vector_returns_nearest_first() {

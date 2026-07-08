@@ -6,7 +6,8 @@
 //!
 //! - `doc_sources` — registered documentation sources (Git repos, local dirs)
 //! - `doc_chunks` — parsed and normalised document chunks with metadata and
-//!   optional `embedding: <F32; 384>?` column indexed by a native HNSW index
+//!   an optional `embedding: <F32; 384>?` column searched by exact brute-force
+//!   cosine k-NN (see [`vectors`])
 //! - `doc_edges` — directed hyperlink edges between chunks
 //! - `doc_code` — code snippets extracted from chunks
 //! - `doc_url_index` — maps a document's globally unique `canonical_url` to its
