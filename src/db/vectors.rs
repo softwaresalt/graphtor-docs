@@ -283,4 +283,32 @@ mod tests {
             "brute-force scan must return the exact nearest neighbour first"
         );
     }
+
+    #[test]
+    fn brute_force_search_excludes_unembedded_chunks() {
+        let s = store();
+
+        // Two embedded chunks plus one chunk left un-embedded (null embedding),
+        // as produced by `upsert_chunk` before `upsert_vector` runs — a realistic
+        // partially-embedded state.
+        insert_chunk(&s, "chunk-a", "docs/a.md");
+        insert_chunk(&s, "chunk-b", "docs/b.md");
+        insert_chunk(&s, "chunk-unembedded", "docs/c.md");
+
+        upsert_vector(&s, "chunk-a", &unit_vec(0)).expect("upsert a");
+        upsert_vector(&s, "chunk-b", &unit_vec(1)).expect("upsert b");
+        // chunk-unembedded intentionally has a null embedding (no upsert_vector).
+
+        let results = search_by_vector(&s, &unit_vec(0), 10).expect("search should succeed");
+
+        assert_eq!(
+            results.len(),
+            2,
+            "only the two embedded chunks are scored; the null-embedding chunk is excluded"
+        );
+        assert!(
+            results.iter().all(|r| r.chunk_id != "chunk-unembedded"),
+            "a chunk with a null embedding must never appear in brute-force results"
+        );
+    }
 }
