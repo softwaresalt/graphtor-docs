@@ -40,7 +40,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use clap::Parser as _;
+use graphtor_core::mcp::format::{
+    format_chunk, format_document, format_research_results, format_search_results,
+    format_sources_list, format_traversal_results,
+};
 use graphtor_core::mcp::{DocServer, SyncStatus};
+use graphtor_core::query;
 use graphtor_core::{
     acquire::{
         execute as acquire_execute, plan as acquire_plan, AcquisitionPlan, PlannedSource,
@@ -135,6 +140,15 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
         OutputFormat::Human
     };
 
+    // Shared context for the query subcommands (CLI parity with MCP query tools).
+    let qctx = QueryCtx {
+        db_path: &db_path,
+        cwd: &cwd,
+        config_override: sources_path.as_deref(),
+        has_explicit_db_target,
+        fmt,
+    };
+
     match cli.command {
         Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path.as_deref(), &args, fmt),
         Command::Serve(_) => {
@@ -161,6 +175,13 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Uninstall(args) => cmd_uninstall(&cwd, &args, fmt),
         Command::Manifest => Ok(cmd_manifest(fmt)),
         Command::Prewarm(args) => cmd_prewarm(&cwd, &db_path, sources_path.as_deref(), &args),
+        Command::Search(args) => cmd_search(&qctx, &args),
+        Command::SearchSemantic(args) => cmd_search_semantic(&qctx, &args),
+        Command::Research(args) => cmd_research(&qctx, &args),
+        Command::Traverse(args) => cmd_traverse(&qctx, &args),
+        Command::ListSources => cmd_list_sources(&qctx),
+        Command::GetChunk(args) => cmd_get_chunk(&qctx, &args),
+        Command::GetDocument(args) => cmd_get_document(&qctx, &args),
     }
 }
 
@@ -2705,6 +2726,230 @@ fn cmd_status(
         emit_status_text(&databases);
     }
 
+    Ok(0)
+}
+
+// ── query commands (CLI parity with MCP query tools) ───────────────────────────
+
+/// Shared inputs for the query subcommands.
+///
+/// Bundling the common database-discovery parameters keeps each `cmd_*` query
+/// entry point to two arguments and mirrors the way the MCP server shares a
+/// single `DocServer` across all of its query tools.
+struct QueryCtx<'a> {
+    db_path: &'a std::path::Path,
+    cwd: &'a std::path::Path,
+    config_override: Option<&'a std::path::Path>,
+    has_explicit_db_target: bool,
+    fmt: OutputFormat,
+}
+
+impl QueryCtx<'_> {
+    /// Open all configured databases read-only for a query subcommand.
+    ///
+    /// Reuses the same registry/database discovery as `status` (honoring
+    /// `--config`, `--db-path`, and cwd auto-discovery) and opens every existing
+    /// database read-only.  Non-existent database paths are skipped so an
+    /// unconfigured or partially-synced workspace still yields whatever data is
+    /// available.  Fails closed on a database that still carries pre-v4 schema.
+    fn open_stores(&self) -> anyhow::Result<Vec<DataStore>> {
+        let db_paths = discover_status_db_paths(
+            self.db_path,
+            self.cwd,
+            self.config_override,
+            self.has_explicit_db_target,
+        )?;
+        let mut stores = Vec::with_capacity(db_paths.len());
+        for candidate in db_paths {
+            if !candidate.exists() {
+                continue;
+            }
+            let store = DataStore::open_sqlite_readonly(&candidate, self.cwd)
+                .with_context(|| format!("failed to open database at {}", candidate.display()))?;
+            if store
+                .needs_v4_migration()
+                .context("failed to check database migration state")?
+            {
+                anyhow::bail!(
+                    "database '{}' has pre-v4 schema; \
+                     run `graphtor-docs sync` to rebuild the index",
+                    candidate.display()
+                );
+            }
+            stores.push(store);
+        }
+        Ok(stores)
+    }
+
+    /// Emit a query result either as human-readable markdown or a JSON-RPC 2.0
+    /// success envelope, depending on the requested output format.
+    fn emit(&self, human: &str, json_value: &serde_json::Value) {
+        match self.fmt {
+            OutputFormat::Json => println!("{}", cli::jsonrpc::wrap_success(json_value)),
+            OutputFormat::Human => println!("{human}"),
+        }
+    }
+}
+
+fn search_result_json(result: &graphtor_core::db::SearchResult) -> serde_json::Value {
+    serde_json::json!({
+        "chunk_id": result.chunk_id,
+        "source_id": result.source_id,
+        "path": result.path,
+        "heading_hierarchy": result.heading_hierarchy,
+        "content": result.content,
+    })
+}
+
+fn traversal_result_json(result: &graphtor_core::db::TraversalResult) -> serde_json::Value {
+    serde_json::json!({
+        "chunk_id": result.chunk_id,
+        "source_id": result.source_id,
+        "path": result.path,
+        "depth": result.depth,
+        "cross_source": result.cross_source,
+    })
+}
+
+fn chunk_record_json(chunk: &graphtor_core::db::ChunkRecord) -> serde_json::Value {
+    serde_json::json!({
+        "chunk_id": chunk.chunk_id,
+        "source_id": chunk.source_id,
+        "path": chunk.path,
+        "title": chunk.title,
+        "position": chunk.position,
+        "char_offset": chunk.char_offset,
+        "heading_hierarchy": chunk.heading_hierarchy,
+        "content": chunk.content,
+    })
+}
+
+fn cmd_search(ctx: &QueryCtx, args: &cli::SearchArgs) -> anyhow::Result<i32> {
+    if args.query.trim().is_empty() {
+        anyhow::bail!("query cannot be empty");
+    }
+    let stores = ctx.open_stores()?;
+    let results = query::search_text(&stores, &args.query, args.source_id.as_deref(), args.top_k)
+        .context("keyword search failed")?;
+    let human = format_search_results(&results);
+    let json_value = serde_json::json!({
+        "results": results.iter().map(search_result_json).collect::<Vec<_>>(),
+    });
+    ctx.emit(&human, &json_value);
+    Ok(0)
+}
+
+fn cmd_search_semantic(ctx: &QueryCtx, args: &cli::SearchSemanticArgs) -> anyhow::Result<i32> {
+    if args.query.trim().is_empty() {
+        anyhow::bail!("query cannot be empty");
+    }
+    let stores = ctx.open_stores()?;
+    // Semantic search is the whole point of this command, so a missing model is
+    // fatal (unlike `research`, which degrades to keyword search).
+    let model = resolve_embedding_model(ResolverCaller::Query, false)
+        .context("embedding model resolution failed")?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "semantic search requires the embedding model, which is unavailable; \
+                 see the diagnostics above, or use `graphtor-docs search` for keyword search"
+            )
+        })?;
+    let results = query::search_semantic(&stores, &model, &args.query, args.top_k)
+        .context("semantic search failed")?;
+    let human = format_search_results(&results);
+    let json_value = serde_json::json!({
+        "results": results.iter().map(search_result_json).collect::<Vec<_>>(),
+    });
+    ctx.emit(&human, &json_value);
+    Ok(0)
+}
+
+fn cmd_research(ctx: &QueryCtx, args: &cli::ResearchArgs) -> anyhow::Result<i32> {
+    if args.query.trim().is_empty() {
+        anyhow::bail!("query cannot be empty");
+    }
+    let stores = ctx.open_stores()?;
+    // Prefer semantic seeds when a model is available; degrade to keyword search
+    // (Ok(None)) rather than failing, matching the MCP `research_topic` tool.
+    let model = resolve_embedding_model(ResolverCaller::Query, false)
+        .context("embedding model resolution failed")?;
+    let results = query::research(
+        &stores,
+        model.as_ref(),
+        &args.query,
+        args.top_k,
+        args.max_depth,
+    )
+    .context("research failed")?;
+    let human = format_research_results(&args.query, &results.initial, &results.related);
+    let json_value = serde_json::json!({
+        "query": args.query,
+        "results": results.initial.iter().map(search_result_json).collect::<Vec<_>>(),
+        "related": results.related.iter().map(traversal_result_json).collect::<Vec<_>>(),
+    });
+    ctx.emit(&human, &json_value);
+    Ok(0)
+}
+
+fn cmd_traverse(ctx: &QueryCtx, args: &cli::TraverseArgs) -> anyhow::Result<i32> {
+    if args.chunk_id.trim().is_empty() {
+        anyhow::bail!("chunk_id cannot be empty");
+    }
+    let stores = ctx.open_stores()?;
+    let results = query::traverse(&stores, &args.chunk_id, args.max_depth)
+        .context("graph traversal failed")?;
+    let human = format_traversal_results(&args.chunk_id, &results);
+    let json_value = serde_json::json!({
+        "start_chunk_id": args.chunk_id,
+        "related": results.iter().map(traversal_result_json).collect::<Vec<_>>(),
+    });
+    ctx.emit(&human, &json_value);
+    Ok(0)
+}
+
+fn cmd_list_sources(ctx: &QueryCtx) -> anyhow::Result<i32> {
+    let stores = ctx.open_stores()?;
+    let sources = query::list_sources(&stores).context("failed to list sources")?;
+    let human = format_sources_list(&sources);
+    let json_value = serde_json::json!({
+        "sources": sources.iter().map(status_source_json).collect::<Vec<_>>(),
+    });
+    ctx.emit(&human, &json_value);
+    Ok(0)
+}
+
+fn cmd_get_chunk(ctx: &QueryCtx, args: &cli::GetChunkArgs) -> anyhow::Result<i32> {
+    if args.chunk_id.trim().is_empty() {
+        anyhow::bail!("chunk_id cannot be empty");
+    }
+    let stores = ctx.open_stores()?;
+    let chunk = query::get_chunk(&stores, &args.chunk_id).context("failed to retrieve chunk")?;
+    let human = match &chunk {
+        Some(c) => format_chunk(c),
+        None => format!("Chunk `{}` not found.", args.chunk_id),
+    };
+    let chunk_value = match chunk.as_ref() {
+        Some(c) => chunk_record_json(c),
+        None => serde_json::Value::Null,
+    };
+    let json_value = serde_json::json!({ "chunk": chunk_value });
+    ctx.emit(&human, &json_value);
+    Ok(0)
+}
+
+fn cmd_get_document(ctx: &QueryCtx, args: &cli::GetDocumentArgs) -> anyhow::Result<i32> {
+    if args.path.trim().is_empty() {
+        anyhow::bail!("path cannot be empty");
+    }
+    let stores = ctx.open_stores()?;
+    let chunks = query::get_document(&stores, args.source_id.as_deref(), &args.path)
+        .context("failed to retrieve document")?;
+    let human = format_document(&args.path, &chunks);
+    let json_value = serde_json::json!({
+        "path": args.path,
+        "chunks": chunks.iter().map(chunk_record_json).collect::<Vec<_>>(),
+    });
+    ctx.emit(&human, &json_value);
     Ok(0)
 }
 

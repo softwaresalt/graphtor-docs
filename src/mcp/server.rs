@@ -19,7 +19,6 @@
 //! Pass the server to [`rmcp::serve_server`] with [`rmcp::transport::stdio`] to
 //! start the STDIO MCP server.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
@@ -31,18 +30,7 @@ use rmcp::{
 use serde::Deserialize;
 use tracing::info;
 
-use crate::{
-    db::{
-        chunks::{get_chunk, list_chunks_by_path, ChunkRecord},
-        nodes::{list_sources, SourceRecord},
-        search::{search_by_text, search_similar, SearchResult},
-        traverse::find_related_chunks,
-        DataStore,
-    },
-    embed::EmbeddingModel,
-    error::GraphtorError,
-    sync::SyncMetrics,
-};
+use crate::{db::DataStore, embed::EmbeddingModel, error::GraphtorError, query, sync::SyncMetrics};
 
 use super::format::{
     format_chunk, format_db_status, format_document, format_research_results,
@@ -273,124 +261,6 @@ impl DocServer {
 
 #[tool_router]
 impl DocServer {
-    fn primary_store(&self) -> &DataStore {
-        // Invariant: stores is non-empty (enforced by all constructors).
-        self.stores.first().unwrap()
-    }
-
-    fn merge_search_results(
-        per_store_results: &[Vec<SearchResult>],
-        limit: Option<usize>,
-    ) -> Vec<SearchResult> {
-        let mut merged = Vec::new();
-        let mut seen_chunk_ids = BTreeSet::new();
-        let mut round_index = 0;
-
-        loop {
-            let mut progressed = false;
-
-            for results in per_store_results {
-                if let Some(result) = results.get(round_index) {
-                    progressed = true;
-                    if seen_chunk_ids.insert(result.chunk_id.clone()) {
-                        merged.push(result.clone());
-                        if limit.is_some_and(|max| merged.len() >= max) {
-                            return merged;
-                        }
-                    }
-                }
-            }
-
-            if !progressed {
-                break;
-            }
-
-            round_index += 1;
-        }
-
-        merged
-    }
-
-    fn search_text_all(&self, query: &str) -> Result<Vec<SearchResult>, GraphtorError> {
-        let per_store_results = self
-            .stores
-            .iter()
-            .map(|store| search_by_text(store, query))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self::merge_search_results(&per_store_results, None))
-    }
-
-    fn search_semantic_all(
-        &self,
-        query: &str,
-        model: &EmbeddingModel,
-        limit: usize,
-    ) -> Result<Vec<SearchResult>, GraphtorError> {
-        let per_store_results = self
-            .stores
-            .iter()
-            .map(|store| search_similar(store, model, query, limit))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self::merge_search_results(&per_store_results, Some(limit)))
-    }
-
-    fn list_sources_all(&self) -> Result<Vec<SourceRecord>, GraphtorError> {
-        let mut sources_by_id = BTreeMap::new();
-
-        for store in &self.stores {
-            for source in list_sources(store)? {
-                sources_by_id
-                    .entry(source.source_id.clone())
-                    .or_insert(source);
-            }
-        }
-
-        Ok(sources_by_id.into_values().collect())
-    }
-
-    fn get_chunk_all(&self, chunk_id: &str) -> Result<Option<ChunkRecord>, GraphtorError> {
-        for store in &self.stores {
-            if let Some(chunk) = get_chunk(store, chunk_id)? {
-                return Ok(Some(chunk));
-            }
-        }
-
-        Ok(None)
-    }
-
-    fn list_chunks_by_path_all(&self, path: &str) -> Result<Vec<ChunkRecord>, GraphtorError> {
-        let mut all_chunks = Vec::new();
-        let mut seen_chunk_ids = BTreeSet::new();
-
-        for store in &self.stores {
-            for chunk in list_chunks_by_path(store, path)? {
-                if seen_chunk_ids.insert(chunk.chunk_id.clone()) {
-                    all_chunks.push(chunk);
-                }
-            }
-        }
-
-        all_chunks.sort_by(|left, right| {
-            left.source_id
-                .cmp(&right.source_id)
-                .then(left.position.cmp(&right.position))
-                .then(left.char_offset.cmp(&right.char_offset))
-                .then(left.chunk_id.cmp(&right.chunk_id))
-        });
-
-        Ok(all_chunks)
-    }
-
-    fn store_for_chunk_id(&self, chunk_id: &str) -> Result<Option<&DataStore>, GraphtorError> {
-        for store in &self.stores {
-            if get_chunk(store, chunk_id)?.is_some() {
-                return Ok(Some(store));
-            }
-        }
-
-        Ok(None)
-    }
-
     /// Search local documentation chunks by keyword.
     ///
     /// Returns matching chunks with path, heading context, and content
@@ -414,24 +284,16 @@ impl DocServer {
         if params.query.trim().is_empty() {
             return Err(ErrorData::invalid_params("query cannot be empty", None));
         }
-        let results = self
-            .search_text_all(&params.query)
-            .map_err(|e| into_tool_err(&e))?;
-        // Normalize empty source_id to None (treat the same as no filter).
-        let sid_filter =
-            params
-                .source_id
-                .as_deref()
-                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
-        let filtered: Vec<_> = if let Some(sid) = sid_filter {
-            results.into_iter().filter(|r| r.source_id == sid).collect()
-        } else {
-            results
-        };
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
         #[allow(clippy::cast_possible_truncation)]
         let limit = params.top_k.unwrap_or(10).min(50) as usize;
-        let page: Vec<_> = filtered.into_iter().take(limit).collect();
+        let page = query::search_text(
+            &self.stores,
+            &params.query,
+            params.source_id.as_deref(),
+            limit,
+        )
+        .map_err(|e| into_tool_err(&e))?;
         let md = format_search_results(&page);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
@@ -461,14 +323,8 @@ impl DocServer {
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
         #[allow(clippy::cast_possible_truncation)]
         let depth = params.max_depth.unwrap_or(2).min(5) as usize;
-        let results = if let Some(store) = self
-            .store_for_chunk_id(&params.chunk_id)
-            .map_err(|e| into_tool_err(&e))?
-        {
-            find_related_chunks(store, &params.chunk_id, depth).map_err(|e| into_tool_err(&e))?
-        } else {
-            Vec::new()
-        };
+        let results = query::traverse(&self.stores, &params.chunk_id, depth)
+            .map_err(|e| into_tool_err(&e))?;
         let md = format_traversal_results(&params.chunk_id, &results);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
@@ -511,8 +367,7 @@ impl DocServer {
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
         #[allow(clippy::cast_possible_truncation)]
         let limit = params.top_k.unwrap_or(10).min(50) as usize;
-        let results = self
-            .search_semantic_all(&params.query, model, limit)
+        let results = query::search_semantic(&self.stores, model, &params.query, limit)
             .map_err(|e| into_tool_err(&e))?;
         let md = format_search_results(&results);
         Ok(CallToolResult::success(vec![Content::text(md)]))
@@ -536,7 +391,7 @@ impl DocServer {
         Parameters(_params): Parameters<ListSourcesParams>,
     ) -> Result<CallToolResult, ErrorData> {
         info!("list_sources invoked");
-        let sources = self.list_sources_all().map_err(|e| into_tool_err(&e))?;
+        let sources = query::list_sources(&self.stores).map_err(|e| into_tool_err(&e))?;
         let md = format_sources_list(&sources);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
@@ -564,9 +419,8 @@ impl DocServer {
         if params.chunk_id.trim().is_empty() {
             return Err(ErrorData::invalid_params("chunk_id cannot be empty", None));
         }
-        let chunk = self
-            .get_chunk_all(&params.chunk_id)
-            .map_err(|e| into_tool_err(&e))?;
+        let chunk =
+            query::get_chunk(&self.stores, &params.chunk_id).map_err(|e| into_tool_err(&e))?;
         let md = match chunk {
             Some(c) => format_chunk(&c),
             None => format!("Chunk `{}` not found.", params.chunk_id),
@@ -598,19 +452,8 @@ impl DocServer {
         if params.path.trim().is_empty() {
             return Err(ErrorData::invalid_params("path cannot be empty", None));
         }
-        let all_chunks = self
-            .list_chunks_by_path_all(&params.path)
+        let chunks = query::get_document(&self.stores, Some(&params.source_id), &params.path)
             .map_err(|e| into_tool_err(&e))?;
-        // Filter by source_id when one is provided and non-empty.
-        let sid = params.source_id.trim();
-        let chunks: Vec<_> = if sid.is_empty() {
-            all_chunks
-        } else {
-            all_chunks
-                .into_iter()
-                .filter(|c| c.source_id == sid)
-                .collect()
-        };
         let md = format_document(&params.path, &chunks);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
@@ -648,43 +491,22 @@ impl DocServer {
         // u32 always fits in usize on all 32-bit and 64-bit platforms we support.
         #[allow(clippy::cast_possible_truncation)]
         let search_k = params.top_k.unwrap_or(5).min(20) as usize;
-        let seed_k = search_k.min(3);
         #[allow(clippy::cast_possible_truncation)]
         let depth = params.max_depth.unwrap_or(1).min(3) as usize;
 
         // Prefer semantic (ranked) search when the embedding model is available;
         // fall back to unranked text search so seed selection is deterministic.
-        let initial: Vec<crate::db::search::SearchResult> = if let Some(model) = &self.model {
-            self.search_semantic_all(&params.query, model, search_k)
-                .map_err(|e| into_tool_err(&e))?
-        } else {
-            let all = self
-                .search_text_all(&params.query)
-                .map_err(|e| into_tool_err(&e))?;
-            all.into_iter().take(search_k).collect()
-        };
+        // At most min(top_k, 3) of the top results seed the graph traversal.
+        let results = query::research(
+            &self.stores,
+            self.model.as_ref(),
+            &params.query,
+            search_k,
+            depth,
+        )
+        .map_err(|e| into_tool_err(&e))?;
 
-        // Traverse from the top seeds; deduplicate globally across all seeds.
-        let mut seen_ids: std::collections::HashSet<String> =
-            initial.iter().map(|r| r.chunk_id.clone()).collect();
-        let mut related: Vec<crate::db::traverse::TraversalResult> = Vec::new();
-
-        for seed in initial.iter().take(seed_k) {
-            if let Some(store) = self
-                .store_for_chunk_id(&seed.chunk_id)
-                .map_err(|e| into_tool_err(&e))?
-            {
-                let traversal = find_related_chunks(store, &seed.chunk_id, depth)
-                    .map_err(|e| into_tool_err(&e))?;
-                for tr in traversal {
-                    if seen_ids.insert(tr.chunk_id.clone()) {
-                        related.push(tr);
-                    }
-                }
-            }
-        }
-
-        let md = format_research_results(&params.query, &initial, &related);
+        let md = format_research_results(&params.query, &results.initial, &results.related);
         Ok(CallToolResult::success(vec![Content::text(md)]))
     }
 
@@ -707,16 +529,7 @@ impl DocServer {
         Parameters(_params): Parameters<GetStatusParams>,
     ) -> Result<CallToolResult, ErrorData> {
         info!("get_status invoked");
-        let mut status = self
-            .primary_store()
-            .get_status()
-            .map_err(|e| into_tool_err(&e))?;
-        for store in self.stores.iter().skip(1) {
-            let next = store.get_status().map_err(|e| into_tool_err(&e))?;
-            status.source_count += next.source_count;
-            status.chunk_count += next.chunk_count;
-            status.schema_version = status.schema_version.max(next.schema_version);
-        }
+        let status = query::status(&self.stores).map_err(|e| into_tool_err(&e))?;
         let mut md = format_db_status(&status);
 
         let sync_str = {

@@ -87,6 +87,9 @@ pub enum ResolverCaller {
     Serve,
     /// Invoked from `prewarm`.
     Prewarm,
+    /// Invoked from a one-shot CLI query subcommand (for example
+    /// `search-semantic`), used as a CLI fallback for the MCP query tools.
+    Query,
 }
 
 impl ResolverCaller {
@@ -95,6 +98,7 @@ impl ResolverCaller {
             Self::Sync => "sync",
             Self::Serve => "serve",
             Self::Prewarm => "prewarm",
+            Self::Query => "query",
         }
     }
 }
@@ -269,6 +273,7 @@ mod tests {
         assert_eq!(ResolverCaller::Sync.label(), "sync");
         assert_eq!(ResolverCaller::Serve.label(), "serve");
         assert_eq!(ResolverCaller::Prewarm.label(), "prewarm");
+        assert_eq!(ResolverCaller::Query.label(), "query");
     }
 
     #[test]
