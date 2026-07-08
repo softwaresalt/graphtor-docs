@@ -167,6 +167,55 @@ Common validation errors:
 
 Run `graphtor-docs doctor` to validate the config file without running a sync.
 
+## Embedding Model (Semantic Search)
+
+Semantic search (`search_semantic`, `research_topic`, and their MCP `serve`
+equivalents) requires the `all-MiniLM-L6-v2` sentence-embedding model. By
+default graphtor-docs downloads it from the Hugging Face Hub into
+`~/.cache/huggingface` on first use. Pass `sync --no-embed` to skip embeddings
+entirely (semantic search is then disabled).
+
+### Offline / air-gapped: `GRAPHTOR_EMBED_MODEL_DIR`
+
+Set the `GRAPHTOR_EMBED_MODEL_DIR` environment variable to a local directory
+containing `config.json`, `tokenizer.json`, and `model.safetensors`.
+graphtor-docs then loads the model from that directory with **no network
+access** — useful for air-gapped environments or to sidestep Hub-download
+failures.
+
+Download the three files once (for example with Python `huggingface_hub`):
+
+```python
+from huggingface_hub import snapshot_download
+snapshot_download(
+    "sentence-transformers/all-MiniLM-L6-v2",
+    allow_patterns=["config.json", "tokenizer.json", "model.safetensors"],
+    local_dir="./.graphtor/models/all-MiniLM-L6-v2",
+)
+```
+
+> [!IMPORTANT]
+> Use an **absolute** path. The directory is resolved against the process
+> working directory, and the MCP `serve` working directory is set by the MCP
+> client — an absolute path is unambiguous in every mode.
+
+### Workspace convention: `.env.local` (CLI and MCP parity)
+
+Because the setting is a plain environment variable, it is inherited by every
+child process. Put it in a workspace-root `.env.local` file so it applies
+uniformly whether graphtor-docs runs as a CLI subcommand (`sync`) or as the
+MCP `serve` server:
+
+```text
+# .env.local (git-ignored)
+GRAPHTOR_EMBED_MODEL_DIR=C:\workspace\.graphtor\models\all-MiniLM-L6-v2
+```
+
+The `start.ps1` harness loader reads `.env.local` into the session environment
+at startup, so both the CLI you invoke and the MCP server the client launches
+inherit the value. This is the recommended way to make configuration behave
+identically in CLI and MCP mode.
+
 ## Annotated Full Example
 
 ```yaml
