@@ -33,7 +33,7 @@ may be a false positive — or a subtle issue that only one model caught. The pr
 preserves both signals with appropriate confidence labels, rather than losing unique
 findings or trusting any single model too much.
 
-Alternate model provider support (`` / ``)
+Alternate model provider support (`alt_review_provider` / `alt_review_family`)
 allows reviewer slots to be assigned to Gemini or other providers outside the standard
 tier routing set, ensuring reviewer diversity is not limited to a single provider's
 model family.
@@ -56,10 +56,10 @@ model family.
   speed/quality spectrum. Specify as a list matching the `reviewers` count, or
   leave unset to use the default tier distribution.
 * `alt_provider`: (Optional) Alternate model provider name (e.g., `google`).
-  Overrides `` for this invocation. When set, one reviewer
+  Overrides `alt_review_provider` for this invocation. When set, one reviewer
   slot is assigned to the alternate provider.
 * `alt_family`: (Optional) Alternate model family (e.g., `gemini-2.5-flash`).
-  Overrides `` for this invocation. Paired with `alt_provider`.
+  Overrides `alt_review_family` for this invocation. Paired with `alt_provider`.
 * `ruleset`: (Optional) Path to a ruleset file. Defaults to
   `.github/copilot-review-instructions.md` if present, otherwise uses the
   built-in harness review ruleset.
@@ -97,7 +97,7 @@ Output file at `docs/closure/{YYYY-MM-DD}-{slug}-adversarial-review.md`.
    * For 4 reviewers: add a second Tier 2 with a different model identifier.
    * For 5 reviewers: add Tier 1 and Tier 2 variants.
 4. Apply alternate model provider assignment:
-   * Read `` and `` (or `alt_provider`
+   * Read `alt_review_provider` and `alt_review_family` (or `alt_provider`
      / `alt_family` input overrides).
    * If both are non-empty: replace one reviewer slot with the alternate provider.
      Replace Reviewer-B (Tier 2 slot) by default to maximize diversity while
@@ -110,13 +110,13 @@ Output file at `docs/closure/{YYYY-MM-DD}-{slug}-adversarial-review.md`.
 | Reviewer | Default Tier | Default Model | With Alternate Provider |
 |---|---|---|---|
 | Reviewer-A | Tier 1 (fast/cheap) | `claude-haiku-4.5` | unchanged |
-| Reviewer-B | Tier 2 (standard) | `claude-sonnet-4.6` | `` via `` |
+| Reviewer-B | Tier 2 (standard) | `claude-sonnet-4.6` | `alt_review_family` via `alt_review_provider` |
 | Reviewer-C | Tier 3 (frontier) | `claude-opus-4.6` | unchanged |
 | Reviewer-D (4-reviewer) | Tier 2 variant | different from B | unchanged |
 | Reviewer-E (5-reviewer) | Tier 1 variant | different from A | unchanged |
 
-When `` is empty, all reviewer slots use standard tier
-routing. When `` is non-empty, Reviewer-B is routed to the
+When `alt_review_provider` is empty, all reviewer slots use standard tier
+routing. When `alt_review_provider` is non-empty, Reviewer-B is routed to the
 alternate provider. This ensures reviewer diversity is not limited to a single
 provider's model family even when only 3 reviewers are used.
 
@@ -254,7 +254,7 @@ re-review loop run in this agent — no further delegation.
   `safe_auto` fixes were applied; it is skipped when no fixes were made
 * The recursion cap of 2 cycles is enforced — the agent MUST NOT recurse more than
   twice regardless of remaining findings
-* When `` is set, at least one reviewer must use the alternate
+* When `alt_review_provider` is set, at least one reviewer must use the alternate
   provider; failure to route when the provider and family are both configured and
   reachable is a configuration error; if the provider is unreachable at runtime,
   fall back to the Tier 2 standard model, log the fallback, and continue

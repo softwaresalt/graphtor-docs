@@ -158,7 +158,7 @@ Use a different model from the caller when available to force genuine diversity 
 
 1. Always-on: spawn Constitution Reviewer, Rust Reviewer, Correctness Reviewer, Maintainability Reviewer, Learnings Researcher
 2. Conditional: analyze changed file paths, content patterns, and workspace agent-native signals to select additional personas:
-   * Select **Security Reviewer** (`security-reviewer.agent.md`) when the diff touches: authentication or authorization code, public endpoint handlers, user input processing, permission or role checks, secret or credential management, or files matching `unsafe blocks without SAFETY comments, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, secrets in config`
+   * Select **Security Reviewer** (`security-reviewer.agent.md`) when the diff touches: authentication or authorization code, public endpoint handlers, user input processing, permission or role checks, secret or credential management, or content matching these patterns: unsafe blocks without SAFETY comments, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, secrets in config
    * Select **Template Integrity Reviewer** (`template-integrity-reviewer.agent.md`) when the diff touches template files, Markdown harness artifacts, review/policy/instruction assets, or generated-artifact reference tables
    * Select **Schema-CLI-Docs Coupling Reviewer** (`schema-cli-docs-coupling-reviewer.agent.md`) when the diff spans schema files, `src/` verification logic, install/tune skills, or operator-facing documentation in the same change set
 3. Broadcast the routing decision with persona count

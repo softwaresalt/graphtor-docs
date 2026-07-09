@@ -15,8 +15,9 @@
     "workspace-discovery"
   ],
   "agents": [
-    ".github/agents/auto-mergeinstall.agent.md",
-    ".github/agents/auto-tune.agent.md"
+    ".github/agents/_orchestrator.agent.md",
+    ".github/agents/.ship.agent.md",
+    ".github/agents/.stage.agent.md"
   ],
   "skills": [
     ".github/skills/"
