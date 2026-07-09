@@ -2,7 +2,7 @@
 description: "Validate affected runtime surfaces after build and CI using adapter-based runtime validators and structured evidence"
 ---
 
-## Runtime Verification
+# Runtime Verification
 
 Validate that the change works in the runtime surfaces it actually affects. Green tests are necessary; they are not always sufficient.
 

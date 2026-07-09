@@ -1,6 +1,6 @@
 schema_version: 1.0.0
 installed_at: '2026-05-10T08:42:00-07:00'
-tuned_at: '2026-07-08T23:14:57.764687-07:00'
+tuned_at: '2026-07-08T23:51:55.375957-07:00'
 autoharness_version: 1.4.11
 autoharness_home: C:\Python\Python312\Lib\site-packages\autoharness\data
 profile_hash: 77f60464a985e74b3002021e70b820643aca6c7122c850f956c72957df24d76a
@@ -38,7 +38,7 @@ capability_pack_overlays:
 - pack: agent-engram
   overlay_targets:
   - .github/instructions/agent-engram.instructions.md
-  - .github/agents/learnings-researcher.agent.md
+  - .github/agents/subagents/learnings-researcher.agent.md
   - .github/skills/skill-search/SKILL.md
   verification_checks:
   - agent-engram.instructions.md installed
@@ -59,12 +59,12 @@ capability_pack_overlays:
 - pack: adversarial-review
   overlay_targets:
   - .github/instructions/adversarial-review.instructions.md
-  - .github/agents/architecture-strategist.agent.md
-  - .github/agents/concurrency-reviewer.agent.md
-  - .github/agents/constitution-reviewer.agent.md
-  - .github/agents/scope-boundary-auditor.agent.md
-  - .github/agents/technology-reviewer.agent.md
-  - .github/agents/agent-native-parity-reviewer.agent.md
+  - .github/agents/subagents/architecture-strategist.agent.md
+  - .github/agents/subagents/concurrency-reviewer.agent.md
+  - .github/agents/subagents/constitution-reviewer.agent.md
+  - .github/agents/subagents/scope-boundary-auditor.agent.md
+  - .github/agents/subagents/technology-reviewer.agent.md
+  - .github/agents/subagents/agent-native-parity-reviewer.agent.md
   - .github/skills/review/SKILL.md
   verification_checks:
   - adversarial-review.instructions.md installed
@@ -177,7 +177,7 @@ artifacts:
   artifact_type: foundation
   primitive: 6
   template: foundation/copilot-instructions.md.tmpl
-  checksum: b699aadd9c2bed572940c51b8329d19ab02e4f57eaec5bc2cf5af3f6f96be376
+  checksum: 97ec5c2db9938f631d33c31e115fda743d1b0c68769480309ccd2c8c59625123
 - path: .github/instructions/adversarial-review.instructions.md
   artifact_type: instruction
   primitive: 7
@@ -242,7 +242,7 @@ artifacts:
   artifact_type: foundation
   primitive: 5
   template: foundation/constitution.instructions.md.tmpl
-  checksum: b525e942ee2d07ba991fb1009ce0e1a14dbcd496e593bc465dbece111094eb7d
+  checksum: 7afedd4116ead48ddd106dd3cd4350f9876d891f810aff1d6e688300f32d80fe
 - path: .github/instructions/git-merge.instructions.md
   artifact_type: instruction
   primitive: 6
@@ -412,7 +412,7 @@ artifacts:
   artifact_type: skill
   primitive: 10
   template: skills/operational-closure/SKILL.md.tmpl
-  checksum: d5aa9843c7a89560a45f846b766514ef4fdd0c186eea20c651a095d3f926d9b3
+  checksum: 7da73783a0f12c1264a0cf47a31397775bf87839e1a94c334136ce821af56f79
 - path: .github/skills/plan-harden/SKILL.md
   artifact_type: skill
   primitive: 10
@@ -437,7 +437,7 @@ artifacts:
   artifact_type: skill
   primitive: 10
   template: skills/runtime-verification/SKILL.md.tmpl
-  checksum: 472dfc98d32761e952a9dae3455962e4791181984e09bf017a3300f69080a8de
+  checksum: 965c7a07af09d5c45a31e72b7ad4725c37dc94974f0d5d7c1bfe7fa8bf42b53e
 - path: .github/skills/safety-modes/SKILL.md
   artifact_type: skill
   primitive: 5
@@ -467,12 +467,12 @@ artifacts:
   artifact_type: script
   primitive: 5
   template: scripts/.markdownlint.json.tmpl
-  checksum: c98a7f4c0dcd7d9d8d1cc3da18a586c2ed9600fd32a32567cfaf94f15fd91349
+  checksum: c527c1b08510f9f34a8c15a693e1c3294d91c95009ee670b13950875aeef0e38
 - path: AGENTS.md
   artifact_type: foundation
   primitive: 9
   template: foundation/AGENTS.md.tmpl
-  checksum: 8609e0f0edd3f6b2dcf6ba3fb7f0cd3b77490f74255f4e33885923b1dd3aaaa8
+  checksum: 521cbf764dc611989d974e11f579178c539b182ca83a8ffdc86828adb972f21d
 - path: scripts/pre-commit-markdownlint.ps1
   artifact_type: script
   primitive: 5
@@ -513,6 +513,26 @@ artifacts:
   primitive: 4
   template: prompts/feature-flow-dark.prompt.md.tmpl
   checksum: 4f5ff60fcb8e6771fc888ad7345125aa684a5b1d3921f415981fd1623a406cc1
+- path: .github/agents/subagents/correctness-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/correctness-reviewer.agent.md.tmpl
+  checksum: c9b6a78e2462ef5056d8d5c46c9b4119cc14ce1578175ff6ab124c06cecdc3b1
+- path: .github/agents/subagents/maintainability-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/maintainability-reviewer.agent.md.tmpl
+  checksum: 0d95daf6155afc9990348cbed9c1afda4ea255dafe7ef2cc6a83114188c3ad42
+- path: .github/agents/subagents/template-integrity-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/template-integrity-reviewer.agent.md.tmpl
+  checksum: 877ed8a76be304247fa3cf184937733512964ad85423b1559f83b8fd87caef59
+- path: .github/agents/subagents/schema-cli-docs-coupling-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/schema-cli-docs-coupling-reviewer.agent.md.tmpl
+  checksum: 6cc9bdf66cd8dfd4a16ba20ccd68b43aae88c9ccd00391122cd76fb60d7647a9
 variables_used:
   PROJECT_NAME: graphtor-docs
   PRIMARY_LANGUAGE: Rust

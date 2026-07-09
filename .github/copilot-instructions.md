@@ -220,6 +220,15 @@ When the workspace enabled the `adversarial-review` capability pack:
 * treat HIGH-confidence P0/P1 findings as gate-blocking
 * feed remediation queue entries into backlog
 
+### graphtor-docs
+
+When the workspace enabled the `graphtor-docs` capability pack:
+
+* prefer `search_local_docs` / `search_semantic` / `research_topic` over raw file scans or web search for documentation lookups covered by indexed sources
+* verify server reachability via `get_status` before trusting query results
+* fall back to file-based search only when the graphtor-docs server is unavailable or sources are unindexed
+* treat `.graphtor/config/sources.yaml` as the authoritative source registry and `.graphtor/` generated artifacts as tool-managed state
+
 ## Remote Operator Integration
 
 ### agent-intercom

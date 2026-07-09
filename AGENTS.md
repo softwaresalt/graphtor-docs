@@ -175,6 +175,23 @@ compliance-critical work:
 * treat HIGH-confidence P0/P1 findings as gate-blocking just like standard review findings
 * feed remediation queue entries into backlog for structured follow-up
 
+### Capability Overlay — graphtor-docs
+
+When the workspace enables the `graphtor-docs` capability pack, agents MUST use the configured
+graphtor-docs workflow for indexed local documentation search, semantic retrieval, and doc-graph
+traversal:
+
+* prefer `search_local_docs` / `search_semantic` / `research_topic` over raw file scans or web search
+  for documentation lookups covered by indexed sources
+* verify server reachability via `get_status` before trusting query results, and fall back to file-based
+  search only when the graphtor-docs server is unavailable or sources are unindexed
+* treat `.graphtor/config/sources.yaml` as the authoritative source registry and
+  `.graphtor/` generated artifacts (indexes, embeddings, chunk registries) as tool-managed state
+
+**Rationale**: graphtor-docs exists to give agents fast, indexed access to cross-referenced
+documentation without repeatedly re-scanning raw files. Bypassing it by default discards the
+token-efficiency and freshness guarantees the overlay was meant to provide.
+
 ### Capability Overlay Interaction Rules
 
 When multiple capability packs are enabled simultaneously, follow these
@@ -268,8 +285,10 @@ cargo audit
    exempt, and they cannot perform implementation, template/source/config
    mutation, shipment claim, PR preparation, or Ship execution.
 4. **Dark factory mode (P-017)**: Activate only through the exact trigger
-   `Run pipeline in dark mode`, `Run pipeline in dark factory mode`, or the
-   `/feature-flow-dark` prompt shim. Dark mode must record `DARK_MODE_ACTIVE`,
+   `Run pipeline in dark mode` or its explicit alias `Run pipeline in dark factory
+   mode`. The `/feature-flow-dark` prompt is a developer-friendly shim that
+   forwards to the canonical trigger — it is not itself an independent
+   activation phrase. Dark mode must record `DARK_MODE_ACTIVE`,
    stay bounded to the declared scope, preserve P-001 / P-009 / P-014 / P-016,
    keep local review readiness authoritative, emit required visibility events,
    and complete post-merge closure before the scope is considered complete.
