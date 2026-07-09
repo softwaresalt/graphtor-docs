@@ -138,6 +138,29 @@ creating parallel task state outside the configured backlog workspace.
 ordering, and durable execution traces. Treating it as a thin file store would discard the very
 capabilities that justify enabling the overlay.
 
+### Capability Overlay — adversarial-review
+
+When the workspace enables the `adversarial-review` capability pack, agents MUST use the
+configured multi-model dispatch workflow for security-sensitive or compliance-critical work.
+Agents MUST escalate from standard review when 3+ P0/P1 findings are surfaced, dispatch parallel
+reviewer instances across different model tiers, and assemble consensus-weighted findings before
+treating HIGH-confidence P0/P1 findings as gate-blocking.
+
+**Rationale**: A single-model review has blind spots. Multi-model consensus review exists to
+raise confidence on the highest-risk changes before they merge.
+
+### Capability Overlay — graphtor-docs
+
+When the workspace enables the `graphtor-docs` capability pack, agents MUST prefer indexed
+semantic and keyword search (`search_local_docs`, `search_semantic`, `research_topic`) over raw
+file scans for documentation lookups, MUST verify server reachability before trusting query
+results, and MUST treat `.graphtor/` generated artifacts as tool-managed state rather than files
+to hand-edit directly.
+
+**Rationale**: graphtor-docs exists to compress documentation cross-referencing into a queryable
+local index. Bypassing it discards the token-efficiency and freshness guarantees the overlay was
+meant to provide.
+
 ### IX. Git-Friendly Persistence
 
 All workspace state managed by the agent harness MUST be serializable to
@@ -208,7 +231,13 @@ cargo audit
    test harness before implementation begins.
 2. **Backlog-driven planning**: All task tracking MUST use the backlog system.
    Static markdown task lists outside `.backlogit/` are not permitted.
-3. **Branch per release unit**: Each feature or chore MUST be developed on a dedicated branch.
+3. **Single active implementation branch/worktree (P-016)**: Each feature or chore MUST be
+   developed on one dedicated implementation branch in one active worktree. Agents
+   MUST NOT split implementation, backlog execution, PR preparation, or closure
+   across parallel branches or worktrees. The only exception is an explicit
+   Stage-owned, time-boxed spike/research worktree used for staging investigation;
+   that worktree MUST NOT perform implementation, template/source/config mutation,
+   shipment claim, PR preparation, or Ship execution.
 4. **Commit discipline**: Each commit MUST be coherent and buildable. Commit
    messages follow conventional commits format (`feat:`, `fix:`, `docs:`, `test:`).
 5. **No dead code**: Placeholder modules MUST be replaced or removed before a

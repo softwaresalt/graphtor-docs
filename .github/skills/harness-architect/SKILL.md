@@ -103,7 +103,7 @@ For each task, select the appropriate harness strategy:
 Write harness files into the module that matches the work item's scope:
 
 * **Unit harnesses**: colocated with the production code in the
-  appropriate src/ subdirectory
+  appropriate src subdirectory
 * **Integration harnesses**: in `tests/integration/` when the
   task spans modules or runtime boundaries
 * **Contract harnesses**: in `tests/contract/` when the task

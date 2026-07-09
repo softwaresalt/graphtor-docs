@@ -15,13 +15,24 @@ Organize MCP server code following the standard layout:
 ```text
 src/
   main.rs           # Entry point, MCP server initialization
-  acquire/          # Local source directory scanning
+  lib.rs            # Crate root, public module declarations
+  lock.rs           # Database lock coordination
+  acquire/          # Documentation source acquisition (git, local, web)
   chunk/            # pulldown-cmark AST parsing, heading-based chunking
-  config/           # sources.yaml loading, CLI args
+  cli/              # clap-based CLI argument parsing and subcommands
+  config/           # sources.yaml loading, configuration validation
+  db/               # lancedb/kuzu embedded database access
+  embed/            # candle in-process embedding inference
   error/            # thiserror error types
   ingest_contract/  # Docline v1 frontmatter contract validation
   logging/          # tracing subscriber setup
+  mcp/              # rmcp tool/resource/prompt registration, STDIO transport
+  parse/            # Document parsing and normalization
   path/             # Path normalization and resolution
+  pipeline/         # Acquire → chunk → embed → index pipeline orchestration
+  query/            # Semantic search query handling
+  sync/             # Incremental source synchronization
+  workspace/        # Workspace binding and state management
 ```
 
 ## Server Lifecycle

@@ -36,8 +36,8 @@ This is a leaf executor. No subagent spawning. Maximum depth: 0.
 
 | Variable | Purpose |
 |---|---|
-| `.autoharness/harness-manifest.json` | Path to the installed harness manifest (default: `.autoharness/harness-manifest.yaml`) |
-| `1.4.5` | Expected autoharness version string from `autoharness_home` metadata |
+| `.autoharness/harness-manifest.yaml` | Path to the installed harness manifest (default: `.autoharness/harness-manifest.yaml`) |
+| `1.4.11` | Install-time autoharness version baked at install; recorded for reference. Current-version drift is resolved live via the `autoharness version` CLI, not from this value |
 
 ## Workflow
 
@@ -45,7 +45,7 @@ This is a leaf executor. No subagent spawning. Maximum depth: 0.
 
 Determine what is installed before running any checks.
 
-1. Check for the harness manifest at `.autoharness/harness-manifest.json`.
+1. Check for the harness manifest at `.autoharness/harness-manifest.yaml`.
    * If absent: record **MISSING MANIFEST** — set scope-detection grade to F and skip Phases 2 and 3. Phases 4–6 proceed using directory heuristics.
 2. If the manifest is present, load it and extract:
    * `schema_version`
@@ -66,11 +66,12 @@ Determine what is installed before running any checks.
 
 **Skip condition**: Skip if Phase 1 found no manifest.
 
-Compare the installed version with the current `autoharness_home` version.
+Compare the version that performed the install against the current autoharness version.
 
-1. Read `autoharness_version` from the manifest.
-2. Compare against `1.4.5` (the version of the autoharness installation that would perform upgrades).
-3. Classify the drift:
+1. Read `autoharness_version` from the manifest (the version that performed the install).
+2. Resolve the **current** autoharness version live by running the `autoharness version` CLI at diagnostic time (this is the version that would perform upgrades).
+   * If the CLI is unavailable, current-version resolution has **failed** — do NOT substitute the install-time `1.4.11` value as the current version (comparing install-time against install-time would report a false match). Record **WARN — current autoharness version could not be resolved; drift undetectable** and skip the drift classification below.
+3. When the current version is resolved, compare it against the manifest version and classify the drift:
 
 | Condition | Signal |
 |---|---|
@@ -79,6 +80,7 @@ Compare the installed version with the current `autoharness_home` version.
 | Minor-version difference | WARN — drift, tune-harness required |
 | Major-version difference | FAIL — breaking drift, reinstall recommended |
 | Manifest version field absent | WARN — legacy install, version unknown |
+| Current version unresolved (CLI unavailable) | WARN — live current-version resolution failed, drift undetectable |
 
 **Phase 2 health signal**: Highest severity condition found above.
 

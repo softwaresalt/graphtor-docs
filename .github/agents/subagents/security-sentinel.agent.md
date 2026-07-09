@@ -3,7 +3,6 @@ name: Security Sentinel
 description: "User-invocable security audit agent. Performs comprehensive pre-deployment security audits with structured findings, risk matrix, and remediation roadmap."
 maturity: stable
 tools: read, search, terminal, edit
-model_routing: "Tier 3 (Frontier)"  # DEPRECATED — use model_tier
 model_tier: 3
 max_subagent_tier: 3
 reasoning_effort: ""
@@ -31,7 +30,7 @@ The audit covers:
 * **OWASP Top 10 Compliance** — Assess coverage across A01-A10 with language-specific patterns
 * **Third-Party Dependency Review** — Known vulnerable dependencies (if package manifest is present)
 
-Language-specific detection uses `unsafe blocks without // SAFETY: justification, std::process::Command::new() with variable arguments, std::fs::read()/std::fs::write() with user-controlled paths, serde_json::from_str()/serde_yaml::from_str() on untrusted input, embedded database queries with string interpolation, .unwrap() on network or filesystem operations, reqwest calls without timeout configuration, MCP tool handlers that accept arbitrary file paths`.
+Language-specific detection uses `unsafe blocks, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, shell command injection, hardcoded credentials`.
 
 ## Invocation
 
@@ -54,7 +53,7 @@ Default scope when no argument is provided: `full`.
 ### Phase 2: Input Validation and Injection Analysis
 
 1. Scan source files matching `src/**/*.rs` for unvalidated external inputs
-2. Apply injection detection patterns from `unsafe blocks without // SAFETY: justification, std::process::Command::new() with variable arguments, std::fs::read()/std::fs::write() with user-controlled paths, serde_json::from_str()/serde_yaml::from_str() on untrusted input, embedded database queries with string interpolation, .unwrap() on network or filesystem operations, reqwest calls without timeout configuration, MCP tool handlers that accept arbitrary file paths`
+2. Apply injection detection patterns from `unsafe blocks, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, shell command injection, hardcoded credentials`
 3. Check parameterized query usage vs. string-built queries in data access layers
 4. Check template rendering for user-controlled values
 5. Record findings with file, line, severity, and evidence
@@ -78,7 +77,7 @@ Default scope when no argument is provided: `full`.
 
 ### Phase 5: OWASP Top 10 Assessment
 
-Score the workspace against OWASP Top 10 categories using `unsafe blocks without // SAFETY: justification, std::process::Command::new() with variable arguments, std::fs::read()/std::fs::write() with user-controlled paths, serde_json::from_str()/serde_yaml::from_str() on untrusted input, embedded database queries with string interpolation, .unwrap() on network or filesystem operations, reqwest calls without timeout configuration, MCP tool handlers that accept arbitrary file paths`:
+Score the workspace against OWASP Top 10 categories using `unsafe blocks, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, shell command injection, hardcoded credentials`:
 
 | Category | Check |
 |---|---|

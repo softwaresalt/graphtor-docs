@@ -1,0 +1,25 @@
+{
+  "name": "autoharness",
+  "description": "Agent harness framework — compose 10 irreducible AI coding assistant primitives into any workspace",
+  "version": "1.4.11",
+  "author": {
+    "name": "softwaresalt"
+  },
+  "license": "MIT",
+  "keywords": [
+    "harness",
+    "agents",
+    "coding-assistant",
+    "primitives",
+    "copilot",
+    "workspace-discovery"
+  ],
+  "agents": [
+    ".github/agents/_orchestrator.agent.md",
+    ".github/agents/.ship.agent.md",
+    ".github/agents/.stage.agent.md"
+  ],
+  "skills": [
+    ".github/skills/"
+  ]
+}

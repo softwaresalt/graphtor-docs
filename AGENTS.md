@@ -175,6 +175,23 @@ compliance-critical work:
 * treat HIGH-confidence P0/P1 findings as gate-blocking just like standard review findings
 * feed remediation queue entries into backlog for structured follow-up
 
+### Capability Overlay — graphtor-docs
+
+When the workspace enables the `graphtor-docs` capability pack, agents MUST use the configured
+graphtor-docs workflow for indexed local documentation search, semantic retrieval, and doc-graph
+traversal:
+
+* prefer `search_local_docs` / `search_semantic` / `research_topic` over raw file scans or web search
+  for documentation lookups covered by indexed sources
+* verify server reachability via `get_status` before trusting query results, and fall back to file-based
+  search only when the graphtor-docs server is unavailable or sources are unindexed
+* treat `.graphtor/config/sources.yaml` as the authoritative source registry and
+  `.graphtor/` generated artifacts (indexes, embeddings, chunk registries) as tool-managed state
+
+**Rationale**: graphtor-docs exists to give agents fast, indexed access to cross-referenced
+documentation without repeatedly re-scanning raw files. Bypassing it by default discards the
+token-efficiency and freshness guarantees the overlay was meant to provide.
+
 ### Capability Overlay Interaction Rules
 
 When multiple capability packs are enabled simultaneously, follow these
@@ -261,10 +278,23 @@ cargo audit
 1. **Harness before code**: Every feature or chore MUST have a compiling but failing
    test harness before implementation begins.
 2. **Backlog-driven planning**: All task tracking uses the configured backlog workspace and registry-backed operations; do not invent parallel task stores.
-3. **Branch per release unit**: Each feature or chore on a dedicated branch.
-4. **Commit discipline**: Conventional commits format (`feat:`, `fix:`, `docs:`, `test:`).
-5. **No dead code**: Placeholder modules replaced or removed before completion.
-6. **Closure before forgetfulness**: Runtime verification and operational closure happen before work is considered fully absorbed.
+3. **Single active implementation branch/worktree**: Each feature or chore uses
+   one dedicated implementation branch in one active worktree. Do not split
+   implementation, backlog execution, PR preparation, or closure across parallel
+   branches/worktrees. Only explicit Stage-owned spike/research worktrees are
+   exempt, and they cannot perform implementation, template/source/config
+   mutation, shipment claim, PR preparation, or Ship execution.
+4. **Dark factory mode (P-017)**: Activate only through the exact trigger
+   `Run pipeline in dark mode` or its explicit alias `Run pipeline in dark factory
+   mode`. The `/feature-flow-dark` prompt is a developer-friendly shim that
+   forwards to the canonical trigger — it is not itself an independent
+   activation phrase. Dark mode must record `DARK_MODE_ACTIVE`,
+   stay bounded to the declared scope, preserve P-001 / P-009 / P-014 / P-016,
+   keep local review readiness authoritative, emit required visibility events,
+   and complete post-merge closure before the scope is considered complete.
+5. **Commit discipline**: Conventional commits format (`feat:`, `fix:`, `docs:`, `test:`).
+6. **No dead code**: Placeholder modules replaced or removed before completion.
+7. **Closure before forgetfulness**: Runtime verification and operational closure happen before work is considered fully absorbed.
 
 ### Task Granularity (NON-NEGOTIABLE)
 
@@ -345,8 +375,8 @@ The table below is maintained as agents are superseded:
 | `doc-ops` | `ship` post-merge closure protocol | Ship handles knowledge graduation and doc gardening after merge |
 | `memory` | Stage and Ship session continuity protocols | Session persistence is inline in both primary agents |
 | `pr-review` | `ship` + `pr-lifecycle` skill | Ship manages the full PR lifecycle including review delegation |
-| `review` (agent) | `review` skill | Converted from agent to skill; dispatches persona subagents from `.github/agents/review/` |
-| `plan-review` (agent) | `plan-review` skill | Converted from agent to skill; dispatches persona subagents from `.github/agents/review/` |
+| `review` (agent) | `review` skill | Converted from agent to skill; dispatches persona subagents from `.github/agents/subagents/` |
+| `plan-review` (agent) | `plan-review` skill | Converted from agent to skill; dispatches persona subagents from `.github/agents/subagents/` |
 | `harness-architect` (agent) | `harness-architect` skill | Converted from agent to skill; invoked by ship agent |
 
 ---

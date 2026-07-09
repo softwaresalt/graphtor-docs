@@ -1,0 +1,317 @@
+schema_version: 1.0.0
+generated_at: '2026-04-29T00:23:00-07:00'
+workspace_path: C:\Source\GitHub\graphtor
+languages:
+  primary: Rust
+  version: edition 2021, rust-version 1.75
+  secondary:
+  - Python
+frameworks:
+  list:
+  - rmcp
+  - clap
+  - tokio
+  - candle
+  - lancedb
+  - kuzu
+  mcp_sdk: rmcp
+  mcp_transport: stdio
+primary_stack_pack: mcp-server
+stack_packs:
+- mcp-server
+- cli-tool
+build:
+  tool: cargo
+  command: cargo build
+  check_command: cargo check
+test:
+  runner: cargo test
+  command: cargo test
+  directory: tests/
+lint:
+  tool: clippy
+  command: cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+format:
+  tool: rustfmt
+  command: cargo fmt --all
+  check_command: cargo fmt --all -- --check
+  fix_command: cargo fmt --all
+ci:
+  platform: GitHub Actions
+  pipeline_steps:
+  - fmt
+  - clippy
+  - test
+  - audit
+  quality_gates:
+  - cargo fmt --all -- --check
+  - cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+  - cargo test --all-targets
+  - cargo audit
+structure:
+  source_layout: src/ with module directories (acquire, chunk, config, error, logging, path)
+  test_layout: tests/ flat layout with integration test files
+  doc_layout: docs/ with adrs, archive, cli-reference, closure, compound, decisions, exec-plans, memory,
+    research, reviews
+runtime_surfaces:
+  web_ui: false
+  public_api: false
+  background_jobs: false
+  browser_tooling: []
+  deployment_manifests: []
+conventions:
+  code_style:
+    unsafe_policy: forbid(unsafe_code)
+    lint_level: clippy::pedantic with -D warnings
+    error_handling: thiserror + anyhow, no unwrap/expect in library code
+    visibility_default: pub(crate)
+  git:
+    commit_style: conventional commits, imperative mood
+    branch_pattern: feature branches with task IDs
+  documentation:
+    public_items: /// doc comments required on all public items
+    modules: //! module-level doc comments on every module
+harness_recommendations:
+  preset: full
+  capability_packs:
+  - agent-intercom
+  - agent-engram
+  - backlogit
+  - adversarial-review
+  - graphtor-docs
+  install_layers:
+  - foundation
+  - instructions
+  - workflow
+  - review
+  - backlog
+  - knowledge
+  - overlays
+  recommendation_reasons:
+    preset:
+    - Mature project with existing comprehensive harness (13 agents, 10 instructions, 2 skills)
+    - Full CI pipeline with GitHub Actions
+    - Multiple MCP integrations (engram, backlogit, intercom)
+    - Established code conventions and quality gates
+    capability_packs:
+    - item: agent-intercom
+      because: agent-intercom MCP server configured in .vscode/mcp.json
+      signals:
+      - .vscode/mcp.json references agent-intercom
+      - copilot-instructions.md describes remote approval workflow
+    - item: agent-engram
+      because: .engram/ directory exists with full configuration
+      signals:
+      - .engram/config.toml present
+      - .engram/code-graph/ present
+      - .vscode/mcp.json references engram
+    - item: backlogit
+      because: backlogit CLI and MCP both available with full config
+      signals:
+      - .backlogit/ directory with config.yaml
+      - backlogit MCP in .vscode/mcp.json
+      - backlogit CLI on PATH
+    - item: adversarial-review
+      because: MCP server product with safety-critical concerns
+      signals:
+      - rmcp dependency for MCP server
+      - forbid(unsafe_code)
+      - embedded database operations
+    install_layers:
+    - item: foundation
+      because: Existing AGENTS.md and copilot-instructions.md need alignment with autoharness structure
+      signals:
+      - AGENTS.md exists
+      - copilot-instructions.md exists
+    - item: instructions
+      because: 14 instruction files missing for capability packs and additional guidance
+      signals:
+      - No agent-intercom, agent-engram, backlogit, or adversarial-review instructions
+    - item: workflow
+      because: 17 skills missing that power the stage/ship pipeline
+      signals:
+      - Only build-feature and compact-context skills exist
+    - item: review
+      because: No review persona agents exist
+      signals:
+      - No architecture-strategist, concurrency-reviewer, etc.
+    - item: backlog
+      because: backlogit already configured; policies and stash template needed
+      signals:
+      - .backlogit/ exists with full config
+    - item: knowledge
+      because: docs/ structure mostly exists but missing design-docs and product-specs
+      signals:
+      - docs/compound, decisions, memory, closure exist
+    - item: overlays
+      because: 4 capability packs require overlay composition
+      signals:
+      - agent-intercom, agent-engram, backlogit, adversarial-review packs selected
+agent_intercom:
+  detected: true
+  mcp_configured: true
+  config_paths:
+  - .vscode/mcp.json
+  instruction_markers:
+  - .github/copilot-instructions.md describes remote approval workflow
+  recommended: true
+agent_engram:
+  detected: true
+  mcp_configured: true
+  config_paths:
+  - .vscode/mcp.json
+  - .engram/config.toml
+  instruction_markers:
+  - .engram/ directory with code-graph, db, registry
+  recommended: true
+agent_native:
+  detected: true
+  mcp_sdk_present: true
+  mcp_transport: stdio
+  agent_tooling_markers:
+  - rmcp in Cargo.toml planned dependencies
+  - src/mcp/ directory planned
+  user_agent_parity_required: true
+  recommended_reviewer: true
+existing_harness:
+  has_harness: true
+  artifacts:
+  - path: .github/agents/auto-mergeinstall.agent.md
+    type: agent
+    description: Auto-MergeInstall agent
+  - path: .github/agents/auto-tune.agent.md
+    type: agent
+    description: Auto-Tune agent
+  - path: .github/agents/backlog-harvester.agent.md
+    type: agent
+    description: Backlog harvester agent
+  - path: .github/agents/build-orchestrator.agent.md
+    type: agent
+    description: Build orchestrator agent
+  - path: .github/agents/doc-ops.agent.md
+    type: agent
+    description: Doc operations agent
+  - path: .github/agents/harness-architect.agent.md
+    type: agent
+    description: Harness architect agent
+  - path: .github/agents/memory.agent.md
+    type: agent
+    description: Memory agent
+  - path: .github/agents/pr-review.agent.md
+    type: agent
+    description: PR review agent
+  - path: .github/agents/prompt-builder.agent.md
+    type: agent
+    description: Prompt builder agent
+  - path: .github/agents/rust-engineer.agent.md
+    type: agent
+    description: Rust engineer agent
+  - path: .github/agents/rust-mcp-expert.agent.md
+    type: agent
+    description: Rust MCP expert agent
+  - path: .github/agents/ship.agent.md
+    type: agent
+    description: Ship agent
+  - path: .github/agents/stage.agent.md
+    type: agent
+    description: Stage agent
+  - path: .github/skills/build-feature
+    type: skill
+    description: Build feature skill
+  - path: .github/skills/compact-context
+    type: skill
+    description: Compact context skill
+  - path: .github/instructions/commit-message.instructions.md
+    type: instruction
+    description: Commit message guidelines
+  - path: .github/instructions/constitution.instructions.md
+    type: instruction
+    description: Constitution principles
+  - path: .github/instructions/git-merge.instructions.md
+    type: instruction
+    description: Git merge protocol
+  - path: .github/instructions/markdown.instructions.md
+    type: instruction
+    description: Markdown conventions
+  - path: .github/instructions/prompt-builder.instructions.md
+    type: instruction
+    description: Prompt builder standards
+  - path: .github/instructions/pull-request.instructions.md
+    type: instruction
+    description: PR generation rules
+  - path: .github/instructions/rust-mcp-server.instructions.md
+    type: instruction
+    description: Rust MCP server practices
+  - path: .github/instructions/rust.instructions.md
+    type: instruction
+    description: Rust coding conventions
+  - path: .github/instructions/workflows.instructions.md
+    type: instruction
+    description: GitHub Actions workflows
+  - path: .github/instructions/writing-style.instructions.md
+    type: instruction
+    description: Writing style conventions
+  - path: .github/prompts/ping-loop.prompt.md
+    type: prompt
+    description: Ping loop prompt
+  - path: AGENTS.md
+    type: foundation
+    description: Root agent instructions
+  - path: .github/copilot-instructions.md
+    type: foundation
+    description: Shared development guidelines
+backlog_tool:
+  detected: true
+  tool_name: backlogit
+  directory: .backlogit
+  tool_type: both
+  mcp_registered: true
+  cli_available: true
+  config_path: .backlogit/config.yaml
+  registry_path: .backlogit/registry.yaml
+  status_values:
+  - queued
+  - active
+  - blocked
+  - review
+  - done
+  - accepted
+  - rejected
+  - archived
+  features:
+    queue: true
+    archive: true
+    shipments: true
+    checkpoints: true
+    dependencies: true
+  suffix_map:
+    feature: F
+    chore: C
+    task: T
+    spike: SP
+    deliberation: DL
+    bug: B
+    review: R
+    shipment: S
+    subtask: ST
+    epic: E
+vscode:
+  detected: true
+  user_settings_path: C:\Users\derek.williams\AppData\Roaming\Code\User\settings.json
+  has_agent_settings: false
+distribution:
+  is_global_tool: false
+  global_agents_dir: null
+  local_agents_dir: null
+tools:
+  markdownlint: false
+  markdownlint_config: null
+drift_report: null
+graphtor_docs:
+  detected: true
+  mcp_configured: true
+  sources_path: .graphtor/config/sources.yaml
+  binary_path: target/release/graphtor-docs
+  config_paths:
+  - .graphtor/config/sources.yaml
+  recommended: true

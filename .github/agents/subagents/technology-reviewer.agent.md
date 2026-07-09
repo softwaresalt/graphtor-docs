@@ -3,7 +3,6 @@ name: "Rust Reviewer"
 description: "Reviews code changes for Rust-specific safety, correctness, and best practices"
 maturity: stable
 tools: read, search
-model_routing: "Tier 1 (Fast/Cheap)"  # DEPRECATED — use model_tier
 model_tier: 1
 max_subagent_tier: 1
 reasoning_effort: ""
