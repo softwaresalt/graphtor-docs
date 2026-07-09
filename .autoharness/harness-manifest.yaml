@@ -1,6 +1,6 @@
 schema_version: 1.0.0
 installed_at: '2026-05-10T08:42:00-07:00'
-tuned_at: '2026-07-08T23:51:55.375957-07:00'
+tuned_at: '2026-07-09T00:12:52.275533-07:00'
 autoharness_version: 1.4.11
 autoharness_home: C:\Python\Python312\Lib\site-packages\autoharness\data
 profile_hash: 77f60464a985e74b3002021e70b820643aca6c7122c850f956c72957df24d76a
@@ -533,6 +533,11 @@ artifacts:
   primitive: 7
   template: agents/review/schema-cli-docs-coupling-reviewer.agent.md.tmpl
   checksum: 6cc9bdf66cd8dfd4a16ba20ccd68b43aae88c9ccd00391122cd76fb60d7647a9
+- path: .autoharness/backlog-registry.yaml
+  artifact_type: config
+  primitive: 3
+  template: backlog/registries/backlogit.registry.yaml
+  checksum: d23da4aa25071acdfc555e437445f69540bdd45f15e0539f4e40924bc8862ba2
 variables_used:
   PROJECT_NAME: graphtor-docs
   PRIMARY_LANGUAGE: Rust
