@@ -176,11 +176,11 @@ Before any pipeline work begins, verify tool availability per P-012. Follow the 
 Gather the full current backlog state:
 
 1. Check for active Ship work (any shipment in `active` status):
-   `backlogit_get_queue` filtered to `active`
+   `backlogit_list_shipments` filtered to `active`
    - If found: record as `active_shipment`. This determines whether planning-overlap mode is available.
 
 2. Check for queued shipments ready for Ship:
-   `backlogit_get_queue` filtered to `queued`
+   `backlogit_list_shipments` filtered to `queued`
    - If found: record as `queued_shipments`.
 
 3. Check stash for pending entries (entries not yet promoted to backlog):

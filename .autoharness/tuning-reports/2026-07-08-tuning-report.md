@@ -94,6 +94,31 @@ convention already confirmed elsewhere (e.g., `backlogit_create_item`,
 the live backlogit MCP tool registry** (e.g., via `backlogit_export_command_map` or
 `backlogit_get_metadata_catalog`) before relying on them operationally.
 
+**Caveat on inferred backlogit operation names — RESOLVED**: `.ship.agent.md` and
+`.stage.agent.md` originally referenced several backlogit MCP operations inferred from
+naming convention rather than confirmed. This was verified against the live backlogit
+tool registry via `backlogit_get_metadata_catalog` and `backlogit_export_command_map`,
+and 4 incorrect references were found and corrected:
+
+| File | Wrong (as first written) | Corrected to |
+|---|---|---|
+| `.ship.agent.md` | `backlogit_save_checkpoint` | `backlogit_create_checkpoint` |
+| `.ship.agent.md` | `backlogit_get_queue` (for shipment lookup) | `backlogit_list_shipments` |
+| `.stage.agent.md` | `backlogit_save_checkpoint` | `backlogit_create_checkpoint` |
+| `.stage.agent.md` | `backlogit_get_queue` (for shipment lookup) | `backlogit_list_shipments` |
+| `.stage.agent.md` | `backlogit_update_item` (for adding shipment items) | `backlogit_add_to_shipment` |
+| `.stage.agent.md` | `backlogit_get_item` (for reading back a shipment) | `backlogit_get_shipment` |
+| `_orchestrator.agent.md` | `backlogit_get_queue` (for active/queued shipment checks) | `backlogit_list_shipments` |
+
+All other inferred names (`backlogit_ack_hook_events`, `backlogit_poll_hook_events`,
+`backlogit_claim_shipment`, `backlogit_create_shipment`, `backlogit_cleanup_checkpoints`,
+`backlogit_get_checkpoint`, `backlogit_list_checkpoints`, `backlogit_resolve_checkpoint`,
+`backlogit_sync_index`, `backlogit_archive_item`, `backlogit_move_item`,
+`backlogit_create_item`, `backlogit_search_items`, `backlogit_get_item`,
+`backlogit_ship_shipment`) matched the live registry exactly. A final cross-check of every
+`backlogit_*` reference across all touched files against the full confirmed 58-tool
+registry found zero remaining unknown names.
+
 ### 4. Other genuine content fixes (unrelated to the governance framework)
 
 - **`.github/instructions/circuit-breaker.instructions.md`** — added the missing "Cooldown
@@ -139,9 +164,7 @@ only.
 ## Next Steps
 
 1. Review the diff on `chore/autoharness-tune-2026-07-08` and open a PR against `main`.
-2. Verify the inferred backlogit operation names in `.ship.agent.md` / `.stage.agent.md`
-   (checkpoint and shipment/hook operations) against the live backlogit tool registry.
-3. Decide whether to configure `model_routing.adversarial_review.alt_provider`/`alt_family`
+2. Decide whether to configure `model_routing.adversarial_review.alt_provider`/`alt_family`
    to activate the new alternate-reviewer-provider capability, or leave it disabled.
-4. Consider updating `harness-config.schema.json` upstream (or removing the custom
+3. Consider updating `harness-config.schema.json` upstream (or removing the custom
    capability pack) to resolve the pre-existing `strict_schema_blockers`.

@@ -1,6 +1,6 @@
 schema_version: 1.0.0
 installed_at: '2026-05-10T08:42:00-07:00'
-tuned_at: '2026-07-08T22:54:26.273763-07:00'
+tuned_at: '2026-07-08T23:14:57.764687-07:00'
 autoharness_version: 1.4.11
 autoharness_home: C:\Python\Python312\Lib\site-packages\autoharness\data
 profile_hash: 77f60464a985e74b3002021e70b820643aca6c7122c850f956c72957df24d76a
@@ -97,7 +97,7 @@ artifacts:
   artifact_type: agent
   primitive: 4
   template: agents/_orchestrator.agent.md.tmpl
-  checksum: 3b5bc098c9db7702ba20c2a0e83f48915106401a48bed204519a87854028c94f
+  checksum: ec135d0f9e3fbafd178af6a4d7f5548222c2ce41881dfe1e28e14a830eb830f7
 - path: .github/agents/subagents/learnings-researcher.agent.md
   artifact_type: agent
   primitive: 1
@@ -157,12 +157,12 @@ artifacts:
   artifact_type: agent
   primitive: 4
   template: agents/.ship.agent.md.tmpl
-  checksum: d1458f3ad9d2c2c60bfe8f93cad802a96154316446234f59093a4b2f75ed1eb2
+  checksum: f174ed0caf0b95d83189ddde54efc5d1e9488e3225920485aab0196156b2c802
 - path: .github/agents/.stage.agent.md
   artifact_type: agent
   primitive: 4
   template: agents/.stage.agent.md.tmpl
-  checksum: b986f1a2a93a8f5e2aa0f1543eb5a76db743fa85daeb0ecc887816fcffbaefcc
+  checksum: 9aa5a0f1f1ba427a264284737fed47bf87757738997945f5837e065de4a3ef78
 - path: .github/agents/subagents/language-engineer.agent.md
   artifact_type: agent
   primitive: 4
@@ -487,7 +487,7 @@ artifacts:
   artifact_type: script
   primitive: 5
   template: scripts/start.ps1.tmpl
-  checksum: d80dae5b20298f8cf640aa236aca34a837e1be18098af22140b4dc5c2787b65a
+  checksum: f63b132015debb51a05ea37e185ca071a542a77293328b3740c6f433763dac4a
 - path: start.sh
   artifact_type: script
   primitive: 5
