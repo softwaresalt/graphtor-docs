@@ -1,5 +1,5 @@
 ---
-description: "GitHub-specific PR automation: Copilot Review polling, comment resolution, and CI check monitoring"
+description: "GitHub-specific PR automation: local-review readiness verification, optional shadow review, and CI check monitoring"
 applyTo: '**'
 ---
 
@@ -20,11 +20,12 @@ comment addressing, and CI status monitoring.
 
 ---
 
-## Part 1: Copilot Review Automation
+## Part 1: Optional Shadow Review Automation
 
-### 1.1 Request Copilot Review
+### 1.1 Request Shadow Review
 
-After creating or updating a PR, request a Copilot review:
+After creating or updating a PR, optionally request a Copilot shadow review during
+the migration period:
 
 ```text
 Tool: mcp_github_request_copilot_review
@@ -33,15 +34,27 @@ Tool: mcp_github_request_copilot_review
   pullNumber: <pr_number>
 ```
 
-If the MCP tool is unavailable, fall back to the CLI:
+If the MCP tool is unavailable, use a repository-approved GitHub API or CLI
+wrapper only when one is explicitly configured for Copilot review requests. Do
+not treat `gh pr edit --add-reviewer` as a required fallback for Copilot review:
+GitHub CLI reviewer flags do not reliably support Copilot's special reviewer
+identity across versions. When no supported fallback is configured, record
+shadow review as unavailable/advisory and continue to the local readiness gate.
 
-```bash
-gh pr edit <pr_number> --add-reviewer "copilot"
-```
+Shadow review is advisory by default. It can help catch residual issues after the
+local review gate, but it is not a required dependency for merge readiness unless
+the operator explicitly elevates it for the current PR.
+
+When `DARK_MODE_ACTIVE` is present under P-017, keep the workflow local-review-first:
+the current-HEAD local review readiness record is the authoritative merge gate,
+and Copilot/GitHub-hosted review remains optional advisory shadow review unless
+the dark-mode activation contract or operator explicitly elevates it. A clean
+shadow review cannot compensate for stale or missing local readiness, and shadow
+review timeout or unavailability does not block by default.
 
 ### 1.2 Poll for Review Completion
 
-Copilot review typically completes within 2–5 minutes. Use a
+Copilot shadow review typically completes within 2–5 minutes. Use a
 back-off polling strategy:
 
 | Attempt | Wait before poll | Cumulative wait |
@@ -61,7 +74,7 @@ Tool: mcp_github_pull_request_read
   pullNumber: <pr_number>
 ```
 
-Inspect the returned reviews and review comments. Copilot review
+Inspect the returned reviews and review comments. Copilot shadow-review
 comments are identified by the author login `copilot-pull-request-reviewer[bot]`
 or similar bot author association.
 
@@ -71,11 +84,11 @@ Review comments attached to a non-`PENDING` review also count as completion.
 
 **Timeout**: If no Copilot review appears after 15 minutes (5 poll
 attempts), proceed without it. Log a warning and note in the PR
-description that automated review was unavailable.
+description that shadow review was unavailable.
 
-### 1.3 Categorize Review Comments
+### 1.3 Categorize Shadow Review Comments
 
-For each Copilot review comment, classify it:
+For each Copilot shadow-review comment, classify it:
 
 | Category | Criteria | Action |
 |----------|----------|--------|
@@ -97,10 +110,16 @@ For each comment requiring a fix:
    to confirm the fix doesn't break anything.
 4. **Commit**: Use a `fix:` conventional commit referencing the comment
    (e.g., `fix: address copilot review — null check on user input`).
+5. **Full-build gate before PR update**: If the fix adds, removes, or changes
+   source code, run the full local build successfully before pushing. If the fix
+   is documentation-only or backlog-only, record full-build non-applicability.
+   Halt on missing or failed build evidence.
+6. **Push**: Push the fix commit before posting any "fixed" reply or resolving
+   the review thread, so the reviewer and PR timeline can see the referenced fix.
 
 ### 1.5 Reply to Addressed Comments
 
-After fixing each comment, reply to the review thread:
+After the fixing commit has been pushed, reply to the review thread:
 
 ```text
 Tool: mcp_github_add_reply_to_pull_request_comment
@@ -126,7 +145,8 @@ Not applied: <what was declined and why>."
 
 ### 1.6 Resolve Review Threads
 
-After replying to a comment, resolve the review thread using the
+After the fixing commit has been pushed and the explanatory reply has been
+posted, resolve the review thread using the
 GitHub GraphQL API. There is no REST endpoint or MCP tool for thread
 resolution — use `gh api graphql`:
 
@@ -176,12 +196,14 @@ each thread using its `id`.
 * Never resolve threads authored by human reviewers — only bot-authored
   threads (Copilot, linters, etc.) may be auto-resolved.
 
-### 1.7 Push Fixes and Re-request Review
+### 1.7 Push Fixes and Re-request Shadow Review
 
 After all addressable comments are handled:
 
-1. Push the fix commits to the branch.
-2. Re-request Copilot review if new code was pushed:
+1. Confirm the fix commits have been pushed to the branch.
+   Code-changing fix commits must already have successful full local build
+   evidence; documentation-only/backlog-only fixes must record non-applicability.
+2. Re-request Copilot shadow review if new code was pushed:
 
    ```text
    Tool: mcp_github_request_copilot_review
@@ -192,36 +214,47 @@ After all addressable comments are handled:
 
 3. Poll again per Section 1.2 to verify the new review is clean.
 
-### 1.8 Stop Conditions for Review Cycles
+When `DARK_MODE_ACTIVE` is present and the operator is AFK, continue this
+comment-handling loop autonomously within the review-fix cycle limits. Every
+actionable bot comment must receive a reply after the fix commit is pushed, and
+every fixed or explicitly declined bot-authored thread must be resolved via
+GraphQL before merge readiness is presented.
+
+### 1.8 Stop Conditions for Shadow-Review Cycles
 
 | Counter | Limit | Action |
 |---------|-------|--------|
 | Review-fix-push cycles | 3 | Accept remaining comments as backlog follow-ups |
 | Same comment re-raised after fix | 2 | Escalate to operator — likely a fundamental disagreement |
 
-**Cycle limits do not clear the merge gate.** When the review-fix cycle
-limit is reached with unresolved Copilot threads remaining, the agent
-MUST NOT proceed to merge. Unresolved Copilot review threads remain
-merge-blocking until resolved or explicitly overridden by the operator.
-The cycle limit stops additional automated fixing, not the merge gate.
+**Cycle limits do not make shadow review merge-blocking by default.** When the
+review-fix cycle limit is reached, unresolved Copilot shadow-review comments
+must be surfaced explicitly in the readiness summary and converted into follow-up
+items or operator-visible residual-risk notes. They only remain merge-blocking if
+the operator explicitly elevated shadow review to blocking status for the current PR.
 
 ### 1.9 Pre-Merge Review Readiness Verification (Defense in Depth)
 
 This gate is a **NON-NEGOTIABLE** pre-merge verification that runs
-independently of the review-fix loop. Even if the review-fix loop in
-§1.7–§1.8 reports completion, this gate re-checks from scratch using
-the GitHub GraphQL API. It must pass before any merge is presented as
-ready or executed.
+independently of shadow review. Even if the local review gate in the ship
+workflow reported success earlier, this step re-checks from scratch that the PR
+still reflects a current-HEAD local review result before any merge is presented
+as ready or executed.
 
 This gate applies to **all pull requests** created or merged by the Ship agent:
 feature PRs, chore PRs, and post-merge closure PRs. There is no exception for
-"small" or "hygiene" PRs. Every merge requires a fresh Copilot review covering
-the current HEAD and zero unresolved Copilot threads.
+"small" or "hygiene" PRs. Every merge requires a fresh local review readiness
+record covering the current HEAD. Shadow review is optional and advisory by default.
+
+In dark mode, this gate is still local-review-first: unresolved local P0/P1
+findings block merge, `READY_WITH_FOLLOWUPS` is allowed only when follow-up item
+IDs or explicit residual-risk notes are recorded, and advisory shadow-review
+comments are surfaced as follow-ups unless elevated by policy or operator.
 
 #### 1.9.1 Readiness Query
 
-Run a single GraphQL query to fetch PR head SHA, pending review
-requests, completed reviews, review decision, and unresolved threads:
+Run a single GraphQL query to fetch PR head SHA, PR body, review decision,
+shadow-review requests/reviews, and review threads:
 
 ```bash
 gh api graphql -f query='
@@ -229,6 +262,7 @@ gh api graphql -f query='
     repository(owner: $owner, name: $repo) {
       pullRequest(number: $pr) {
         headRefOid
+        body
         reviewDecision
         reviewRequests(first: 100) {
           nodes {
@@ -267,11 +301,33 @@ gh api graphql -f query='
 If `pageInfo.hasNextPage` is true, re-run the query with
 `-f threadCursor="{endCursor}"` and merge the `reviewThreads.nodes`
 results. Repeat until `hasNextPage` is false. **Do not skip
-pagination** — a hard gate that misses blocking data is unsafe. If
+pagination** — a hard gate that misses operator-visible review data is unsafe. If
 pagination cannot complete (API error, rate limit), fail closed and
 halt rather than declaring readiness.
 
-#### 1.9.2 Bot Identity
+#### 1.9.2 Local Readiness Record
+
+The PR description or other operator-visible readiness summary MUST contain a
+local review block for the current HEAD. Use this format or an equivalent
+machine-readable variant:
+
+```markdown
+## Local Review Readiness
+
+- Reviewed HEAD: `<sha>`
+- Outcome: `READY` | `READY_WITH_FOLLOWUPS` | `BLOCKED`
+- Blocking findings: `P0=0, P1=0`
+- Full local build: `<command and successful result>` | `not applicable — <docs/backlog-only rationale>`
+- Follow-ups: `none` | `<item ids or residual-risk notes>`
+- Shadow review: `not requested` | `requested` | `clean` | `comments pending`
+```
+
+If the workspace uses a different readiness artifact, the PR body must still
+contain the reviewed HEAD SHA, the outcome, successful full local build evidence
+(or explicit non-applicability), and the follow-up handling summary so the merge
+gate can confirm the current PR state without relying on hidden local state.
+
+#### 1.9.3 Advisory Bot Identity
 
 The Copilot review bot appears under different login strings depending
 on the API surface:
@@ -287,49 +343,50 @@ When matching in GraphQL responses, use `copilot-pull-request-reviewer`
 `copilot-pull-request-reviewer[bot]`. For review thread comments
 returned via GraphQL, the `author.login` field uses the no-suffix form.
 
-#### 1.9.3 Gate Checks
+#### 1.9.4 Gate Checks
 
-Evaluate three checks in order. All three must pass for merge readiness.
+Evaluate four checks in order. All four must pass for merge readiness.
 
-**Check 1 — Review completion (no pending Copilot review)**:
-
-1. Inspect `reviewRequests.nodes[].requestedReviewer`. If any node has
-   `login == "copilot-pull-request-reviewer"`, a Copilot review is still
-   pending (requested but not yet submitted).
-2. If pending: wait using the back-off cadence from §1.2 (max 15 min).
-   Re-run the readiness query after each wait interval.
-3. If no Copilot review request is pending, proceed to Check 2.
-
-**Check 2 — Review freshness (review covers current HEAD)**:
+**Check 1 — Local review coverage (record covers current HEAD)**:
 
 1. Record `headRefOid` from the query response.
-2. Filter `reviews.nodes` to entries where
-   `author.login == "copilot-pull-request-reviewer"`.
-3. Find the most recent Copilot review by `submittedAt`.
-4. Compare its `commit.oid` against `headRefOid`.
-   - If they match: the review covers the current code. Proceed to Check 3.
-   - If they do not match: the latest Copilot review is stale (applies to
-     an older commit). Treat this as equivalent to "review pending" — wait
-     and re-poll per Check 1, or halt if the wait budget (15 min) is
-     already exhausted.
-   - If no Copilot review exists at all: the review was never requested or
-     timed out. Log a warning and proceed only if §1.2 timeout already
-     applied. Otherwise, request a review per §1.1 and wait.
+2. Parse the PR `body` for the `## Local Review Readiness` block (or the
+   equivalent repository-approved marker).
+3. Extract `Reviewed HEAD`.
+4. If the block is missing or `Reviewed HEAD` does not match `headRefOid`, the
+   local review is stale or absent. Halt and require the caller to rerun local review
+   for the current HEAD.
 
-**Check 3 — Thread resolution (no unresolved Copilot threads)**:
+**Check 2 — Local readiness outcome (no unresolved blocking findings)**:
 
-1. From the paginated `reviewThreads.nodes`, filter to threads where:
-   - `isResolved == false`, AND
-   - the first comment's `author.login == "copilot-pull-request-reviewer"`
-2. If zero unresolved Copilot threads: **GATE PASSES**. The PR is ready
-   for merge presentation.
-3. If any unresolved Copilot threads remain: **GATE FAILS**. List each
-   unresolved thread (path, line, comment summary) and halt. Do not
-   present the PR as merge-ready.
+1. Extract `Outcome` and `Blocking findings` from the local readiness block.
+2. If `Outcome` is `BLOCKED`, **GATE FAILS**. Halt and report the blocking local review.
+3. If `Blocking findings` reports any unresolved P0 or P1 findings, **GATE FAILS** even
+   if the outcome string is malformed or overly optimistic.
+4. If `Outcome` is `READY` or `READY_WITH_FOLLOWUPS` and blocking findings are clear,
+   proceed to Check 3.
 
-**Human and other-bot threads**: Human review threads and non-Copilot
-bot threads are surfaced in the merge-readiness summary but do not
-block this Copilot-specific gate. However, if the repository has branch
+**Check 3 — Follow-up handling is explicit**:
+
+1. If `Outcome` is `READY`, the `Follow-ups` field may be `none`.
+2. If `Outcome` is `READY_WITH_FOLLOWUPS`, the `Follow-ups` field must list
+   follow-up item IDs, queued backlog work, or explicit residual-risk notes.
+3. If the field is missing or empty for `READY_WITH_FOLLOWUPS`, **GATE FAILS**.
+4. Otherwise, proceed to Check 4.
+
+**Check 4 — Full local build evidence for code-changing PRs**:
+
+1. If the PR adds, removes, or changes source code, the readiness block must list
+   the full local build command and a successful result.
+2. If the PR is documentation-only or backlog-only, the readiness block may state
+   `Full local build: not applicable` with a short rationale.
+3. If build applicability is ambiguous, required evidence is missing, or the
+   recorded full local build result failed, **GATE FAILS**.
+4. Otherwise, **GATE PASSES**. The PR is ready for merge presentation.
+
+**Human and shadow-review threads**: Human review threads and non-blocking
+Copilot shadow-review threads are surfaced in the merge-readiness summary but do not
+block this local-readiness gate by default. However, if the repository has branch
 protection rules requiring conversation resolution, approved reviews,
 or if a human reviewer submitted a `CHANGES_REQUESTED` review, those
 constraints may independently block the merge at the GitHub level. The
@@ -337,31 +394,63 @@ constraints may independently block the merge at the GitHub level. The
 decision (`APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED`, or null)
 and should be reported in the merge-readiness summary.
 
-#### 1.9.4 Terminal States
+#### 1.9.5 Terminal States
 
 | Condition | Action |
 |-----------|--------|
-| Copilot review pending, wait budget (15 min) exhausted | **Halt.** Report to operator. Do not proceed to merge. |
-| Copilot review stale (wrong HEAD), wait budget exhausted | **Halt.** Report stale review and current HEAD SHA to operator. |
-| Unresolved Copilot threads remain after fix cycles exhausted | **Halt.** List unresolved threads. Do not proceed to merge. |
-| No Copilot review exists and §1.2 timeout previously applied | **Warning.** Note in PR summary that Copilot review was unavailable. Gate passes for Copilot-specific checks only. |
-| All 3 checks pass | **Ready.** Present PR for merge approval. |
+| Local review block missing from PR body | **Halt.** Report that readiness evidence is absent. |
+| Local review block references the wrong HEAD SHA | **Halt.** Report stale review and current HEAD SHA to operator. |
+| Local readiness outcome is `BLOCKED` or blocking findings remain | **Halt.** List blocking findings. Do not proceed to merge. |
+| `READY_WITH_FOLLOWUPS` omits follow-up handling | **Halt.** Report missing follow-up IDs or residual-risk notes. |
+| Code-changing PR omits successful full local build evidence | **Halt.** Run the full local build successfully or explain non-applicability only for documentation-only/backlog-only work. |
+| Shadow review unavailable or still pending | **Warning.** Note in PR summary. Shadow review remains advisory unless operator elevated it. |
+| All 4 checks pass | **Ready.** Present PR for merge approval. |
 
-The timeout for a pending Copilot review results in a **halt**, not
-"proceed without review." This is the defense-in-depth distinction from
-§1.2: the initial poll (§1.2) may allow proceeding after timeout with a
-warning during the review-fix loop, but this pre-merge gate does not.
-If the operator wants to merge without Copilot review, they must
-explicitly override.
+Shadow-review timeout does not fail this gate by itself. The required dependency
+is local review coverage for the current HEAD. If the operator wants shadow review
+to become merge-blocking for a specific PR, that escalation must be explicit.
 
-### 1.10 Post-Merge Closure PR Copilot Surveillance
+#### 1.9.6 Dark-Mode Merge Authorization and Admin Fallback
+
+When `DARK_MODE_ACTIVE` is present under P-017, the activation record may satisfy
+the P-014 operator approval signal only when all of these are true:
+
+1. The PR is inside the recorded dark-mode `scope`.
+2. `merge_approval_pre_authorized` is `true`.
+3. The §1.9 local readiness gate passed for the current `headRefOid`.
+4. Required CI/checks are green or explicitly marked non-applicable.
+5. P-009 merge-commit-only and P-016 worktree topology checks passed.
+
+If any condition is false or ambiguous, fail closed and wait for an explicit
+operator approval signal.
+
+Before any admin fallback, attempt the normal merge path first and classify the
+result:
+
+| State | Meaning | Dark-mode action |
+|---|---|---|
+| `NORMAL_MERGE_READY` | Normal merge can proceed with merge commit strategy | Merge normally; record `DARK_MODE_MERGE_AUTHORIZED` when approval came from the activation record |
+| `REVIEW_REQUIRED_BLOCK` | Branch protection rejected merge for required review approval | Admin fallback may be attempted only if `admin_fallback_pre_authorized` is `true` |
+| `CONVERSATION_RESOLUTION_BLOCK` | Branch protection requires unresolved conversations to be resolved | Admin fallback may be attempted only if explicitly covered by `admin_fallback_pre_authorized`; otherwise halt |
+| `CHECKS_BLOCK` | Required checks are failed, pending, missing, or not explicitly non-applicable | Halt; admin fallback is forbidden |
+| `MERGE_STRATEGY_BLOCK` | Merge commit strategy is unavailable or squash/rebase is selected | Halt under P-009; admin fallback is forbidden |
+| `MISSING_ADMIN_RIGHTS` | Admin fallback was authorized but credentials lack bypass rights | Halt with an operator-visible reason |
+| `UNKNOWN_MERGE_BLOCK` | The merge rejection cannot be classified confidently | Halt; do not guess or bypass |
+
+Admin fallback cannot bypass stale local readiness, unresolved local P0/P1
+findings, failed required CI/checks, P-009, P-016, secrets-safety concerns, or
+scope mismatch. Every normal merge attempt and admin fallback attempt must be
+recorded in the PR readiness/merge summary with the state, decision, command/API
+used, and result.
+
+### 1.10 Post-Merge Closure PR Shadow Review Surveillance
 
 When the Ship agent creates a dedicated post-merge closure branch and PR:
 
-1. Request Copilot Review per §1.1 immediately after PR creation.
+1. Optionally request Copilot shadow review per §1.1 immediately after PR creation.
 2. Poll per §1.2 back-off cadence.
 3. Apply the full §1.3–§1.7 fix cycle for any comments raised.
-4. Run §1.9 readiness gate before presenting the post-merge closure PR for merge.
+4. Run §1.9 local readiness gate before presenting the post-merge closure PR for merge.
 5. Obtain explicit operator approval before merging the post-merge closure PR.
 
 Post-merge closure PRs are not exempt from the P-014 gate. The operator must
@@ -456,10 +545,13 @@ gh run view <run_id> --log-failed
 After diagnosing and fixing CI failures:
 
 1. Run the failing checks locally first (per fix-ci skill protocol).
-2. Commit and push the fix.
-3. Wait for CI to re-trigger (Section 2.1 timing).
-4. Poll for new check results (Section 2.3 cadence).
-5. Repeat until all checks pass or circuit breaker triggers.
+2. If the fix adds, removes, or changes source code, run the full local build
+   successfully before pushing. If the fix is documentation-only or backlog-only,
+   record full-build non-applicability. Halt on missing or failed build evidence.
+3. Commit and push the fix.
+4. Wait for CI to re-trigger (Section 2.1 timing).
+5. Poll for new check results (Section 2.3 cadence).
+6. Repeat until all checks pass or circuit breaker triggers.
 
 ### 2.7 CI Circuit Breakers
 
@@ -473,12 +565,12 @@ After diagnosing and fixing CI failures:
 
 ## Part 3: Combined Review + CI Workflow
 
-When both Copilot Review and CI checks are active on the same PR, follow
+When optional shadow review and CI checks are active on the same PR, follow
 this sequencing:
 
-1. **Push code** → triggers both CI and Copilot Review.
+1. **Push code** → triggers both CI and optional Copilot shadow review.
 2. **Poll CI status** (Section 2.2) — CI results usually arrive first.
-3. **Poll Copilot Review** (Section 1.2) — review typically takes 2–5 min.
+3. **Poll shadow review** (Section 1.2) — review typically takes 2–5 min.
 4. **Fix CI failures first** — CI failures are typically more mechanical
    and faster to resolve.
 5. **Address review comments** — may overlap with CI fixes. If a review
@@ -487,10 +579,10 @@ this sequencing:
 6. **Push combined fixes** → re-triggers both CI and review.
 7. **Resolve addressed threads** (Section 1.6) — only after fixes are
    pushed and replies posted.
-8. **Final verification poll** — confirm both CI green and review clean.
+8. **Final verification poll** — confirm CI is green and shadow review, if requested, is summarized.
 9. **Pre-merge readiness gate** (Section 1.9) — run the defense-in-depth
-   GraphQL verification to confirm the Copilot review covers the current
-   HEAD and no unresolved Copilot threads remain. This gate runs even if
+   GraphQL verification to confirm the local review readiness record covers the current
+   HEAD and that any residual follow-up handling is explicit. This gate runs even if
    step 8 reported clean status.
 
 ### Interaction with fix-ci Skill
@@ -504,7 +596,7 @@ repositories.
 ### Interaction with pr-lifecycle Skill
 
 The pr-lifecycle skill's Step 3 (handle review feedback) SHOULD follow
-Part 1 of this document for the complete Copilot Review workflow on
+Part 1 of this document for the optional shadow-review workflow on
 GitHub-hosted repositories. The pr-lifecycle skill's Step 4 (handle CI
 failures) SHOULD reference Part 2 for GitHub-specific polling and
 failure extraction.
@@ -521,7 +613,7 @@ Agents detect this via:
 
 For GitHub-hosted repositories:
 
-* Part 1 (PR review polling, Copilot Review handling, and comment
+* Part 1 (optional shadow-review polling, Copilot Review handling, and comment
   lifecycle management) applies whenever agents interact with pull
   requests via GitHub MCP tools or the `gh` CLI.
 * Part 2 (CI polling and check monitoring) applies when the workspace

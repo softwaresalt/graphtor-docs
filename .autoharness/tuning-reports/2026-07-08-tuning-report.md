@@ -8,16 +8,14 @@
 
 ## Summary
 
-The pip package was already current. The real drift was in the *installed workspace harness*:
-the manifest/profile were in a legacy JSON format the current CLI can no longer read, several
-agent files had been renamed upstream without the manifest being updated, and a handful of
-instruction/skill files were missing small, genuinely new content. Upstream templates also
-introduced a large new governance framework (P-014 rewrite + new P-015/P-016/P-017 policies)
-that was deliberately **not** adopted — see "Excluded — Requires Separate Decision" below.
+Full adoption of the current upstream autoharness template set, including the new P-014
+rewrite and new P-015/P-016/P-017 governance policies, per explicit operator direction.
+`verify-workspace` reports **0 blockers, 0 warnings, all 85 tracked artifacts `unchanged`**
+(new baseline established).
 
 ## Applied Changes
 
-### 1. Manifest/profile format migration (breaking — required for any future `verify-workspace`/tune to work)
+### 1. Manifest/profile format migration (breaking — required for `verify-workspace`/tune to work at all)
 
 - Converted `.autoharness/harness-manifest.json` → `harness-manifest.yaml` and
   `workspace-profile.json` → `workspace-profile.yaml` (the CLI hardcodes `.yaml`; originals
@@ -28,9 +26,8 @@ that was deliberately **not** adopted — see "Excluded — Requires Separate De
 
 ### 2. Path/template corrections for 14 renamed agent files
 
-Upstream renamed several installed agent files; the manifest still pointed at the old locations.
-Updated manifest `path`/`template` fields to match reality (no file moves were needed — the
-correct files already existed):
+Upstream renamed several installed agent files; the manifest still pointed at the old
+locations. Updated manifest `path`/`template` fields and confirmed content parity:
 
 - `.github/agents/orchestrator.agent.md` → `.github/agents/_orchestrator.agent.md`
 - `.github/agents/ship.agent.md` → `.github/agents/.ship.agent.md`
@@ -39,100 +36,112 @@ correct files already existed):
 - `.github/agents/security-sentinel.agent.md` → `.github/agents/subagents/security-sentinel.agent.md`
 - `.github/agents/review/*.agent.md` (9 files) → `.github/agents/subagents/*.agent.md`
 
-### 3. Genuine content fixes (small, low-risk, unrelated to the new governance framework)
+### 3. Full governance framework adoption (P-014 rewrite + new P-015/P-016/P-017)
 
-- **`.github/instructions/circuit-breaker.instructions.md`** — added the missing "Cooldown and
-  Auto-Reset (Optional)" section present in the current template.
+Adopted upstream's new local-review-first PR merge model and dark-factory autonomy
+framework:
+
+- **`.github/policies/workflow-policies.md`** — rewrote P-014 (local review readiness is
+  now the authoritative merge gate; Copilot/GitHub-hosted review is optional advisory
+  shadow review), added **P-015** (single-artifact shipment closure, no cascade
+  `ship_shipment`), **P-016** (no parallel branch/worktree execution), and **P-017**
+  (dark factory autonomy contract). Amendment-log dates: preserved `2026-05-20` for
+  pre-existing P-001–P-013 rows; used `2026-07-08` for the P-014 rewrite and new
+  P-015/P-016/P-017 rows.
+- **`.github/instructions/github-pr-automation.instructions.md`** — rewrote to the
+  local-review-first / shadow-review model with the §1.9 Pre-Merge Review Readiness gate.
+- **`.github/instructions/concurrency.instructions.md`** — adopted P-016-aware wording
+  (branch/worktree boundary section).
+- **`.github/instructions/constitution.instructions.md`** and **`AGENTS.md`** — restored the
+  "Single active implementation branch/worktree" and "Dark factory mode (P-017)"
+  Development Workflow bullets; fixed stale `.github/agents/review/` → `.github/agents/subagents/`
+  references in the deprecated-agents table.
+- **`.github/instructions/agent-intercom.instructions.md`** — added the "Dark Factory
+  Visibility Protocol" section and the `output-timestamps.instructions.md` cross-reference.
+- **`.github/instructions/output-timestamps.instructions.md`** — installed (new artifact;
+  timestamp-format authority referenced by agent-intercom).
+- **`.github/instructions/release-observability.instructions.md`** — added the
+  "Releasability Evidence Contract" section.
+- **`.github/instructions/adversarial-review.instructions.md`** and
+  **`.github/agents/subagents/adversarial-review.agent.md`** — added "Alternate Model
+  Provider Support" and "Post-Remediation Re-Review". Added a new
+  `model_routing.adversarial_review.alt_provider` / `alt_family` section to
+  `.autoharness/config.yaml` (both empty — no alternate provider configured yet; the docs
+  read sensibly in that state and can be filled in later to enable it).
+- **Skills fully re-rendered** to the current local-review-first / P-014–017-aware
+  templates: `pr-lifecycle`, `review`, `runtime-verification`, `operational-closure`,
+  `shipment-reconcile`, `harness-architect`, `build-feature`.
+- **Core pipeline agents fully re-rendered**: `.github/agents/.ship.agent.md`,
+  `.github/agents/.stage.agent.md`, `.github/agents/_orchestrator.agent.md` (these were
+  missed in the first pass because the manifest's old paths pointed at nonexistent files;
+  the diff tool never actually compared their real content until the path fix was
+  cross-checked against upstream's P-016/P-017 references).
+- **Review persona agents fully re-rendered**: `agent-native-parity-reviewer`,
+  `architecture-strategist`, `concurrency-reviewer`, `constitution-reviewer`,
+  `scope-boundary-auditor`, `security-lens-reviewer`, `security-reviewer`,
+  `technology-reviewer`, plus `learnings-researcher` and `security-sentinel`.
+- **New prompts installed**: `feature-flow.prompt.md` (sequential default),
+  `feature-flow-parallel.prompt.md` (P-016-compliant planning overlap — now installable
+  since P-016 is adopted), `feature-flow-dark.prompt.md` (P-017 dark-factory entrypoint —
+  now installable since P-017 is adopted).
+
+**Caveat on inferred backlogit operation names**: `.ship.agent.md` and `.stage.agent.md`
+reference several backlogit MCP operations not previously documented in this workspace's
+attached instruction set (checkpoint save/get/list/resolve, shipment claim/create/add-to,
+hook event poll/ack). These were rendered using the `backlogit_<verb>_<noun>` naming
+convention already confirmed elsewhere (e.g., `backlogit_create_item`,
+`backlogit_move_item`, `backlogit_archive_item`). **Verify these exact tool names against
+the live backlogit MCP tool registry** (e.g., via `backlogit_export_command_map` or
+`backlogit_get_metadata_catalog`) before relying on them operationally.
+
+### 4. Other genuine content fixes (unrelated to the governance framework)
+
+- **`.github/instructions/circuit-breaker.instructions.md`** — added the missing "Cooldown
+  and Auto-Reset (Optional)" section.
 - **`.github/skills/harness-doctor/SKILL.md`** — fixed the manifest-path reference
-  (`.json` → `.yaml`) and adopted the improved Phase 2 version-check logic (resolves the
-  *current* autoharness version live via `autoharness version` instead of comparing against a
-  stale baked-in string — this directly fixes the exact stale-version problem this tuning run
-  diagnosed).
-- **`.github/instructions/mcp-server.instructions.md`** — updated the "Project Structure" listing
-  to match the actual current `src/` tree (previously missing `lib.rs`, `lock.rs`, `cli/`, `db/`,
-  `embed/`, `mcp/`, `parse/`, `pipeline/`, `query/`, `sync/`, `workspace/`).
-- **`.github/instructions/graphtor-docs.instructions.md`** — added the missing paragraph
-  documenting the `GRAPHTOR_EMBED_MODEL_DIR` environment variable / `.env.local` convention.
-- **`.github/prompts/feature-flow.prompt.md`** — installed (new optional prompt, approved by
-  operator; developer-friendly alias for the Orchestrator's standard sequential pipeline).
+  (`.json` → `.yaml`) and adopted live `autoharness version` CLI resolution instead of a
+  stale baked-in version string.
+- **`.github/instructions/mcp-server.instructions.md`** — updated "Project Structure" to
+  match the actual current `src/` tree.
+- **`.github/instructions/graphtor-docs.instructions.md`** — added the missing
+  `GRAPHTOR_EMBED_MODEL_DIR` paragraph.
 
-### 4. Manifest reconciliation (baseline refresh)
+### 5. Manifest reconciliation
 
-- Recomputed SHA-256 checksums for all 82 tracked artifacts against their actual current content
-  and wrote them back into the manifest as the new baseline.
-- Adopted the current `.autoharness/config.yaml` content as-is (it is intentionally
-  operator-customized — model routing, capability packs, etc.) and refreshed `config_hash` /
-  `profile_hash` to match.
-- Added a manifest entry for the newly-installed `feature-flow.prompt.md`.
-- Re-ran `autoharness verify-workspace --json`: **0 blockers, 0 warnings, all 82 tracked
-  artifacts report `unchanged`.**
+- Recomputed SHA-256 checksums for all 85 tracked artifacts against actual current content.
+- Adopted current `.autoharness/config.yaml` as-is (operator-customized model routing,
+  capability packs, etc. — plus the new `adversarial_review` section above) and refreshed
+  `config_hash`.
+- Final `verify-workspace --json`: **0 blockers, 0 warnings, all 85 artifacts `unchanged`,
+  0 remaining new-artifact candidates.**
 
-### 5. Housekeeping
+### 6. Housekeeping
 
-- Added `.autoharness/staging/` to `.gitignore` (disposable `verify-workspace` output; was
-  previously untracked and un-ignored).
-
-## Excluded — Requires Separate Decision
-
-While diffing every tracked artifact against its current template, a **large new governance
-framework** was discovered upstream that this tuning run deliberately did **not** adopt, because
-it changes real operating policy rather than fixing drift:
-
-- **P-014 rewrite** — demotes GitHub Copilot review from the primary merge gate to an optional
-  "advisory shadow review," replacing it with a **local review readiness** gate as the
-  authoritative merge condition.
-- **P-015 (new)** — Single-Artifact Shipment Closure (no cascade `ship_shipment`).
-- **P-016 (new)** — No Parallel Branch/Worktree Execution (forbids parallel implementation
-  worktrees workspace-wide, with a narrow Stage spike/research exception).
-- **P-017 (new)** — "Dark Factory Autonomy Contract": an explicit bounded autonomous
-  Stage → Ship execution and merge-approval mode, with its own trigger phrases, telemetry
-  events, and visibility protocol.
-
-Files that carry pieces of this framework and were **left unchanged**:
-`.github/policies/workflow-policies.md`, `.github/instructions/constitution.instructions.md`
-(one bullet under "Development Workflow"), `.github/instructions/github-pr-automation.instructions.md`,
-`.github/instructions/concurrency.instructions.md`, `.github/instructions/agent-intercom.instructions.md`
-(the "Dark Factory Visibility Protocol" section, which also references a not-yet-installed
-`output-timestamps.instructions.md`), `.github/instructions/release-observability.instructions.md`
-(the "Releasability Evidence Contract" section), and the skill files
-`pr-lifecycle`, `review`, `runtime-verification`, `operational-closure`, `shipment-reconcile`,
-`harness-architect`, `build-feature` (all reference the local-review-first / P-014 language).
-
-**Recommendation**: run the `deliberate` skill (or an explicit conversation) to decide whether to
-adopt this framework before the next tuning pass — it is a policy change, not a bug fix.
-
-## Other Advisory Items (not installed)
-
-- **`feature-flow-parallel.prompt.md`** — explicitly requires P-016 compliance; not installed
-  because P-016 was not adopted (see above). Revisit if/when P-016 is adopted.
-- **`feature-flow-dark.prompt.md`** — requires explicit P-017 opt-in; not installed.
-- **Adversarial-review "Alternate Model Provider Support" + "Post-Remediation Re-Review"** —
-  genuinely new, separate optional capabilities (`ALT_REVIEW_PROVIDER`/`ALT_REVIEW_FAMILY` are
-  not configured for this workspace). Not adopted; would need new `config.yaml` fields if wanted.
+- Added `.autoharness/staging/` to `.gitignore` (disposable `verify-workspace` output).
 
 ## Pre-Existing Schema Findings (not introduced by this tuning run)
 
-`verify-workspace` surfaced `strict_schema_blockers` against `.autoharness/config.yaml` that
-predate this session (this config content was never touched):
+`verify-workspace` surfaces `strict_schema_blockers` against `.autoharness/config.yaml`
+that predate this session:
 
 - `capability_packs` includes `graphtor-docs`, which is not in the current
-  `harness-config.schema.json` enum (`agent-intercom`, `agent-engram`, `backlogit`,
-  `browser-verification`, `continuous-learning`, `strict-safety`, `release-observability`,
-  `adversarial-review`). This appears to be a legitimate workspace-specific capability pack the
-  schema enum doesn't yet accommodate.
-- `model_routing.tier1` / `tier2` / `tier3` / `orchestrator` are nested objects
-  (`{model, model_family, reasoning_effort, model_provider}`) but the schema expects a plain
-  string. The richer object form is what the installed agent/skill templates actually consume
-  (`TIER_1_FAMILY`, `TIER_1_PROVIDER`, etc. all resolve correctly from it), so this looks like
-  the schema lagging the config convention rather than the config being wrong.
+  `harness-config.schema.json` enum. This is a legitimate workspace-specific capability
+  pack the schema enum doesn't yet accommodate.
+- `model_routing.tier1` / `tier2` / `tier3` / `orchestrator` / (now also)
+  `adversarial_review` are nested objects but the schema expects a plain string. The
+  richer object form is what the installed agent/skill templates actually consume
+  (`TIER_1_FAMILY`, `TIER_1_PROVIDER`, etc. all resolve correctly from it), so this looks
+  like the schema lagging the config convention rather than the config being wrong.
 
-Neither finding blocks harness operation (`blockers: []`); both are flagged for awareness only.
-`config.yaml` was intentionally left untouched since it is operator-customized.
+Neither finding blocks harness operation (`blockers: []`); both are flagged for awareness
+only.
 
 ## Next Steps
 
 1. Review the diff on `chore/autoharness-tune-2026-07-08` and open a PR against `main`.
-2. Decide on the P-014/P-015/P-016/P-017 governance framework adoption (separate from this PR
-   recommended, given its scope).
-3. Consider updating `harness-config.schema.json` upstream (or removing the custom capability
-   pack) to resolve the `strict_schema_blockers` above.
+2. Verify the inferred backlogit operation names in `.ship.agent.md` / `.stage.agent.md`
+   (checkpoint and shipment/hook operations) against the live backlogit tool registry.
+3. Decide whether to configure `model_routing.adversarial_review.alt_provider`/`alt_family`
+   to activate the new alternate-reviewer-provider capability, or leave it disabled.
+4. Consider updating `harness-config.schema.json` upstream (or removing the custom
+   capability pack) to resolve the pre-existing `strict_schema_blockers`.
