@@ -105,6 +105,7 @@ tmp/
 
 # autoharness
 .autoharness/backups/
+.autoharness/staging/
 
 # graphtor workspace runtime (databases, state, cloned data)
 .graphtor/*.db
