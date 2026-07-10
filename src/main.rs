@@ -70,7 +70,7 @@ use graphtor_core::{
 };
 use sha2::{Digest as _, Sha256};
 use std::any::Any;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use cli::{Cli, Command, OutputFormat};
 
@@ -95,14 +95,18 @@ async fn main() {
     let exit_code = match run(cli).await {
         Ok(code) => code,
         Err(e) => {
-            error!(error = %e, "fatal error");
+            debug!(error = ?e, "fatal error");
             if use_json {
                 println!(
                     "{}",
-                    cli::jsonrpc::wrap_error(cli::jsonrpc::SERVER_ERROR, e.to_string(), None,)
+                    cli::jsonrpc::wrap_error(
+                        cli::jsonrpc::SERVER_ERROR,
+                        e.to_string(),
+                        Some(cli::errfmt::fatal_error_data(&e)),
+                    )
                 );
             } else {
-                eprintln!("error: {e}");
+                cli::errfmt::eprint_fatal(&e);
             }
             2
         }

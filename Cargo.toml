@@ -3,7 +3,7 @@ resolver = "2"
 
 [package]
 name = "graphtor-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "GraphRAG documentation index — core library and CLI"
 license = "MIT"
@@ -48,6 +48,8 @@ rmcp = { version = "1.5", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 schemars = "1"
 clap = { version = "4", features = ["derive", "env"] }
+anstream = "1"
+anstyle = "1"
 indicatif = "0.17"
 sysinfo = "0.30"
 

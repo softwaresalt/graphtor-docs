@@ -6,6 +6,7 @@
 //! When the `--json` global flag is set, command output is wrapped in
 //! JSON-RPC 2.0 response envelopes via [`jsonrpc`].
 
+pub mod errfmt;
 pub mod jsonrpc;
 pub mod prewarm;
 
