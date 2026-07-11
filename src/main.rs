@@ -101,7 +101,7 @@ async fn main() {
                     "{}",
                     cli::jsonrpc::wrap_error(
                         cli::jsonrpc::SERVER_ERROR,
-                        e.to_string(),
+                        cli::errfmt::fatal_headline(&e),
                         Some(cli::errfmt::fatal_error_data(&e)),
                     )
                 );

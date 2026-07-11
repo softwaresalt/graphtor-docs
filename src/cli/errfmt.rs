@@ -121,6 +121,16 @@ fn friendly_head(err: &anyhow::Error) -> String {
         .map_or_else(|| err.to_string(), friendly_cause)
 }
 
+/// The friendly, tag-free headline for a fatal error.
+///
+/// Shared by the human block, the JSON envelope `message`, and
+/// `cause_chain[0]` so every surface presents the same tag-free headline —
+/// including bare [`GraphtorError`]s that reach `main` without a context wrapper.
+#[must_use]
+pub(crate) fn fatal_headline(err: &anyhow::Error) -> String {
+    friendly_head(err)
+}
+
 /// Human-friendly, category-tag-free rendering of a [`GraphtorError`].
 fn friendly_graphtor(err: &GraphtorError) -> String {
     match err {
@@ -255,12 +265,12 @@ fn format_embeddings_skipped_warning(chunks_created: usize, color: bool) -> Stri
     out.push_str("embeddings were skipped — the embedding model was unavailable.");
     let _ = write!(
         out,
-        "\n  {chunks_created} chunk(s) were stored without vectors; \
-         semantic search will return no results."
+        "\n  {chunks_created} chunk(s) were processed this run without generating embeddings; \
+         those chunks will not be found by semantic search."
     );
     out.push_str(
         "\n  set GRAPHTOR_EMBED_MODEL_DIR to a local all-MiniLM-L6-v2 directory (or fix the \
-         Hugging Face cache) and re-run `graphtor-docs sync --full`.",
+         Hugging Face cache) and re-run `graphtor-docs sync --full` to embed them.",
     );
     out
 }
@@ -411,12 +421,50 @@ mod tests {
     }
 
     #[test]
+    fn fatal_headline_strips_tag_for_bare_error() {
+        let err = anyhow::Error::new(GraphtorError::DatabaseLocked {
+            db_name: "graph.db".to_string(),
+            holder_pid: Some(7),
+        });
+        let head = fatal_headline(&err);
+        assert!(
+            head.contains("database 'graph.db' is locked by process 7"),
+            "{head}"
+        );
+        assert!(
+            !head.contains("[database_locked]"),
+            "tag must be stripped: {head}"
+        );
+    }
+
+    #[test]
+    fn fatal_headline_preserves_context_wrapped_head() {
+        let err = anyhow::Error::new(GraphtorError::PathViolation {
+            attempted: PathBuf::from(r"D:\docs"),
+            allowed_root: PathBuf::from(r"C:\Tools"),
+        })
+        .context("failed to build acquisition plan");
+        assert_eq!(fatal_headline(&err), "failed to build acquisition plan");
+    }
+
+    #[test]
     fn embeddings_skipped_warning_plain_has_content_and_no_ansi() {
         let out = format_embeddings_skipped_warning(4082, false);
         assert!(out.contains("warning: embeddings were skipped"), "{out}");
         assert!(out.contains("4082 chunk"), "{out}");
+        assert!(out.contains("without generating embeddings"), "{out}");
         assert!(out.contains("GRAPHTOR_EMBED_MODEL_DIR"), "{out}");
         assert!(out.contains("sync --full"), "{out}");
+        // Must not overstate: chunks may retain vectors on incremental re-sync,
+        // and semantic search fails (not "returns no results") without the model.
+        assert!(
+            !out.contains("will return no results"),
+            "warning must not overstate semantic-search behaviour: {out}"
+        );
+        assert!(
+            !out.contains("stored without vectors"),
+            "warning must not claim all chunks lack vectors: {out}"
+        );
         assert!(
             !out.contains('\u{1b}'),
             "plain warning must have no ANSI: {out:?}"
