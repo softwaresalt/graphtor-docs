@@ -91,7 +91,7 @@ fn render_fatal(err: &anyhow::Error, color: bool) -> String {
 
 /// Friendly, de-duplicated cause lines (the chain below the top-level context).
 fn cause_lines(err: &anyhow::Error) -> Vec<String> {
-    let head = err.to_string();
+    let head = friendly_head(err);
     let mut lines: Vec<String> = Vec::new();
     for cause in err.chain().skip(1) {
         let line = friendly_cause(cause);
@@ -170,9 +170,8 @@ fn actionable_hint(err: &anyhow::Error) -> Option<String> {
         .find_map(|cause| cause.downcast_ref::<GraphtorError>())?;
     match graphtor {
         GraphtorError::PathViolation { allowed_root, .. } => Some(format!(
-            "every source path in .graphtor/config/sources.yaml must resolve inside the \
-             current working directory ('{}'). Run graphtor-docs from your project root, \
-             or move the source under that directory.",
+            "the path must resolve inside the workspace root ('{}'). Run graphtor-docs from \
+             the directory that contains the target, or move the target inside the workspace.",
             allowed_root.display()
         )),
         GraphtorError::DatabaseLocked { .. } => Some(
@@ -445,6 +444,40 @@ mod tests {
         })
         .context("failed to build acquisition plan");
         assert_eq!(fatal_headline(&err), "failed to build acquisition plan");
+    }
+
+    #[test]
+    fn bare_io_error_head_not_duplicated_under_causes() {
+        // A bare GraphtorError::Io: the friendly headline strips `[io]`, so the
+        // inner std::io::Error (same message) must be de-duplicated, not shown
+        // again under `Caused by:`.
+        let err = anyhow::Error::new(GraphtorError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file missing",
+        )));
+        let out = render_fatal(&err, false);
+        assert!(
+            !out.contains("Caused by:"),
+            "bare io must not duplicate its headline under Caused by: {out}"
+        );
+        assert!(
+            out.contains("hint:"),
+            "not-found io should carry a hint: {out}"
+        );
+    }
+
+    #[test]
+    fn path_violation_hint_is_generic_not_sources_yaml_specific() {
+        let err = anyhow::Error::new(GraphtorError::PathViolation {
+            attempted: PathBuf::from(r"D:\x"),
+            allowed_root: PathBuf::from(r"C:\ws"),
+        });
+        let hint = actionable_hint(&err).expect("path violation must carry a hint");
+        assert!(hint.contains("workspace root"), "{hint}");
+        assert!(
+            !hint.contains("sources.yaml"),
+            "hint must be path-purpose-agnostic (also raised for --db-path): {hint}"
+        );
     }
 
     #[test]
