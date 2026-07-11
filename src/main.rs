@@ -70,7 +70,7 @@ use graphtor_core::{
 };
 use sha2::{Digest as _, Sha256};
 use std::any::Any;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use cli::{Cli, Command, OutputFormat};
 
@@ -95,14 +95,18 @@ async fn main() {
     let exit_code = match run(cli).await {
         Ok(code) => code,
         Err(e) => {
-            error!(error = %e, "fatal error");
+            debug!(error = ?e, "fatal error");
             if use_json {
                 println!(
                     "{}",
-                    cli::jsonrpc::wrap_error(cli::jsonrpc::SERVER_ERROR, e.to_string(), None,)
+                    cli::jsonrpc::wrap_error(
+                        cli::jsonrpc::SERVER_ERROR,
+                        cli::errfmt::fatal_headline(&e),
+                        Some(cli::errfmt::fatal_error_data(&e)),
+                    )
                 );
             } else {
-                eprintln!("error: {e}");
+                cli::errfmt::eprint_fatal(&e);
             }
             2
         }
@@ -563,6 +567,14 @@ fn cmd_sync(
     }
 
     total_metrics.duration_ms = elapsed_millis(started_at);
+
+    // Surface a prominent warning when embeddings were silently skipped — the
+    // model was unavailable and the operator did not pass --no-embed. Without
+    // this, a degraded graph/keyword-only index looks like a successful sync.
+    if model.is_none() && !args.no_embed && total_metrics.chunks_created > 0 {
+        cli::errfmt::eprint_embeddings_skipped_warning(total_metrics.chunks_created);
+    }
+
     Ok(emit_sync_output(
         if args.full { "full" } else { "incremental" },
         &total_metrics,
