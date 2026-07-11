@@ -46,7 +46,7 @@ pub(crate) fn eprint_fatal(err: &anyhow::Error) {
 /// actionable `hint`.
 #[must_use]
 pub(crate) fn fatal_error_data(err: &anyhow::Error) -> serde_json::Value {
-    let mut chain: Vec<String> = vec![err.to_string()];
+    let mut chain: Vec<String> = vec![friendly_head(err)];
     chain.extend(cause_lines(err));
 
     let mut map = serde_json::Map::new();
@@ -68,7 +68,7 @@ pub(crate) fn fatal_error_data(err: &anyhow::Error) -> serde_json::Value {
 fn render_fatal(err: &anyhow::Error, color: bool) -> String {
     let mut out = String::new();
     out.push_str(&paint("error: ", error_style(), color));
-    out.push_str(&err.to_string());
+    out.push_str(&friendly_head(err));
 
     let causes = cause_lines(err);
     if !causes.is_empty() {
@@ -109,6 +109,16 @@ fn friendly_cause(cause: &(dyn std::error::Error + 'static)) -> String {
     cause
         .downcast_ref::<GraphtorError>()
         .map_or_else(|| cause.to_string(), friendly_graphtor)
+}
+
+/// Friendly rendering of the top-level error.
+///
+/// Tag-free when the error reaches `main` as a bare [`GraphtorError`] (no
+/// `anyhow` context wrapper); otherwise the top-level context string as-is.
+fn friendly_head(err: &anyhow::Error) -> String {
+    err.chain()
+        .next()
+        .map_or_else(|| err.to_string(), friendly_cause)
 }
 
 /// Human-friendly, category-tag-free rendering of a [`GraphtorError`].
@@ -372,6 +382,32 @@ mod tests {
         // Same string used for context and wrapped error must not double-print.
         let err = anyhow::anyhow!("boom").context("boom");
         assert!(cause_lines(&err).is_empty());
+    }
+
+    #[test]
+    fn bare_top_level_graphtor_error_head_is_friendly() {
+        // A GraphtorError reaching main without a `.context(...)` wrapper must
+        // still render tag-free on the headline (P3 review finding).
+        let err = anyhow::Error::new(GraphtorError::PathViolation {
+            attempted: PathBuf::from(r"D:\docs"),
+            allowed_root: PathBuf::from(r"C:\Tools"),
+        });
+        let out = render_fatal(&err, false);
+        assert!(
+            out.contains(
+                "error: path violation: 'D:\\docs' is outside the workspace root 'C:\\Tools'"
+            ),
+            "head must be the tag-free friendly form: {out}"
+        );
+        assert!(
+            !out.contains("[path_violation]"),
+            "category tag must be stripped from the head: {out}"
+        );
+        let data = fatal_error_data(&err);
+        assert_eq!(
+            data["cause_chain"][0],
+            "path violation: 'D:\\docs' is outside the workspace root 'C:\\Tools'"
+        );
     }
 
     #[test]
