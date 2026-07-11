@@ -22,6 +22,7 @@
 //! For `--json` mode, [`fatal_error_data`] produces a structured payload
 //! (`category`, `cause_chain`, optional `hint`) for the JSON-RPC error envelope.
 
+use std::fmt::Write as _;
 use std::io::Write as _;
 
 use graphtor_core::GraphtorError;
@@ -224,6 +225,43 @@ fn hint_style() -> anstyle::Style {
         .bold()
 }
 
+/// Print a prominent, coloured warning that embeddings were skipped during sync.
+///
+/// Written to stderr through an [`anstream::AutoStream`], so ANSI escapes are
+/// stripped on non-terminals and when `NO_COLOR` is set.
+pub(crate) fn eprint_embeddings_skipped_warning(chunks_created: usize) {
+    let rendered = format_embeddings_skipped_warning(chunks_created, true);
+    let mut stream = anstream::AutoStream::auto(std::io::stderr());
+    let _ = writeln!(stream, "{rendered}");
+}
+
+/// Build the "embeddings skipped" warning block.
+///
+/// When `color` is `true`, the `warning:` label is wrapped in ANSI escapes.
+#[must_use]
+fn format_embeddings_skipped_warning(chunks_created: usize, color: bool) -> String {
+    let mut out = String::new();
+    out.push_str(&paint("warning: ", warning_style(), color));
+    out.push_str("embeddings were skipped — the embedding model was unavailable.");
+    let _ = write!(
+        out,
+        "\n  {chunks_created} chunk(s) were stored without vectors; \
+         semantic search will return no results."
+    );
+    out.push_str(
+        "\n  set GRAPHTOR_EMBED_MODEL_DIR to a local all-MiniLM-L6-v2 directory (or fix the \
+         Hugging Face cache) and re-run `graphtor-docs sync --full`.",
+    );
+    out
+}
+
+/// Style for the `warning:` label — bold red.
+fn warning_style() -> anstyle::Style {
+    anstyle::Style::new()
+        .fg_color(Some(anstyle::AnsiColor::Red.into()))
+        .bold()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -334,6 +372,26 @@ mod tests {
         // Same string used for context and wrapped error must not double-print.
         let err = anyhow::anyhow!("boom").context("boom");
         assert!(cause_lines(&err).is_empty());
+    }
+
+    #[test]
+    fn embeddings_skipped_warning_plain_has_content_and_no_ansi() {
+        let out = format_embeddings_skipped_warning(4082, false);
+        assert!(out.contains("warning: embeddings were skipped"), "{out}");
+        assert!(out.contains("4082 chunk"), "{out}");
+        assert!(out.contains("GRAPHTOR_EMBED_MODEL_DIR"), "{out}");
+        assert!(out.contains("sync --full"), "{out}");
+        assert!(
+            !out.contains('\u{1b}'),
+            "plain warning must have no ANSI: {out:?}"
+        );
+    }
+
+    #[test]
+    fn embeddings_skipped_warning_colored_has_ansi() {
+        let out = format_embeddings_skipped_warning(1, true);
+        assert!(out.contains('\u{1b}'), "coloured warning must embed ANSI");
+        assert!(out.contains("embeddings were skipped"));
     }
 
     #[test]

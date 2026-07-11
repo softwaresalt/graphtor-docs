@@ -23,6 +23,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
@@ -192,10 +193,10 @@ fn load_from_local_dir(caller: ResolverCaller, dir: &Path) -> Option<EmbeddingMo
 /// remediation guidance without parsing structured log output.
 fn emit_resolution_diagnostic(caller: ResolverCaller, err: &GraphtorError) {
     let cache_hint = canonical_cache_hint();
-    eprintln!(
+    eprintln_error_header(&format!(
         "[embed] embedding model unavailable in `{}`:",
         caller.label()
-    );
+    ));
     eprintln!("  model     : {DEFAULT_MODEL_ID}");
     eprintln!("  cause     : {err}");
     eprintln!("  cache dir : {cache_hint}");
@@ -213,10 +214,10 @@ fn emit_resolution_diagnostic(caller: ResolverCaller, err: &GraphtorError) {
 /// fails, mirroring [`emit_resolution_diagnostic`] but pointing the operator at
 /// the configured directory rather than the Hub cache.
 fn emit_local_dir_diagnostic(caller: ResolverCaller, dir: &Path, err: &GraphtorError) {
-    eprintln!(
+    eprintln_error_header(&format!(
         "[embed] local embedding model unavailable in `{}`:",
         caller.label()
-    );
+    ));
     eprintln!("  model dir : {}", dir.display());
     eprintln!("  source    : {MODEL_DIR_ENV} (environment override)");
     eprintln!("  cause     : {err}");
@@ -257,6 +258,36 @@ fn canonical_cache_hint() -> String {
     "~/.cache/huggingface".to_string()
 }
 
+/// Bold-red style for embed-diagnostic headers.
+fn embed_error_style() -> anstyle::Style {
+    anstyle::Style::new()
+        .fg_color(Some(anstyle::AnsiColor::Red.into()))
+        .bold()
+}
+
+/// Wrap `text` in bold-red ANSI escapes when `color` is enabled.
+fn paint_error(text: &str, color: bool) -> String {
+    if color {
+        format!(
+            "{}{text}{}",
+            embed_error_style().render(),
+            anstyle::Reset.render()
+        )
+    } else {
+        text.to_string()
+    }
+}
+
+/// Print a bold-red diagnostic header line to stderr.
+///
+/// Written through an [`anstream::AutoStream`], so ANSI escapes are stripped on
+/// non-terminals and when `NO_COLOR` is set.
+fn eprintln_error_header(text: &str) {
+    let styled = paint_error(text, true);
+    let mut stream = anstream::AutoStream::auto(std::io::stderr());
+    let _ = writeln!(stream, "{styled}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +297,18 @@ mod tests {
         let result =
             resolve_embedding_model(ResolverCaller::Sync, true).expect("no-embed must not error");
         assert!(result.is_none(), "no-embed mode must skip model load");
+    }
+
+    #[test]
+    fn paint_error_plain_is_unstyled() {
+        assert_eq!(paint_error("boom", false), "boom");
+    }
+
+    #[test]
+    fn paint_error_colored_wraps_in_ansi() {
+        let s = paint_error("boom", true);
+        assert!(s.contains('\u{1b}'), "coloured header must embed ANSI");
+        assert!(s.contains("boom"), "content preserved");
     }
 
     #[test]

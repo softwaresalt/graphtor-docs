@@ -567,6 +567,14 @@ fn cmd_sync(
     }
 
     total_metrics.duration_ms = elapsed_millis(started_at);
+
+    // Surface a prominent warning when embeddings were silently skipped — the
+    // model was unavailable and the operator did not pass --no-embed. Without
+    // this, a degraded graph/keyword-only index looks like a successful sync.
+    if model.is_none() && !args.no_embed && total_metrics.chunks_created > 0 {
+        cli::errfmt::eprint_embeddings_skipped_warning(total_metrics.chunks_created);
+    }
+
     Ok(emit_sync_output(
         if args.full { "full" } else { "incremental" },
         &total_metrics,
