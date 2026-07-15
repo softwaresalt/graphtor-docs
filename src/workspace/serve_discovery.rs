@@ -205,7 +205,9 @@ pub fn classify_serve_postures(
 
     if let Some(config) = source_config {
         for source in &config.sources {
-            let Source::Local(local) = source;
+            let Some(local) = source.as_local() else {
+                continue;
+            };
             if !local.path.exists() || !source_has_ingestible_content(local) {
                 // Absent, empty, or stale — this source resolves no
                 // database to `Generation`; fail-safe default applies.
@@ -702,7 +704,9 @@ mod tests {
             1,
             "only the valid source group must be returned"
         );
-        let Source::Local(only) = &classified.generation_sources[0];
+        let only = classified.generation_sources[0]
+            .as_local()
+            .expect("generation source is local");
         assert_eq!(only.id, "valid-src");
     }
 
@@ -713,9 +717,14 @@ mod tests {
         touch(&docs_dir, "guide.md");
         let db = touch(root.path(), "graph.db");
         let served = vec![validate_path(&db, root.path()).unwrap()];
-        let mut source = local_source("docs", &docs_dir, None);
-        let Source::Local(local) = &mut source;
-        local.include = vec!["no-match-*.md".to_string()];
+        let source = Source::Local(LocalSource {
+            id: "docs".to_string(),
+            path: docs_dir.clone(),
+            include: vec!["no-match-*.md".to_string()],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
         let config = config_with(vec![source]);
 
         let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
