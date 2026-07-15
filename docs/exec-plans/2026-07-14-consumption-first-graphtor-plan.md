@@ -272,7 +272,9 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   accessors (review threads 2/2b / PR #88 comments 3588876057, 3588876095) —
   existing `type: local` entries parse unchanged and `git`/`url` stay rejected;
   adding the variant then only extends the `src/config/source.rs` accessor match
-  arms and breaks no consumer (build OR test). Merged through
+  arms — `id()` returns the required `DatabaseSource.id` alias, `formats()`/`include()`/
+  `exclude()` return empty, `database()` returns the served path, `as_local()` → `None`,
+  `is_ingestible()` → `false` — and breaks no consumer (build OR test). Merged through
   `serve_discovery` with CANONICAL-path dedup against auto-discovery (same
   underlying file collapses to one served store; the explicit entry's `id` is the
   served alias/name). Phase-1 explicit entries MUST remain **workspace-contained**:
@@ -339,9 +341,14 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 > top-level filter needed.
 
 **P1-RF1 — Variant-safe `Source` accessors + config-validation refactor** (050.010-T; code, test-first)
-* Changes: add `Source::as_local(&self) -> Option<&LocalSource>` and
-  `Source::is_ingestible(&self) -> bool` to `src/config/source.rs` (today always
-  `Some`/`true`); refactor the THREE irrefutable bindings in
+* Changes: add `as_local(&self) -> Option<&LocalSource>` (declared `pub`) and
+  `is_ingestible(&self) -> bool` to `Source` in `src/config/source.rs` (today always
+  `Some`/`true`), AND widen the existing `Source::id()` accessor (`src/config/source.rs:60`)
+  from `pub(crate)` to `pub` so the bin crate (src/main.rs, P1-RF4) and external
+  integration tests (P1-RF5) — SEPARATE crates from the library — can call
+  `id()`/`as_local()` across the crate boundary; `is_ingestible()` MAY remain
+  `pub(crate)` (library-only, used by RF3's src/sync/mod.rs); refactor the THREE
+  irrefutable bindings in
   `src/config/validation.rs` (`validate` ~L67, `detect_with_context` ~L210,
   `intake_key` ~L302) and the THREE colocated `#[cfg(test)]` bindings in
   `src/config/source.rs` (~L162/L188/L197) to route through `as_local()` /
@@ -350,7 +357,8 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Tests: `as_local()`/`is_ingestible()` unit behaviour; `validate`,
   `detect_with_context`, and `intake_key` produce identical results for local-only
   configs; the src/config/source.rs colocated tests stay green through `as_local()`;
-  clean under clippy pedantic (refutable `Option` let-else — no irrefutable-pattern lint).
+  cross-crate visibility compiles (the bin crate and external tests call the now-public
+  `id()`/`as_local()`); clean under clippy pedantic (refutable `Option` let-else — no irrefutable-pattern lint).
 * Posture: test-first. Depends on P1-T3.
 
 **P1-RF2 — Acquire plan/dispatch variant-safe refactor** (050.011-T; code, test-first)
@@ -382,7 +390,9 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   `changed_source_fields` (~L661) and `collect_candidate_md_files` (~L1310) via
   `as_local()` (defensive empty/skip when non-local); plus the one colocated
   `#[cfg(test)]` binding (~L4323) via `as_local()`. Uniform mechanical
-  accessor-routing in a single file/domain (≤ 3 test-scenario families).
+  accessor-routing in a single file/domain (≤ 3 test-scenario families). src/main.rs
+  is the BIN crate (separate from the library), so it calls the now-public
+  `Source::id()`/`Source::as_local()` widened in P1-RF1 across the crate boundary.
 * Files: `src/main.rs`.
 * Tests: id-extraction, `changed_source_fields`, and `collect_candidate_md_files`
   identical for local sources; the main.rs colocated migration test stays green; after
