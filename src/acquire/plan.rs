@@ -45,6 +45,13 @@ pub fn plan(
     let mut total_scan: usize = 0;
 
     for source in &config.sources {
+        // A non-local (e.g. served, read-only) source is never scanned —
+        // filtered here, BEFORE `resolve_source_dir`, so a mixed
+        // local/database config plans successfully instead of failing
+        // closed on the non-ingestible entry (P1-T6, 050.006-T).
+        if source.as_local().is_none() {
+            continue;
+        }
         let target_dir = resolve_source_dir(source, allowed_root)?;
         total_scan += 1;
         sources.push(PlannedSource {
@@ -87,7 +94,11 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
     let total_count = config.sources.len();
 
     for source in &config.sources {
-        let crate::config::Source::Local(local) = source;
+        // A non-local (e.g. served, read-only) source has no ingestion
+        // path, globs, or formats to validate.
+        let Some(local) = source.as_local() else {
+            continue;
+        };
 
         if local.path.exists() {
             // FR-017: path security — must be within allowed_root
@@ -128,11 +139,26 @@ pub fn validate_sources(config: &SourceConfig, allowed_root: &Path) -> Validatio
 // ── Private helpers ────────────────────────────────────────────────────────────
 
 /// Determine the resolved target directory for a local source.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Config`] if `source` is not a local ingestion
+/// source. This is defence-in-depth: the [`plan`] loop filters non-local
+/// sources out before ever calling this function, so a mixed
+/// local/database config still plans successfully.
 fn resolve_source_dir(
     source: &crate::config::Source,
     allowed_root: &Path,
 ) -> Result<PathBuf, GraphtorError> {
-    let crate::config::Source::Local(local) = source;
+    let Some(local) = source.as_local() else {
+        return Err(GraphtorError::Config {
+            message: format!(
+                "source '{}' is not a local ingestion source and has no directory to resolve",
+                source.id()
+            ),
+            field: Some("type".to_string()),
+        });
+    };
     crate::path::validate_path(&local.path, allowed_root)
 }
 

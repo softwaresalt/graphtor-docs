@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{error, info, warn};
 
-use crate::config::source::{LocalSource, Source};
+use crate::config::source::LocalSource;
 use crate::error::GraphtorError;
 
 pub mod filter;
@@ -140,7 +140,17 @@ fn dispatch_planned_source(planned: &PlannedSource, acq_plan: &AcquisitionPlan) 
 
 /// Scan a local source directory and apply glob filtering.
 fn execute_scan_local(planned: &PlannedSource, acq_plan: &AcquisitionPlan) -> SourceOutcome {
-    let Source::Local(local) = &planned.source;
+    // Defence-in-depth: the plan loop (`acquire::plan::plan`) only ever
+    // constructs a `PlannedSource` for a local, ingestible source, so this
+    // is structurally unreachable for a non-local source today — but a
+    // variant-safe fail-closed outcome here means a future change to the
+    // plan loop cannot silently panic instead of reporting a failure.
+    let Some(local) = planned.source.as_local() else {
+        return SourceOutcome::Failed {
+            source_id: planned.source.id().to_string(),
+            error: "source is not a local ingestion source".to_string(),
+        };
+    };
 
     let scan_source = LocalSource {
         id: local.id.clone(),
