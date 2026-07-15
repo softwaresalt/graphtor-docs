@@ -273,7 +273,10 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   existing `type: local` entries parse unchanged and `git`/`url` stay rejected;
   adding the variant then only extends the `src/config/source.rs` accessor match
   arms — `id()` returns the required `DatabaseSource.id` alias, `formats()`/`include()`/
-  `exclude()` return empty, `database()` returns the served path, `as_local()` → `None`,
+  `exclude()` return empty, `database()` returns `None` (local-target-only; it must
+  NOT return the served path because it feeds the ingestion/generation write path),
+  a DISTINCT `served_db_path()` accessor returns `Some(DatabaseSource.path)` for the
+  read-only served path, `as_local()` → `None`,
   `is_ingestible()` → `false` — and breaks no consumer (build OR test). Merged through
   `serve_discovery` with CANONICAL-path dedup against auto-discovery (same
   underlying file collapses to one served store; the explicit entry's `id` is the
@@ -286,10 +289,12 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   round-trips with zero risk (the original `deny_unknown_fields` concern is moot).
 * Files: `sources.yaml` schema/parse module, `src/workspace/serve_discovery.rs`.
 * Tests: explicit workspace-contained read-only entry served read-only + never
-  synced; **mixed local+database config through BOTH `serve` (database served
-  read-only, local source keeps generation posture) AND `sync` (`cmd_sync`
-  ingests only the local source; the database entry is ignored via the
-  P1-RF2/P1-RF3 gates)**; explicit entry + auto-discovery for the same file
+  synced; **mixed local+database config through `serve` (database served
+  read-only via `served_db_path`, local source keeps generation posture),
+  `sync` (`cmd_sync` ingests only the local source; the database entry is ignored
+  via the P1-RF2/P1-RF3 gates), AND generation (the database entry is EXCLUDED
+  from `discover_db_files`/`split_plan_by_database` via the P1-RF4 gate, never
+  opened read-write)**; explicit entry + auto-discovery for the same file
   collapse to one store; an entry using `..`/POSIX symlink/Windows
   junction/outside-root path → rejected with a path-violation error; a pre-change
   `sources.yaml` round-trips (backward-compat parse); the additive variant
@@ -298,7 +303,8 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Posture: test-first. Depends on P1-T3 and P1-RF5 (050.014-T, the last
   variant-safe pre-refactor) — the variant is added only after every
   `Source::Local` consumer (production AND test) is variant-safe (review threads 2/2b, 5). Ingestion
-  filtering is owned by P1-RF2/P1-RF3, so this unit does NOT touch
+  AND generation filtering is owned by P1-RF2/P1-RF3/P1-RF4 (acquisition plan loop +
+  sync path + `discover_db_files`/`split_plan_by_database`), so this unit does NOT touch
   `cmd_sync`/main.rs and stays at 2 source files.
 
 **P1-T7 — Optional `--read-only` serve override flag** (config/CLI, test-first)
@@ -362,13 +368,21 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Posture: test-first. Depends on P1-T3.
 
 **P1-RF2 — Acquire plan/dispatch variant-safe refactor** (050.011-T; code, test-first)
-* Changes: route `validate_sources` (`src/acquire/plan.rs:90`),
+* Changes: filter the acquisition PLAN LOOP (`plan`,
+  `src/acquire/plan.rs:47-55` — it calls `resolve_source_dir` for EVERY configured
+  source, so it MUST gate on `as_local()` BEFORE `resolve_source_dir`) and route
+  `validate_sources` (`src/acquire/plan.rs:90`),
   `resolve_source_dir` (`src/acquire/plan.rs:135`), and `execute_scan_local`
   (`src/acquire/mod.rs:143`) through `as_local()` so acquisition ignores
-  non-ingestible sources by design.
+  non-ingestible sources by design. Without the plan-loop filter, a mixed
+  local/database config would FAIL planning once P1-T6 lands (PR #88 thread
+  PRRT_kwDORiB5E86RNyUU); `resolve_source_dir` fail-closes on a non-local source as
+  defence-in-depth.
 * Files: `src/acquire/plan.rs`, `src/acquire/mod.rs`.
-* Tests: `validate_sources`/`resolve_source_dir`/`execute_scan_local` identical for
-  local-only configs; existing acquire tests green.
+* Tests: `plan`/`validate_sources`/`resolve_source_dir`/`execute_scan_local`
+  identical for local-only configs; a mixed local/database config plans ONLY the
+  local source (the database entry is filtered, not failed — exercised once P1-T6
+  adds the variant); existing acquire tests green.
 * Posture: test-first. Depends on P1-RF1.
 
 **P1-RF3 — Pipeline record + sync-cycle variant-safe refactor** (050.012-T; code, test-first)
@@ -389,13 +403,34 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   `cmd_prewarm` ~L3382, `prewarm_sync_source` ~L3435) via `Source::id()`;
   `changed_source_fields` (~L661) and `collect_candidate_md_files` (~L1310) via
   `as_local()` (defensive empty/skip when non-local); plus the one colocated
-  `#[cfg(test)]` binding (~L4323) via `as_local()`. Uniform mechanical
-  accessor-routing in a single file/domain (≤ 3 test-scenario families). src/main.rs
+  `#[cfg(test)]` binding (~L4323) via `as_local()`. ALSO gate the GENERATION
+    db-discovery/splitting against non-ingestible sources with TWO separate guards
+    (the two functions iterate DIFFERENT collections): `discover_db_files` (~L244)
+    gates its `source_config.sources` loop on `as_local()`, and
+    `split_plan_by_database` (~L273) — which seeds keys from the now-filtered
+    `discover_db_files` but then iterates `plan.sources` (~L284-290) where
+    `or_insert_with` (~L286-288) can re-introduce a db key — also gates that
+    `plan.sources` loop on `as_local()`, belt-and-suspenders atop RF2's (050.011-T)
+    filtered `AcquisitionPlan` invariant, so a non-ingestible `Database` source is
+    EXCLUDED from generation discovery AND splitting and never opened read-write
+    (PR #88 threads PRRT_kwDORiB5E86RNyT4 / PRRT_kwDORiB5E86RO5GB). This is a
+  SHRINKING exclusion filter that PRESERVES the P0-1 invariant (the sync/write set is
+  never ENLARGED) and is distinct from the P1-T1 constraint forbidding auto-discovery
+  feedback INTO those functions. Uniform mechanical
+  accessor-routing in a single file/domain. src/main.rs
   is the BIN crate (separate from the library), so it calls the now-public
   `Source::id()`/`Source::as_local()` widened in P1-RF1 across the crate boundary.
 * Files: `src/main.rs`.
 * Tests: id-extraction, `changed_source_fields`, and `collect_candidate_md_files`
-  identical for local sources; the main.rs colocated migration test stays green; after
+  identical for local sources; `discover_db_files` (gating its `source_config.sources`
+  loop) and `split_plan_by_database` (gating its `plan.sources` loop atop RF2's
+  filtered `AcquisitionPlan`) enumerate the same generation db set for a local-only
+  config, and a non-local (future `Database`) source is excluded from BOTH (exercised once P1-T6 adds the
+  variant); the filter skips a `Database` source ENTIRELY (it must not fall through
+  `resolve_source_db_path`'s `database()==None` default to `base_db_path`); for a
+  database-only config the empty-set + `graph.db` write-fallback remains owned by
+  P1-T3 and consumption-mode classification by P1-T2, and the served entry reaches
+  the serve union via the P1-T6 merge (P1-T1), not `discover_db_files`; the main.rs colocated migration test stays green; after
   this unit ZERO `Source::Local` consumers remain in `src/main.rs` (production and
   colocated tests) — only the EXTERNAL integration tests (P1-RF5) remain.
 * Posture: test-first. Depends on P1-RF3.
@@ -449,13 +484,21 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Changes: add `--with-ingestion` to `InstallArgs` (`src/cli/mod.rs:274`) and
   thread it through `cmd_install` to select the install PATH — the consumption-
   first default routes to `install_minimal()` (P2-T1), `--with-ingestion` routes
-  to the PRESERVED full `install()` (invoked by the P2-T2b scaffold path). Flag +
-  plumbing ONLY; scaffold creation is P2-T2b (review thread 9 split — the original
+  to the PRESERVED full `install()` (invoked by the P2-T2b scaffold path). Because
+  this selector changes the DEFAULT to `install_minimal()`, also update the
+  command-level `Install` doc comment clap renders as `install --help`
+  (`src/cli/mod.rs:115-120`), which currently promises the default creates
+  `bin/data/cache/config/logs` and copies the binary — behaviour that no longer
+  occurs on the default path (PR #88 thread PRRT_kwDORiB5E86RNyVA). Flag +
+  plumbing + help-text update ONLY; scaffold creation is P2-T2b (review thread 9 split — the original
   P2-T2 listed three files, violating the `< 3 files` rule).
 * Files: `src/cli/mod.rs`, `src/main.rs` (`cmd_install`).
 * Tests: flag parsed and threaded to the install-path selector; absent flag
   selects the consumption-first default (`install_minimal()`); present flag
-  selects the preserved full `install()`; no scaffold behaviour implemented here.
+  selects the preserved full `install()`; no scaffold behaviour implemented here;
+  `install --help` describes the minimal default + `--with-ingestion` opt-in and no
+  longer claims the default creates the full scaffold or copies the binary
+  (help-text assertion).
 * Posture: test-first. Depends on P2-T1.
 
 **P2-T2b — Opt-in full-ingestion scaffold + managed marker** (code, test-first)
@@ -466,7 +509,10 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   (`src/main.rs:3017-3028`): write the template `sources.yaml`
   (`init_sources_yaml`), manage the `.gitignore` block (unless `--no-gitignore`;
   thread 8), and write `.mcp.json` via the shared P2-T3 writer so the managed
-  server entry uses the pinned `.graphtor/bin` path AND carries the managed marker
+  server entry uses the pinned, cwd-independent ABSOLUTE
+  `<canonical_project_root>/.graphtor/bin/graphtor-docs[.exe]` command (the relative
+  `.graphtor/bin/...` string is reserved ONLY for legacy exact-match recognition)
+  AND carries the managed marker
   (review thread 13). These `sources.yaml`/`.gitignore`/`.mcp.json` calls MUST be
   guarded to the `--with-ingestion` path so the consumption-first DEFAULT
   (`install_minimal()`, P2-T1) never runs them. P2-T2a stays routing-only (flag +
@@ -477,7 +523,7 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Files: `src/workspace/install.rs`, `src/main.rs` (`cmd_install` full-path
   orchestration; still < 3 files).
 * Tests: `--with-ingestion` → full layout + `sources.yaml` + copied binary +
-  `.mcp.json` pinned bin path WITH managed marker + managed `.gitignore`; the
+  `.mcp.json` pinned cwd-independent ABSOLUTE `<canonical_project_root>/.graphtor/bin/graphtor-docs[.exe]` command WITH managed marker + managed `.gitignore`; the
   full-path `sources.yaml`/`.gitignore`/`.mcp.json` orchestration runs ONLY on
   `--with-ingestion`; default (no flag) routes to `install_minimal()` and creates
   none of these (no `sources.yaml`, no `.gitignore`, minimal serve `.mcp.json`);
@@ -487,8 +533,12 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 **P2-T3 — Shared `.mcp.json` writer: resolution ladder + managed marker + atomic write** (code, test-first) — Phase-2 root
 * Changes: make the MCP config writer (`generate_mcp_config`/`managed_server_value`,
   `src/workspace/mcp_config.rs:84-140`) the shared foundation both install paths
-  consume: (a) a binary-resolution LADDER — pinned absolute
-  `.graphtor/bin/graphtor-docs` (+ platform ext) when a managed binary exists,
+  consume: (a) a binary-resolution LADDER that LOCKS a single cwd-independent
+  model — the ACTUAL ABSOLUTE project-root path
+  `<project_root>/.graphtor/bin/graphtor-docs` (+ platform ext), computed from the
+  canonical root at install time, when a managed binary exists (a bare
+  workspace-relative `.graphtor/bin/graphtor-docs` string does NOT resolve when the
+  MCP client launches from a different cwd — PR #88 thread PRRT_kwDORiB5E86RNyUs);
   else the bare `graphtor-docs` PATH command (no `.exe`; Windows resolves via
   `PATHEXT`); (b) a managed-entry PROVENANCE MARKER in the server entry so
   `uninstall` (P2-T5b) can identify the managed entry; (c) ATOMIC temp-file +
@@ -500,24 +550,28 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   extended by PR #88 comments 3588876135, 3588876172): key ABSENT → insert a
   marked managed entry atomically; PRESENT AND carrying the provenance marker →
   UPDATE atomically in place; PRESENT, UNMARKED, but EXACTLY matching the legacy
-  generated shape (exact NORMALIZED command equality to `.graphtor/bin/graphtor-docs`
-  OR `.graphtor/bin/graphtor-docs.exe` AND args == `["serve"]` AND stdio
+  generated shape (exact NORMALIZED command equality to the HISTORICAL RELATIVE
+  string `.graphtor/bin/graphtor-docs`
+  OR `.graphtor/bin/graphtor-docs.exe` written by the pre-marker writer, AND args == `["serve"]` AND stdio
   transport) → MIGRATE IN PLACE atomically by ADDING the provenance marker and
-  refreshing the managed value (this is the current release's OWN pre-marker entry
+  refreshing the managed value to the new absolute-path + marker shape (this is the current release's OWN pre-marker entry
   — R14 backward-compat for existing installs / reinstall / `--with-ingestion` —
   NOT a user collision); PRESENT, UNMARKED, and any OTHER shape (user-authored) →
   FAIL CLOSED with a `GraphtorError::Config` collision error, leaving the file
   byte-for-byte unchanged (never overwrite). The legacy shape uses EXACT equality
-  (the SAME predicate as P2-T5b removal), never CONTAINS. The current writer hardcodes `.graphtor/bin/...`
+  (the SAME predicate as P2-T5b removal), never CONTAINS, and recognises only the
+  HISTORICAL RELATIVE pre-marker shape; the marker (not the command string) is the
+  forward-looking managed identity, so the going-forward value is absolute. The current writer hardcodes a RELATIVE `.graphtor/bin/...`
   (`mcp_config.rs:86`) and always creates it; restructured as the Phase-2 ROOT so
   binary resolution + marker + atomic write + collision contract exist BEFORE the
   minimal install (P2-T1) claims a working install (review thread 7).
 * Files: `src/workspace/mcp_config.rs`.
-* Tests: ladder pure-function (managed binary → pinned path+ext; none → bare PATH
+* Tests: ladder pure-function (managed binary → ACTUAL ABSOLUTE project-root
+  path+ext, cwd-independent; none → bare PATH
   command, no `.exe`); managed marker present; atomic write with stable ordering;
   collision — absent key → created; marked entry → updated in place; **UNMARKED
-  entry EXACTLY matching the legacy generated shape → migrated in place (marker
-  added, managed value refreshed), NOT a collision (R14 backward-compat)**;
+  entry EXACTLY matching the historical relative legacy shape → migrated in place (marker
+  added, managed value refreshed to absolute+marker), NOT a collision (R14 backward-compat)**;
   UNMARKED user `graphtor-docs` key of any OTHER shape → install fails closed and
   the user entry is preserved byte-for-byte; unrelated user servers preserved.
 * Posture: test-first. Depends on Phase 1 (050-F).
@@ -536,14 +590,22 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Changes: `uninstall()` (`src/workspace/uninstall.rs:34`) removes ONLY
   graphtor-created filesystem artifacts (full-install subdirs) and MUST NEVER
   delete user-dropped `*.db` in the `.graphtor/` root; no symlink-follow out of
-  root. `.gitignore` parity (thread 8): a minimal uninstall MUST NOT remove a
+  root. The footprint rewrite MUST PRESERVE the existing public
+  `uninstall(project_root, keep_config)` contract: `keep_config == true` retains
+  `.graphtor/config` (existing behaviour + test, `uninstall.rs:34-77,112-124`) —
+  the new artifact allowlist branches on `keep_config` to skip `config/` deletion
+  while still retaining user-dropped `*.db` (PR #88 thread PRRT_kwDORiB5E86RNyVa);
+  do NOT drop the `keep_config` parameter during the rewrite.
+  `.gitignore` parity (thread 8): a minimal uninstall MUST NOT remove a
   `.gitignore` it never created; only a full-footprint uninstall touches the
   managed `.gitignore` block. The PA-3 approval prompt enumerates the deletion
   set. Managed `.mcp.json` removal is P2-T5b; upgrade parity is P2-T5c (review
   thread 10 split — the original P2-T5 spanned four files).
 * Files: `src/workspace/uninstall.rs`, `src/main.rs` (`cmd_uninstall` prompt).
-* Tests: minimal → no user-db deletion and no `.gitignore` removal; full →
-  removes graphtor subdirs + managed `.gitignore` while a dropped `.db` SURVIVES;
+* Tests: minimal → no user-db deletion and no `.gitignore` removal; full +
+  `keep_config == false` → removes graphtor subdirs + managed `.gitignore` while a
+  dropped `.db` SURVIVES; full + `keep_config == true` → removes managed subdirs but
+  PRESERVES `.graphtor/config` while the dropped `.db` still SURVIVES;
   no symlink-follow; PA-3 prompt enumerates the deletion set.
 * Posture: test-first. Depends on P2-T1 and P2-T2b.
 
@@ -914,9 +976,12 @@ resolved in this revision (Attempt 2).
   chokepoint.** It is called by `split_plan_by_database` on the sync path;
   folding auto-discovery into it would pull dropped consumption dbs into
   background writes (INV-1 hazard). *Resolution*: P1-T1 now adds a NEW
-  serve/status-scoped `serve_discovery` module and explicitly forbids modifying
-  `discover_db_files`/`split_plan_by_database`; a characterization test asserts
-  sync does not enlarge its db set from dropped dbs.
+  serve/status-scoped `serve_discovery` module and explicitly forbids ENLARGING
+  `discover_db_files`/`split_plan_by_database` with auto-discovered dbs; a
+  characterization test asserts sync does not enlarge its db set from dropped dbs.
+  P1-RF4's non-ingestible `as_local()` EXCLUSION filter on those same functions is
+  compatible: it can only SHRINK the generation set (dropping `type: database`
+  read-only entries), never enlarge it, so it upholds the same invariant.
 * **P0-2 (Rust): `run_duplicate_intake_preflight` fires before classification.**
   A stale non-empty `sources.yaml` would trip the write-path guard in consumer
   mode. *Resolution*: P1-T2 moves content-derived classification BEFORE the
@@ -1082,14 +1147,19 @@ The 12 Copilot threads from the third review were remediated in-place
   dependency-ordered variant-safe pre-refactors P1-RF1..P1-RF5
   (050.010 → 050.011 → 050.012 → 050.013 → 050.014-T, each ≤ 2 files, independently
   green) route every consumer through `Source::id()`/`as_local()`/`is_ingestible()`
-  BEFORE P1-T6 adds the variant; acquisition and sync ignore `Database` by design
-  (per-consumer gates); P1-T6 adds the variant + a mixed local+database serve+sync
+  BEFORE P1-T6 adds the variant; acquisition, sync, AND generation db-discovery/splitting
+  ignore `Database` by design (per-consumer gates: RF2 acquisition plan loop, RF3 sync,
+  RF4 `discover_db_files`/`split_plan_by_database`); `database()` stays local-target-only and a distinct
+  `served_db_path()` exposes the read-only path; P1-T6 adds the variant + a mixed local+database serve+sync+generation
   test and keeps `cargo build`/clippy/`cargo test` green.
 * **Writer collision migration (3588876135 plan, 3588876172 051.004-T)** — the
   P2-T3 collision matrix is now FOUR-way: absent → create marked; marked → update
-  in place; UNMARKED but exact legacy shape → migrate in place by adding the marker
+  in place; UNMARKED but exact HISTORICAL RELATIVE legacy shape → migrate in place by adding the marker
   (R14 backward-compat for the release's own pre-marker entry); any other unmarked
-  entry → fail closed. Exact normalized command equality, `["serve"]` args, stdio
+  entry → fail closed. The going-forward managed command is the ACTUAL ABSOLUTE
+  project-root path (cwd-independent; PR #88 thread PRRT_kwDORiB5E86RNyUs) with the
+  marker as forward-looking identity; legacy recognition uses exact normalized
+  equality to the historical relative string, `["serve"]` args, stdio
   transport; tests for both new cases.
 * **T2b full-path scaffold (3588876203 plan, 3588876245 051.008-T)** — P2-T2b adds
   `src/main.rs` (still < 3 files) and owns the full-path `cmd_install` orchestration

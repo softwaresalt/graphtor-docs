@@ -269,9 +269,11 @@ path.
    `config/bin/cache/data/logs`. A new `install --with-ingestion` (and/or the
    existing `init`) opt-in creates the full generation scaffold (config +
    `sources.yaml` + data/cache/logs + bin/binary copy). The graphtor dev
-   workspace uses the ingestion path. Binary resolution precedence: prefer a
-   `.graphtor/bin/graphtor-docs` copy when the ingestion scaffold created it,
-   otherwise reference the PATH command. `uninstall`, `upgrade`, and `doctor`
+   workspace uses the ingestion path. Binary resolution precedence: prefer the
+   managed `.graphtor/bin/graphtor-docs` binary copy when the ingestion scaffold
+   created it — serialized in `.mcp.json` as its cwd-independent ABSOLUTE
+   `<canonical_project_root>/.graphtor/bin/graphtor-docs` path (see the locked
+   `.mcp.json` command value below) — otherwise reference the PATH command. `uninstall`, `upgrade`, and `doctor`
    are updated to tolerate both footprints; behaviour stays idempotent and
    backward-compatible with existing full installs. *Rationale*: consumers get a
    minimal, sync-free footprint; authors are one flag away from the full scaffold.
@@ -308,11 +310,15 @@ workspace being the primary such case).
   committed timeline); read-only is the fail-safe default, so a force-consumption
   override is the only escape hatch required. See plan P1-T7.
 * **`.mcp.json` command value on Windows** — **LOCKED (PR #88 thread 12)**: the
-  binary-resolution ladder is fixed — reference the pinned absolute
-  `.graphtor/bin/graphtor-docs` (+ platform ext) when the ingestion scaffold
-  created a managed binary, otherwise the bare `graphtor-docs` PATH command with
-  NO `.exe` (Windows resolves via `PATHEXT`); append the platform ext ONLY on the
-  pinned bin path. See plan P2-T3.
+  binary-resolution ladder is fixed and cwd-independent — reference the pinned
+  ABSOLUTE `<canonical_project_root>/.graphtor/bin/graphtor-docs` (+ platform ext),
+  computed from the canonical project root at install time so it resolves regardless
+  of the MCP client's launch cwd, when the ingestion scaffold created a managed
+  binary, otherwise the bare `graphtor-docs` PATH command with NO `.exe` (Windows
+  resolves via `PATHEXT`); append the platform ext ONLY on the pinned bin path. The
+  workspace-relative `.graphtor/bin/graphtor-docs` string is reserved ONLY for legacy
+  exact-match recognition, never the going-forward managed value (PR #88 thread
+  PRRT_kwDORiB5E86RNyUs). See plan P2-T3.
 * **Discovery filter list** — **LOCKED (plan P1-T1)**: skip `*.lock`, index/tmp
   files, `.graphtor/models`, and generated artifacts; the served set is `*.db` by
   extension in the `.graphtor/` root minus that skip-list, with canonicalize +
