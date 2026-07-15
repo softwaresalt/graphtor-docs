@@ -45,7 +45,7 @@ ingestion).
 
 | # | Requirement (from decision) | Implementation action | Phase |
 |---|---|---|---|
-| R1 | `serve` auto-discovers `*.db` in `.graphtor/` root | Add a root-scan discovery step feeding `discover_db_files` | P1 / T1 |
+| R1 | `serve` auto-discovers `*.db` in `.graphtor/` root | Add a root-scan discovery step feeding the new `serve_discovery` module; it does NOT feed or modify `discover_db_files` | P1 / T1 |
 | R2 | Mode is content-derived; stale/empty `sources.yaml` never enables sync | Add resolvable-source classification; default read-only | P1 / T2 |
 | R3 | No-real-source dbs are served read-only and never background-synced | Gate rw-store open + `spawn_background_sync` on resolved sources | P1 / T3 |
 | R4 | v4 pre-sync gate applies to auto-discovered read-only dbs | Reuse `needs_v4_migration` gate for discovered dbs | P1 / T4 |
@@ -275,7 +275,7 @@ Phase 1 (feature) ──blocks──> Phase 2 (feature)
 
 Phase 1 internal:
   P1-T1 ──> P1-T2 ──> P1-T3 ──> {P1-T7, P1-T8}
-  P1-T1 ──> P1-T4
+  P1-T3 ──> P1-T4
   P1-T1 ──> P1-T5
   P1-T2 ──> P1-T6
 
@@ -465,8 +465,12 @@ do not proceed to closure — this is a direct INV-1 violation.
   fail-closed. See decision doc Unresolved Questions and P1-T2.
 * `--read-only` naming and whether a symmetric force-sync flag is needed
   (lean: `--read-only` only this phase).
-* Whether Phase 1 and Phase 2 ship as one PR or two sequential PRs (dependency
-  requires Phase 1 first regardless).
+* ~~Whether Phase 1 and Phase 2 ship as one PR or two sequential PRs~~ —
+  **RESOLVED**: ship shipment 045-S as one bounded release unit / one PR
+  containing both Phase 1 and Phase 2. Phase 2 is a consumption-first install
+  layered on Phase 1, the shipment already encodes the Phase 1 → Phase 2
+  dependency, and P-001 permits one in-flight bundled release unit. Phase 1
+  still lands before Phase 2 within the single PR.
 
 ## Constitution Check
 
