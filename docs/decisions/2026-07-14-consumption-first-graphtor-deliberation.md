@@ -229,8 +229,10 @@ path.
 
 1. **Mode detection is CONTENT-DERIVED (Option M1), default-safe.** A workspace
    is in generation/write mode only when it has resolvable ingestion sources
-   with real content (a `sources.yaml` whose declared `local` source paths
-   exist). Otherwise it is read-only consumption — even when a stale or empty
+   with real content (a `sources.yaml` with a declared `local` source whose
+   path exists AND resolves to at least one ingestible file; an
+   existing-but-empty source remains read-only). Otherwise it is read-only
+   consumption — even when a stale or empty
    `sources.yaml` is present. On ambiguity, **fail read-only**. An explicit
    override flag (e.g. `--read-only` / `--allow-sync`) is added ONLY as an
    escape hatch, never as the primary control. *Rationale*: role must be derived
@@ -253,8 +255,9 @@ path.
    read-only posture does NOT relax the pre-v4 serve refusal gate — a pre-v4
    read-only db is still refused at serve time (operator must sync); it is simply
    never written to or pruned in place. Source-backed dbs (a `local`
-   source whose path exists) keep read-write + background sync on the generation
-   side. *Rationale*: C is a strict superset of A and B — it delivers the
+   source whose path exists AND resolves to at least one ingestible file) keep
+   read-write + background sync on the generation side. *Rationale*: C is a
+   strict superset of A and B — it delivers the
    zero-config consumer UX while preserving the explicit (workspace-contained)
    and sources-driven generation paths with no regression. Confirmed over the
    operator's initial lean toward C.

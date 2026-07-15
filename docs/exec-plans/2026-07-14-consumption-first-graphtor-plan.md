@@ -65,11 +65,12 @@ ingestion).
 
 Each unit follows the 2-hour rule (< 3 files, < 5 functions, < 4 test
 scenarios), width isolation (single domain), and produces a verifiable outcome.
-Phase 1 has 8 units (P1-T1..P1-T8); Phase 2 has 11 units after the review-thread
+Phase 1 has 9 units (P1-T0..P1-T8); Phase 2 has 11 units after the review-thread
 splits (P2-T1, P2-T2a, P2-T2b, P2-T3, P2-T4, P2-T5a, P2-T5b, P2-T5c, P2-T6,
-P2-T7a, P2-T7b). With the two covering features (050-F, 051-F) this is 21 items
-in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
-050.005/050.006/050.007/050.008-T; P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
+P2-T7a, P2-T7b). With the two covering features (050-F, 051-F) this is 22 items
+in shipment 045-S. Backlog IDs: P1-T0 = 050.009-T; P1-T1..T8 =
+050.002/050.004/050.001/050.003/050.005/050.006/050.007/050.008-T;
+P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 051.004/051.001/051.002/051.008/051.003/051.006/051.005/051.009/051.010/051.007/
 051.011-T.
 
@@ -87,6 +88,38 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
 > hazard). Posture is **per-db** (`ServeMode::ReadOnly | Generation`), not
 > per-workspace, so a workspace may hold both source-backed and dropped
 > read-only dbs.
+
+**P1-T0 — Engine/filesystem read-only open feasibility proof (Phase-1 gate)** (code, test-first)
+* Changes: PROVE an ENGINE/FILESYSTEM-level read-only open primitive for the
+  Cozo SQLite backend BEFORE any other Phase-1 work. This is the Phase-1 ROOT
+  GATE: P1-T1 depends on it, so the whole Phase-1 chain — and shipment 045-S — is
+  gated on this proof (review thread 3). `CozoDB`'s public SQLite backend opens a
+  WRITE-capable `DbInstance` and ignores the options string
+  (`src/db/store.rs:366-373,383-390`); the current `open_sqlite_readonly` guards
+  only at the `DataStore` mutate boundary (`src/db/store.rs:105-134`), NOT at the
+  engine/filesystem level. Implement + prove a real engine-level read-only open
+  (SQLite `immutable=1`/`mode=ro` URI or an equivalent `SQLITE_OPEN_READONLY`
+  connection) that cannot create or mutate the db or its WAL/SHM/journal/lock
+  sidecars, verified by an automated before/after no-write proof. Scope is the
+  primitive + proof ONLY; v4 gate parity and ATTACH/extension/single-file serve
+  hardening move to P1-T4 (which consumes this primitive).
+* Files: `src/db/store.rs` (engine-level read-only open path) + a v3/v4 fixture
+  builder if a suitable db fixture is absent (≤ 2 files).
+* Tests: engine/filesystem no-write proof — capture the served `.db` (size,
+  mtime, content hash) and assert NO creation/mutation of the db or its
+  `-wal`/`-shm`/`-journal`/lock sidecars before AND after a query+search+semantic
+  read cycle; an attempted write is rejected at the ENGINE boundary (not the
+  `DataStore` mutate-guard); the open is proven to use immutable/`mode=ro` (or
+  `SQLITE_OPEN_READONLY`).
+* Posture: test-first. No upstream dependency — this is the Phase-1 root.
+* **Feasibility stop condition (NON-NEGOTIABLE):** if the Cozo SQLite backend
+  cannot be opened with a PROVEN engine/filesystem-level no-write guarantee
+  (immutable/`mode=ro` or equivalent, verified by the before/after no-write
+  proof), then P1-T0 (050.009-T) **and** shipment 045-S become **BLOCKED** and
+  Dark Mode HALTS before Phase 2 / minimal install. Do NOT silently degrade, do
+  NOT claim INV-1 on the `DataStore` mutate-guard alone, and do NOT merge a
+  feature-disable fallback. Resolve by proving engine read-only, or escalate for
+  an explicit decision.
 
 **P1-T1 — Serve/status-scoped `.graphtor/*.db` discovery with containment** (code, test-first)
 * Changes: add a serve/status-scoped discovery helper in the new
@@ -133,7 +166,7 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
   For `ReadOnly` dbs: skip `DataStore::open_sqlite` (rw) and `ensure_schema()`
   (a write), skip the exclusive `acquire_database_lock` write lock, and open ONLY
   the read-only store (the *engine-enforced* no-write guarantee is established and
-  proven in P1-T4 — this unit's INV-1 claim is the **gating** invariant, not the
+  proven in P1-T0 (050.009-T) — this unit's INV-1 claim is the **gating** invariant, not the
   filesystem no-write proof; review thread 1). For `Generation` dbs: keep the
   current rw+lock path. `ServeOpenedDatabases` carries per-db posture, and ONLY
   the **filtered `Generation` source groups** from P1-T2 (never the full
@@ -156,46 +189,33 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
 * Posture: characterization-first (lock current dev + mixed behaviour, then gate).
   Depends on P1-T2.
 
-**P1-T4 — Engine-enforced read-only open + no-write proof + v4 gate parity** (code, test-first)
-* Changes: establish an ENGINE/FILESYSTEM-level read-only open for EVERY
-  `ReadOnly`-classified db (auto-discovered AND explicit workspace-contained
-  entries from P1-T6) plus automated no-write verification, and keep the v4
-  pre-sync gate. The read-only open MUST use a backend/open mode that cannot
-  create or mutate the db or its WAL/SHM/journal/lock sidecars (SQLite
-  `immutable=1`/`mode=ro` URI or an equivalent `SQLITE_OPEN_READONLY` connection).
-  `CozoDB`'s public SQLite backend exposes NO read-only connection flag and
-  ignores the options string (`src/db/store.rs:107-110,384`), so the FIRST
-  test-first step confirms engine-level read-only feasibility for the Cozo SQLite
-  backend; if it cannot be PROVEN, the **feasibility stop condition below**
-  applies (fail closed AND block — never a write-capable handle claiming INV-1 on
-  the `DataStore` mutate-guard alone, and never a silent degrade; review thread
-  1). Evaluate `needs_v4_migration` on the read-only store (no
-  write transaction), keeping the refusal message (`open_serve_databases:2363`),
-  and harden the RO open (disable loadable extensions, disallow `ATTACH`,
-  constrain to the single file).
-* Files: `src/db/store.rs` (read-only open strategy), `src/main.rs`
-  (`open_serve_databases` v4 gate on the RO store).
-* Tests: engine/filesystem no-write proof — capture the served `.db` (size,
-  mtime, content hash) and assert NO creation/mutation of `-wal`/`-shm`/
-  `-journal`/lock sidecars before AND after a serve+query+search+semantic read
-  cycle; attempted write/mutation rejected at the ENGINE boundary; fail-closed
-  when engine read-only is unavailable; pre-v4 db → refusal exit + message; v4 db
-  → served; a crafted auto-discovered db and an explicit workspace-contained
-  entry attempting `ATTACH`/extension-load → refused/inert.
+**P1-T4 — v4 gate parity + ATTACH/extension/single-file serve hardening** (code, test-first)
+* Changes: consume the engine-enforced read-only open primitive PROVEN in P1-T0
+  and apply the serve-side hardening for EVERY `ReadOnly`-classified db
+  (auto-discovered AND explicit workspace-contained entries from P1-T6): (1) keep
+  v4 pre-sync gate parity — evaluate `needs_v4_migration` on the read-only store
+  with NO write transaction, preserving the refusal message
+  (`open_serve_databases:2363`); and (2) harden the RO open — disable loadable
+  extensions, disallow `ATTACH`, and constrain to the single file — identically
+  for all `ReadOnly` entries. This unit does NOT re-prove the engine no-write
+  guarantee (that is P1-T0); it builds v4 parity + hardening on top of the proven
+  primitive (review threads 1, 3).
+* Files: `src/db/store.rs` (single-file/`ATTACH`/extension hardening on the RO
+  open), `src/main.rs` (`open_serve_databases` v4 gate on the RO store).
+* Tests: pre-v4 (v3) db → refusal exit + message; v4 db → served; the v4 gate
+  (`needs_v4_migration`) is evaluated on the read-only store with no write
+  transaction; a crafted auto-discovered db and an explicit workspace-contained
+  entry attempting `ATTACH`/extension-load → refused/inert, RO open constrained to
+  the single file.
 * Posture: test-first. **Precondition**: confirm a pre-v4 (v3) fixture db or a
-  programmatic v3-schema builder exists; if absent, add a v3 fixture builder as
-  the first step of this unit. Depends on P1-T3 and P1-T6 (hardening applies to
-  explicit entries; review thread 4).
-* **Feasibility stop condition (NON-NEGOTIABLE):** the engine/filesystem-level
-  no-write guarantee for the Cozo SQLite backend is a hard precondition of this
-  unit. If Cozo cannot be opened with a PROVEN engine/filesystem-level no-write
-  guarantee (immutable/`mode=ro` or equivalent, verified by the before/after
-  no-write proof), then P1-T4 (050.003-T) **and** shipment 045-S become
-  **BLOCKED** and Dark Mode HALTS before Phase 2 / minimal install. Do NOT
-  silently degrade, do NOT claim INV-1 on the `DataStore` mutate-guard alone, and
-  do NOT merge a feature-disable fallback. This is a STOP CONDITION, not a
-  temp-copy or scope expansion — resolve by proving engine read-only, or escalate
-  for an explicit decision.
+  programmatic v3-schema builder exists (may be shared with P1-T0); if absent, add
+  a v3 fixture builder as the first step. Depends on P1-T3 and P1-T6 (hardening
+  applies to explicit entries; review thread 4); transitively gated by P1-T0 via
+  P1-T1.
+* **Feasibility dependency:** the engine/filesystem-level no-write PROOF is owned
+  by P1-T0. If that proof fails, P1-T0 and shipment 045-S are BLOCKED upstream and
+  this unit never runs — do NOT re-open a write-capable handle or claim INV-1 on
+  the `DataStore` mutate-guard alone here (see P1-T0 feasibility stop condition).
 
 **P1-T5 — Expose discovered read-only dbs via status + MCP list-sources** (code, test-first)
 * Changes: make `status` (`discover_status_db_paths` → currently
@@ -211,18 +231,25 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
   populated `doc_sources`. Depends on P1-T1.
 
 **P1-T6 — Optional explicit read-only db entry (workspace-contained)** (code, test-first)
-* Changes: support an explicit read-only database entry (e.g. `read_only: true`
-  or a `type: database` kind) for NAMED/ALIASED dbs, merged through
+* Changes: support an explicit read-only database entry via a NEW, DISTINCT
+  `type: database` source variant (NOT a `read_only: true` flag — the distinct
+  variant avoids overloading LocalSource's ingestion-only fields; review thread
+  5). LOCKED serialized contract: `Source::Database(DatabaseSource { id: String
+  (required, unique alias/name), path: PathBuf (required, workspace-contained) })`
+  — no other fields in Phase 1 (the variant IS read-only; no `read_only` field).
+  Adding `Database(DatabaseSource)` to the existing internally-tagged `Source`
+  enum (`#[serde(tag = "type", rename_all = "lowercase")]`,
+  `src/config/source.rs:51-56`) is purely additive — existing `type: local`
+  entries parse unchanged; `git`/`url` stay rejected. Merged through
   `serve_discovery` with CANONICAL-path dedup against auto-discovery (same
-  underlying file via different path forms collapses to one served store).
-  Phase-1 explicit entries MUST remain **workspace-contained**: each entry's path
-  is canonicalized and validated to stay within the same authorized root as
-  auto-discovery (`validate_path`, `src/path/security.rs:143`). Out-of-root/
-  external paths are REJECTED, not served — external-path support is explicitly
-  OUT of Phase-1 scope and MUST NOT broaden authorized roots (review thread 3).
-  `SourceConfig` schema change MUST be additive: `#[serde(default)]` on new
-  fields (check for `deny_unknown_fields`) so existing `sources.yaml` (dev
-  workspace) still deserializes.
+  underlying file collapses to one served store; the explicit entry's `id` is the
+  served alias/name). Phase-1 explicit entries MUST remain **workspace-contained**:
+  each `path` is canonicalized and validated to stay within the same authorized
+  root as auto-discovery (`validate_path`, `src/path/security.rs:143`). Out-of-
+  root/external paths are REJECTED, not served — external-path support is
+  explicitly OUT of Phase-1 scope and MUST NOT broaden authorized roots (review
+  thread 3). Because LocalSource is UNTOUCHED, every existing `sources.yaml`
+  round-trips with zero risk (the original `deny_unknown_fields` concern is moot).
 * Files: `sources.yaml` schema/parse module, `src/workspace/serve_discovery.rs`.
 * Tests: explicit workspace-contained read-only entry served read-only + never
   synced; explicit entry + auto-discovery for the same file collapse to one
@@ -252,40 +279,55 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
 ### Phase 2 — B333B9B8 (covering feature: consumption-first install + opt-in ingestion)
 
 **P2-T1 — Consumption-first `install` default** (code, test-first)
-* Changes: default `install` creates only the `.graphtor/` root + a minimal serve
-  `.mcp.json` written via the shared P2-T3 writer (PATH command `graphtor-docs`,
-  args `["serve"]`, with the managed provenance marker and atomic write); do NOT
-  write `sources.yaml`, do NOT create `config/bin/cache/data/logs`, and do NOT
-  create/update `.gitignore` (review thread 8: the minimal consumption install has
-  no managed `.gitignore` side effect; the current `cmd_install` always manages it
-  at `src/main.rs:3021-3024`, so the minimal path must skip it). Make
-  `InstallResult.binary_path` an `Option<PathBuf>` (or add an `InstallKind`);
-  update callers (`cmd_install` message, upgrade, uninstall) to handle `None`.
+* Changes: add a NEW consumption-first path `install_minimal()` that creates only
+  the `.graphtor/` root + a minimal serve `.mcp.json` written via the shared P2-T3
+  writer (PATH command `graphtor-docs`, args `["serve"]`, with the managed
+  provenance marker and atomic write); it writes NO `sources.yaml`, creates NONE
+  of `config/bin/cache/data/logs`, and does NOT create/update `.gitignore` (review
+  thread 8: the minimal install has no managed `.gitignore` side effect; the
+  current `cmd_install` manages it at `src/main.rs:3021-3024`, so the minimal path
+  skips it). **Backward-compat (review thread 8 follow-on):** PRESERVE the existing
+  full-scaffold `install()` (`src/workspace/install.rs:34`) UNCHANGED so internal
+  callers (upgrade, `--with-ingestion`, `init`) keep working and the existing
+  upgrade tests stay green — do NOT gut `install()`; ADD a sibling
+  `install_minimal()`. `cmd_install` DEFAULT routes to `install_minimal()`;
+  `--with-ingestion` routes to the preserved `install()`. Represent the minimal
+  "no binary" case via `InstallResult.binary_path: Option<PathBuf>` (full
+  `install()` → `Some`, `install_minimal()` → `None`) or a dedicated minimal
+  result; update `cmd_install` message + uninstall to handle `None`. Upgrade needs
+  NO change (still calls the preserved full `install()`/`installed_binary_path`).
   This unit CALLS the shared writer (P2-T3) and asserts the resulting minimal
   install — it does not re-implement the marker/atomic-write (review thread 7).
 * Files: `src/workspace/install.rs`, `src/main.rs` (`cmd_install:3002`).
-* Tests: fresh install creates only `.graphtor/` + minimal `.mcp.json` (marker
-  present, no `.exe`); no `sources.yaml`; no ingestion subdirs; NO `.gitignore`
-  created/modified; `binary_path` is `None`.
+* Tests: fresh default install (`install_minimal()`) creates only `.graphtor/` +
+  minimal `.mcp.json` (marker present, no `.exe`); no `sources.yaml`; no ingestion
+  subdirs; NO `.gitignore` created/modified; the minimal "no binary" case is
+  representable; the existing upgrade test (`upgrade_succeeds_after_install`,
+  `src/workspace/upgrade.rs:94-101`, which calls `install()` then `upgrade()`)
+  REMAINS GREEN because `install()` is preserved.
 * Posture: test-first. Depends on P2-T3.
 
 **P2-T2a — `install --with-ingestion` CLI flag + plumbing** (code, test-first)
 * Changes: add `--with-ingestion` to `InstallArgs` (`src/cli/mod.rs:274`) and
-  thread it through `cmd_install` to select the install kind. Flag + plumbing
-  ONLY; scaffold creation is P2-T2b (review thread 9 split — the original P2-T2
-  listed three files, violating the `< 3 files` rule).
+  thread it through `cmd_install` to select the install PATH — the consumption-
+  first default routes to `install_minimal()` (P2-T1), `--with-ingestion` routes
+  to the PRESERVED full `install()` (invoked by the P2-T2b scaffold path). Flag +
+  plumbing ONLY; scaffold creation is P2-T2b (review thread 9 split — the original
+  P2-T2 listed three files, violating the `< 3 files` rule).
 * Files: `src/cli/mod.rs`, `src/main.rs` (`cmd_install`).
-* Tests: flag parsed and threaded to `install()`; absent flag selects the
-  consumption-first default; no scaffold behaviour implemented here.
+* Tests: flag parsed and threaded to the install-path selector; absent flag
+  selects the consumption-first default (`install_minimal()`); present flag
+  selects the preserved full `install()`; no scaffold behaviour implemented here.
 * Posture: test-first. Depends on P2-T1.
 
 **P2-T2b — Opt-in full-ingestion scaffold + managed marker** (code, test-first)
-* Changes: when `--with-ingestion` is set, create the full generation scaffold
-  (config + `sources.yaml` + data/cache/logs + bin/binary copy) and write
-  `.mcp.json` via the shared P2-T3 writer so the managed server entry uses the
-  pinned `.graphtor/bin` path AND carries the managed marker (review thread 13);
-  retain the existing managed `.gitignore` behaviour (unless `--no-gitignore`;
-  thread 8). The graphtor dev workspace uses this path.
+* Changes: when `--with-ingestion` is set, invoke the PRESERVED full-scaffold
+  `install()` (already creates config + data/cache/logs + bin/binary copy; kept
+  intact by P2-T1) and complete the generation footprint — write the template
+  `sources.yaml` and write `.mcp.json` via the shared P2-T3 writer so the managed
+  server entry uses the pinned `.graphtor/bin` path AND carries the managed marker
+  (review thread 13); retain the existing managed `.gitignore` behaviour (unless
+  `--no-gitignore`; thread 8). The graphtor dev workspace uses this path.
 * Files: `src/workspace/install.rs`.
 * Tests: `--with-ingestion` → full layout + `sources.yaml` + copied binary +
   `.mcp.json` pinned bin path WITH managed marker + managed `.gitignore`; default
@@ -294,21 +336,30 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
 
 **P2-T3 — Shared `.mcp.json` writer: resolution ladder + managed marker + atomic write** (code, test-first) — Phase-2 root
 * Changes: make the MCP config writer (`generate_mcp_config`/`managed_server_value`,
-  `src/workspace/mcp_config.rs:84-97`) the shared foundation both install paths
+  `src/workspace/mcp_config.rs:84-140`) the shared foundation both install paths
   consume: (a) a binary-resolution LADDER — pinned absolute
   `.graphtor/bin/graphtor-docs` (+ platform ext) when a managed binary exists,
   else the bare `graphtor-docs` PATH command (no `.exe`; Windows resolves via
   `PATHEXT`); (b) a managed-entry PROVENANCE MARKER in the server entry so
   `uninstall` (P2-T5b) can identify the managed entry; (c) ATOMIC temp-file +
-  rename writes with stable key ordering (Principle IX). The current writer
-  hardcodes `.graphtor/bin/...` (`mcp_config.rs:86`) and always creates it;
-  restructured as the Phase-2 ROOT so binary resolution + marker + atomic write
-  exist BEFORE the minimal install (P2-T1) claims a working install (review
-  thread 7).
+  rename writes with stable key ordering (Principle IX); (d) a LOCKED fixed-key
+  collision contract for the `graphtor-docs` key (review thread E / comment
+  3585938864) — the current writer does `servers.insert("graphtor-docs", ...)`
+  (`mcp_config.rs:131-134`), overwriting an unmarked user entry with that key.
+  Replace it with a three-way decision: key ABSENT → insert a marked managed entry
+  atomically; PRESENT AND carrying the provenance marker → UPDATE atomically in
+  place; PRESENT but UNMARKED (user-authored) → FAIL CLOSED with a
+  `GraphtorError::Config` collision error, leaving the file byte-for-byte
+  unchanged (never overwrite). The current writer hardcodes `.graphtor/bin/...`
+  (`mcp_config.rs:86`) and always creates it; restructured as the Phase-2 ROOT so
+  binary resolution + marker + atomic write + collision contract exist BEFORE the
+  minimal install (P2-T1) claims a working install (review thread 7).
 * Files: `src/workspace/mcp_config.rs`.
 * Tests: ladder pure-function (managed binary → pinned path+ext; none → bare PATH
   command, no `.exe`); managed marker present; atomic write with stable ordering;
-  user-authored `.mcp.json` entries preserved.
+  collision — absent key → created, marked entry → updated in place, UNMARKED user
+  `graphtor-docs` key → install fails closed and the user entry is preserved
+  byte-for-byte; unrelated user servers preserved.
 * Posture: test-first. Depends on Phase 1 (050-F).
 
 **P2-T4 — `doctor` tolerates the minimal consumption layout** (code, test-first)
@@ -338,20 +389,32 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
 
 **P2-T5b — Managed `.mcp.json` entry removal by provenance marker** (code, test-first)
 * Changes: add managed-entry removal to the MCP config module — `uninstall`
-  removes ONLY the managed server entry matched by the P2-T3 provenance marker
-  and leaves user-authored entries untouched; atomic rewrite.
+  removes the managed server entry matched by (a) the P2-T3 provenance marker
+  (primary) OR (b) a NARROW LEGACY MATCH for entries generated by the current
+  pre-marker writer, which have no provenance field (review thread F / comment
+  3585938909). LEGACY MATCH (exact): the shape emitted by `managed_server_value`
+  (`mcp_config.rs:273-279`) — command CONTAINS `.graphtor/bin/graphtor-docs` (±
+  `.exe`) AND args == `["serve"]` AND transport == `"stdio"`. Remove/migrate ONLY
+  marker-matched or exact-legacy-matched entries; leave all other unmarked/user
+  entries untouched; atomic rewrite.
 * Files: `src/workspace/mcp_config.rs`, `src/workspace/uninstall.rs`.
-* Tests: managed entry removed while a user-authored entry SURVIVES; a user-only
+* Tests: a MARKED managed entry is removed while a user-authored entry SURVIVES;
+  an UNMARKED LEGACY entry (current generated shape) is ALSO removed so upgraders
+  do not retain a stale registration; a user entry that merely references the
+  binary path but does NOT match the exact legacy shape is PRESERVED; a user-only
   `.mcp.json` is unchanged; rewrite is atomic.
 * Posture: test-first. Depends on P2-T5a and P2-T3.
 
 **P2-T5c — Minimal/full upgrade parity** (code, test-first)
 * Changes: `upgrade()` (`src/workspace/upgrade.rs:43`) of a minimal (no-bin)
   install treats missing bin/subdirs as a no-op success; a full install upgrade
-  replaces the binary; idempotent.
+  replaces the binary as today; idempotent. Purely ADDITIVE: because P2-T1
+  preserves the full-scaffold `install()`, the existing full-install upgrade path
+  and its tests stay green throughout — this unit only ADDS the minimal no-op case
+  (review thread 8 follow-on), not a deferred fix for a broken upgrade.
 * Files: `src/workspace/upgrade.rs`.
-* Tests: minimal upgrade → no-op success; full upgrade → replaces binary; repeat
-  idempotent.
+* Tests: minimal upgrade → no-op success; full upgrade → replaces binary (existing
+  behaviour, still green); repeat idempotent.
 * Posture: test-first. Depends on P2-T1 and P2-T2b.
 
 **P2-T6 — Backward-compat detection + idempotency** (code, test-first)
@@ -387,10 +450,11 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
 ```text
 Phase 1 (feature) ──blocks──> Phase 2 (feature)
 
-Phase 1 internal:
-  P1-T1 ──> P1-T2 ──> P1-T3 ──> {P1-T7, P1-T8}
+Phase 1 internal (P1-T0 is the root gate):
+  P1-T0 ──> P1-T1 ──> P1-T2 ──> P1-T3 ──> {P1-T7, P1-T8}
   P1-T1 ──> P1-T5
-  P1-T3 ──> P1-T6 ──> P1-T4        (P1-T4 also depends on P1-T3)
+  P1-T3 ──> P1-T6 ──> P1-T4        (P1-T4 also depends on P1-T3; hardens the RO
+                                    primitive proven in P1-T0)
 
 Phase 2 internal (P2-T3 is the root):
   P2-T3 ──> P2-T1 ──> {P2-T2a, P2-T4, P2-T6, P2-T7a}
@@ -400,9 +464,11 @@ Phase 2 internal (P2-T3 is the root):
   {P2-T7a, P2-T2b} ──> P2-T7b
 ```
 
-No cycles. Suggested execution order (matches shipment 045-S): P1-T1 → P1-T2 →
-P1-T3 → P1-T6 → P1-T4 → P1-T5 → P1-T7 → P1-T8 → P2-T3 → P2-T1 → P2-T2a → P2-T2b →
-P2-T4 → P2-T6 → P2-T5a → P2-T5b → P2-T5c → P2-T7a → P2-T7b. Notes: P1-T3 and P1-T4
+No cycles. Suggested execution order (matches shipment 045-S): P1-T0 → P1-T1 →
+P1-T2 → P1-T3 → P1-T6 → P1-T4 → P1-T5 → P1-T7 → P1-T8 → P2-T3 → P2-T1 → P2-T2a →
+P2-T2b → P2-T4 → P2-T6 → P2-T5a → P2-T5b → P2-T5c → P2-T7a → P2-T7b. Notes: P1-T0
+proves the engine read-only primitive first (de-risks the shipment's primary
+invariant before any dependent work); P1-T3 and P1-T4
 both edit the read-only open / `open_serve_databases` — sequence T3 then T4. P1-T6
 introduces the explicit read-only entry that P1-T4's hardening exercises, so T6
 precedes T4 (review threads 4–6). P2-T3 (shared `.mcp.json` writer) is the Phase-2
@@ -430,7 +496,7 @@ root so the marker/atomic-write exist before the minimal install (review thread 
 | Risk | Mitigation |
 |---|---|
 | Accidental background sync in a consumer workspace | Content-derived mode, fail read-only; gate `spawn_background_sync` + rw-store open behind resolved real sources (P1-T3) |
-| Engine/filesystem write to a served read-only db (Cozo exposes no RO flag) | Engine-enforced read-only open (immutable/`mode=ro`) + before/after no-write verification; fail closed if unattainable (P1-T4) |
+| Engine/filesystem write to a served read-only db (Cozo exposes no RO flag) | Engine-enforced read-only open (immutable/`mode=ro`) + before/after no-write verification, PROVEN first as the Phase-1 root gate; fail closed AND block 045-S if unattainable (P1-T0; hardening P1-T4) |
 | Full `SourceConfig` re-split re-schedules stale/read-only targets | Return + pass ONLY filtered `Generation` source groups to preflight/sync (P1-T2, P1-T3) |
 | Regression in dev-workspace generation/serve | Characterization tests before refactor (P1-T3); preserve sources-driven path |
 | Auto-discovery picks up generated/non-db artifacts | Explicit filter + `.graphtor/` root-only scan + containment (P1-T1) |
@@ -503,12 +569,12 @@ write sync in a consumption workspace.
   ENGINE-enforced (immutable/`mode=ro`) with automated before/after no-write
   verification; if the Cozo SQLite backend cannot guarantee engine read-only, the
   served read-only path fails closed rather than relying on the `DataStore`
-  mutate-guard alone (P1-T3 gating; P1-T4 engine-level proof). Read-only is the
-  fail-safe default on any ambiguity. If engine read-only cannot be PROVEN, this
-  is a hard STOP CONDITION (not a silent degrade): P1-T4 (050.003-T) and shipment
-  045-S are BLOCKED and Dark Mode halts before Phase 2 / minimal install — no
-  INV-1 claim on the mutate-guard alone and no feature-disable fallback merge (see
-  P1-T4 feasibility stop condition).
+  mutate-guard alone (P1-T0 engine-level proof — the Phase-1 root gate; P1-T3
+  gating). Read-only is the fail-safe default on any ambiguity. If engine
+  read-only cannot be PROVEN, this is a hard STOP CONDITION (not a silent
+  degrade): P1-T0 (050.009-T) and shipment 045-S are BLOCKED and Dark Mode halts
+  before Phase 2 / minimal install — no INV-1 claim on the mutate-guard alone and
+  no feature-disable fallback merge (see P1-T0 feasibility stop condition).
 * **INV-2** — The graphtor dev/authoring workspace (real sources) retains full
   generate-and-serve behaviour with no regression.
 * **INV-3** — A stale or empty `sources.yaml` in a consumption workspace does
@@ -701,11 +767,14 @@ resolved in this revision (Attempt 2).
   symlink-follow out of root, approval prompt enumerates the deletion set; test
   asserts a dropped `.db` survives uninstall.
 * **P1-5 (Rust): `InstallResult.binary_path` is non-optional but a consumption
-  install copies no binary.** *Resolution*: P2-T1 makes it `Option<PathBuf>`
-  (or `InstallKind`) and updates callers.
+  install copies no binary.** *Resolution*: P2-T1 preserves the full `install()`
+  and adds a sibling `install_minimal()`; `binary_path` becomes `Option<PathBuf>`
+  (full → `Some`, minimal → `None`) and callers handle `None` (see second-review
+  thread D).
 * **P1-6 (Rust): `SourceConfig` serde change must be additive.** *Resolution*:
-  P1-T6 uses `#[serde(default)]`, checks `deny_unknown_fields`, and adds a
-  pre-change round-trip parse test.
+  P1-T6 adds a DISTINCT additive `type: database` variant (LocalSource untouched)
+  and a pre-change round-trip parse test (see second-review thread C for the
+  locked contract).
 * **P1-7 (Constitution IV): scratch workspace OUTSIDE the repo tree.**
   *Resolution*: runtime verification now roots scratch under `target/`.
 
@@ -725,7 +794,7 @@ resolved in this revision (Attempt 2).
 * Atomic config writes + stable key ordering (P2-T1) — Principle IX.
 * Positive posture log line — Principle V (Constitution Check).
 * P2-T2 file-count split: binary resolution moved to its own unit P2-T3.
-* Pre-v4/v4 fixture availability precondition (P1-T4, P1-T5).
+* Pre-v4/v4 fixture availability precondition (P1-T0, P1-T4, P1-T5).
 
 **P3 — advisory (carried as build-time guidance)**
 
@@ -750,11 +819,12 @@ as advisory build-time guidance. Plan is cleared for harvest.
 The 14 Copilot review threads on the staging PR were remediated in-place
 (planning/backlog only; no code, no build). Summary:
 
-* **Thread 1 (INV-1, security)** — P1-T4 now requires an engine/filesystem-level
-  read-only open (immutable/`mode=ro`) with automated before/after no-write
-  verification and a fail-closed fallback, because `open_sqlite_readonly` reuses a
+* **Thread 1 (INV-1, security)** — an engine/filesystem-level read-only open
+  (immutable/`mode=ro`) with automated before/after no-write verification and a
+  fail-closed fallback is required, because `open_sqlite_readonly` reuses a
   write-capable `DbInstance` and Cozo's SQLite backend exposes no read-only flag
   (`src/db/store.rs:107-110,384`). P1-T3's INV-1 claim is scoped to gating only.
+  (The second review split the PROOF into the P1-T0 root gate — see below.)
 * **Thread 2** — P1-T2 returns filtered `Generation` source groups; P1-T3 passes
   ONLY those to preflight/`spawn_background_sync` (never the full `SourceConfig`,
   which re-splits at `src/main.rs:2268`). New INV-7.
@@ -777,5 +847,38 @@ The 14 Copilot review threads on the staging PR were remediated in-place
   posture + discovered-db count).
 
 Backlog impact: Phase 2 grew from 7 to 11 task units (4 new:
-051.008/051.009/051.010/051.011-T); shipment 045-S is 21 items; the dependency
-DAG was re-validated acyclic.
+051.008/051.009/051.010/051.011-T); shipment 045-S was 21 items after the first
+review; the dependency DAG was re-validated acyclic.
+
+### Second-Review Remediation (PR #88 second review / threads A–F)
+
+The 7 planning/backlog threads from the second review were remediated in-place
+(planning/backlog only; no code, no build):
+
+* **A (decision lines 234, 257)** — both authoritative Decision summaries now
+  state generation requires a `local` source whose path exists AND resolves to at
+  least one ingestible file; an existing-but-empty source stays read-only (aligns
+  with the locked "resolvable real source" definition).
+* **B (050.003-T)** — the engine/filesystem read-only feasibility PROOF is split
+  into a new Phase-1 ROOT task **P1-T0 (050.009-T)**; P1-T1 depends on it so the
+  whole Phase-1 chain and shipment 045-S are gated on the proof (≤ 2 files, ≤ 3
+  scenarios). P1-T4 (050.003-T) refocuses on v4 gate parity +
+  ATTACH/extension/single-file hardening, consuming P1-T0's primitive.
+* **C (050.006-T)** — the explicit read-only db entry is a DISTINCT additive
+  `type: database` variant `{ id, path }` (not `read_only: true`); required
+  fields, alias/name semantics, workspace-contained `validate_path` validation,
+  and backward-compat are locked with a fixture.
+* **D (051.001/002/008/010-T)** — the consumption-first install PRESERVES the
+  full-scaffold `install()` and adds a sibling `install_minimal()`, so existing
+  upgrade tests stay green and no task leaves the suite red; T2a/T2b/T5c updated.
+* **E (051.004-T)** — the `.mcp.json` writer locks a fixed-key collision
+  contract: absent → create marked entry; marked → update in place; unmarked
+  user `graphtor-docs` → fail closed (never overwrite), with an exact test.
+* **F (051.009-T)** — uninstall keeps a NARROW legacy-removal match (old managed
+  shape: `.graphtor/bin/graphtor-docs[.exe]` command + `["serve"]` args + `stdio`
+  transport) so unmarked pre-change entries are removed while user entries are
+  preserved.
+
+Backlog impact (second review): Phase 1 grew from 8 to 9 task units (1 new:
+050.009-T); shipment 045-S is now 22 items; the dependency DAG was re-validated
+acyclic and the manifest is topologically ordered (P1-T0 first).
