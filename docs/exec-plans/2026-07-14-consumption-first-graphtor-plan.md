@@ -368,7 +368,7 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Posture: test-first. Depends on P1-T3.
 
 **P1-RF2 — Acquire plan/dispatch variant-safe refactor** (050.011-T; code, test-first)
-* Changes: filter the acquisition PLAN LOOP (`build_acquisition_plan`,
+* Changes: filter the acquisition PLAN LOOP (`plan`,
   `src/acquire/plan.rs:47-55` — it calls `resolve_source_dir` for EVERY configured
   source, so it MUST gate on `as_local()` BEFORE `resolve_source_dir`) and route
   `validate_sources` (`src/acquire/plan.rs:90`),
@@ -379,7 +379,7 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   PRRT_kwDORiB5E86RNyUU); `resolve_source_dir` fail-closes on a non-local source as
   defence-in-depth.
 * Files: `src/acquire/plan.rs`, `src/acquire/mod.rs`.
-* Tests: `build_acquisition_plan`/`validate_sources`/`resolve_source_dir`/`execute_scan_local`
+* Tests: `plan`/`validate_sources`/`resolve_source_dir`/`execute_scan_local`
   identical for local-only configs; a mixed local/database config plans ONLY the
   local source (the database entry is filtered, not failed — exercised once P1-T6
   adds the variant); existing acquire tests green.
