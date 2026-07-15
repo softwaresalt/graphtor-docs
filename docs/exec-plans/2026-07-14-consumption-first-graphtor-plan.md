@@ -50,7 +50,7 @@ ingestion).
 | R3 | No-real-source dbs are served read-only and never background-synced | Gate rw-store open + pass ONLY filtered `Generation` source groups to `spawn_background_sync` | P1 / T2+T3 |
 | R4 | v4 pre-sync gate applies to auto-discovered read-only dbs | Engine-enforced read-only open + no-write proof; reuse `needs_v4_migration` gate | P1 / T4 |
 | R5 | `status` + MCP list-sources span multiple discovered dbs | Synthesize source metadata from stored `doc_sources` | P1 / T5 |
-| R6 | Optional explicit read-only db entry in `sources.yaml` | Parse an additive `type: database` variant, workspace-contained (out-of-root paths rejected), after the P1-RF1..P1-RF4 variant-safe consumer pre-refactors make the additive variant compile-safe | P1 / T6 |
+| R6 | Optional explicit read-only db entry in `sources.yaml` | Parse an additive `type: database` variant, workspace-contained (out-of-root paths rejected), after the P1-RF1..P1-RF5 variant-safe consumer pre-refactors make the additive variant compile-safe | P1 / T6 |
 | R7 | Optional `--read-only` override escape hatch | Add serve CLI flag forcing consumption posture | P1 / T7 |
 | R8 | Docs: pipeline + dev-workspace exception + read-only serve | Phase-1 docs in product-specs/design-docs | P1 / T8 |
 | R9 | `install` default creates only `.graphtor/` root + minimal serve `.mcp.json` | Consumption-first install path | P2 / T1 |
@@ -65,14 +65,15 @@ ingestion).
 
 Each unit follows the 2-hour rule (< 3 files, < 5 functions, < 4 test
 scenarios), width isolation (single domain), and produces a verifiable outcome.
-Phase 1 has 9 primary units (P1-T0..P1-T8) plus 4 `Source`-variant compatibility
-pre-refactor units (P1-RF1..P1-RF4) added after the PR #88 third-pass review = 13
+Phase 1 has 9 primary units (P1-T0..P1-T8) plus 5 `Source`-variant compatibility
+pre-refactor units (P1-RF1..P1-RF5; RF1..RF4 added after the PR #88 third-pass
+review, RF5 added after the fourth-pass irrefutable-consumer audit) = 14
 Phase-1 units; Phase 2 has 11 units after the review-thread
 splits (P2-T1, P2-T2a, P2-T2b, P2-T3, P2-T4, P2-T5a, P2-T5b, P2-T5c, P2-T6,
-P2-T7a, P2-T7b). With the two covering features (050-F, 051-F) this is 26 items
+P2-T7a, P2-T7b). With the two covering features (050-F, 051-F) this is 27 items
 in shipment 045-S. Backlog IDs: P1-T0 = 050.009-T; P1-T1..T8 =
 050.002/050.004/050.001/050.003/050.005/050.006/050.007/050.008-T;
-P1-RF1..RF4 = 050.010/050.011/050.012/050.013-T;
+P1-RF1..RF5 = 050.010/050.011/050.012/050.013/050.014-T;
 P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 051.004/051.001/051.002/051.008/051.003/051.006/051.005/051.009/051.010/051.007/
 051.011-T.
@@ -263,13 +264,15 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   Adding `Database(DatabaseSource)` to the existing internally-tagged `Source`
   enum (`#[serde(tag = "type", rename_all = "lowercase")]`,
   `src/config/source.rs:51-56`) is additive at the serde level AND compile-safe
-  for consumers because P1-RF1..P1-RF4 first route every external irrefutable
-  `Source::Local` binding (config validation, acquire/plan, acquire/mod,
-  pipeline/mod, sync/mod, main.rs) through variant-safe accessors (review threads
-  2/2b / PR #88 comments 3588876057, 3588876095) — existing `type: local` entries
-  parse unchanged and `git`/`url` stay rejected; adding the variant then only
-  extends the `src/config/source.rs` accessor match arms and breaks no external
-  consumer. Merged through
+  for consumers because P1-RF1..P1-RF5 first route every irrefutable/non-exhaustive
+  `Source::Local` consumer — all 18 production sites (config validation,
+  acquire/plan, acquire/mod, pipeline/mod, sync/mod, main.rs) plus every breaking
+  test binding (src/config/source.rs + src/main.rs colocated tests and external
+  tests/config_test.rs & tests/pipeline_format_test.rs) — through variant-safe
+  accessors (review threads 2/2b / PR #88 comments 3588876057, 3588876095) —
+  existing `type: local` entries parse unchanged and `git`/`url` stay rejected;
+  adding the variant then only extends the `src/config/source.rs` accessor match
+  arms and breaks no consumer (build OR test). Merged through
   `serve_discovery` with CANONICAL-path dedup against auto-discovery (same
   underlying file collapses to one served store; the explicit entry's `id` is the
   served alias/name). Phase-1 explicit entries MUST remain **workspace-contained**:
@@ -290,9 +293,9 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   `sources.yaml` round-trips (backward-compat parse); the additive variant
   compiles with only `src/config/source.rs` match-arm changes (clippy-pedantic
   clean).
-* Posture: test-first. Depends on P1-T3 and P1-RF4 (050.013-T, the last
-  variant-safe pre-refactor) — the variant is added only after every external
-  `Source::Local` consumer is variant-safe (review threads 2/2b, 5). Ingestion
+* Posture: test-first. Depends on P1-T3 and P1-RF5 (050.014-T, the last
+  variant-safe pre-refactor) — the variant is added only after every
+  `Source::Local` consumer (production AND test) is variant-safe (review threads 2/2b, 5). Ingestion
   filtering is owned by P1-RF2/P1-RF3, so this unit does NOT touch
   `cmd_sync`/main.rs and stays at 2 source files.
 
@@ -314,17 +317,23 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Tests: n/a (docs); `backlogit_docs_lint` clean.
 * Posture: docs. Depends on P1-T3 (document actual behaviour).
 
-### Phase 1 — `Source`-variant compatibility pre-refactors (P1-RF1..P1-RF4)
+### Phase 1 — `Source`-variant compatibility pre-refactors (P1-RF1..P1-RF5)
 
-> **Added after the PR #88 third-pass review (comments 3588876057, 3588876095).**
+> **Added after the PR #88 third-pass review (comments 3588876057, 3588876095);
+> P1-RF5 and the exact-count correction added after the fourth-pass
+> irrefutable-consumer audit.**
 > The `Source` enum today has ONLY `Local(LocalSource)`
 > (`src/config/source.rs:53-56`), so EVERY consumer destructures it irrefutably
-> (`let Source::Local(...) = ...`). Adding `Database(DatabaseSource)` in P1-T6
-> would break compilation at 10 external sites. These four pre-refactors route
-> every external consumer through variant-safe accessors FIRST; each is a pure
-> structural refactor with NO behaviour change while only `Local` exists
-> (independently green), each ≤ 2 source files, chained
-> P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-T6. "Filter/ignore `Database` by design"
+> (`let Source::Local(...) = ...`) or matches it non-exhaustively. Adding
+> `Database(DatabaseSource)` in P1-T6 would break compilation at **18 production
+> sites** (3 in config validation, 2 in acquire/plan, 1 in acquire/mod, 1 in
+> pipeline/mod, 2 in sync/mod, 9 in main.rs) AND at **7 breaking test consumers**
+> (3 in src/config/source.rs colocated tests, 1 in src/main.rs colocated tests, 1
+> in tests/config_test.rs, 2 in tests/pipeline_format_test.rs). These five
+> pre-refactors route every consumer — production and test — through variant-safe
+> accessors FIRST; each is a pure structural refactor with NO behaviour change
+> while only `Local` exists (independently green), each ≤ 2 files, chained
+> P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-RF5 → P1-T6. "Filter/ignore `Database` by design"
 > is the emergent effect of these gates: once the variant lands, non-ingestible
 > sources are skipped by every acquisition/sync consumer with no separate
 > top-level filter needed.
@@ -332,13 +341,16 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 **P1-RF1 — Variant-safe `Source` accessors + config-validation refactor** (050.010-T; code, test-first)
 * Changes: add `Source::as_local(&self) -> Option<&LocalSource>` and
   `Source::is_ingestible(&self) -> bool` to `src/config/source.rs` (today always
-  `Some`/`true`); refactor the two irrefutable bindings in
-  `src/config/validation.rs` (`validate` ~L67, `detect_with_context` ~L210) to
-  route through `as_local()` / existing accessors. NO variant is added here.
+  `Some`/`true`); refactor the THREE irrefutable bindings in
+  `src/config/validation.rs` (`validate` ~L67, `detect_with_context` ~L210,
+  `intake_key` ~L302) and the THREE colocated `#[cfg(test)]` bindings in
+  `src/config/source.rs` (~L162/L188/L197) to route through `as_local()` /
+  existing accessors. NO variant is added here.
 * Files: `src/config/source.rs`, `src/config/validation.rs`.
-* Tests: `as_local()`/`is_ingestible()` unit behaviour; `validate` and
-  `detect_with_context` produce identical results for local-only configs; clean
-  under clippy pedantic (refutable `Option` let-else — no irrefutable-pattern lint).
+* Tests: `as_local()`/`is_ingestible()` unit behaviour; `validate`,
+  `detect_with_context`, and `intake_key` produce identical results for local-only
+  configs; the src/config/source.rs colocated tests stay green through `as_local()`;
+  clean under clippy pedantic (refutable `Option` let-else — no irrefutable-pattern lint).
 * Posture: test-first. Depends on P1-T3.
 
 **P1-RF2 — Acquire plan/dispatch variant-safe refactor** (050.011-T; code, test-first)
@@ -361,16 +373,36 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   sources; existing pipeline/sync tests green.
 * Posture: test-first. Depends on P1-RF2.
 
-**P1-RF4 — v4-migration source-helper variant-safe refactor** (050.013-T; code, test-first)
-* Changes: route `source_id` (`src/main.rs:655`) via the existing `Source::id()`
-  accessor and `changed_source_fields` (`src/main.rs:661`) via `as_local()` on both
-  operands (defensive empty set when non-local). This closes the LAST external
-  irrefutable consumer.
+**P1-RF4 — `src/main.rs` variant-safe refactor (v4-migration + sync/prewarm surface)** (050.013-T; code, test-first)
+* Changes: route ALL nine `src/main.rs` production consumers through the centralized
+  accessors — id-only sites `source_id` (~L655) and the six `=> local.id...` match
+  arms (`guard_no_embed_before_v4_rebuild` ~L1280, `collect_snapshot_candidates`
+  ~L1410, `freeze_v4_migration_input` ~L1486, `run_incremental_sync` ~L2070,
+  `cmd_prewarm` ~L3382, `prewarm_sync_source` ~L3435) via `Source::id()`;
+  `changed_source_fields` (~L661) and `collect_candidate_md_files` (~L1310) via
+  `as_local()` (defensive empty/skip when non-local); plus the one colocated
+  `#[cfg(test)]` binding (~L4323) via `as_local()`. Uniform mechanical
+  accessor-routing in a single file/domain (≤ 3 test-scenario families).
 * Files: `src/main.rs`.
-* Tests: `source_id`/`changed_source_fields` identical for local sources; after
-  this unit ZERO external `let Source::Local(...)` bindings remain, so P1-T6 adds
-  the variant with only `src/config/source.rs` arm updates.
+* Tests: id-extraction, `changed_source_fields`, and `collect_candidate_md_files`
+  identical for local sources; the main.rs colocated migration test stays green; after
+  this unit ZERO `Source::Local` consumers remain in `src/main.rs` (production and
+  colocated tests) — only the EXTERNAL integration tests (P1-RF5) remain.
 * Posture: test-first. Depends on P1-RF3.
+
+**P1-RF5 — External integration-test variant-safe pre-refactor** (050.014-T; code/test, test-first)
+* Changes: route the irrefutable `let Source::Local(...)` bindings in the EXTERNAL
+  integration tests — `tests/config_test.rs:31` and `tests/pipeline_format_test.rs:223,243`
+  (the ONLY external test files with breaking consumers; every other `tests/*`
+  occurrence merely CONSTRUCTS `Source::Local(LocalSource { .. })`, which an additive
+  variant does not break) — through `as_local()`. NO variant is added here.
+* Files: `tests/config_test.rs`, `tests/pipeline_format_test.rs`.
+* Tests: both files compile and pass identically under `cargo test --all-targets`;
+  after this unit ZERO irrefutable `Source::Local` bindings remain across `src/` AND
+  `tests/`, so P1-T6 keeps `cargo build` / clippy / `cargo test` green with only
+  `src/config/source.rs` arm updates.
+* Posture: test-first. Depends on P1-RF4. This is the pre-refactor chain tail; P1-T6
+  depends on it.
 
 ### Phase 2 — B333B9B8 (covering feature: consumption-first install + opt-in ingestion)
 
@@ -577,8 +609,8 @@ Phase 1 (feature) ──blocks──> Phase 2 (feature)
 Phase 1 internal (P1-T0 is the root gate):
   P1-T0 ──> P1-T1 ──> P1-T2 ──> P1-T3 ──> {P1-T7, P1-T8}
   P1-T1 ──> P1-T5
-  P1-T3 ──> P1-RF1 ──> P1-RF2 ──> P1-RF3 ──> P1-RF4 ──> P1-T6 ──> P1-T4
-                                    (the four variant-safe pre-refactors gate P1-T6;
+  P1-T3 ──> P1-RF1 ──> P1-RF2 ──> P1-RF3 ──> P1-RF4 ──> P1-RF5 ──> P1-T6 ──> P1-T4
+                                    (the five variant-safe pre-refactors gate P1-T6;
                                      P1-T6 also depends on P1-T3; P1-T4 also depends
                                      on P1-T3 and hardens the RO primitive proven in
                                      P1-T0)
@@ -592,14 +624,14 @@ Phase 2 internal (P2-T3 is the root):
 ```
 
 No cycles. Suggested execution order (matches shipment 045-S): P1-T0 → P1-T1 →
-P1-T2 → P1-T3 → P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-T6 → P1-T4 → P1-T5 →
+P1-T2 → P1-T3 → P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-RF5 → P1-T6 → P1-T4 → P1-T5 →
 P1-T7 → P1-T8 → P2-T3 → P2-T1 → P2-T2a → P2-T2b → P2-T4 → P2-T6 → P2-T5a →
 P2-T5b → P2-T5c → P2-T7a → P2-T7b. Notes: P1-T0
 proves the engine read-only primitive first (de-risks the shipment's primary
-invariant before any dependent work); the four `Source`-variant pre-refactors
-(P1-RF1..P1-RF4) run after P1-T3 and BEFORE P1-T6 so every external
-`Source::Local` consumer is variant-safe before the additive `type: database`
-variant is added (review threads 2/2b); P1-T3 and P1-T4
+invariant before any dependent work); the five `Source`-variant pre-refactors
+(P1-RF1..P1-RF5) run after P1-T3 and BEFORE P1-T6 so every `Source::Local`
+consumer — production AND test — is variant-safe before the additive
+`type: database` variant is added (review threads 2/2b); P1-T3 and P1-T4
 both edit the read-only open / `open_serve_databases` — sequence T3 then T4. P1-T6
 introduces the explicit read-only entry that P1-T4's hardening exercises, so T6
 precedes T4 (review threads 4–6). P2-T3 (shared `.mcp.json` writer) is the Phase-2
@@ -638,7 +670,7 @@ root so the marker/atomic-write exist before the minimal install (review thread 
 | uninstall/upgrade break on minimal layout | Footprint-safe uninstall (P2-T5a) + managed MCP-entry removal (P2-T5b) + upgrade parity (P2-T5c) |
 | Existing full installs disrupted | Backward-compat detection + idempotency (P2-T6) |
 | Path traversal in discovery | Resolve within `.graphtor/` root; reject `..`/symlink escapes (P1-T1) |
-| Adding `Source::Database` breaks 10 irrefutable `Source::Local` consumers | Variant-safe accessor pre-refactors (P1-RF1..P1-RF4) route every external consumer through `as_local()`/`is_ingestible()` BEFORE the variant is added; each independently green (PR #88 threads 2/2b) |
+| Adding `Source::Database` breaks 18 production + 7 test `Source::Local` consumers | Variant-safe accessor pre-refactors (P1-RF1..P1-RF5) route every consumer — production AND test, internal AND external — through `Source::id()`/`as_local()`/`is_ingestible()` BEFORE the variant is added; each independently green (PR #88 threads 2/2b + fourth-pass audit) |
 | Root-scan discovery drops existing serve candidates (fresh generation target / explicit `--db-path`) | Union preserves `discover_db_files` candidates incl. not-yet-created targets + explicit `--db-path`; zero-db exit only when the full union is empty (P1-T1; PR #88 thread 1) |
 | Reinstall/`--with-ingestion` fails on the release's own pre-marker `.mcp.json` entry | Four-way collision matrix migrates the exact legacy shape in place by adding the marker (R14); fail-closed only for other unmarked entries (P2-T3; PR #88 thread 3) |
 | `CONTAINS` legacy match deletes a look-alike user `.mcp.json` command | Exact normalized command equality to `.graphtor/bin/graphtor-docs`[.exe] (never CONTAINS) + prefix/suffix preservation test (P2-T3, P2-T5b; PR #88 threads 3, 5) |
@@ -1031,14 +1063,18 @@ The 12 Copilot threads from the third review were remediated in-place
   `discover_db_files`/sync; the zero-db exit fires only when the full union is
   empty; regression tests for a missing generation target and an explicit
   `--db-path` were added.
-* **`Source::Database` consumer refactors (3588876057 plan, 3588876095 050.006-T)**
-  — the additive variant breaks 10 irrefutable `Source::Local` consumers, so four
-  dependency-ordered variant-safe pre-refactors P1-RF1..P1-RF4
-  (050.010 → 050.011 → 050.012 → 050.013-T, each ≤ 2 files, independently green)
-  route config validation, acquire/plan, acquire/mod, pipeline/mod, sync/mod, and
-  main.rs through `as_local()`/`is_ingestible()` BEFORE P1-T6 adds the variant;
-  acquisition and sync ignore `Database` by design (per-consumer gates); P1-T6 adds
-  the variant + a mixed local+database serve+sync test.
+* **`Source::Database` consumer refactors (3588876057 plan, 3588876095 050.006-T;
+  fourth-pass exact-count audit)** — the additive variant breaks **18 production**
+  irrefutable/non-exhaustive `Source::Local` consumers (3 config validation, 2
+  acquire/plan, 1 acquire/mod, 1 pipeline/mod, 2 sync/mod, 9 main.rs) AND **7
+  breaking test consumers** (3 src/config/source.rs colocated, 1 src/main.rs
+  colocated, 1 tests/config_test.rs, 2 tests/pipeline_format_test.rs), so FIVE
+  dependency-ordered variant-safe pre-refactors P1-RF1..P1-RF5
+  (050.010 → 050.011 → 050.012 → 050.013 → 050.014-T, each ≤ 2 files, independently
+  green) route every consumer through `Source::id()`/`as_local()`/`is_ingestible()`
+  BEFORE P1-T6 adds the variant; acquisition and sync ignore `Database` by design
+  (per-consumer gates); P1-T6 adds the variant + a mixed local+database serve+sync
+  test and keeps `cargo build`/clippy/`cargo test` green.
 * **Writer collision migration (3588876135 plan, 3588876172 051.004-T)** — the
   P2-T3 collision matrix is now FOUR-way: absent → create marked; marked → update
   in place; UNMARKED but exact legacy shape → migrate in place by adding the marker
@@ -1056,13 +1092,25 @@ The 12 Copilot threads from the third review were remediated in-place
   supersedes the imprecise "narrow match" wording in second-review thread F and
   aligns with the P2-T3 case-3 migration predicate (extends thread E to four-way).
 * **050-F summary (3588876360)** — the feature summary now reads P1-T0..P1-T8 plus
-  the four P1-RF1..P1-RF4 compatibility sub-units.
+  the five P1-RF1..P1-RF5 compatibility sub-units.
 * **051-F summary (3588876398)** — the feature summary now lists the actual 11
   Phase-2 units (P2-T1, P2-T2a, P2-T2b, P2-T3, P2-T4, P2-T5a, P2-T5b, P2-T5c, P2-T6,
   P2-T7a, P2-T7b).
 
 Backlog impact (third review): Phase 1 grew from 9 to 13 task units (4 new
-variant-safe pre-refactors: 050.010/050.011/050.012/050.013-T); shipment 045-S is
-now 26 items; the dependency DAG was re-validated acyclic
-(P1-T3 → P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-T6) and the manifest stays
-topologically ordered (P1-T0 first).
+variant-safe pre-refactors: 050.010/050.011/050.012/050.013-T); the dependency
+DAG was re-validated acyclic and the manifest stays topologically ordered
+(P1-T0 first).
+
+Backlog impact (fourth-pass irrefutable-consumer audit): the earlier
+"10 external sites" figure was an undercount — a full source audit confirms **18
+production** irrefutable/non-exhaustive `Source::Local` consumers plus **7
+breaking test consumers**. P1-RF1 (050.010-T) expands to cover
+`src/config/validation.rs:302` (`intake_key`) and the three `src/config/source.rs`
+colocated test bindings; P1-RF4 (050.013-T) expands to cover all nine `src/main.rs`
+production sites and its one colocated test; and a new tail unit **P1-RF5
+(050.014-T)** pre-refactors the external integration tests (`tests/config_test.rs`,
+`tests/pipeline_format_test.rs`). Phase 1 is now **14 task units**, shipment 045-S is
+**27 items**, P1-T6 (050.006-T) now depends on P1-RF5, and the DAG stays
+acyclic/topological (P1-T3 → P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-RF5 → P1-T6,
+P1-T0 first).
