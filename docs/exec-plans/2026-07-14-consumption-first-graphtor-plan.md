@@ -166,10 +166,10 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
   `CozoDB`'s public SQLite backend exposes NO read-only connection flag and
   ignores the options string (`src/db/store.rs:107-110,384`), so the FIRST
   test-first step confirms engine-level read-only feasibility for the Cozo SQLite
-  backend; if it cannot be guaranteed, the `ReadOnly` serve path **fails closed**
-  (refuse to serve that db with a clear error) rather than opening a
-  write-capable handle and claiming INV-1 on the `DataStore` mutate-guard alone
-  (review thread 1). Evaluate `needs_v4_migration` on the read-only store (no
+  backend; if it cannot be PROVEN, the **feasibility stop condition below**
+  applies (fail closed AND block — never a write-capable handle claiming INV-1 on
+  the `DataStore` mutate-guard alone, and never a silent degrade; review thread
+  1). Evaluate `needs_v4_migration` on the read-only store (no
   write transaction), keeping the refusal message (`open_serve_databases:2363`),
   and harden the RO open (disable loadable extensions, disallow `ATTACH`,
   constrain to the single file).
@@ -186,6 +186,16 @@ in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
   programmatic v3-schema builder exists; if absent, add a v3 fixture builder as
   the first step of this unit. Depends on P1-T3 and P1-T6 (hardening applies to
   explicit entries; review thread 4).
+* **Feasibility stop condition (NON-NEGOTIABLE):** the engine/filesystem-level
+  no-write guarantee for the Cozo SQLite backend is a hard precondition of this
+  unit. If Cozo cannot be opened with a PROVEN engine/filesystem-level no-write
+  guarantee (immutable/`mode=ro` or equivalent, verified by the before/after
+  no-write proof), then P1-T4 (050.003-T) **and** shipment 045-S become
+  **BLOCKED** and Dark Mode HALTS before Phase 2 / minimal install. Do NOT
+  silently degrade, do NOT claim INV-1 on the `DataStore` mutate-guard alone, and
+  do NOT merge a feature-disable fallback. This is a STOP CONDITION, not a
+  temp-copy or scope expansion — resolve by proving engine read-only, or escalate
+  for an explicit decision.
 
 **P1-T5 — Expose discovered read-only dbs via status + MCP list-sources** (code, test-first)
 * Changes: make `status` (`discover_status_db_paths` → currently
@@ -405,7 +415,8 @@ root so the marker/atomic-write exist before the minimal install (review thread 
   sync in a consumer workspace. Hooks onto the existing `cmd_serve`
   "has sources / no sources" split (`src/main.rs:2447-2467`).
 * **Serve discovery Option C** — auto-discovery gives zero-config UX; optional
-  explicit entries cover named/external dbs; a strict superset with no
+  explicit entries cover named/aliased workspace-contained dbs (external/
+  out-of-root support deferred out of Phase-1 scope); a strict superset with no
   regression to the sources-driven dev path.
 * **Install Option I1** — consumption-first default keeps the footprint minimal
   and sync-free; ingestion is one opt-in flag away; `managed_server_value`
@@ -493,7 +504,11 @@ write sync in a consumption workspace.
   verification; if the Cozo SQLite backend cannot guarantee engine read-only, the
   served read-only path fails closed rather than relying on the `DataStore`
   mutate-guard alone (P1-T3 gating; P1-T4 engine-level proof). Read-only is the
-  fail-safe default on any ambiguity.
+  fail-safe default on any ambiguity. If engine read-only cannot be PROVEN, this
+  is a hard STOP CONDITION (not a silent degrade): P1-T4 (050.003-T) and shipment
+  045-S are BLOCKED and Dark Mode halts before Phase 2 / minimal install — no
+  INV-1 claim on the mutate-guard alone and no feature-disable fallback merge (see
+  P1-T4 feasibility stop condition).
 * **INV-2** — The graphtor dev/authoring workspace (real sources) retains full
   generate-and-serve behaviour with no regression.
 * **INV-3** — A stale or empty `sources.yaml` in a consumption workspace does

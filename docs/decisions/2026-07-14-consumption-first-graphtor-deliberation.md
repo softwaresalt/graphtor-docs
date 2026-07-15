@@ -168,7 +168,7 @@ flag exists only as an escape hatch.
 
 #### Option B: Explicit read-only db entry in `sources.yaml`
 
-* **Pros**: explicit, supports external/aliased dbs.
+* **Pros**: explicit, supports named/aliased dbs.
 * **Cons**: not zero-config; a consumer workspace shouldn't need `sources.yaml`
   at all; contradicts the consumption-first install goal.
 * **Effort**: medium. **Fit**: partial.
@@ -176,12 +176,14 @@ flag exists only as an escape hatch.
 #### Option C: Combination — auto-discovery default + optional explicit entries (RECOMMENDED)
 
 Zero-config auto-discovery of `.graphtor/*.db` is the default posture. An
-optional explicit read-only db entry (in `sources.yaml`) covers named, aliased,
-or external databases for advanced/generation workspaces.
+optional explicit read-only db entry (in `sources.yaml`) covers named or
+aliased, **workspace-contained** databases for advanced/generation workspaces.
+Out-of-root/external databases are explicitly OUT of Phase-1 scope (deferred,
+no committed timeline).
 
 * **Pros**: zero-config for the common consumer case AND an explicit escape
-  hatch for named/external dbs; superset of A and B; no regression for the
-  sources-driven dev path.
+  hatch for named/aliased workspace-contained dbs; superset of A and B; no
+  regression for the sources-driven dev path.
 * **Cons**: two code paths to test (discovery + explicit).
 * **Effort**: medium-high. **Fit**: best.
 
@@ -217,7 +219,7 @@ path.
 | Zero-config UX | n/a | n/a | high | low | high | high | medium |
 | Safety (no accidental sync) | high | low | medium | medium | high | high | medium |
 | Backward compat (dev path) | high | medium | medium | high | high | high | high |
-| Named/external db support | n/a | n/a | none | yes | yes | n/a | n/a |
+| Named/aliased db support (workspace-contained) | n/a | n/a | none | yes | yes | n/a | n/a |
 | Complexity | medium | low | medium | medium | med-high | med-high | medium |
 | Operator intent alignment | full | rejected | partial | partial | full | full | partial |
 
@@ -240,8 +242,12 @@ path.
 
 2. **Serve discovery is COMBINATION (Option C).** Zero-config auto-discovery of
    `*.db` at the top level of `.graphtor/` is the default; optional explicit
-   read-only db entries in `sources.yaml` cover named/aliased/external
-   databases. Discovered no-real-source dbs are served **read-only**: they are
+   read-only db entries in `sources.yaml` cover named/aliased,
+   **workspace-contained** databases only (each entry is canonicalized and
+   validated to stay within the same authorized root as auto-discovery;
+   out-of-root/external paths are REJECTED, not served, and MUST NOT broaden
+   authorized roots — external-path support is explicitly DEFERRED out of
+   Phase-1 scope). Discovered no-real-source dbs are served **read-only**: they are
    **never** background-synced, and generation/resolution **must not perform any
    write-side v4 prune (or other in-place write migration) on them**. The
    read-only posture does NOT relax the pre-v4 serve refusal gate — a pre-v4
@@ -249,8 +255,8 @@ path.
    never written to or pruned in place. Source-backed dbs (a `local`
    source whose path exists) keep read-write + background sync on the generation
    side. *Rationale*: C is a strict superset of A and B — it delivers the
-   zero-config consumer UX while preserving the explicit/external and
-   sources-driven generation paths with no regression. Confirmed over the
+   zero-config consumer UX while preserving the explicit (workspace-contained)
+   and sources-driven generation paths with no regression. Confirmed over the
    operator's initial lean toward C.
 
 3. **Install is CONSUMPTION-FIRST by default with opt-in ingestion (Option
@@ -276,7 +282,7 @@ workspace being the primary such case).
 * **M2 (hardcoded path/env mode)** — brittle and unsafe; a stale env var or
   moved repo silently changes posture. Contradicts the content-derived,
   fail-safe requirement.
-* **A alone** — no support for named/aliased/external dbs.
+* **A alone** — no support for named/aliased dbs.
 * **B alone** — forces `sources.yaml` on consumers, contradicting
   consumption-first install.
 * **I2 (full scaffold then prune)** — writes ingestion files just to remove
@@ -308,6 +314,14 @@ workspace being the primary such case).
   files, `.graphtor/models`, and generated artifacts; the served set is `*.db` by
   extension in the `.graphtor/` root minus that skip-list, with canonicalize +
   containment.
+* **Explicit read-only entry path scope (workspace-contained vs external)** —
+  **LOCKED (adversarial follow-up)**: Phase-1 explicit read-only entries are
+  restricted to WORKSPACE-CONTAINED named/aliased databases — each entry is
+  canonicalized and validated (`validate_path`) to stay within the same
+  authorized root as auto-discovery; out-of-root/external paths are REJECTED and
+  MUST NOT broaden authorized roots. External/out-of-root database support is
+  explicitly DEFERRED out of Phase-1 scope (no committed timeline). See plan
+  P1-T6.
 
 All questions above are now decided; none remain open (consistent with
 `decision_status: decided`).
