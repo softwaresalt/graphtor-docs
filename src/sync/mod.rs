@@ -224,7 +224,12 @@ pub fn sync_source_with_frozen_mtimes_and_ignored_root<S: std::hash::BuildHasher
     let started_at = Instant::now();
     let source_id = source.id();
 
-    let Source::Local(local) = source;
+    let Some(local) = source.as_local() else {
+        return Err(GraphtorError::Sync {
+            message: "source is not a local ingestion source".to_string(),
+            source_id: source_id.to_string(),
+        });
+    };
     let source_path_str = local.path.to_str().unwrap_or("");
 
     let sync_span = info_span!("sync_source", source_id, source_kind = "local");
@@ -1056,7 +1061,12 @@ fn build_new_state(
     source_dir: &Path,
     ignored_root: Option<&Path>,
 ) -> Result<SourceSyncState, GraphtorError> {
-    let Source::Local(_) = source;
+    if !source.is_ingestible() {
+        return Err(GraphtorError::Sync {
+            message: "source is not a local ingestion source".to_string(),
+            source_id: source.id().to_string(),
+        });
+    }
     let file_mtimes = scan_tracked_source_mtimes(source, source_dir, ignored_root)?;
     Ok(build_new_state_from_mtimes(file_mtimes))
 }
