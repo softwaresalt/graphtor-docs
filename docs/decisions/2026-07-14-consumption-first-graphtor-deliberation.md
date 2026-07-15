@@ -282,7 +282,7 @@ workspace being the primary such case).
 * **I2 (full scaffold then prune)** — writes ingestion files just to remove
   them; not a genuine consumption-first default.
 
-## Unresolved Questions
+## Resolved Questions (locked post plan-review and PR #88 review)
 
 * **Precise "resolvable real source" definition** — **LOCKED (post-review)**: a
   source is resolvable for generation mode only when its declared `local` path
@@ -292,14 +292,25 @@ workspace being the primary such case).
   (read-only). A malformed/unparseable `sources.yaml` remains a fail-closed hard
   error (never silently downgraded). This closes the INV-1/INV-3 bypass raised
   in plan review.
-* **Override flag naming/semantics**: `--read-only` (force consumption) vs
-  `--allow-sync` (force generation) vs both. Lean: add `--read-only` as the
-  primary safety escape hatch; defer a force-sync flag unless needed.
-* **`.mcp.json` command value on Windows**: bare `graphtor-docs` on PATH vs
-  `graphtor-docs.exe`; confirm PATH resolution behaviour during Phase 2.
-* **Discovery filter list**: exact set of files/dirs to skip
-  (`*.lock`, index/tmp, `.graphtor/models`, generated artifacts) — enumerate in
-  Phase 1.
+* **Override flag naming/semantics** — **LOCKED (PR #88 thread 12)**:
+  `--read-only` is the chosen flag — the primary safety escape hatch that forces
+  consumption (read-only) posture regardless of resolved sources. A symmetric
+  `--force-sync` flag is intentionally ABSENT in this phase (deferred, no
+  committed timeline); read-only is the fail-safe default, so a force-consumption
+  override is the only escape hatch required. See plan P1-T7.
+* **`.mcp.json` command value on Windows** — **LOCKED (PR #88 thread 12)**: the
+  binary-resolution ladder is fixed — reference the pinned absolute
+  `.graphtor/bin/graphtor-docs` (+ platform ext) when the ingestion scaffold
+  created a managed binary, otherwise the bare `graphtor-docs` PATH command with
+  NO `.exe` (Windows resolves via `PATHEXT`); append the platform ext ONLY on the
+  pinned bin path. See plan P2-T3.
+* **Discovery filter list** — **LOCKED (plan P1-T1)**: skip `*.lock`, index/tmp
+  files, `.graphtor/models`, and generated artifacts; the served set is `*.db` by
+  extension in the `.graphtor/` root minus that skip-list, with canonicalize +
+  containment.
+
+All questions above are now decided; none remain open (consistent with
+`decision_status: decided`).
 
 ## Risks and Mitigations
 

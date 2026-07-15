@@ -47,24 +47,31 @@ ingestion).
 |---|---|---|---|
 | R1 | `serve` auto-discovers `*.db` in `.graphtor/` root | Add a root-scan discovery step feeding the new `serve_discovery` module; it does NOT feed or modify `discover_db_files` | P1 / T1 |
 | R2 | Mode is content-derived; stale/empty `sources.yaml` never enables sync | Add resolvable-source classification; default read-only | P1 / T2 |
-| R3 | No-real-source dbs are served read-only and never background-synced | Gate rw-store open + `spawn_background_sync` on resolved sources | P1 / T3 |
-| R4 | v4 pre-sync gate applies to auto-discovered read-only dbs | Reuse `needs_v4_migration` gate for discovered dbs | P1 / T4 |
+| R3 | No-real-source dbs are served read-only and never background-synced | Gate rw-store open + pass ONLY filtered `Generation` source groups to `spawn_background_sync` | P1 / T2+T3 |
+| R4 | v4 pre-sync gate applies to auto-discovered read-only dbs | Engine-enforced read-only open + no-write proof; reuse `needs_v4_migration` gate | P1 / T4 |
 | R5 | `status` + MCP list-sources span multiple discovered dbs | Synthesize source metadata from stored `doc_sources` | P1 / T5 |
-| R6 | Optional explicit read-only db entry in `sources.yaml` | Parse a `read_only`/database entry kind | P1 / T6 |
+| R6 | Optional explicit read-only db entry in `sources.yaml` | Parse an additive `read_only`/database entry kind; workspace-contained (out-of-root paths rejected) | P1 / T6 |
 | R7 | Optional `--read-only` override escape hatch | Add serve CLI flag forcing consumption posture | P1 / T7 |
 | R8 | Docs: pipeline + dev-workspace exception + read-only serve | Phase-1 docs in product-specs/design-docs | P1 / T8 |
 | R9 | `install` default creates only `.graphtor/` root + minimal serve `.mcp.json` | Consumption-first install path | P2 / T1 |
-| R10 | Ingestion scaffold is opt-in (`install --with-ingestion`) | New flag creates full layout + binary + `sources.yaml` | P2 / T2 |
-| R11 | Binary resolution: PATH command default, `.graphtor/bin` when scaffolded | Precedence in `managed_server_value` caller | P2 / T3 |
+| R10 | Ingestion scaffold is opt-in (`install --with-ingestion`) | New flag (T2a) + full-layout scaffold with managed marker (T2b) | P2 / T2a+T2b |
+| R11 | Binary resolution: PATH command default, `.graphtor/bin` when scaffolded | Shared writer ladder + provenance marker + atomic write (Phase-2 root) | P2 / T3 |
 | R12 | `doctor` tolerates the minimal consumption layout | Make doctor checks layout-aware | P2 / T4 |
-| R13 | uninstall/upgrade parity for both footprints (never delete user dbs) | Update `uninstall()` / `upgrade()` + tests | P2 / T5 |
+| R13 | uninstall/upgrade parity for both footprints (never delete user dbs) | Footprint-safe uninstall (T5a) + managed MCP-entry removal (T5b) + upgrade parity (T5c) | P2 / T5a+T5b+T5c |
 | R14 | Backward compat for existing full installs + idempotency | Detect existing layout; additive-only opt-in | P2 / T6 |
-| R15 | Post-install message + separate ingestion-setup docs | Consumption-first message + ingestion doc section | P2 / T7 |
+| R15 | Post-install message + separate ingestion-setup docs | Message contract (T7a) + ingestion-setup docs section (T7b) | P2 / T7a+T7b |
 
 ## Implementation Units
 
 Each unit follows the 2-hour rule (< 3 files, < 5 functions, < 4 test
 scenarios), width isolation (single domain), and produces a verifiable outcome.
+Phase 1 has 8 units (P1-T1..P1-T8); Phase 2 has 11 units after the review-thread
+splits (P2-T1, P2-T2a, P2-T2b, P2-T3, P2-T4, P2-T5a, P2-T5b, P2-T5c, P2-T6,
+P2-T7a, P2-T7b). With the two covering features (050-F, 051-F) this is 21 items
+in shipment 045-S. Backlog IDs: P1-T1..T8 = 050.002/050.004/050.001/050.003/
+050.005/050.006/050.007/050.008-T; P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
+051.004/051.001/051.002/051.008/051.003/051.006/051.005/051.009/051.010/051.007/
+051.011-T.
 
 ### Phase 1 — 79B5A7BC (covering feature: read-only serve auto-discovery + content-derived mode)
 
@@ -105,52 +112,80 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
   source's resolved target db → `Generation` (a resolvable source NEVER promotes
   an unrelated co-resident dropped db, which stays `ReadOnly`);
   (3) absent/empty/stale/unresolvable sources → `ReadOnly`. The
-  preflight then runs only for `Generation` dbs. Expose a PURE classification
-  function returning `Vec<(PathBuf, ServeMode)>` for unit-testability.
+  preflight then runs only for `Generation` dbs. Expose a PURE function that
+  returns BOTH the `Vec<(PathBuf, ServeMode)>` classification AND the **filtered
+  per-database `Generation` source groups** (the subset of source groups whose
+  resolved target db is `Generation`), so preflight and background sync receive
+  ONLY `Generation` sources and never the full `SourceConfig` (review thread 2).
 * Files: `src/workspace/serve_discovery.rs`, `src/main.rs` (call ordering in
   `cmd_serve` so classification precedes the preflight).
 * Tests: real non-empty source → Generation; existing-but-empty path → ReadOnly;
   stale `sources.yaml`, paths absent → ReadOnly; malformed yaml → hard error;
   source-backed db + co-resident dropped db → only the source's target db is
-  Generation while the dropped db stays ReadOnly.
+  Generation while the dropped db stays ReadOnly; **mixed valid+stale sources
+  targeting DIFFERENT dbs → only the valid db's `Generation` source group is
+  returned**.
 * Posture: test-first. Depends on P1-T1.
 
 **P1-T3 — Per-db posture threaded through serve open + sync gating** (code, characterization-first)
 * Changes: change `open_serve_databases` (`src/main.rs:2344`) to accept the
   `Vec<(PathBuf, ServeMode)>` classification instead of a bare `Vec<PathBuf>`.
   For `ReadOnly` dbs: skip `DataStore::open_sqlite` (rw) and `ensure_schema()`
-  (a write), skip the exclusive `acquire_database_lock` write lock (use a shared/
-  read lock or none), and open ONLY the read-only store. For `Generation` dbs:
-  keep the current rw+lock path. `ServeOpenedDatabases` carries per-db posture so
-  `spawn_background_sync` receives ONLY `Generation` rw stores. Handle the
-  zero-discovered-db case explicitly (clear "no databases found to serve" exit,
-  no `graph.db` write-fallback, replace the `unreachable!` at ~2490 with a
-  handled error).
+  (a write), skip the exclusive `acquire_database_lock` write lock, and open ONLY
+  the read-only store (the *engine-enforced* no-write guarantee is established and
+  proven in P1-T4 — this unit's INV-1 claim is the **gating** invariant, not the
+  filesystem no-write proof; review thread 1). For `Generation` dbs: keep the
+  current rw+lock path. `ServeOpenedDatabases` carries per-db posture, and ONLY
+  the **filtered `Generation` source groups** from P1-T2 (never the full
+  `SourceConfig`) are passed to `run_duplicate_intake_preflight` and
+  `spawn_background_sync`, which internally re-splits its `SourceConfig` via
+  `split_plan_by_database` (`src/main.rs:2268`) and would otherwise re-schedule
+  stale/read-only targets (review thread 2). Handle the zero-discovered-db case
+  explicitly (clear "no databases found to serve" exit, no `graph.db`
+  write-fallback, replace the `unreachable!` at ~2490 with a handled error). Emit
+  a positive startup log of the resolved per-db posture and discovered-db count
+  (review thread 14; Constitution V).
 * Files: `src/main.rs` (`open_serve_databases`, `cmd_serve`).
 * Tests: consumption db → no rw store, no write lock, no sync spawn; MIXED
   workspace (real-source + dropped db) → source-backed gets rw+sync while
-  co-resident dropped db stays read-only and RO read paths work; empty
-  `.graphtor/` → graceful "nothing to serve".
+  co-resident dropped db stays read-only and RO read paths work; **mixed
+  valid+stale sources targeting different dbs → only the `Generation` db's source
+  group reaches `spawn_background_sync`**; empty `.graphtor/` → graceful
+  "nothing to serve"; **a tested positive startup log reports resolved per-db
+  posture + discovered-db count**.
 * Posture: characterization-first (lock current dev + mixed behaviour, then gate).
   Depends on P1-T2.
 
-**P1-T4 — v4 pre-sync gate parity via read-only store** (code, test-first)
-* Changes: evaluate `needs_v4_migration` on the READ-ONLY store for discovered
-  read-only dbs (no write transaction), keeping the existing refusal message
-  (`open_serve_databases:2363`). Ensure the read-only open for EVERY
-  `ReadOnly`-classified db — auto-discovered AND explicit external read-only
-  entries (P1-T6), not only auto-discovered — is hardened: disable loadable
-  extensions and disallow `ATTACH`, constraining the open to the single file.
-  Sequence AFTER P1-T3 (same function,
-  shared change surface).
-* Files: `src/main.rs` (`open_serve_databases`), read-only open helper.
-* Tests: pre-v4 discovered db → refusal exit + message; v4 db → served; crafted
-  auto-discovered db attempting `ATTACH`/extension-load → refused/inert; an
-  explicit external read-only entry attempting `ATTACH`/extension-load →
-  refused/inert (same hardening applies to explicit ReadOnly entries).
+**P1-T4 — Engine-enforced read-only open + no-write proof + v4 gate parity** (code, test-first)
+* Changes: establish an ENGINE/FILESYSTEM-level read-only open for EVERY
+  `ReadOnly`-classified db (auto-discovered AND explicit workspace-contained
+  entries from P1-T6) plus automated no-write verification, and keep the v4
+  pre-sync gate. The read-only open MUST use a backend/open mode that cannot
+  create or mutate the db or its WAL/SHM/journal/lock sidecars (SQLite
+  `immutable=1`/`mode=ro` URI or an equivalent `SQLITE_OPEN_READONLY` connection).
+  `CozoDB`'s public SQLite backend exposes NO read-only connection flag and
+  ignores the options string (`src/db/store.rs:107-110,384`), so the FIRST
+  test-first step confirms engine-level read-only feasibility for the Cozo SQLite
+  backend; if it cannot be guaranteed, the `ReadOnly` serve path **fails closed**
+  (refuse to serve that db with a clear error) rather than opening a
+  write-capable handle and claiming INV-1 on the `DataStore` mutate-guard alone
+  (review thread 1). Evaluate `needs_v4_migration` on the read-only store (no
+  write transaction), keeping the refusal message (`open_serve_databases:2363`),
+  and harden the RO open (disable loadable extensions, disallow `ATTACH`,
+  constrain to the single file).
+* Files: `src/db/store.rs` (read-only open strategy), `src/main.rs`
+  (`open_serve_databases` v4 gate on the RO store).
+* Tests: engine/filesystem no-write proof — capture the served `.db` (size,
+  mtime, content hash) and assert NO creation/mutation of `-wal`/`-shm`/
+  `-journal`/lock sidecars before AND after a serve+query+search+semantic read
+  cycle; attempted write/mutation rejected at the ENGINE boundary; fail-closed
+  when engine read-only is unavailable; pre-v4 db → refusal exit + message; v4 db
+  → served; a crafted auto-discovered db and an explicit workspace-contained
+  entry attempting `ATTACH`/extension-load → refused/inert.
 * Posture: test-first. **Precondition**: confirm a pre-v4 (v3) fixture db or a
   programmatic v3-schema builder exists; if absent, add a v3 fixture builder as
-  the first step of this unit. Depends on P1-T3.
+  the first step of this unit. Depends on P1-T3 and P1-T6 (hardening applies to
+  explicit entries; review thread 4).
 
 **P1-T5 — Expose discovered read-only dbs via status + MCP list-sources** (code, test-first)
 * Changes: make `status` (`discover_status_db_paths` → currently
@@ -165,19 +200,26 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
 * Posture: test-first. **Fixtures**: add a temp-sqlite v4 fixture builder with
   populated `doc_sources`. Depends on P1-T1.
 
-**P1-T6 — Optional explicit read-only db entry in `sources.yaml`** (code, test-first)
+**P1-T6 — Optional explicit read-only db entry (workspace-contained)** (code, test-first)
 * Changes: support an explicit read-only database entry (e.g. `read_only: true`
-  or a `type: database` kind) for named/aliased/external dbs, merged through
+  or a `type: database` kind) for NAMED/ALIASED dbs, merged through
   `serve_discovery` with CANONICAL-path dedup against auto-discovery (same
   underlying file via different path forms collapses to one served store).
+  Phase-1 explicit entries MUST remain **workspace-contained**: each entry's path
+  is canonicalized and validated to stay within the same authorized root as
+  auto-discovery (`validate_path`, `src/path/security.rs:143`). Out-of-root/
+  external paths are REJECTED, not served — external-path support is explicitly
+  OUT of Phase-1 scope and MUST NOT broaden authorized roots (review thread 3).
   `SourceConfig` schema change MUST be additive: `#[serde(default)]` on new
   fields (check for `deny_unknown_fields`) so existing `sources.yaml` (dev
   workspace) still deserializes.
 * Files: `sources.yaml` schema/parse module, `src/workspace/serve_discovery.rs`.
-* Tests: explicit read-only entry served read-only + never synced; explicit
-  entry + auto-discovery for the same file collapse to one store; a pre-change
-  `sources.yaml` round-trips (backward-compat parse).
-* Posture: test-first. Depends on P1-T2.
+* Tests: explicit workspace-contained read-only entry served read-only + never
+  synced; explicit entry + auto-discovery for the same file collapse to one
+  store; an entry using `..`/POSIX symlink/Windows junction/outside-root path →
+  rejected with a path-violation error; a pre-change `sources.yaml` round-trips
+  (backward-compat parse).
+* Posture: test-first. Depends on P1-T3 (behaviour owned by T3; review thread 5).
 
 **P1-T7 — Optional `--read-only` serve override flag** (config/CLI, test-first)
 * Changes: add a `--read-only` escape-hatch flag to `serve` that forces
@@ -200,46 +242,64 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
 ### Phase 2 — B333B9B8 (covering feature: consumption-first install + opt-in ingestion)
 
 **P2-T1 — Consumption-first `install` default** (code, test-first)
-* Changes: default `install` creates only the `.graphtor/` root + a minimal
-  serve `.mcp.json` (PATH command `graphtor-docs`, args `["serve"]`); do NOT
-  write `sources.yaml`, do NOT create `config/bin/cache/data/logs`. The minimal
-  `.mcp.json` server entry MUST carry an explicit managed-entry provenance marker
-  (so `uninstall` can identify the graphtor-managed entry — see P2-T5). Make
-  `InstallResult.binary_path` an `Option<PathBuf>` (or add an `InstallKind`) so
-  a consumption install with no copied binary is representable; update callers
-  (`cmd_install` message, upgrade, uninstall) to handle `None`. Config/`.mcp.json`
-  writes use temp-file + rename (atomic) with stable key ordering.
+* Changes: default `install` creates only the `.graphtor/` root + a minimal serve
+  `.mcp.json` written via the shared P2-T3 writer (PATH command `graphtor-docs`,
+  args `["serve"]`, with the managed provenance marker and atomic write); do NOT
+  write `sources.yaml`, do NOT create `config/bin/cache/data/logs`, and do NOT
+  create/update `.gitignore` (review thread 8: the minimal consumption install has
+  no managed `.gitignore` side effect; the current `cmd_install` always manages it
+  at `src/main.rs:3021-3024`, so the minimal path must skip it). Make
+  `InstallResult.binary_path` an `Option<PathBuf>` (or add an `InstallKind`);
+  update callers (`cmd_install` message, upgrade, uninstall) to handle `None`.
+  This unit CALLS the shared writer (P2-T3) and asserts the resulting minimal
+  install — it does not re-implement the marker/atomic-write (review thread 7).
 * Files: `src/workspace/install.rs`, `src/main.rs` (`cmd_install:3002`).
-* Tests: fresh install creates only `.graphtor/` + minimal `.mcp.json`; no
-  `sources.yaml`; no ingestion subdirs; `binary_path` is `None`.
-* Posture: test-first. Depends on Phase 1 (serve must auto-discover first).
+* Tests: fresh install creates only `.graphtor/` + minimal `.mcp.json` (marker
+  present, no `.exe`); no `sources.yaml`; no ingestion subdirs; NO `.gitignore`
+  created/modified; `binary_path` is `None`.
+* Posture: test-first. Depends on P2-T3.
 
-**P2-T2 — Opt-in `install --with-ingestion` full scaffold** (code, test-first)
-* Changes: add `--with-ingestion` to `InstallArgs` (`src/cli/mod.rs:274`);
-  when set, create the full generation scaffold (config + `sources.yaml` +
-  data/cache/logs + bin/binary copy). The graphtor dev workspace uses this path.
-* Files: `src/cli/mod.rs`, `src/main.rs` (`cmd_install`),
-  `src/workspace/install.rs`.
-* Tests: `--with-ingestion` creates full layout + `sources.yaml` + copied
-  binary; default (no flag) does not.
+**P2-T2a — `install --with-ingestion` CLI flag + plumbing** (code, test-first)
+* Changes: add `--with-ingestion` to `InstallArgs` (`src/cli/mod.rs:274`) and
+  thread it through `cmd_install` to select the install kind. Flag + plumbing
+  ONLY; scaffold creation is P2-T2b (review thread 9 split — the original P2-T2
+  listed three files, violating the `< 3 files` rule).
+* Files: `src/cli/mod.rs`, `src/main.rs` (`cmd_install`).
+* Tests: flag parsed and threaded to `install()`; absent flag selects the
+  consumption-first default; no scaffold behaviour implemented here.
 * Posture: test-first. Depends on P2-T1.
 
-**P2-T3 — Binary resolution precedence in `.mcp.json`** (code, test-first)
-* Changes: `.mcp.json` binary resolution precedence is an unambiguous ladder
-  that reconciles the locked decision (prefer the `.graphtor/bin` copy the
-  ingestion scaffold created, otherwise the PATH command):
-  (1) for a managed install where the `.graphtor/bin` scaffold created the
-  binary, reference its absolute/pinned path (`.graphtor/bin/graphtor-docs` +
-  platform ext) — this is the reliably-known managed path;
-  (2) the bare `graphtor-docs` PATH command is used ONLY when no reliable managed
-  binary path is available (the consumption-first minimal install, which copies
-  no binary). Do NOT append `.exe` for the bare PATH command (Windows resolves
-  via `PATHEXT`); append the platform ext only for the pinned `.graphtor/bin`
-  path. The bare-PATH fallback carries a documented binary-hijack trade-off.
-* Files: `src/workspace/mcp_config.rs` (`managed_server_value`), `src/main.rs`.
-* Tests: minimal install → PATH command value (no `.exe`); `--with-ingestion`
-  → bin path with platform ext.
-* Posture: test-first. Depends on P2-T2.
+**P2-T2b — Opt-in full-ingestion scaffold + managed marker** (code, test-first)
+* Changes: when `--with-ingestion` is set, create the full generation scaffold
+  (config + `sources.yaml` + data/cache/logs + bin/binary copy) and write
+  `.mcp.json` via the shared P2-T3 writer so the managed server entry uses the
+  pinned `.graphtor/bin` path AND carries the managed marker (review thread 13);
+  retain the existing managed `.gitignore` behaviour (unless `--no-gitignore`;
+  thread 8). The graphtor dev workspace uses this path.
+* Files: `src/workspace/install.rs`.
+* Tests: `--with-ingestion` → full layout + `sources.yaml` + copied binary +
+  `.mcp.json` pinned bin path WITH managed marker + managed `.gitignore`; default
+  → none of these and no `.gitignore`.
+* Posture: test-first. Depends on P2-T2a and P2-T3.
+
+**P2-T3 — Shared `.mcp.json` writer: resolution ladder + managed marker + atomic write** (code, test-first) — Phase-2 root
+* Changes: make the MCP config writer (`generate_mcp_config`/`managed_server_value`,
+  `src/workspace/mcp_config.rs:84-97`) the shared foundation both install paths
+  consume: (a) a binary-resolution LADDER — pinned absolute
+  `.graphtor/bin/graphtor-docs` (+ platform ext) when a managed binary exists,
+  else the bare `graphtor-docs` PATH command (no `.exe`; Windows resolves via
+  `PATHEXT`); (b) a managed-entry PROVENANCE MARKER in the server entry so
+  `uninstall` (P2-T5b) can identify the managed entry; (c) ATOMIC temp-file +
+  rename writes with stable key ordering (Principle IX). The current writer
+  hardcodes `.graphtor/bin/...` (`mcp_config.rs:86`) and always creates it;
+  restructured as the Phase-2 ROOT so binary resolution + marker + atomic write
+  exist BEFORE the minimal install (P2-T1) claims a working install (review
+  thread 7).
+* Files: `src/workspace/mcp_config.rs`.
+* Tests: ladder pure-function (managed binary → pinned path+ext; none → bare PATH
+  command, no `.exe`); managed marker present; atomic write with stable ordering;
+  user-authored `.mcp.json` entries preserved.
+* Posture: test-first. Depends on Phase 1 (050-F).
 
 **P2-T4 — `doctor` tolerates the minimal consumption layout** (code, test-first)
 * Changes: add a footprint-detection helper; make `run_doctor`
@@ -251,25 +311,38 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
   unchanged.
 * Posture: test-first. Depends on P2-T1.
 
-**P2-T5 — uninstall/upgrade parity + user-data preservation** (code, test-first)
+**P2-T5a — Footprint-safe uninstall + approval-set enumeration** (code, test-first)
 * Changes: `uninstall()` (`src/workspace/uninstall.rs:34`) removes ONLY
-  graphtor-CREATED artifacts (known subdirs + the managed `.mcp.json` entry
-  identified by the explicit managed-entry provenance marker written at install
-  time by BOTH the minimal and full paths — see P2-T1) and MUST NEVER delete
-  user-dropped `*.db` files in the `.graphtor/` root; it removes ONLY managed MCP
-  entries and MUST leave user-authored `.mcp.json` server entries untouched; do
-  not follow symlinks out of the root. When user-dropped dbs are present, the
-  operator-approval prompt (PA-3) enumerates the exact deletion set and preserves
-  (or per-file confirms) dropped dbs. `upgrade()`
-  (`src/workspace/upgrade.rs:43`) of a consumption install has no bin to replace
-  and must treat missing bin/subdirs as a no-op, not an error.
-* Files: `src/workspace/uninstall.rs`, `src/workspace/upgrade.rs`.
-* Tests: default (minimal) install → uninstall removes the managed `.mcp.json`
-  entry (matched by provenance marker) while a user-dropped `.db` in `.graphtor/`
-  and any user-authored `.mcp.json` entry SURVIVE; full install → uninstall
-  removes full graphtor artifacts but a user-dropped `.db` SURVIVES; upgrade of a
-  minimal (no-bin) install succeeds.
-* Posture: test-first. Depends on P2-T1, P2-T2.
+  graphtor-created filesystem artifacts (full-install subdirs) and MUST NEVER
+  delete user-dropped `*.db` in the `.graphtor/` root; no symlink-follow out of
+  root. `.gitignore` parity (thread 8): a minimal uninstall MUST NOT remove a
+  `.gitignore` it never created; only a full-footprint uninstall touches the
+  managed `.gitignore` block. The PA-3 approval prompt enumerates the deletion
+  set. Managed `.mcp.json` removal is P2-T5b; upgrade parity is P2-T5c (review
+  thread 10 split — the original P2-T5 spanned four files).
+* Files: `src/workspace/uninstall.rs`, `src/main.rs` (`cmd_uninstall` prompt).
+* Tests: minimal → no user-db deletion and no `.gitignore` removal; full →
+  removes graphtor subdirs + managed `.gitignore` while a dropped `.db` SURVIVES;
+  no symlink-follow; PA-3 prompt enumerates the deletion set.
+* Posture: test-first. Depends on P2-T1 and P2-T2b.
+
+**P2-T5b — Managed `.mcp.json` entry removal by provenance marker** (code, test-first)
+* Changes: add managed-entry removal to the MCP config module — `uninstall`
+  removes ONLY the managed server entry matched by the P2-T3 provenance marker
+  and leaves user-authored entries untouched; atomic rewrite.
+* Files: `src/workspace/mcp_config.rs`, `src/workspace/uninstall.rs`.
+* Tests: managed entry removed while a user-authored entry SURVIVES; a user-only
+  `.mcp.json` is unchanged; rewrite is atomic.
+* Posture: test-first. Depends on P2-T5a and P2-T3.
+
+**P2-T5c — Minimal/full upgrade parity** (code, test-first)
+* Changes: `upgrade()` (`src/workspace/upgrade.rs:43`) of a minimal (no-bin)
+  install treats missing bin/subdirs as a no-op success; a full install upgrade
+  replaces the binary; idempotent.
+* Files: `src/workspace/upgrade.rs`.
+* Tests: minimal upgrade → no-op success; full upgrade → replaces binary; repeat
+  idempotent.
+* Posture: test-first. Depends on P2-T1 and P2-T2b.
 
 **P2-T6 — Backward-compat detection + idempotency** (code, test-first)
 * Changes: detect an existing full install and preserve it (opt-in is additive,
@@ -279,16 +352,25 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
   idempotent.
 * Posture: test-first. Depends on P2-T1.
 
-**P2-T7 — Post-install message + separate ingestion-setup docs** (docs)
-* Changes: consumption-first post-install message ("drop a `.db` into
-  `.graphtor/` to serve it read-only"; link to ingestion docs). Add a distinct
-  ingestion/sync setup docs section (create scaffold, author `sources.yaml`,
-  run sync, consume read-only downstream).
-* Files: `src/main.rs` (`cmd_install` message strings), `docs/product-specs/` or
-  `docs/cli-reference/`.
-* Tests: explicit test asserting the consumption-first post-install message
-  (locks the user-facing contract); `backlogit_docs_lint` clean.
-* Posture: docs + a message-assertion test. Depends on P2-T1.
+**P2-T7a — Consumption-first post-install message contract** (code, test-first)
+* Changes: emit the consumption-first post-install message from `cmd_install`
+  ("drop a `.db` into `.graphtor/` to serve it read-only"; link to the
+  ingestion-setup docs) and lock it with a message-assertion test. Runtime
+  message/code ONLY; docs are P2-T7b (review thread 11 split — width isolation
+  forbids mixing code and docs in one task).
+* Files: `src/main.rs` (`cmd_install` message strings).
+* Tests: explicit assertion of the message content + docs link; the minimal path
+  prints this message (not the ingestion-oriented one).
+* Posture: test-first. Depends on P2-T1.
+
+**P2-T7b — Separate ingestion-setup docs section** (docs)
+* Changes: add a distinct ingestion/sync setup docs section (create scaffold via
+  `--with-ingestion`, author `sources.yaml`, run `sync`, consume read-only
+  downstream). Keep default install docs focused on the consumption/serve path.
+* Files: `docs/product-specs/*.md` or `docs/cli-reference/*.md`.
+* Tests: n/a (docs); `backlogit_docs_lint` clean; cross-links from the P2-T7a
+  message.
+* Posture: docs. Depends on P2-T7a and P2-T2b.
 
 ## Dependency Graph
 
@@ -297,20 +379,24 @@ Phase 1 (feature) ──blocks──> Phase 2 (feature)
 
 Phase 1 internal:
   P1-T1 ──> P1-T2 ──> P1-T3 ──> {P1-T7, P1-T8}
-  P1-T3 ──> P1-T4
   P1-T1 ──> P1-T5
-  P1-T2 ──> P1-T6
+  P1-T3 ──> P1-T6 ──> P1-T4        (P1-T4 also depends on P1-T3)
 
-Phase 2 internal:
-  P2-T1 ──> {P2-T2, P2-T4, P2-T6, P2-T7}
-  P2-T2 ──> P2-T3
-  {P2-T1, P2-T2} ──> P2-T5
+Phase 2 internal (P2-T3 is the root):
+  P2-T3 ──> P2-T1 ──> {P2-T2a, P2-T4, P2-T6, P2-T7a}
+  P2-T2a ──> P2-T2b                (P2-T2b also depends on P2-T3)
+  {P2-T1, P2-T2b} ──> P2-T5a ──> P2-T5b   (P2-T5b also depends on P2-T3)
+  {P2-T1, P2-T2b} ──> P2-T5c
+  {P2-T7a, P2-T2b} ──> P2-T7b
 ```
 
-No cycles. Suggested execution order: P1-T1 → P1-T2 → P1-T3 → P1-T4 → P1-T5 →
-P1-T6 → P1-T7 → P1-T8 → P2-T1 → P2-T2 → P2-T3 → P2-T4 → P2-T6 → P2-T5 → P2-T7.
-Note: P1-T3 and P1-T4 both edit `open_serve_databases` — sequence T3 then T4 (do
-not interleave) to avoid churn on the shared change surface.
+No cycles. Suggested execution order (matches shipment 045-S): P1-T1 → P1-T2 →
+P1-T3 → P1-T6 → P1-T4 → P1-T5 → P1-T7 → P1-T8 → P2-T3 → P2-T1 → P2-T2a → P2-T2b →
+P2-T4 → P2-T6 → P2-T5a → P2-T5b → P2-T5c → P2-T7a → P2-T7b. Notes: P1-T3 and P1-T4
+both edit the read-only open / `open_serve_databases` — sequence T3 then T4. P1-T6
+introduces the explicit read-only entry that P1-T4's hardening exercises, so T6
+precedes T4 (review threads 4–6). P2-T3 (shared `.mcp.json` writer) is the Phase-2
+root so the marker/atomic-write exist before the minimal install (review thread 7).
 
 ## Decisions and Rationale
 
@@ -333,11 +419,15 @@ not interleave) to avoid churn on the shared change surface.
 | Risk | Mitigation |
 |---|---|
 | Accidental background sync in a consumer workspace | Content-derived mode, fail read-only; gate `spawn_background_sync` + rw-store open behind resolved real sources (P1-T3) |
+| Engine/filesystem write to a served read-only db (Cozo exposes no RO flag) | Engine-enforced read-only open (immutable/`mode=ro`) + before/after no-write verification; fail closed if unattainable (P1-T4) |
+| Full `SourceConfig` re-split re-schedules stale/read-only targets | Return + pass ONLY filtered `Generation` source groups to preflight/sync (P1-T2, P1-T3) |
 | Regression in dev-workspace generation/serve | Characterization tests before refactor (P1-T3); preserve sources-driven path |
 | Auto-discovery picks up generated/non-db artifacts | Explicit filter + `.graphtor/` root-only scan + containment (P1-T1) |
 | Pre-v4 db served ungated | Reuse `needs_v4_migration` gate for discovered dbs (P1-T4) |
+| Explicit read-only entry escapes the workspace root | Canonicalize + `validate_path` containment; reject out-of-root; no authorized-root broadening (P1-T6) |
+| Ambiguous `.gitignore` behaviour on install | Minimal install does not manage `.gitignore`; full `--with-ingestion` retains it; uninstall parity (P2-T1, P2-T2b, P2-T5a) |
 | doctor breaks on minimal layout | Layout-aware doctor (P2-T4) |
-| uninstall/upgrade break on minimal layout | Footprint-aware uninstall/upgrade (P2-T5) |
+| uninstall/upgrade break on minimal layout | Footprint-safe uninstall (P2-T5a) + managed MCP-entry removal (P2-T5b) + upgrade parity (P2-T5c) |
 | Existing full installs disrupted | Backward-compat detection + idempotency (P2-T6) |
 | Path traversal in discovery | Resolve within `.graphtor/` root; reject `..`/symlink escapes (P1-T1) |
 
@@ -397,8 +487,13 @@ write sync in a consumption workspace.
 ### Protected Invariants
 
 * **INV-1 (primary)** — A consumption workspace (no resolvable real sources)
-  MUST NEVER open a read-write store or spawn `spawn_background_sync` for a
-  served db. Read-only is the fail-safe default on any ambiguity.
+  MUST NEVER open a read-write store, mutate the served db or its WAL/SHM/journal
+  sidecars, or spawn `spawn_background_sync` for a served db. The read-only open is
+  ENGINE-enforced (immutable/`mode=ro`) with automated before/after no-write
+  verification; if the Cozo SQLite backend cannot guarantee engine read-only, the
+  served read-only path fails closed rather than relying on the `DataStore`
+  mutate-guard alone (P1-T3 gating; P1-T4 engine-level proof). Read-only is the
+  fail-safe default on any ambiguity.
 * **INV-2** — The graphtor dev/authoring workspace (real sources) retains full
   generate-and-serve behaviour with no regression.
 * **INV-3** — A stale or empty `sources.yaml` in a consumption workspace does
@@ -410,6 +505,9 @@ write sync in a consumption workspace.
   explicit) with a clear "run sync" message.
 * **INV-6** — Existing full installs are preserved; the opt-in scaffold is
   additive-only and re-running install is idempotent.
+* **INV-7** — Only `Generation`-classified source groups reach preflight and
+  `spawn_background_sync`; the full `SourceConfig` is never handed to the sync
+  path, so a stale/read-only source can never be re-split into a background write.
 
 ### Learnings and Instructions Consulted
 
@@ -428,7 +526,7 @@ write sync in a consumption workspace.
 
 | ID | ProposedAction | Targets | ActionRisk | Approval | ActionResult |
 |---|---|---|---|---|---|
-| PA-1 | Gate rw-store open + background sync behind resolved real sources | `cmd_serve`, `open_serve_databases` (`src/main.rs`) | high | prefer approval (changes serve read/write posture) | planned |
+| PA-1 | Gate rw-store open + background sync behind resolved real sources; engine-enforced read-only open with no-write proof | `cmd_serve`, `open_serve_databases`, `DataStore::open_sqlite_readonly` (`src/main.rs`, `src/db/store.rs`) | high | prefer approval (changes serve read/write posture) | planned |
 | PA-2 | Change default `install` footprint (drop `config/bin/cache/data/logs` + `sources.yaml`) | `install()`, `cmd_install` | high | prefer approval (on-disk layout + backward compat) | planned |
 | PA-3 | Make `uninstall` clean up both footprints | `uninstall()` | destructive | **approval required** (deletes on-disk dirs) | planned |
 | PA-4 | Add filesystem discovery scan of `.graphtor/` root | new discovery helper | moderate | standard (read-only scan, containment-gated) | planned |
@@ -511,6 +609,15 @@ do not proceed to closure — this is a direct INV-1 violation.
   layered on Phase 1, the shipment already encodes the Phase 1 → Phase 2
   dependency, and P-001 permits one in-flight bundled release unit. Phase 1
   still lands before Phase 2 within the single PR.
+* ~~Explicit read-only entry path scope (workspace-contained vs external)~~ —
+  **RESOLVED (plan review thread 3)**: Phase-1 explicit entries are
+  workspace-contained (canonicalize + `validate_path`); out-of-root/external
+  paths are rejected and MUST NOT broaden authorized roots. External-path support
+  is deferred (no committed timeline). See P1-T6.
+* ~~Whether the minimal install manages `.gitignore`~~ — **RESOLVED (thread 8)**:
+  the consumption-first minimal install does NOT create/update `.gitignore`; the
+  full `--with-ingestion` install retains the existing managed `.gitignore`
+  behaviour, and uninstall parity is tested. See P2-T1 / P2-T2b / P2-T5a.
 
 ## Constitution Check
 
@@ -518,7 +625,7 @@ do not proceed to closure — this is a direct INV-1 violation.
 |---|---|---|
 | I. Safety-First Rust | COMPLIANT | New library code (`serve_discovery`) uses `Result<_, GraphtorError>`, no `unwrap`/`expect`; `#![forbid(unsafe_code)]` retained; clippy pedantic clean is a per-task gate; new helpers `#[must_use]`. |
 | II. Test-First | COMPLIANT | Every code unit is test-first or characterization-first with explicit scenarios; docs unit P2-T7 adds a message-assertion test. Fixture preconditions (v3/v4 dbs) called out. |
-| III. Workspace Isolation | COMPLIANT | Discovery scans only `.graphtor/` root with canonicalize + prefix containment (P1-T1). |
+| III. Workspace Isolation | COMPLIANT | Discovery scans only `.graphtor/` root with canonicalize + prefix containment (P1-T1); explicit read-only entries stay workspace-contained via `validate_path` (P1-T6). |
 | IV. CLI Containment | COMPLIANT | Scratch test workspaces rooted under `target/`; no writes outside cwd; uninstall never follows symlinks out of `.graphtor/`. |
 | V. Structured Observability | COMPLIANT | Positive serve-start posture log line (resolved posture + discovered-db count) added so read-only selection is affirmatively observable, not inferred from an absent line. |
 | VI. Single Responsibility | COMPLIANT | No new dependencies; reuses existing `SourceConfig`, `DataStore`, tokio. |
@@ -622,3 +729,38 @@ window) are present and were deepened by plan-harden. Adequate for harvest.
 **Attempt 2 — Gate: PASS.** All P0/P1 findings resolved in this revision; P2
 items folded into the affected units or the Constitution Check; P3 items carried
 as advisory build-time guidance. Plan is cleared for harvest.
+
+### Review-Thread Remediation (PR #88 / shipment 045-S)
+
+The 14 Copilot review threads on the staging PR were remediated in-place
+(planning/backlog only; no code, no build). Summary:
+
+* **Thread 1 (INV-1, security)** — P1-T4 now requires an engine/filesystem-level
+  read-only open (immutable/`mode=ro`) with automated before/after no-write
+  verification and a fail-closed fallback, because `open_sqlite_readonly` reuses a
+  write-capable `DbInstance` and Cozo's SQLite backend exposes no read-only flag
+  (`src/db/store.rs:107-110,384`). P1-T3's INV-1 claim is scoped to gating only.
+* **Thread 2** — P1-T2 returns filtered `Generation` source groups; P1-T3 passes
+  ONLY those to preflight/`spawn_background_sync` (never the full `SourceConfig`,
+  which re-splits at `src/main.rs:2268`). New INV-7.
+* **Thread 3** — P1-T6 explicit entries are workspace-contained (`validate_path`);
+  external/out-of-root paths rejected; authorized roots not broadened.
+* **Threads 4–6** — P1-T6 depends on P1-T3; P1-T4 depends on P1-T3 + P1-T6; the
+  045-S manifest runs T6 before T4.
+* **Thread 7** — P2-T3 (shared `.mcp.json` writer: ladder + marker + atomic write)
+  is the Phase-2 root; P2-T1 depends on and consumes it.
+* **Thread 8** — minimal install does not manage `.gitignore`; full
+  `--with-ingestion` retains it; uninstall parity tested (P2-T1/T2b/T5a).
+* **Threads 9–11** — oversized tasks split: P2-T2 → P2-T2a (flag) + P2-T2b
+  (scaffold); P2-T5 → P2-T5a (uninstall) + P2-T5b (MCP-entry removal) + P2-T5c
+  (upgrade); P2-T7 → P2-T7a (message) + P2-T7b (docs). Each < 3 files, one domain.
+* **Thread 12** — deliberation "Unresolved Questions" locked/resolved
+  (`--read-only`, Windows PATH/pinned command ladder, discovery filter).
+* **Thread 13** — P2-T2b asserts the full install writes the managed marker via
+  the shared P2-T3 writer.
+* **Thread 14** — P1-T3 adds a tested positive startup log (resolved per-db
+  posture + discovered-db count).
+
+Backlog impact: Phase 2 grew from 7 to 11 task units (4 new:
+051.008/051.009/051.010/051.011-T); shipment 045-S is 21 items; the dependency
+DAG was re-validated acyclic.
