@@ -11,8 +11,9 @@
 //! The auto-discovered (root-scan) subset is force-classified read-only by
 //! callers and MUST NEVER be fed back into `discover_db_files` /
 //! `split_plan_by_database` (the sync/write chokepoint in `main.rs`) —
-//! this module only ASSEMBLES the served set; it does not decide posture
-//! (that is `P1-T2`) and it never mutates or calls into the sync path.
+//! [`discover_served_databases`] only ASSEMBLES the served set; deciding
+//! per-database posture is [`classify_serve_postures`], and neither
+//! function mutates or calls into the sync path.
 //!
 //! The root scan is intentionally NON-RECURSIVE: the `.graphtor/` layout is
 //! flat (`bin/`, `data/`, `cache/`, `config/`, `logs/`, `models/` are all
@@ -21,9 +22,10 @@
 //! directory (and any other subdirectory) is excluded structurally, not
 //! merely by name.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use graphtor_core::config::{resolve_source_db_path, LocalSource, Source, SourceConfig};
 use graphtor_core::path::validate_path;
 use graphtor_core::GraphtorError;
 
@@ -130,6 +132,171 @@ fn scan_root_for_db_files(root: &Path) -> Result<Vec<PathBuf>, GraphtorError> {
     }
     found.sort();
     Ok(found)
+}
+
+// ── P1-T2: content-derived posture classification ──────────────────────────
+
+/// Per-database serve posture, derived from CONTENT — never from a
+/// hardcoded path, an environment variable, or a hand-set flag.
+///
+/// See [`classify_serve_postures`] for the three-way classification rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // threaded through serve open + sync gating by P1-T3 (050.001-T)
+pub enum ServeMode {
+    /// No resolvable real generation source targets this database (absent,
+    /// empty, or stale `sources.yaml`, or an unrelated co-resident dropped
+    /// db): served read-only, never background-synced. The fail-safe
+    /// default on any ambiguity.
+    ReadOnly,
+    /// A `local` source with a real, existing, non-empty target directory
+    /// resolves its target database to this path: full read-write
+    /// generate-and-serve behaviour is retained.
+    Generation,
+}
+
+/// Result of [`classify_serve_postures`]: the per-database posture
+/// assignment, plus the FILTERED subset of `sources.yaml` entries whose
+/// resolved target reached [`ServeMode::Generation`].
+///
+/// `generation_sources` is deliberately NEVER the full [`SourceConfig`] —
+/// callers (the write-path preflight and `spawn_background_sync`) must
+/// receive only this filtered subset, so a stale or read-only-classified
+/// source group can never be re-split into a background write (INV-7).
+#[allow(dead_code)] // consumed by P1-T3 (050.001-T)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassifiedServeSet {
+    /// Every database from the `served` union, in the same order, paired
+    /// with its resolved posture.
+    pub postures: Vec<(PathBuf, ServeMode)>,
+    /// Only the `sources.yaml` entries whose resolved target database is
+    /// `Generation` — never the full, unfiltered source list.
+    pub generation_sources: Vec<Source>,
+}
+
+/// Classify every database in `served` into a per-database [`ServeMode`]
+/// using a three-way, fail-safe rule:
+///
+/// 1. `source_config` is `None` (absent registry, or the no-config
+///    `--db-path` path) — every database stays [`ServeMode::ReadOnly`].
+/// 2. A `local` source whose `path` exists AND contains at least one file
+///    matching its configured `formats`/`include`/`exclude` promotes ONLY
+///    the database whose resolved (canonicalized) target equals that
+///    source's target to [`ServeMode::Generation`] — a resolvable source
+///    NEVER promotes an unrelated co-resident dropped database.
+/// 3. Every other database (absent/empty/stale/unresolvable source, or no
+///    source targets it at all) stays [`ServeMode::ReadOnly`].
+///
+/// Malformed/unparseable `sources.yaml` is NOT this function's concern —
+/// that fails closed with a hard [`GraphtorError`] upstream, at parse time
+/// (`SourceConfig::parse`/`load_source_config`), before a caller ever has an
+/// `Option<&SourceConfig>` to pass in here; this function only ever sees
+/// the already-validated `Some(config)` or the `None`/absent case.
+#[allow(dead_code)] // consumed by P1-T3 (050.001-T)
+#[must_use]
+pub fn classify_serve_postures(
+    served: &[PathBuf],
+    source_config: Option<&SourceConfig>,
+    base_db_path: &Path,
+    root: &Path,
+) -> ClassifiedServeSet {
+    let mut generation_targets: BTreeMap<PathBuf, Vec<Source>> = BTreeMap::new();
+
+    if let Some(config) = source_config {
+        for source in &config.sources {
+            let Source::Local(local) = source;
+            if !local.path.exists() || !source_has_ingestible_content(local) {
+                // Absent, empty, or stale — this source resolves no
+                // database to `Generation`; fail-safe default applies.
+                continue;
+            }
+
+            let target = resolve_source_db_path(base_db_path, source);
+            // Canonicalize the target the SAME way `served` entries were
+            // canonicalized (`validate_path` against the same `root`) so
+            // both sides compare equal. Fail-safe: if the target cannot be
+            // validated for any reason, this source promotes nothing
+            // rather than risking an incorrect `Generation` classification.
+            if let Ok(canonical_target) = validate_path(&target, root) {
+                generation_targets
+                    .entry(canonical_target)
+                    .or_default()
+                    .push(source.clone());
+            }
+        }
+    }
+
+    let mut postures = Vec::with_capacity(served.len());
+    let mut generation_sources = Vec::new();
+    for db_path in served {
+        if let Some(sources) = generation_targets.get(db_path) {
+            postures.push((db_path.clone(), ServeMode::Generation));
+            generation_sources.extend(sources.iter().cloned());
+        } else {
+            postures.push((db_path.clone(), ServeMode::ReadOnly));
+        }
+    }
+
+    ClassifiedServeSet {
+        postures,
+        generation_sources,
+    }
+}
+
+/// Returns `true` when `local`'s directory exists and recursively contains
+/// at least one file that would actually be ingested: its extension
+/// matches one of `local`'s configured `formats` (honoring the
+/// `"markdown"` → `md` alias) AND it survives `local`'s `include`/`exclude`
+/// glob filters. Read-only — never creates or modifies anything, unlike
+/// the full acquisition `plan`/`execute` pipeline (which would create
+/// `data_root` as a side effect).
+fn source_has_ingestible_content(local: &LocalSource) -> bool {
+    if !local.path.is_dir() {
+        return false;
+    }
+
+    let mut relative_candidates: Vec<PathBuf> = Vec::new();
+    for entry in walkdir::WalkDir::new(&local.path)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(extension) = entry.path().extension().and_then(|ext| ext.to_str()) else {
+            continue;
+        };
+        let matches_format = local
+            .formats
+            .iter()
+            .any(|fmt| canonicalize_format_alias(fmt).eq_ignore_ascii_case(extension));
+        if !matches_format {
+            continue;
+        }
+        if let Ok(relative) = entry.path().strip_prefix(&local.path) {
+            relative_candidates.push(relative.to_path_buf());
+        }
+    }
+
+    if relative_candidates.is_empty() {
+        return false;
+    }
+
+    graphtor_core::acquire::filter_files(&relative_candidates, &local.include, &local.exclude)
+        .is_ok_and(|filtered| !filtered.is_empty())
+}
+
+/// Canonicalize a configured format alias to its canonical file extension.
+///
+/// Mirrors `crate::config::source::canonicalize_format_ext`, which is
+/// `pub(crate)` to the library crate and therefore not reachable from this
+/// binary-crate module; the mapping itself is a single, stable alias
+/// (`"markdown"` → `"md"`) and is trivial to keep in sync.
+fn canonicalize_format_alias(fmt: &str) -> &str {
+    if fmt.eq_ignore_ascii_case("markdown") {
+        "md"
+    } else {
+        fmt
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +505,190 @@ mod tests {
         let served = discover_served_databases(root.path(), std::slice::from_ref(&explicit))
             .expect("discovery should succeed");
         assert_eq!(served, vec![validate_path(&explicit, root.path()).unwrap()]);
+    }
+
+    // ── P1-T2: classify_serve_postures ──────────────────────────────────
+
+    fn local_source(id: &str, path: &Path, database: Option<&str>) -> Source {
+        Source::Local(LocalSource {
+            id: id.to_string(),
+            path: path.to_path_buf(),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: database.map(str::to_string),
+        })
+    }
+
+    fn config_with(sources: Vec<Source>) -> SourceConfig {
+        SourceConfig { sources }
+    }
+
+    #[test]
+    fn no_source_config_stays_read_only() {
+        let root = temp_root();
+        let db = touch(root.path(), "graph.db");
+        let served = vec![validate_path(&db, root.path()).unwrap()];
+
+        let classified = classify_serve_postures(&served, None, &db, root.path());
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::ReadOnly)]
+        );
+        assert!(classified.generation_sources.is_empty());
+    }
+
+    #[test]
+    fn real_non_empty_source_promotes_its_target_to_generation() {
+        let root = temp_root();
+        let docs_dir = root.path().join("docs");
+        touch(&docs_dir, "guide.md");
+        let db = root.path().join("graph.db");
+        // `graph.db` need not exist yet for a fresh generation workspace.
+        let served = vec![validate_path(&db, root.path()).unwrap()];
+        let config = config_with(vec![local_source("docs", &docs_dir, None)]);
+
+        let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::Generation)]
+        );
+        assert_eq!(classified.generation_sources.len(), 1);
+    }
+
+    #[test]
+    fn existing_but_empty_source_path_stays_read_only() {
+        let root = temp_root();
+        let docs_dir = root.path().join("empty-docs");
+        fs::create_dir_all(&docs_dir).unwrap();
+        let db = touch(root.path(), "graph.db");
+        let served = vec![validate_path(&db, root.path()).unwrap()];
+        let config = config_with(vec![local_source("docs", &docs_dir, None)]);
+
+        let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::ReadOnly)]
+        );
+        assert!(classified.generation_sources.is_empty());
+    }
+
+    #[test]
+    fn stale_source_path_that_does_not_exist_stays_read_only() {
+        let root = temp_root();
+        let missing_dir = root.path().join("never-existed");
+        let db = touch(root.path(), "graph.db");
+        let served = vec![validate_path(&db, root.path()).unwrap()];
+        let config = config_with(vec![local_source("docs", &missing_dir, None)]);
+
+        let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::ReadOnly)]
+        );
+    }
+
+    #[test]
+    fn source_backed_target_and_co_resident_dropped_db_classified_independently() {
+        let root = temp_root();
+        let docs_dir = root.path().join("docs");
+        touch(&docs_dir, "guide.md");
+        let generation_db = root.path().join("graph.db");
+        let dropped_db = touch(root.path(), "dropped.db");
+
+        let served = discover_served_databases(root.path(), std::slice::from_ref(&generation_db))
+            .expect("union should include both the configured target and the dropped db");
+        assert_eq!(
+            served.len(),
+            2,
+            "expected both the target and the dropped db in the union"
+        );
+
+        let config = config_with(vec![local_source("docs", &docs_dir, None)]);
+        let classified =
+            classify_serve_postures(&served, Some(&config), &generation_db, root.path());
+
+        let generation_path = validate_path(&generation_db, root.path()).unwrap();
+        let dropped_path = validate_path(&dropped_db, root.path()).unwrap();
+        let mode_of = |p: &PathBuf| {
+            classified
+                .postures
+                .iter()
+                .find(|(path, _)| path == p)
+                .map(|(_, mode)| *mode)
+                .unwrap()
+        };
+        assert_eq!(mode_of(&generation_path), ServeMode::Generation);
+        assert_eq!(
+            mode_of(&dropped_path),
+            ServeMode::ReadOnly,
+            "an unrelated co-resident dropped db must never be promoted by an unrelated source"
+        );
+    }
+
+    #[test]
+    fn mixed_valid_and_stale_sources_targeting_different_dbs_only_returns_the_valid_groups() {
+        let root = temp_root();
+        let valid_docs = root.path().join("valid-docs");
+        touch(&valid_docs, "guide.md");
+        let stale_docs = root.path().join("stale-docs-that-does-not-exist");
+
+        let valid_db = root.path().join("valid.db");
+        let stale_db = root.path().join("stale.db");
+        let base = root.path().join("graph.db");
+
+        let served = vec![
+            validate_path(&valid_db, root.path()).unwrap(),
+            validate_path(&stale_db, root.path()).unwrap(),
+        ];
+        let config = config_with(vec![
+            local_source("valid-src", &valid_docs, Some("valid.db")),
+            local_source("stale-src", &stale_docs, Some("stale.db")),
+        ]);
+
+        let classified = classify_serve_postures(&served, Some(&config), &base, root.path());
+
+        assert_eq!(
+            classified.generation_sources.len(),
+            1,
+            "only the valid source group must be returned"
+        );
+        let Source::Local(only) = &classified.generation_sources[0];
+        assert_eq!(only.id, "valid-src");
+    }
+
+    #[test]
+    fn source_with_include_filtered_to_zero_files_stays_read_only() {
+        let root = temp_root();
+        let docs_dir = root.path().join("docs");
+        touch(&docs_dir, "guide.md");
+        let db = touch(root.path(), "graph.db");
+        let served = vec![validate_path(&db, root.path()).unwrap()];
+        let mut source = local_source("docs", &docs_dir, None);
+        let Source::Local(local) = &mut source;
+        local.include = vec!["no-match-*.md".to_string()];
+        let config = config_with(vec![source]);
+
+        let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::ReadOnly)],
+            "an include filter that matches nothing must not promote the target to Generation"
+        );
+    }
+
+    #[test]
+    fn malformed_sources_yaml_is_a_hard_error_upstream_of_classification() {
+        // Characterizes the "(unchanged behaviour)" fail-closed contract:
+        // classification is never reached for malformed YAML because
+        // parsing itself already fails closed.
+        let malformed = "sources:\n  - type: local\n    id: broken\n    path: [unterminated\n";
+        let result: Result<SourceConfig, _> = serde_yaml::from_str(malformed);
+        assert!(result.is_err(), "malformed sources.yaml must fail to parse");
     }
 }
