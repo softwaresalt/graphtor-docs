@@ -320,7 +320,7 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 > The `Source` enum today has ONLY `Local(LocalSource)`
 > (`src/config/source.rs:53-56`), so EVERY consumer destructures it irrefutably
 > (`let Source::Local(...) = ...`). Adding `Database(DatabaseSource)` in P1-T6
-> would break compilation at 8 external sites. These four pre-refactors route
+> would break compilation at 10 external sites. These four pre-refactors route
 > every external consumer through variant-safe accessors FIRST; each is a pure
 > structural refactor with NO behaviour change while only `Local` exists
 > (independently green), each ≤ 2 source files, chained
@@ -638,7 +638,7 @@ root so the marker/atomic-write exist before the minimal install (review thread 
 | uninstall/upgrade break on minimal layout | Footprint-safe uninstall (P2-T5a) + managed MCP-entry removal (P2-T5b) + upgrade parity (P2-T5c) |
 | Existing full installs disrupted | Backward-compat detection + idempotency (P2-T6) |
 | Path traversal in discovery | Resolve within `.graphtor/` root; reject `..`/symlink escapes (P1-T1) |
-| Adding `Source::Database` breaks 8 irrefutable `Source::Local` consumers | Variant-safe accessor pre-refactors (P1-RF1..P1-RF4) route every external consumer through `as_local()`/`is_ingestible()` BEFORE the variant is added; each independently green (PR #88 threads 2/2b) |
+| Adding `Source::Database` breaks 10 irrefutable `Source::Local` consumers | Variant-safe accessor pre-refactors (P1-RF1..P1-RF4) route every external consumer through `as_local()`/`is_ingestible()` BEFORE the variant is added; each independently green (PR #88 threads 2/2b) |
 | Root-scan discovery drops existing serve candidates (fresh generation target / explicit `--db-path`) | Union preserves `discover_db_files` candidates incl. not-yet-created targets + explicit `--db-path`; zero-db exit only when the full union is empty (P1-T1; PR #88 thread 1) |
 | Reinstall/`--with-ingestion` fails on the release's own pre-marker `.mcp.json` entry | Four-way collision matrix migrates the exact legacy shape in place by adding the marker (R14); fail-closed only for other unmarked entries (P2-T3; PR #88 thread 3) |
 | `CONTAINS` legacy match deletes a look-alike user `.mcp.json` command | Exact normalized command equality to `.graphtor/bin/graphtor-docs`[.exe] (never CONTAINS) + prefix/suffix preservation test (P2-T3, P2-T5b; PR #88 threads 3, 5) |
@@ -1032,7 +1032,7 @@ The 12 Copilot threads from the third review were remediated in-place
   empty; regression tests for a missing generation target and an explicit
   `--db-path` were added.
 * **`Source::Database` consumer refactors (3588876057 plan, 3588876095 050.006-T)**
-  — the additive variant breaks 8 irrefutable `Source::Local` consumers, so four
+  — the additive variant breaks 10 irrefutable `Source::Local` consumers, so four
   dependency-ordered variant-safe pre-refactors P1-RF1..P1-RF4
   (050.010 → 050.011 → 050.012 → 050.013-T, each ≤ 2 files, independently green)
   route config validation, acquire/plan, acquire/mod, pipeline/mod, sync/mod, and
