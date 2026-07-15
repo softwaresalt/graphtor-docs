@@ -101,13 +101,18 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
   `run_duplicate_intake_preflight` (`src/main.rs:2398-2406`): (1) malformed/
   unparseable `sources.yaml` → fail-closed hard `Err(GraphtorError)` (unchanged
   behaviour); (2) a `local` source whose path exists AND has ≥1 ingestible file
-  → `Generation`; (3) absent/empty/stale/unresolvable sources → `ReadOnly`. The
+  promotes ONLY the candidate db whose resolved (canonicalized) path equals that
+  source's resolved target db → `Generation` (a resolvable source NEVER promotes
+  an unrelated co-resident dropped db, which stays `ReadOnly`);
+  (3) absent/empty/stale/unresolvable sources → `ReadOnly`. The
   preflight then runs only for `Generation` dbs. Expose a PURE classification
   function returning `Vec<(PathBuf, ServeMode)>` for unit-testability.
 * Files: `src/workspace/serve_discovery.rs`, `src/main.rs` (call ordering in
   `cmd_serve` so classification precedes the preflight).
 * Tests: real non-empty source → Generation; existing-but-empty path → ReadOnly;
-  stale `sources.yaml`, paths absent → ReadOnly; malformed yaml → hard error.
+  stale `sources.yaml`, paths absent → ReadOnly; malformed yaml → hard error;
+  source-backed db + co-resident dropped db → only the source's target db is
+  Generation while the dropped db stays ReadOnly.
 * Posture: test-first. Depends on P1-T1.
 
 **P1-T3 — Per-db posture threaded through serve open + sync gating** (code, characterization-first)
@@ -132,13 +137,17 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
 **P1-T4 — v4 pre-sync gate parity via read-only store** (code, test-first)
 * Changes: evaluate `needs_v4_migration` on the READ-ONLY store for discovered
   read-only dbs (no write transaction), keeping the existing refusal message
-  (`open_serve_databases:2363`). Ensure the read-only open for auto-discovered
-  (untrusted) dbs is hardened: disable loadable extensions and disallow `ATTACH`,
-  constraining the open to the single file. Sequence AFTER P1-T3 (same function,
+  (`open_serve_databases:2363`). Ensure the read-only open for EVERY
+  `ReadOnly`-classified db — auto-discovered AND explicit external read-only
+  entries (P1-T6), not only auto-discovered — is hardened: disable loadable
+  extensions and disallow `ATTACH`, constraining the open to the single file.
+  Sequence AFTER P1-T3 (same function,
   shared change surface).
 * Files: `src/main.rs` (`open_serve_databases`), read-only open helper.
 * Tests: pre-v4 discovered db → refusal exit + message; v4 db → served; crafted
-  db attempting `ATTACH`/extension-load → refused/inert.
+  auto-discovered db attempting `ATTACH`/extension-load → refused/inert; an
+  explicit external read-only entry attempting `ATTACH`/extension-load →
+  refused/inert (same hardening applies to explicit ReadOnly entries).
 * Posture: test-first. **Precondition**: confirm a pre-v4 (v3) fixture db or a
   programmatic v3-schema builder exists; if absent, add a v3 fixture builder as
   the first step of this unit. Depends on P1-T3.
@@ -193,7 +202,9 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
 **P2-T1 — Consumption-first `install` default** (code, test-first)
 * Changes: default `install` creates only the `.graphtor/` root + a minimal
   serve `.mcp.json` (PATH command `graphtor-docs`, args `["serve"]`); do NOT
-  write `sources.yaml`, do NOT create `config/bin/cache/data/logs`. Make
+  write `sources.yaml`, do NOT create `config/bin/cache/data/logs`. The minimal
+  `.mcp.json` server entry MUST carry an explicit managed-entry provenance marker
+  (so `uninstall` can identify the graphtor-managed entry — see P2-T5). Make
   `InstallResult.binary_path` an `Option<PathBuf>` (or add an `InstallKind`) so
   a consumption install with no copied binary is representable; update callers
   (`cmd_install` message, upgrade, uninstall) to handle `None`. Config/`.mcp.json`
@@ -214,12 +225,17 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
 * Posture: test-first. Depends on P2-T1.
 
 **P2-T3 — Binary resolution precedence in `.mcp.json`** (code, test-first)
-* Changes: `.mcp.json` references the PATH command `graphtor-docs` by default and
-  `.graphtor/bin/graphtor-docs` only when the bin scaffold exists. Do NOT append
-  `.exe` for the bare PATH command (Windows resolves via `PATHEXT`); append the
-  platform ext only for the `.graphtor/bin` path. Prefer an absolute pinned path
-  when the resolved binary location is known at install time; fall back to bare
-  PATH otherwise (documented binary-hijack trade-off).
+* Changes: `.mcp.json` binary resolution precedence is an unambiguous ladder
+  that reconciles the locked decision (prefer the `.graphtor/bin` copy the
+  ingestion scaffold created, otherwise the PATH command):
+  (1) for a managed install where the `.graphtor/bin` scaffold created the
+  binary, reference its absolute/pinned path (`.graphtor/bin/graphtor-docs` +
+  platform ext) — this is the reliably-known managed path;
+  (2) the bare `graphtor-docs` PATH command is used ONLY when no reliable managed
+  binary path is available (the consumption-first minimal install, which copies
+  no binary). Do NOT append `.exe` for the bare PATH command (Windows resolves
+  via `PATHEXT`); append the platform ext only for the pinned `.graphtor/bin`
+  path. The bare-PATH fallback carries a documented binary-hijack trade-off.
 * Files: `src/workspace/mcp_config.rs` (`managed_server_value`), `src/main.rs`.
 * Tests: minimal install → PATH command value (no `.exe`); `--with-ingestion`
   → bin path with platform ext.
@@ -237,16 +253,22 @@ scenarios), width isolation (single domain), and produces a verifiable outcome.
 
 **P2-T5 — uninstall/upgrade parity + user-data preservation** (code, test-first)
 * Changes: `uninstall()` (`src/workspace/uninstall.rs:34`) removes ONLY
-  graphtor-CREATED artifacts (known subdirs + the managed `.mcp.json` entry) and
-  MUST NEVER delete user-dropped `*.db` files in the `.graphtor/` root; do not
-  follow symlinks out of the root. When user-dropped dbs are present, the
+  graphtor-CREATED artifacts (known subdirs + the managed `.mcp.json` entry
+  identified by the explicit managed-entry provenance marker written at install
+  time by BOTH the minimal and full paths — see P2-T1) and MUST NEVER delete
+  user-dropped `*.db` files in the `.graphtor/` root; it removes ONLY managed MCP
+  entries and MUST leave user-authored `.mcp.json` server entries untouched; do
+  not follow symlinks out of the root. When user-dropped dbs are present, the
   operator-approval prompt (PA-3) enumerates the exact deletion set and preserves
   (or per-file confirms) dropped dbs. `upgrade()`
   (`src/workspace/upgrade.rs:43`) of a consumption install has no bin to replace
   and must treat missing bin/subdirs as a no-op, not an error.
 * Files: `src/workspace/uninstall.rs`, `src/workspace/upgrade.rs`.
-* Tests: uninstall removes minimal + full graphtor artifacts but a user-dropped
-  `.db` in `.graphtor/` SURVIVES; upgrade of a minimal (no-bin) install succeeds.
+* Tests: default (minimal) install → uninstall removes the managed `.mcp.json`
+  entry (matched by provenance marker) while a user-dropped `.db` in `.graphtor/`
+  and any user-authored `.mcp.json` entry SURVIVE; full install → uninstall
+  removes full graphtor artifacts but a user-dropped `.db` SURVIVES; upgrade of a
+  minimal (no-bin) install succeeds.
 * Posture: test-first. Depends on P2-T1, P2-T2.
 
 **P2-T6 — Backward-compat detection + idempotency** (code, test-first)
@@ -314,8 +336,9 @@ not interleave) to avoid churn on the shared change surface.
 | Regression in dev-workspace generation/serve | Characterization tests before refactor (P1-T3); preserve sources-driven path |
 | Auto-discovery picks up generated/non-db artifacts | Explicit filter + `.graphtor/` root-only scan + containment (P1-T1) |
 | Pre-v4 db served ungated | Reuse `needs_v4_migration` gate for discovered dbs (P1-T4) |
-| doctor/uninstall/upgrade break on minimal layout | Layout-aware doctor (P2-T3); footprint-aware uninstall/upgrade (P2-T4) |
-| Existing full installs disrupted | Backward-compat detection + idempotency (P2-T5) |
+| doctor breaks on minimal layout | Layout-aware doctor (P2-T4) |
+| uninstall/upgrade break on minimal layout | Footprint-aware uninstall/upgrade (P2-T5) |
+| Existing full installs disrupted | Backward-compat detection + idempotency (P2-T6) |
 | Path traversal in discovery | Resolve within `.graphtor/` root; reject `..`/symlink escapes (P1-T1) |
 
 ## Plan Hardening Signals (REQUIRED)
@@ -455,6 +478,19 @@ do not proceed to closure — this is a direct INV-1 violation.
 * **Owner**: single-developer operator (@softwaresalt).
 * **Validation window**: manual verification at merge; re-check the six target
   scenarios above.
+* **Post-merge observation window**: 7 days after merge (or until the next
+  release, whichever comes first), owner @softwaresalt. Manual observation is
+  acceptable for this local CLI/MCP server: within the window, on the first
+  `serve` in the dev workspace AND in at least one scratch consumer workspace,
+  confirm no `background sync task spawned` log line appears in consumption mode
+  and the served-db file mtime is unchanged; on the first `install`/`uninstall`
+  exercised, confirm the default footprint stays minimal and no user-dropped
+  `*.db` is deleted.
+* **Post-merge rollback triggers** (concrete): (a) any consumption-mode `serve`
+  emits `background sync task spawned` OR a served-db mtime changes during the
+  window → revert the Phase-1 gating commit(s) (PA-1); (b) a default `install`
+  writes `sources.yaml`/`config`/`bin` OR an `uninstall` deletes a user-dropped
+  `*.db` → revert the Phase-2 install/uninstall commit(s) (PA-2/PA-3).
 * **Human checkpoints**: PA-3 uninstall deletion requires operator approval at
   execution; PA-1/PA-2 posture changes preferred for approval before merge.
 
@@ -463,8 +499,12 @@ do not proceed to closure — this is a direct INV-1 violation.
 * ~~Precise "resolvable real source" semantics~~ — **RESOLVED in plan review**:
   requires path existence AND ≥1 ingestible file; malformed config stays
   fail-closed. See decision doc Unresolved Questions and P1-T2.
-* `--read-only` naming and whether a symmetric force-sync flag is needed
-  (lean: `--read-only` only this phase).
+* ~~`--read-only` naming and whether a symmetric force-sync flag is needed~~ —
+  **RESOLVED**: `--read-only` is the chosen flag name — the primary safety
+  escape hatch that forces consumption (read-only) posture regardless of resolved
+  sources. A symmetric `--force-sync` flag is intentionally ABSENT in this phase
+  (deferred with no committed timeline); read-only is the fail-safe default, so a
+  force-consumption override is the only escape hatch required. See P1-T7.
 * ~~Whether Phase 1 and Phase 2 ship as one PR or two sequential PRs~~ —
   **RESOLVED**: ship shipment 045-S as one bounded release unit / one PR
   containing both Phase 1 and Phase 2. Phase 2 is a consumption-first install

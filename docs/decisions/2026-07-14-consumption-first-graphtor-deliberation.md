@@ -241,8 +241,12 @@ path.
 2. **Serve discovery is COMBINATION (Option C).** Zero-config auto-discovery of
    `*.db` at the top level of `.graphtor/` is the default; optional explicit
    read-only db entries in `sources.yaml` cover named/aliased/external
-   databases. Discovered no-real-source dbs are served **read-only** and are
-   **never** background-synced or v4-pruned; source-backed dbs (a `local`
+   databases. Discovered no-real-source dbs are served **read-only**: they are
+   **never** background-synced, and generation/resolution **must not perform any
+   write-side v4 prune (or other in-place write migration) on them**. The
+   read-only posture does NOT relax the pre-v4 serve refusal gate — a pre-v4
+   read-only db is still refused at serve time (operator must sync); it is simply
+   never written to or pruned in place. Source-backed dbs (a `local`
    source whose path exists) keep read-write + background sync on the generation
    side. *Rationale*: C is a strict superset of A and B — it delivers the
    zero-config consumer UX while preserving the explicit/external and
