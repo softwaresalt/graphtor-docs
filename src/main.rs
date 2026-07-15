@@ -245,6 +245,13 @@ fn discover_db_files(base_db_path: &std::path::Path, source_config: &SourceConfi
     let mut db_paths = BTreeSet::new();
 
     for source in &source_config.sources {
+        // A non-ingestible (e.g. served, read-only) source contributes no
+        // generation target — this is a SHRINKING exclusion filter that
+        // never enlarges the write/sync set. Its served path reaches the
+        // serve candidate union via the P1-T6 merge (P1-T1), not here.
+        if source.as_local().is_none() {
+            continue;
+        }
         db_paths.insert(resolve_source_db_path(base_db_path, source));
     }
 
@@ -282,6 +289,14 @@ fn split_plan_by_database(
             .collect();
 
     for planned in &plan.sources {
+        // Belt-and-suspenders on top of P1-RF2's filtered `AcquisitionPlan`
+        // invariant (which already excludes a non-local source from
+        // `plan.sources`): without this guard, `or_insert_with` below could
+        // re-introduce a db key for a non-local planned source and route it
+        // toward a read-write open.
+        if planned.source.as_local().is_none() {
+            continue;
+        }
         let db_path = resolve_source_db_path(base_db_path, &planned.source);
         let grouped_plan = plans_by_db
             .entry(db_path)
@@ -652,13 +667,16 @@ struct PersistedV4MigrationSnapshot {
 
 #[must_use]
 fn source_id(source: &Source) -> &str {
-    let Source::Local(local) = source;
-    &local.id
+    source.id()
 }
 
 #[must_use]
 fn changed_source_fields(current: &Source, persisted: &Source) -> Vec<&'static str> {
-    let (Source::Local(current), Source::Local(persisted)) = (current, persisted);
+    let (Some(current), Some(persisted)) = (current.as_local(), persisted.as_local()) else {
+        // A non-local source is not part of the v4 generation snapshot;
+        // defensively report no field-level changes rather than panicking.
+        return Vec::new();
+    };
     let mut changed_fields = Vec::new();
     if current.path != persisted.path {
         changed_fields.push("path");
@@ -1276,9 +1294,7 @@ fn guard_no_embed_before_v4_rebuild(
         )
     })?;
     let has_epoch_mismatch = grouped_plan.sources.iter().any(|planned| {
-        let source_id = match &planned.source {
-            Source::Local(local) => local.id.as_str(),
-        };
+        let source_id = planned.source.id();
         sync_state.source(source_id).is_some_and(|s| {
             s.contract_epoch.as_deref() != Some(graphtor_core::ingest_contract::CONTRACT_EPOCH)
         })
@@ -1307,7 +1323,12 @@ fn collect_candidate_md_files(
     let mut collected_sources = Vec::with_capacity(plan.sources.len());
 
     for planned in &plan.sources {
-        let Source::Local(local) = &planned.source;
+        let Some(local) = planned.source.as_local() else {
+            anyhow::bail!(
+                "source '{}' is not a local ingestion source; cannot scan for v4 migration",
+                planned.source.id()
+            );
+        };
         let scan_source = graphtor_core::LocalSource {
             id: local.id.clone(),
             path: planned.target_dir.clone(),
@@ -1406,9 +1427,7 @@ fn collect_snapshot_candidates(
     let mut snapshot_candidates = Vec::new();
 
     for collected_source in collected_sources {
-        let source_id = match &collected_source.planned.source {
-            Source::Local(local) => local.id.clone(),
-        };
+        let source_id = collected_source.planned.source.id().to_string();
         if let Some(expected_sources) = expected_frozen_source_mtimes {
             let expected_paths = expected_sources.get(&source_id).with_context(|| {
                 format!(
@@ -1482,9 +1501,7 @@ fn freeze_v4_migration_input(
     let mut frozen_source_mtimes = HashMap::with_capacity(collected_sources.len());
 
     for (index, collected_source) in collected_sources.into_iter().enumerate() {
-        let source_id = match &collected_source.planned.source {
-            Source::Local(local) => local.id.clone(),
-        };
+        let source_id = collected_source.planned.source.id().to_string();
         let snapshot_dir = PathBuf::from(format!("source-{index}"));
         let snapshot_source_dir = snapshot_root.join(&snapshot_dir);
         std::fs::create_dir_all(&snapshot_source_dir).with_context(|| {
@@ -2066,9 +2083,7 @@ where
 
     for (index, planned) in plan.sources.iter().enumerate() {
         let source_dir = &planned.target_dir;
-        let source_id = match &planned.source {
-            graphtor_core::Source::Local(l) => l.id.as_str(),
-        };
+        let source_id = planned.source.id();
 
         on_source_start(source_id, index + 1, total_sources);
 
@@ -3492,9 +3507,7 @@ fn cmd_prewarm(
                 ..SyncMetrics::default()
             };
             for planned in &prepared.rebuild_plan.sources {
-                let source_id = match &planned.source {
-                    Source::Local(local) => local.id.as_str(),
-                };
+                let source_id = planned.source.id();
                 match prewarm_sync_source(
                     store,
                     planned,
@@ -3545,10 +3558,7 @@ fn prewarm_sync_source(
     quiet: bool,
 ) -> Option<SyncMetrics> {
     let source_dir = &planned.target_dir;
-    let source_id = match &planned.source {
-        Source::Local(l) => l.id.as_str(),
-    }
-    .to_string();
+    let source_id = planned.source.id().to_string();
 
     if !source_dir.exists() {
         warn!(
@@ -4434,7 +4444,10 @@ mod tests {
             );
 
             let persisted = load_persisted_v4_migration_snapshot(&snapshot_root);
-            let Source::Local(local) = &persisted.sources[0].source;
+            let local = persisted.sources[0]
+                .source
+                .as_local()
+                .expect("persisted source is local");
             assert_eq!(
                 local.path, docs_old,
                 "failed retry must preserve the original grouped-plan source config"
