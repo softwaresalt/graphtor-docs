@@ -64,15 +64,18 @@ pub fn validate(config: &SourceConfig) -> Result<(), GraphtorError> {
             });
         }
 
-        let Source::Local(l) = source;
-        let (include, exclude) = (&l.include, &l.exclude);
-
         if let Some(db_name) = source.database() {
             validate_database_name(db_name, id)?;
         }
-        validate_globs(include, id)?;
-        validate_globs(exclude, id)?;
-        validate_formats(source.formats(), id)?;
+
+        // Glob/format validation is local-ingestion-specific — a future
+        // non-ingestible source variant (e.g. an explicit read-only db
+        // entry) has no `include`/`exclude`/`formats` semantics to check.
+        if let Some(l) = source.as_local() {
+            validate_globs(&l.include, id)?;
+            validate_globs(&l.exclude, id)?;
+            validate_formats(source.formats(), id)?;
+        }
     }
 
     Ok(())
@@ -207,7 +210,12 @@ impl DuplicateIntakeReport {
 
         for source in &config.sources {
             let db = resolve_source_db_path(base_db_path, source);
-            let Source::Local(local_src) = source;
+            // A non-local (e.g. served, read-only) source is not an
+            // ingestion source and never participates in duplicate-intake
+            // detection.
+            let Some(local_src) = source.as_local() else {
+                continue;
+            };
             local_sources.push((local_src, source.id().to_string(), db));
         }
 
@@ -299,8 +307,14 @@ impl fmt::Display for DuplicateIntakeReport {
 }
 
 fn intake_key(source: &Source) -> String {
-    let Source::Local(l) = source;
-    normalize_path_key(&l.path)
+    // A non-local source has no ingestion path to key on. Fall back to a
+    // per-source key namespaced with a NUL byte (never valid in a real
+    // filesystem path) so distinct non-local sources can never collide
+    // with each other or with a real local path's key.
+    source.as_local().map_or_else(
+        || format!("\0non-local:{}", source.id()),
+        |l| normalize_path_key(&l.path),
+    )
 }
 
 fn normalize_path_key(path: &Path) -> String {

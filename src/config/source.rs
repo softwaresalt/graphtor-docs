@@ -57,7 +57,14 @@ pub enum Source {
 
 impl Source {
     /// Returns the unique identifier for this source.
-    pub(crate) fn id(&self) -> &str {
+    ///
+    /// `pub` (widened from `pub(crate)`) so the bin crate (`src/main.rs`)
+    /// and external integration tests — separate crates from this
+    /// library — can call it across the crate boundary once every
+    /// `Source::Local` consumer is routed through variant-safe accessors
+    /// (P1-RF1..P1-RF5).
+    #[must_use]
+    pub fn id(&self) -> &str {
         match self {
             Self::Local(l) => &l.id,
         }
@@ -90,6 +97,33 @@ impl Source {
         match self {
             Self::Local(l) => l.database.as_deref(),
         }
+    }
+
+    /// Returns this source as a [`LocalSource`] reference, or `None` when it
+    /// is not a local ingestion source.
+    ///
+    /// This is the variant-safe replacement for irrefutably destructuring
+    /// `Source::Local(..)`: every consumer that only knows how to handle
+    /// local ingestion sources MUST route through this accessor (or
+    /// [`Source::is_ingestible`]) instead, so a future additive,
+    /// non-ingestible `Source` variant compiles without breaking any
+    /// existing call site. Always `Some` while `Local` is the only variant.
+    #[must_use]
+    pub fn as_local(&self) -> Option<&LocalSource> {
+        match self {
+            Self::Local(l) => Some(l),
+        }
+    }
+
+    /// Returns `true` when this source is eligible for ingestion (scanning,
+    /// acquisition planning, and sync).
+    ///
+    /// `pub(crate)` — only called from within this library (the acquisition
+    /// plan loop and sync path in P1-RF2/P1-RF3). Always `true` while
+    /// `Local` is the only variant.
+    #[allow(dead_code)] // consumed by P1-RF3 (050.012-T src/sync/mod.rs)
+    pub(crate) fn is_ingestible(&self) -> bool {
+        self.as_local().is_some()
     }
 }
 
@@ -159,7 +193,7 @@ sources:
     fn local_source_deserializes_all_fields() {
         let config: SourceConfig = serde_yaml::from_str(VALID_LOCAL_YAML).unwrap();
         assert_eq!(config.sources.len(), 1);
-        let Source::Local(local) = &config.sources[0];
+        let local = config.sources[0].as_local().expect("local source");
         assert_eq!(local.id, "internal-docs");
         assert_eq!(local.path, PathBuf::from("/workspace/docs"));
         assert_eq!(local.include, vec!["**/*.md"]);
@@ -185,7 +219,7 @@ sources:
     fn formats_defaults_to_md_when_absent_from_yaml() {
         const YAML: &str = "sources:\n  - type: local\n    id: t\n    path: /docs\n";
         let config: SourceConfig = serde_yaml::from_str(YAML).unwrap();
-        let Source::Local(local) = &config.sources[0];
+        let local = config.sources[0].as_local().expect("local source");
         assert_eq!(local.formats, vec!["md"]);
     }
 
@@ -194,7 +228,7 @@ sources:
         const YAML: &str =
             "sources:\n  - type: local\n    id: t\n    path: /docs\n    formats:\n      - md\n      - markdown\n";
         let config: SourceConfig = serde_yaml::from_str(YAML).unwrap();
-        let Source::Local(local) = &config.sources[0];
+        let local = config.sources[0].as_local().expect("local source");
         assert_eq!(local.formats, vec!["md", "markdown"]);
     }
 
@@ -209,6 +243,53 @@ sources:
             database: None,
         });
         assert!(src.database().is_none());
+    }
+
+    // ── P1-RF1: variant-safe accessors ────────────────────────────────────
+
+    #[test]
+    fn as_local_returns_some_for_a_local_source() {
+        let src = Source::Local(LocalSource {
+            id: "t".to_string(),
+            path: PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: None,
+        });
+        assert!(src.as_local().is_some());
+        assert_eq!(src.as_local().unwrap().id, "t");
+    }
+
+    #[test]
+    fn is_ingestible_returns_true_for_a_local_source() {
+        let src = Source::Local(LocalSource {
+            id: "t".to_string(),
+            path: PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: None,
+        });
+        assert!(src.is_ingestible());
+    }
+
+    #[test]
+    fn id_accessor_is_reachable_as_a_public_item() {
+        // Compiles only if `id()` is `pub` (widened from `pub(crate)`) —
+        // this test module is technically still inside the library crate,
+        // so the real cross-crate check is the bin crate/external test
+        // build succeeding; this test pins the intended visibility.
+        let src = Source::Local(LocalSource {
+            id: "cross-crate-id".to_string(),
+            path: PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: None,
+        });
+        let id: &str = Source::id(&src);
+        assert_eq!(id, "cross-crate-id");
     }
 
     #[test]
