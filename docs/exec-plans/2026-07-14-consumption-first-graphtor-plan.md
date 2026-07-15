@@ -404,11 +404,16 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   `changed_source_fields` (~L661) and `collect_candidate_md_files` (~L1310) via
   `as_local()` (defensive empty/skip when non-local); plus the one colocated
   `#[cfg(test)]` binding (~L4323) via `as_local()`. ALSO gate the GENERATION
-  db-discovery/splitting source iteration — `discover_db_files` (~L244) and
-  `split_plan_by_database` (~L273), which iterate `source_config.sources` through
-  `resolve_source_db_path`/`source.database()` — behind `as_local()` so a
-  non-ingestible `Database` source is EXCLUDED from generation discovery/splitting
-  and never opened read-write (PR #88 thread PRRT_kwDORiB5E86RNyT4). This is a
+    db-discovery/splitting against non-ingestible sources with TWO separate guards
+    (the two functions iterate DIFFERENT collections): `discover_db_files` (~L244)
+    gates its `source_config.sources` loop on `as_local()`, and
+    `split_plan_by_database` (~L273) — which seeds keys from the now-filtered
+    `discover_db_files` but then iterates `plan.sources` (~L284-290) where
+    `or_insert_with` (~L286-288) can re-introduce a db key — also gates that
+    `plan.sources` loop on `as_local()`, belt-and-suspenders atop RF2's (050.011-T)
+    filtered `AcquisitionPlan` invariant, so a non-ingestible `Database` source is
+    EXCLUDED from generation discovery AND splitting and never opened read-write
+    (PR #88 threads PRRT_kwDORiB5E86RNyT4 / PRRT_kwDORiB5E86RO5GB). This is a
   SHRINKING exclusion filter that PRESERVES the P0-1 invariant (the sync/write set is
   never ENLARGED) and is distinct from the P1-T1 constraint forbidding auto-discovery
   feedback INTO those functions. Uniform mechanical
@@ -417,9 +422,10 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   `Source::id()`/`Source::as_local()` widened in P1-RF1 across the crate boundary.
 * Files: `src/main.rs`.
 * Tests: id-extraction, `changed_source_fields`, and `collect_candidate_md_files`
-  identical for local sources; `discover_db_files`/`split_plan_by_database` enumerate
-  the same generation db set for a local-only config after gating on `as_local()`, and
-  a non-local (future `Database`) source is excluded (exercised once P1-T6 adds the
+  identical for local sources; `discover_db_files` (gating its `source_config.sources`
+  loop) and `split_plan_by_database` (gating its `plan.sources` loop atop RF2's
+  filtered `AcquisitionPlan`) enumerate the same generation db set for a local-only
+  config, and a non-local (future `Database`) source is excluded from BOTH (exercised once P1-T6 adds the
   variant); the filter skips a `Database` source ENTIRELY (it must not fall through
   `resolve_source_db_path`'s `database()==None` default to `base_db_path`); for a
   database-only config the empty-set + `graph.db` write-fallback remains owned by
@@ -503,7 +509,10 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   (`src/main.rs:3017-3028`): write the template `sources.yaml`
   (`init_sources_yaml`), manage the `.gitignore` block (unless `--no-gitignore`;
   thread 8), and write `.mcp.json` via the shared P2-T3 writer so the managed
-  server entry uses the pinned `.graphtor/bin` path AND carries the managed marker
+  server entry uses the pinned, cwd-independent ABSOLUTE
+  `<canonical_project_root>/.graphtor/bin/graphtor-docs[.exe]` command (the relative
+  `.graphtor/bin/...` string is reserved ONLY for legacy exact-match recognition)
+  AND carries the managed marker
   (review thread 13). These `sources.yaml`/`.gitignore`/`.mcp.json` calls MUST be
   guarded to the `--with-ingestion` path so the consumption-first DEFAULT
   (`install_minimal()`, P2-T1) never runs them. P2-T2a stays routing-only (flag +
@@ -514,7 +523,7 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Files: `src/workspace/install.rs`, `src/main.rs` (`cmd_install` full-path
   orchestration; still < 3 files).
 * Tests: `--with-ingestion` → full layout + `sources.yaml` + copied binary +
-  `.mcp.json` pinned bin path WITH managed marker + managed `.gitignore`; the
+  `.mcp.json` pinned cwd-independent ABSOLUTE `<canonical_project_root>/.graphtor/bin/graphtor-docs[.exe]` command WITH managed marker + managed `.gitignore`; the
   full-path `sources.yaml`/`.gitignore`/`.mcp.json` orchestration runs ONLY on
   `--with-ingestion`; default (no flag) routes to `install_minimal()` and creates
   none of these (no `sources.yaml`, no `.gitignore`, minimal serve `.mcp.json`);
