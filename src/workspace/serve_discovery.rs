@@ -32,17 +32,27 @@ use graphtor_core::GraphtorError;
 /// The only file extension eligible for auto-discovery.
 const DB_EXTENSION: &str = "db";
 
-/// Discover the served database set for `root`.
+/// Discover the served database set.
 ///
 /// Returns the canonical-path-deduplicated UNION of `existing_candidates`
 /// (preserved in their given order, including candidates that do not yet
 /// exist on disk) and any EXISTING `*.db` file found directly inside
-/// `root`. Every returned path is canonicalized and guaranteed to be
-/// contained within `root`; a root-scan entry that is a symlink, or that
-/// would resolve outside `root` (a junction/reparse point target, or an
+/// `scan_root` (the `.graphtor/` workspace directory). Every returned path
+/// is canonicalized; a `scan_root` entry that is a symlink, or that would
+/// resolve outside `scan_root` (a junction/reparse point target, or an
 /// escaping `..`), is silently excluded from the served set rather than
 /// served. Non-`.db` files (including `*.lock`, journal/WAL sidecars, and
 /// anything inside a subdirectory such as `models/`) are never candidates.
+///
+/// `existing_candidates` are validated against the BROADER `candidate_root`
+/// instead of `scan_root`: today's `serve`/`status` already accept an
+/// explicit `--db-path` anywhere within the overall project root, not only
+/// inside `.graphtor/` (characterized by
+/// `serve_explicit_db_path_without_registry_reaches_v4_gate` in
+/// `tests/explicit_db_target_no_registry_test.rs`), and auto-discovery must
+/// not narrow that existing contract. Auto-discovery itself stays strictly
+/// scoped to `scan_root` — it never widens to scan the full
+/// `candidate_root` project tree.
 ///
 /// The zero-database case is represented by an empty returned `Vec` —
 /// callers decide how to react (for example, exiting with a "no databases
@@ -52,16 +62,11 @@ const DB_EXTENSION: &str = "db";
 /// # Errors
 ///
 /// Returns [`GraphtorError::PathViolation`] if one of `existing_candidates`
-/// escapes `root`, or [`GraphtorError::Io`] if `root` exists but cannot be
-/// read.
-// Not yet called from `main.rs` — `open_serve_databases`/`cmd_serve` are
-// wired to this module by P1-T3 (050.001-T), which also decides read-only
-// vs. generation posture per discovered path (P1-T2). This unit lands the
-// discovery/union primitive and its own test coverage as an independent,
-// atomic milestone first.
-#[allow(dead_code)]
+/// escapes `candidate_root`, or [`GraphtorError::Io`] if `scan_root` exists
+/// but cannot be read.
 pub fn discover_served_databases(
-    root: &Path,
+    scan_root: &Path,
+    candidate_root: &Path,
     existing_candidates: &[PathBuf],
 ) -> Result<Vec<PathBuf>, GraphtorError> {
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
@@ -72,18 +77,18 @@ pub fn discover_served_databases(
     // not exist yet, or an explicit `--db-path`, is never dropped even when
     // the root scan contributes nothing.
     for candidate in existing_candidates {
-        let canonical = validate_path(candidate, root)?;
+        let canonical = validate_path(candidate, candidate_root)?;
         if seen.insert(canonical.clone()) {
             served.push(canonical);
         }
     }
 
-    for discovered in scan_root_for_db_files(root)? {
+    for discovered in scan_root_for_db_files(scan_root)? {
         // Containment is re-validated defensively even though `discovered`
-        // was just read from inside `root`: a `.db`-suffixed junction or
-        // reparse point could still resolve outside `root`. Such an entry
-        // is EXCLUDED from the served set rather than served.
-        let Ok(canonical) = validate_path(&discovered, root) else {
+        // was just read from inside `scan_root`: a `.db`-suffixed junction
+        // or reparse point could still resolve outside `scan_root`. Such an
+        // entry is EXCLUDED from the served set rather than served.
+        let Ok(canonical) = validate_path(&discovered, scan_root) else {
             continue;
         };
         if seen.insert(canonical.clone()) {
@@ -141,7 +146,6 @@ fn scan_root_for_db_files(root: &Path) -> Result<Vec<PathBuf>, GraphtorError> {
 ///
 /// See [`classify_serve_postures`] for the three-way classification rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // threaded through serve open + sync gating by P1-T3 (050.001-T)
 pub enum ServeMode {
     /// No resolvable real generation source targets this database (absent,
     /// empty, or stale `sources.yaml`, or an unrelated co-resident dropped
@@ -162,7 +166,6 @@ pub enum ServeMode {
 /// callers (the write-path preflight and `spawn_background_sync`) must
 /// receive only this filtered subset, so a stale or read-only-classified
 /// source group can never be re-split into a background write (INV-7).
-#[allow(dead_code)] // consumed by P1-T3 (050.001-T)
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassifiedServeSet {
     /// Every database from the `served` union, in the same order, paired
@@ -191,7 +194,6 @@ pub struct ClassifiedServeSet {
 /// (`SourceConfig::parse`/`load_source_config`), before a caller ever has an
 /// `Option<&SourceConfig>` to pass in here; this function only ever sees
 /// the already-validated `Some(config)` or the `None`/absent case.
-#[allow(dead_code)] // consumed by P1-T3 (050.001-T)
 #[must_use]
 pub fn classify_serve_postures(
     served: &[PathBuf],
@@ -327,7 +329,7 @@ mod tests {
         let root = temp_root();
         let dropped = touch(root.path(), "dropped.db");
 
-        let served = discover_served_databases(root.path(), &[])
+        let served = discover_served_databases(root.path(), root.path(), &[])
             .expect("discovery should succeed on a plain root");
 
         assert_eq!(served.len(), 1);
@@ -340,9 +342,12 @@ mod tests {
         let configured_target = touch(root.path(), "configured.db");
         let dropped = touch(root.path(), "dropped.db");
 
-        let served =
-            discover_served_databases(root.path(), std::slice::from_ref(&configured_target))
-                .expect("discovery should succeed");
+        let served = discover_served_databases(
+            root.path(),
+            root.path(),
+            std::slice::from_ref(&configured_target),
+        )
+        .expect("discovery should succeed");
 
         assert_eq!(
             served.len(),
@@ -363,7 +368,7 @@ mod tests {
         // The exact same canonical path supplied both as an "existing
         // candidate" (as `discover_db_files` would) and discoverable via
         // the root scan must collapse to a single served entry.
-        let served = discover_served_databases(root.path(), std::slice::from_ref(&db))
+        let served = discover_served_databases(root.path(), root.path(), std::slice::from_ref(&db))
             .expect("discovery should succeed");
 
         assert_eq!(
@@ -377,8 +382,8 @@ mod tests {
     fn empty_union_returns_empty_vec_not_an_error() {
         let root = temp_root();
         // Root exists but is empty and no candidates were supplied.
-        let served =
-            discover_served_databases(root.path(), &[]).expect("empty root is not an error");
+        let served = discover_served_databases(root.path(), root.path(), &[])
+            .expect("empty root is not an error");
         assert!(served.is_empty());
     }
 
@@ -392,7 +397,8 @@ mod tests {
         touch(root.path(), "readme.txt");
         let db = touch(root.path(), "real.db");
 
-        let served = discover_served_databases(root.path(), &[]).expect("discovery should succeed");
+        let served = discover_served_databases(root.path(), root.path(), &[])
+            .expect("discovery should succeed");
 
         assert_eq!(served, vec![validate_path(&db, root.path()).unwrap()]);
     }
@@ -404,7 +410,8 @@ mod tests {
         touch(root.path(), "nested/other.db");
         let top_level = touch(root.path(), "top_level.db");
 
-        let served = discover_served_databases(root.path(), &[]).expect("discovery should succeed");
+        let served = discover_served_databases(root.path(), root.path(), &[])
+            .expect("discovery should succeed");
 
         assert_eq!(
             served,
@@ -421,7 +428,8 @@ mod tests {
         touch(root.path(), "sidecar.db-shm");
         touch(root.path(), "sidecar.db-journal");
 
-        let served = discover_served_databases(root.path(), &[]).expect("discovery should succeed");
+        let served = discover_served_databases(root.path(), root.path(), &[])
+            .expect("discovery should succeed");
 
         assert_eq!(served, vec![validate_path(&db, root.path()).unwrap()]);
     }
@@ -431,7 +439,7 @@ mod tests {
         let root = temp_root();
         let outside = root.path().join("..").join("outside.db");
 
-        let error = discover_served_databases(root.path(), &[outside])
+        let error = discover_served_databases(root.path(), root.path(), &[outside])
             .expect_err("a candidate escaping root must be rejected");
         assert!(
             matches!(error, GraphtorError::PathViolation { .. }),
@@ -469,7 +477,8 @@ mod tests {
             }
         }
 
-        let served = discover_served_databases(root.path(), &[]).expect("discovery should succeed");
+        let served = discover_served_databases(root.path(), root.path(), &[])
+            .expect("discovery should succeed");
         assert!(
             served.is_empty(),
             "a directory junction inside root must never be traversed into: {served:?}"
@@ -484,8 +493,12 @@ mod tests {
         let future_target = root.path().join("future-generation-target.db");
         assert!(!future_target.exists());
 
-        let served = discover_served_databases(root.path(), std::slice::from_ref(&future_target))
-            .expect("a not-yet-created candidate must still validate");
+        let served = discover_served_databases(
+            root.path(),
+            root.path(),
+            std::slice::from_ref(&future_target),
+        )
+        .expect("a not-yet-created candidate must still validate");
 
         assert_eq!(
             served,
@@ -496,14 +509,42 @@ mod tests {
     }
 
     #[test]
+    fn explicit_db_path_outside_graphtor_root_but_within_project_root_is_honoured() {
+        // Characterizes `serve_explicit_db_path_without_registry_reaches_v4_gate`
+        // (tests/explicit_db_target_no_registry_test.rs): an explicit
+        // `--db-path` may live anywhere under the project root, not only
+        // inside `.graphtor/`. Auto-discovery must still validate it against
+        // the broader `candidate_root`, not the narrower `scan_root`.
+        let project_root = temp_root();
+        let graphtor_dir = project_root.path().join(".graphtor");
+        fs::create_dir_all(&graphtor_dir).unwrap();
+        let explicit_outside_graphtor = touch(project_root.path(), "explicit-pre-v4.db");
+
+        let served = discover_served_databases(
+            &graphtor_dir,
+            project_root.path(),
+            std::slice::from_ref(&explicit_outside_graphtor),
+        )
+        .expect(
+            "an explicit candidate outside .graphtor/ but inside the project root must validate",
+        );
+
+        assert_eq!(
+            served,
+            vec![validate_path(&explicit_outside_graphtor, project_root.path()).unwrap()],
+        );
+    }
+
+    #[test]
     fn explicit_db_path_candidate_is_served_even_with_no_root_scan_hit() {
         let root = temp_root();
         let explicit = touch(root.path(), "explicit-target.db");
         // No other `.db` files exist in root — the root scan alone would
         // find exactly this one file, but the candidate must be honoured
         // regardless (characterizes the "no-config --db-path" path).
-        let served = discover_served_databases(root.path(), std::slice::from_ref(&explicit))
-            .expect("discovery should succeed");
+        let served =
+            discover_served_databases(root.path(), root.path(), std::slice::from_ref(&explicit))
+                .expect("discovery should succeed");
         assert_eq!(served, vec![validate_path(&explicit, root.path()).unwrap()]);
     }
 
@@ -600,8 +641,12 @@ mod tests {
         let generation_db = root.path().join("graph.db");
         let dropped_db = touch(root.path(), "dropped.db");
 
-        let served = discover_served_databases(root.path(), std::slice::from_ref(&generation_db))
-            .expect("union should include both the configured target and the dropped db");
+        let served = discover_served_databases(
+            root.path(),
+            root.path(),
+            std::slice::from_ref(&generation_db),
+        )
+        .expect("union should include both the configured target and the dropped db");
         assert_eq!(
             served.len(),
             2,

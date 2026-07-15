@@ -2336,50 +2336,97 @@ struct ServeOpenedDatabases {
 
 /// Open all databases for the `serve` command.
 ///
-/// For each path: acquires the lock, opens read-write and read-only stores,
-/// ensures the schema, and gates on pre-v4 state.
+/// For each path, per its resolved [`ServeMode`]:
+/// - [`ServeMode::Generation`]: acquires the advisory write lock, opens the
+///   read-write store, ensures the schema (a write), gates on pre-v4 state,
+///   then opens the read-only store used by MCP query handlers — unchanged
+///   from the pre-P1-T3 behaviour.
+/// - [`ServeMode::ReadOnly`]: skips the write lock, the read-write store,
+///   and `ensure_schema()` entirely. Opens ONLY
+///   [`DataStore::open_engine_readonly`] — the engine/filesystem-enforced
+///   read-only primitive proven in P1-T0 (050.009-T) — and gates on pre-v4
+///   state using that same read-only store. This is the **gating**
+///   invariant (INV-1); the underlying engine-level no-write proof itself
+///   is P1-T0's responsibility, not re-proven here.
 ///
 /// Returns `Ok(None)` when all databases opened cleanly, or `Ok(Some(code))`
 /// when an exit code should be returned immediately (e.g. pre-v4 gate).
 fn open_serve_databases(
-    db_paths: Vec<PathBuf>,
+    classified: Vec<(PathBuf, workspace::serve_discovery::ServeMode)>,
     cwd: &std::path::Path,
 ) -> anyhow::Result<(Option<i32>, ServeOpenedDatabases)> {
+    use workspace::serve_discovery::ServeMode;
+
     let mut result = ServeOpenedDatabases {
         locks: Vec::new(),
         rw_stores: Vec::new(),
         ro_stores: Vec::new(),
     };
-    for target_db_path in db_paths {
-        info!(db_path = %target_db_path.display(), "opening database");
-        let lock = acquire_database_lock(&target_db_path, cwd)?;
-        let store = DataStore::open_sqlite(&target_db_path, cwd)
-            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
-        store
-            .ensure_schema()
-            .context("failed to ensure database schema")?;
-        // Gate serve on pre-v4 databases.  Serving stale pre-pivot data is
-        // worse than refusing to start; the operator must run `sync` first.
-        if store
-            .needs_v4_migration()
-            .context("failed to check database migration state")?
-        {
-            eprintln!(
-                "error: database at '{}' has pre-v4 schema; \
-                 run `graphtor-docs sync` to rebuild the index before starting serve",
-                target_db_path.display()
-            );
-            return Ok((Some(2), result));
+    for (target_db_path, posture) in classified {
+        match posture {
+            ServeMode::Generation => {
+                info!(
+                    db_path = %target_db_path.display(),
+                    posture = "generation",
+                    "opening database"
+                );
+                let lock = acquire_database_lock(&target_db_path, cwd)?;
+                let store = DataStore::open_sqlite(&target_db_path, cwd).with_context(|| {
+                    format!("failed to open database at {}", target_db_path.display())
+                })?;
+                store
+                    .ensure_schema()
+                    .context("failed to ensure database schema")?;
+                // Gate serve on pre-v4 databases.  Serving stale pre-pivot data is
+                // worse than refusing to start; the operator must run `sync` first.
+                if store
+                    .needs_v4_migration()
+                    .context("failed to check database migration state")?
+                {
+                    eprintln!(
+                        "error: database at '{}' has pre-v4 schema; \
+                         run `graphtor-docs sync` to rebuild the index before starting serve",
+                        target_db_path.display()
+                    );
+                    return Ok((Some(2), result));
+                }
+                let readonly_store = DataStore::open_sqlite_readonly(&target_db_path, cwd)
+                    .with_context(|| {
+                        format!("failed to open database at {}", target_db_path.display())
+                    })?;
+                result.locks.push(lock);
+                result.rw_stores.push((target_db_path.clone(), store));
+                result.ro_stores.push((target_db_path, readonly_store));
+            }
+            ServeMode::ReadOnly => {
+                info!(
+                    db_path = %target_db_path.display(),
+                    posture = "read_only",
+                    "opening database"
+                );
+                let readonly_store = DataStore::open_engine_readonly(&target_db_path, cwd)
+                    .with_context(|| {
+                        format!("failed to open database at {}", target_db_path.display())
+                    })?;
+                if readonly_store
+                    .needs_v4_migration()
+                    .context("failed to check database migration state")?
+                {
+                    eprintln!(
+                        "error: database at '{}' has pre-v4 schema; \
+                         run `graphtor-docs sync` to rebuild the index before starting serve",
+                        target_db_path.display()
+                    );
+                    return Ok((Some(2), result));
+                }
+                result.ro_stores.push((target_db_path, readonly_store));
+            }
         }
-        let readonly_store = DataStore::open_sqlite_readonly(&target_db_path, cwd)
-            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
-        result.locks.push(lock);
-        result.rw_stores.push((target_db_path.clone(), store));
-        result.ro_stores.push((target_db_path, readonly_store));
     }
     Ok((None, result))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn cmd_serve(
     db_path: &std::path::Path,
     cwd: &std::path::Path,
@@ -2388,34 +2435,8 @@ async fn cmd_serve(
 ) -> anyhow::Result<i32> {
     let source_config_result = load_source_config(cwd, db_path, config_override);
 
-    // Duplicate-intake preflight — same fail-closed check as `sync`.
-    // The background-sync task spawned by `serve` is a write path: it
-    // mutates databases just like an interactive sync.  Allowing it to run
-    // with duplicate intakes could silently corrupt those databases.
-    //
-    // We check before opening any databases so that a mis-configured
-    // registry is rejected immediately without creating empty DB files.
-    if let Ok(Some(ref source_config)) = source_config_result {
-        if !source_config.sources.is_empty() {
-            if let Some(exit_code) =
-                run_duplicate_intake_preflight(source_config, db_path, cwd, false)?
-            {
-                return Ok(exit_code);
-            }
-        }
-    }
-
-    let db_paths = match &source_config_result {
-        Ok(Some(source_config)) => discover_db_files(db_path, source_config),
-        Ok(None) => {
-            if config_override.is_none() && has_explicit_db_target {
-                vec![db_path.to_path_buf()]
-            } else {
-                let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
-                eprintln!("error: config file '{}' not found", path.display());
-                return Ok(2);
-            }
-        }
+    let source_config: Option<SourceConfig> = match source_config_result {
+        Ok(config) => config,
         Err(e) => {
             // A registry file exists but is malformed — fail closed.  Opening
             // databases and starting the MCP server with a broken config would
@@ -2427,7 +2448,115 @@ async fn cmd_serve(
         }
     };
 
-    let (early_exit, opened) = open_serve_databases(db_paths, cwd)?;
+    let db_paths = if let Some(config) = &source_config {
+        discover_db_files(db_path, config)
+    } else if let Some(path) = config_override {
+        // The operator explicitly pointed `--config` at a file that does not
+        // exist — a genuine configuration error, not a case for
+        // auto-discovery to paper over.
+        eprintln!("error: config file '{}' not found", path.display());
+        return Ok(2);
+    } else if has_explicit_db_target {
+        vec![db_path.to_path_buf()]
+    } else {
+        // Zero-config consumption workspace: no `sources.yaml` was
+        // auto-discovered and no explicit `--db-path`/`--config` was given.
+        // Auto-discovery of `.graphtor/*.db` below is the SOLE source of
+        // candidates — this is no longer a hard error (R1: `serve`
+        // auto-discovers dropped `.db` files with zero configuration).
+        Vec::new()
+    };
+
+    // Auto-discover dropped `.db` files directly inside `.graphtor/` and
+    // assemble the served set as a UNION that PRESERVES `db_paths` (the
+    // existing configured/explicit candidates) — see
+    // `workspace::serve_discovery` (P1-T1). Existing candidates validate
+    // against the broader `cwd` project root (an explicit `--db-path` may
+    // live outside `.graphtor/`); auto-discovery itself stays scoped to
+    // `.graphtor/`.
+    let graphtor_dir = cwd.join(".graphtor");
+    let served_paths =
+        workspace::serve_discovery::discover_served_databases(&graphtor_dir, cwd, &db_paths)
+            .context("failed to discover databases to serve")?;
+    if served_paths.is_empty() {
+        eprintln!(
+            "no databases found to serve; drop a `.db` file into '{}' or configure a source",
+            graphtor_dir.display()
+        );
+        return Ok(2);
+    }
+
+    // Content-derived posture classification (P1-T2): resolvable real
+    // generation sources promote ONLY their resolved target to
+    // `Generation`; everything else — absent/empty/stale sources.yaml, or
+    // an auto-discovered dropped db with no source targeting it — stays
+    // `ReadOnly` (the fail-safe default).
+    let mut classified = workspace::serve_discovery::classify_serve_postures(
+        &served_paths,
+        source_config.as_ref(),
+        db_path,
+        cwd,
+    );
+
+    // `discover_db_files` falls back to `base_db_path` when a source
+    // registry resolves to zero sources, purely so `sync` always has
+    // somewhere to write a fresh database. For `serve`, a `ReadOnly`
+    // candidate that does not exist on disk is exactly this phantom
+    // default — nothing was ever dropped there and no source targets it —
+    // so it is excluded here rather than attempted (and failed) through
+    // `open_engine_readonly`, which requires the file to already exist. A
+    // `Generation` candidate is kept even when absent: that is the
+    // legitimate "not-yet-created generation target" case a fresh
+    // source-backed workspace relies on.
+    classified.postures.retain(|(path, mode)| {
+        *mode == workspace::serve_discovery::ServeMode::Generation || path.exists()
+    });
+
+    if classified.postures.is_empty() {
+        eprintln!(
+            "no databases found to serve; drop a `.db` file into '{}' or configure a source",
+            graphtor_dir.display()
+        );
+        return Ok(2);
+    }
+
+    let generation_count = classified
+        .postures
+        .iter()
+        .filter(|(_, mode)| *mode == workspace::serve_discovery::ServeMode::Generation)
+        .count();
+    // Positive startup observability (Constitution V): the resolved posture
+    // is affirmatively logged, not inferred from an absent line.
+    info!(
+        discovered_count = classified.postures.len(),
+        generation_count,
+        readonly_count = classified.postures.len() - generation_count,
+        "resolved serve posture"
+    );
+
+    // NEVER the full `SourceConfig` (INV-7) — only the source groups whose
+    // resolved target actually reached `Generation` reach the preflight and
+    // the background sync task below.
+    let generation_config = SourceConfig {
+        sources: classified.generation_sources.clone(),
+    };
+
+    // Duplicate-intake preflight — same fail-closed check as `sync`.
+    // The background-sync task spawned by `serve` is a write path: it
+    // mutates databases just like an interactive sync.  Allowing it to run
+    // with duplicate intakes could silently corrupt those databases.
+    //
+    // We check before opening any databases so that a mis-configured
+    // registry is rejected immediately without creating empty DB files.
+    if !generation_config.sources.is_empty() {
+        if let Some(exit_code) =
+            run_duplicate_intake_preflight(&generation_config, db_path, cwd, false)?
+        {
+            return Ok(exit_code);
+        }
+    }
+
+    let (early_exit, opened) = open_serve_databases(classified.postures, cwd)?;
     if let Some(code) = early_exit {
         return Ok(code);
     }
@@ -2442,52 +2571,37 @@ async fn cmd_serve(
     let model: Option<EmbeddingModel> = resolve_embedding_model(ResolverCaller::Serve, false)
         .context("embedding model resolution failed")?;
 
-    // Resolve source config (same auto-discovery logic as cmd_sync) and spawn
-    // a background incremental sync task if a config is available.
-    let sync_status = match source_config_result {
-        Ok(Some(source_config)) if !source_config.sources.is_empty() => {
-            info!("background sync task spawned");
-            spawn_background_sync(
-                source_config,
-                db_path.to_path_buf(),
-                cwd.to_path_buf(),
-                stores_by_db
-                    .iter()
-                    .map(|(path, store)| (path.clone(), store.clone()))
-                    .collect(),
-                model.clone(),
-            )
-        }
-        Ok(Some(_)) => {
-            info!("source config has no sources; background sync skipped");
-            Arc::default()
-        }
-        Ok(None) => {
-            if config_override.is_none() && has_explicit_db_target {
-                info!("no source registry found; background sync skipped");
-                Arc::default()
-            } else {
-                // Any remaining Ok(None) case is still fail-closed: either an
-                // explicit --config path is missing, or auto-discovery found no
-                // registry and the operator did not explicitly target a DB.
-                let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
-                eprintln!("error: config file '{}' not found", path.display());
-                return Ok(2);
-            }
-        }
-        Err(e) => {
-            // load_source_config Err is handled above in the db_paths match;
-            // this arm is unreachable in normal operation, but kept fail-closed
-            // for defence-in-depth.
-            return Err(e.context("source registry is invalid; fix it before running serve"));
-        }
+    // Spawn a background incremental sync task ONLY when at least one
+    // database resolved to `Generation`; hand it ONLY the filtered
+    // `generation_config` — never the full registry — so
+    // `spawn_background_sync`'s internal `split_plan_by_database` re-split
+    // can never re-schedule a stale or read-only-classified source group.
+    let sync_status = if generation_config.sources.is_empty() {
+        info!("no generation sources resolved; background sync skipped");
+        Arc::default()
+    } else {
+        info!("background sync task spawned");
+        spawn_background_sync(
+            generation_config,
+            db_path.to_path_buf(),
+            cwd.to_path_buf(),
+            stores_by_db
+                .iter()
+                .map(|(path, store)| (path.clone(), store.clone()))
+                .collect(),
+            model.clone(),
+        )
     };
 
     let mut stores = readonly_stores_by_db
         .into_iter()
         .map(|(_path, store)| store);
     let Some(primary) = stores.next() else {
-        unreachable!("discover_db_files always yields at least one database path");
+        // Structurally unreachable — the empty-union case is already
+        // handled above — but kept as a HANDLED error rather than
+        // `unreachable!()` for defence-in-depth (review thread 14).
+        eprintln!("no databases found to serve");
+        return Ok(2);
     };
     let additional: Vec<_> = stores.collect();
     let server = match model {
