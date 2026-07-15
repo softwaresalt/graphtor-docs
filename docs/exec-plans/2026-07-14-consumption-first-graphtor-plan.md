@@ -593,7 +593,7 @@ write sync in a consumption workspace.
 ### Learnings and Instructions Consulted
 
 * `docs/compound/keep-docs-synchronized-with-implementation.md` — keep Phase-1
-  and Phase-2 docs in lockstep with the behaviour change (informs P1-T8, P2-T6).
+  and Phase-2 docs in lockstep with the behaviour change (informs P1-T8, P2-T7b (051.011-T)).
 * `docs/compound/cli-jsonrpc-output-pattern-2026-05-06.md` and
   `mcp-formatter-source-verification-2026-05-06.md` — preserve the existing
   JSON-RPC/MCP output contracts when extending `status`/list-sources (P1-T5).
@@ -791,7 +791,7 @@ resolved in this revision (Attempt 2).
   (P1-T3).
 * Malformed `sources.yaml` classified fail-closed (P1-T2).
 * `doctor` footprint-detection helper (P2-T4).
-* Atomic config writes + stable key ordering (P2-T1) — Principle IX.
+* Atomic config writes + stable key ordering (P2-T3 (051.004-T)) — Principle IX.
 * Positive posture log line — Principle V (Constitution Check).
 * P2-T2 file-count split: binary resolution moved to its own unit P2-T3.
 * Pre-v4/v4 fixture availability precondition (P1-T0, P1-T4, P1-T5).
