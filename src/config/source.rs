@@ -45,14 +45,22 @@ impl SourceConfig {
     }
 }
 
-/// A documentation source — a local directory of docline-emitted Markdown files.
+/// A documentation source — either a local ingestion directory or an
+/// explicit, pre-built, workspace-contained read-only database entry.
 ///
-/// Only the `local` type is supported. Discriminated in YAML by `type: local`.
+/// Discriminated in YAML by `type: local` or `type: database`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Source {
     /// A local filesystem directory of standardized Markdown files to index.
     Local(LocalSource),
+    /// An explicit, pre-built database file to serve read-only.
+    ///
+    /// Workspace-contained: `path` MUST resolve within the same authorized
+    /// root as auto-discovery (external/out-of-root paths are rejected, not
+    /// served — external-path support is explicitly out of Phase-1 scope).
+    /// This variant is inherently read-only; there is no `read_only` field.
+    Database(DatabaseSource),
 }
 
 impl Source {
@@ -67,35 +75,52 @@ impl Source {
     pub fn id(&self) -> &str {
         match self {
             Self::Local(l) => &l.id,
+            Self::Database(d) => &d.id,
         }
     }
 
     /// Returns the allowed file format extensions for this source.
+    ///
+    /// A [`Source::Database`] entry has no ingestion formats: empty.
     pub(crate) fn formats(&self) -> &[String] {
         match self {
             Self::Local(l) => &l.formats,
+            Self::Database(_) => &[],
         }
     }
 
     /// Returns the source-relative include glob patterns for this source.
+    ///
+    /// A [`Source::Database`] entry has no ingestion globs: empty.
     pub(crate) fn include(&self) -> &[String] {
         match self {
             Self::Local(l) => &l.include,
+            Self::Database(_) => &[],
         }
     }
 
     /// Returns the source-relative exclude glob patterns for this source.
+    ///
+    /// A [`Source::Database`] entry has no ingestion globs: empty.
     pub(crate) fn exclude(&self) -> &[String] {
         match self {
             Self::Local(l) => &l.exclude,
+            Self::Database(_) => &[],
         }
     }
 
     /// Returns the target database file name for this source, if set.
+    ///
+    /// This is local-target-only: it feeds the ingestion/generation WRITE
+    /// path (`resolve_source_db_path`, `discover_db_files`). A
+    /// [`Source::Database`] entry's pre-built served path is NEVER returned
+    /// here — use [`Source::served_db_path`] instead — otherwise a served
+    /// read-only db could be routed into the write/sync path.
     #[must_use]
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Local(l) => l.database.as_deref(),
+            Self::Database(_) => None,
         }
     }
 
@@ -107,11 +132,12 @@ impl Source {
     /// local ingestion sources MUST route through this accessor (or
     /// [`Source::is_ingestible`]) instead, so a future additive,
     /// non-ingestible `Source` variant compiles without breaking any
-    /// existing call site. Always `Some` while `Local` is the only variant.
+    /// existing call site.
     #[must_use]
     pub fn as_local(&self) -> Option<&LocalSource> {
         match self {
             Self::Local(l) => Some(l),
+            Self::Database(_) => None,
         }
     }
 
@@ -119,11 +145,26 @@ impl Source {
     /// acquisition planning, and sync).
     ///
     /// `pub(crate)` — only called from within this library (the acquisition
-    /// plan loop and sync path in P1-RF2/P1-RF3). Always `true` while
-    /// `Local` is the only variant.
-    #[allow(dead_code)] // consumed by P1-RF3 (050.012-T src/sync/mod.rs)
+    /// plan loop and sync path in P1-RF2/P1-RF3). `false` for
+    /// [`Source::Database`] — it is never ingested.
     pub(crate) fn is_ingestible(&self) -> bool {
         self.as_local().is_some()
+    }
+
+    /// Returns the pre-built, workspace-contained path to serve read-only
+    /// for a [`Source::Database`] entry, or `None` for any other variant.
+    ///
+    /// Distinct from [`Source::database`] (a generation TARGET filename fed
+    /// to the ingestion/write path): this accessor exposes the READ-ONLY
+    /// served path and is consumed only by `serve_discovery`'s merge step.
+    /// Containment (workspace-root validation) is the caller's
+    /// responsibility, matching every other served-path consumer.
+    #[must_use]
+    pub fn served_db_path(&self) -> Option<&Path> {
+        match self {
+            Self::Local(_) => None,
+            Self::Database(d) => Some(&d.path),
+        }
     }
 }
 
@@ -149,6 +190,24 @@ pub struct LocalSource {
     /// Optional target database file name (e.g. `"rust-docs.db"`).
     #[serde(default)]
     pub database: Option<String>,
+}
+
+/// An explicit, pre-built database file to serve read-only.
+///
+/// LOCKED serialized contract (Phase 1): exactly two REQUIRED fields, `id`
+/// and `path`, and no others — this variant is inherently read-only, so
+/// there is deliberately no `read_only` field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DatabaseSource {
+    /// Unique alias/name for this served database (e.g. `"legacy-docs"`).
+    pub id: String,
+    /// Workspace-contained filesystem path to the pre-built database file.
+    ///
+    /// Validated (by `serve_discovery`) to resolve within the same
+    /// authorized root as auto-discovery; an out-of-root path (`..`,
+    /// symlink, or Windows junction/reparse escape) is rejected, not
+    /// served.
+    pub path: PathBuf,
 }
 
 /// Default file formats processed when `formats` is absent from YAML.
@@ -290,6 +349,95 @@ sources:
         });
         let id: &str = Source::id(&src);
         assert_eq!(id, "cross-crate-id");
+    }
+
+    // ── P1-T6: Source::Database variant ────────────────────────────────────
+
+    #[test]
+    fn database_source_round_trips_through_yaml() {
+        const YAML: &str =
+            "sources:\n  - type: database\n    id: legacy-docs\n    path: legacy.db\n";
+        let config: SourceConfig = serde_yaml::from_str(YAML).expect("parse type: database");
+        assert_eq!(config.sources.len(), 1);
+        assert_eq!(config.sources[0].id(), "legacy-docs");
+        assert_eq!(
+            config.sources[0].served_db_path(),
+            Some(Path::new("legacy.db"))
+        );
+
+        let reserialized = serde_yaml::to_string(&config).expect("reserialize");
+        let round_tripped: SourceConfig =
+            serde_yaml::from_str(&reserialized).expect("parse reserialized yaml");
+        assert_eq!(config, round_tripped);
+    }
+
+    #[test]
+    fn database_source_has_exactly_id_and_path_fields() {
+        // LOCKED contract: no `read_only` field and no other fields — an
+        // unknown field must be rejected the same way YAML would reject any
+        // other unrecognised key on a struct without `deny_unknown_fields`
+        // (i.e. it is simply ignored, matching `LocalSource`'s existing
+        // permissive-unknown-field behaviour) rather than silently adding
+        // new semantics.
+        const YAML: &str =
+            "sources:\n  - type: database\n    id: legacy-docs\n    path: legacy.db\n";
+        let config: SourceConfig = serde_yaml::from_str(YAML).expect("parse");
+        let Source::Database(d) = &config.sources[0] else {
+            panic!("expected a Database source");
+        };
+        assert_eq!(d.id, "legacy-docs");
+        assert_eq!(d.path, PathBuf::from("legacy.db"));
+    }
+
+    #[test]
+    fn database_source_accessors_are_variant_safe() {
+        let src = Source::Database(DatabaseSource {
+            id: "legacy-docs".to_string(),
+            path: PathBuf::from("legacy.db"),
+        });
+        assert_eq!(src.id(), "legacy-docs");
+        assert!(src.formats().is_empty());
+        assert!(src.include().is_empty());
+        assert!(src.exclude().is_empty());
+        assert!(
+            src.database().is_none(),
+            "database() is local-target-only and must never return the served path"
+        );
+        assert!(src.as_local().is_none());
+        assert!(!src.is_ingestible());
+        assert_eq!(src.served_db_path(), Some(Path::new("legacy.db")));
+    }
+
+    #[test]
+    fn local_source_served_db_path_is_none() {
+        let src = Source::Local(LocalSource {
+            id: "t".to_string(),
+            path: PathBuf::from("/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec![],
+            database: None,
+        });
+        assert!(src.served_db_path().is_none());
+    }
+
+    #[test]
+    fn existing_local_only_sources_yaml_parses_unchanged_after_database_variant_added() {
+        // Backward compatibility: adding the additive `Database` variant
+        // must not change how a pre-existing `type: local` entry parses.
+        let config: SourceConfig = serde_yaml::from_str(VALID_LOCAL_YAML).unwrap();
+        assert_eq!(config.sources.len(), 1);
+        let local = config.sources[0].as_local().expect("still a local source");
+        assert_eq!(local.id, "internal-docs");
+    }
+
+    #[test]
+    fn mixed_local_and_database_config_parses_both_variants() {
+        const YAML: &str = "sources:\n  - type: local\n    id: docs\n    path: docs\n  - type: database\n    id: legacy\n    path: legacy.db\n";
+        let config: SourceConfig = serde_yaml::from_str(YAML).expect("parse mixed config");
+        assert_eq!(config.sources.len(), 2);
+        assert!(config.sources[0].as_local().is_some());
+        assert!(config.sources[1].served_db_path().is_some());
     }
 
     #[test]

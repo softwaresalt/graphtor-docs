@@ -1445,6 +1445,39 @@ mod tests {
             .map_or(0, |duration| duration.as_secs())
     }
 
+    // ── P1-T6/P1-RF3: a Database source is never ingested by sync ─────────
+
+    #[test]
+    fn sync_source_fails_closed_for_a_non_local_database_source() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let db_path = root.join("graph.db");
+        let store = DataStore::open_sqlite(&db_path, root).expect("open store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let database_source = Source::Database(crate::DatabaseSource {
+            id: "legacy".to_string(),
+            path: root.join(".graphtor").join("legacy.db"),
+        });
+        let state_path = root.join(".sync_state.json");
+
+        let result = sync_source(
+            &store,
+            &database_source,
+            &root.join("unused-source-dir"),
+            &state_path,
+            root,
+            None,
+            None,
+        );
+
+        let error = result.expect_err("a Database source must never be ingested by sync");
+        assert!(
+            matches!(error, crate::GraphtorError::Sync { .. }),
+            "expected a Sync error, got: {error:?}"
+        );
+    }
+
     #[test]
     fn sync_source_progress_callback_invoked_per_file() {
         let temp = tempdir().expect("tempdir");

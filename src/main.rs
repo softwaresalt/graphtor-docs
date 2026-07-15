@@ -2490,9 +2490,13 @@ async fn cmd_serve(
     // live outside `.graphtor/`); auto-discovery itself stays scoped to
     // `.graphtor/`.
     let graphtor_dir = cwd.join(".graphtor");
-    let served_paths =
-        workspace::serve_discovery::discover_served_databases(&graphtor_dir, cwd, &db_paths)
-            .context("failed to discover databases to serve")?;
+    let served_paths = workspace::serve_discovery::discover_served_databases(
+        &graphtor_dir,
+        cwd,
+        &db_paths,
+        source_config.as_ref(),
+    )
+    .context("failed to discover databases to serve")?;
     if served_paths.is_empty() {
         eprintln!(
             "no databases found to serve; drop a `.db` file into '{}' or configure a source",
@@ -3728,6 +3732,97 @@ mod tests {
         fs::create_dir_all(&config_dir).expect("create config dir");
         fs::write(config_dir.join("sources.yaml"), "sources: []\n")
             .expect("write empty sources.yaml");
+    }
+
+    // ── P1-RF4 / P1-T6: generation discovery/splitting exclusion ──────────
+
+    #[test]
+    fn discover_db_files_excludes_a_database_source_from_the_generation_set() {
+        let base_db_path = Path::new("/workspace/.graphtor/graph.db");
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(graphtor_core::LocalSource {
+                    id: "docs".to_string(),
+                    path: PathBuf::from("/workspace/docs"),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec!["md".to_string()],
+                    database: Some("docs.db".to_string()),
+                }),
+                Source::Database(graphtor_core::DatabaseSource {
+                    id: "legacy".to_string(),
+                    path: PathBuf::from("/workspace/.graphtor/legacy.db"),
+                }),
+            ],
+        };
+
+        let db_paths = discover_db_files(base_db_path, &config);
+
+        assert_eq!(
+            db_paths,
+            vec![PathBuf::from("/workspace/.graphtor/docs.db")],
+            "the Database entry must contribute no generation target — it must not fall \
+             through to base_db_path, and only the local source's target remains"
+        );
+    }
+
+    #[test]
+    fn split_plan_by_database_excludes_a_database_source_even_if_present_in_plan_sources() {
+        let base_db_path = Path::new("/workspace/.graphtor/graph.db");
+        let local_source = Source::Local(graphtor_core::LocalSource {
+            id: "docs".to_string(),
+            path: PathBuf::from("/workspace/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+        let database_source = Source::Database(graphtor_core::DatabaseSource {
+            id: "legacy".to_string(),
+            path: PathBuf::from("/workspace/.graphtor/legacy.db"),
+        });
+        let config = SourceConfig {
+            sources: vec![local_source.clone(), database_source.clone()],
+        };
+
+        // Construct an `AcquisitionPlan` that (unrealistically, for this
+        // defence-in-depth test) STILL contains the Database source in
+        // `plan.sources`, to prove `split_plan_by_database`'s OWN guard
+        // excludes it independently of whatever produced the plan.
+        let plan = AcquisitionPlan {
+            data_root: PathBuf::from("/workspace/.graphtor/data"),
+            allowed_root: PathBuf::from("/workspace"),
+            sources: vec![
+                PlannedSource {
+                    source: local_source,
+                    action: SourceAction::ScanLocal,
+                    target_dir: PathBuf::from("/workspace/docs"),
+                    allow_internal_snapshot_scan: false,
+                },
+                PlannedSource {
+                    source: database_source,
+                    action: SourceAction::ScanLocal,
+                    target_dir: PathBuf::from("/workspace/.graphtor/legacy.db"),
+                    allow_internal_snapshot_scan: false,
+                },
+            ],
+            total_scan: 2,
+        };
+
+        let grouped = split_plan_by_database(base_db_path, &config, &plan);
+
+        assert_eq!(
+            grouped.len(),
+            1,
+            "only the local source's group must survive splitting"
+        );
+        let (target_db_path, grouped_plan) = grouped.into_iter().next().unwrap();
+        assert_eq!(
+            target_db_path,
+            PathBuf::from("/workspace/.graphtor/graph.db")
+        );
+        assert_eq!(grouped_plan.sources.len(), 1);
+        assert_eq!(grouped_plan.sources[0].source.id(), "docs");
     }
 
     fn seed_current_sync_state(

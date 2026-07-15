@@ -36,23 +36,31 @@ const DB_EXTENSION: &str = "db";
 ///
 /// Returns the canonical-path-deduplicated UNION of `existing_candidates`
 /// (preserved in their given order, including candidates that do not yet
-/// exist on disk) and any EXISTING `*.db` file found directly inside
-/// `scan_root` (the `.graphtor/` workspace directory). Every returned path
-/// is canonicalized; a `scan_root` entry that is a symlink, or that would
-/// resolve outside `scan_root` (a junction/reparse point target, or an
-/// escaping `..`), is silently excluded from the served set rather than
-/// served. Non-`.db` files (including `*.lock`, journal/WAL sidecars, and
-/// anything inside a subdirectory such as `models/`) are never candidates.
+/// exist on disk), any explicit workspace-contained `type: database` entry
+/// in `explicit_sources` (P1-T6), and any EXISTING `*.db` file found
+/// directly inside `scan_root` (the `.graphtor/` workspace directory).
+/// Every returned path is canonicalized; an entry that is a symlink, or
+/// that would resolve outside its authorized root (a junction/reparse
+/// point target, or an escaping `..`), is silently excluded from the
+/// served set rather than served. Non-`.db` files (including `*.lock`,
+/// journal/WAL sidecars, and anything inside a subdirectory such as
+/// `models/`) are never root-scan candidates.
 ///
-/// `existing_candidates` are validated against the BROADER `candidate_root`
-/// instead of `scan_root`: today's `serve`/`status` already accept an
-/// explicit `--db-path` anywhere within the overall project root, not only
-/// inside `.graphtor/` (characterized by
+/// `existing_candidates` AND explicit `type: database` entries are both
+/// validated against the BROADER `candidate_root` instead of `scan_root`:
+/// today's `serve`/`status` already accept an explicit `--db-path` anywhere
+/// within the overall project root, not only inside `.graphtor/`
+/// (characterized by
 /// `serve_explicit_db_path_without_registry_reaches_v4_gate` in
 /// `tests/explicit_db_target_no_registry_test.rs`), and auto-discovery must
-/// not narrow that existing contract. Auto-discovery itself stays strictly
-/// scoped to `scan_root` — it never widens to scan the full
-/// `candidate_root` project tree.
+/// not narrow that existing contract. An explicit `type: database` entry
+/// whose canonical `served_db_path()` equals an existing candidate or an
+/// auto-discovered entry collapses to the SAME single served store
+/// (canonical-path dedup) rather than opening it twice. Auto-discovery
+/// itself stays strictly scoped to `scan_root` — it never widens to scan
+/// the full `candidate_root` project tree, and out-of-root explicit
+/// entries are REJECTED (not served) rather than broadening the authorized
+/// root — external-path support is explicitly out of Phase-1 scope.
 ///
 /// The zero-database case is represented by an empty returned `Vec` —
 /// callers decide how to react (for example, exiting with a "no databases
@@ -63,11 +71,16 @@ const DB_EXTENSION: &str = "db";
 ///
 /// Returns [`GraphtorError::PathViolation`] if one of `existing_candidates`
 /// escapes `candidate_root`, or [`GraphtorError::Io`] if `scan_root` exists
-/// but cannot be read.
+/// but cannot be read. An explicit `type: database` entry that escapes
+/// `candidate_root` is silently excluded rather than propagated as an
+/// error — it is operator-authored workspace configuration, not a
+/// programming-error candidate, so a single out-of-root entry does not
+/// abort serving every other database.
 pub fn discover_served_databases(
     scan_root: &Path,
     candidate_root: &Path,
     existing_candidates: &[PathBuf],
+    explicit_sources: Option<&SourceConfig>,
 ) -> Result<Vec<PathBuf>, GraphtorError> {
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
     let mut served: Vec<PathBuf> = Vec::new();
@@ -80,6 +93,23 @@ pub fn discover_served_databases(
         let canonical = validate_path(candidate, candidate_root)?;
         if seen.insert(canonical.clone()) {
             served.push(canonical);
+        }
+    }
+
+    // Merge explicit workspace-contained `type: database` entries (P1-T6).
+    // An out-of-root path (`..`, symlink, Windows junction/reparse escape)
+    // is REJECTED — never served — rather than broadening the authorized
+    // root; Phase-1 external-path support is explicitly out of scope.
+    if let Some(config) = explicit_sources {
+        for source in &config.sources {
+            if let Some(path) = source.served_db_path() {
+                let Ok(canonical) = validate_path(path, candidate_root) else {
+                    continue;
+                };
+                if seen.insert(canonical.clone()) {
+                    served.push(canonical);
+                }
+            }
         }
     }
 
@@ -331,7 +361,7 @@ mod tests {
         let root = temp_root();
         let dropped = touch(root.path(), "dropped.db");
 
-        let served = discover_served_databases(root.path(), root.path(), &[])
+        let served = discover_served_databases(root.path(), root.path(), &[], None)
             .expect("discovery should succeed on a plain root");
 
         assert_eq!(served.len(), 1);
@@ -348,6 +378,7 @@ mod tests {
             root.path(),
             root.path(),
             std::slice::from_ref(&configured_target),
+            None,
         )
         .expect("discovery should succeed");
 
@@ -370,8 +401,9 @@ mod tests {
         // The exact same canonical path supplied both as an "existing
         // candidate" (as `discover_db_files` would) and discoverable via
         // the root scan must collapse to a single served entry.
-        let served = discover_served_databases(root.path(), root.path(), std::slice::from_ref(&db))
-            .expect("discovery should succeed");
+        let served =
+            discover_served_databases(root.path(), root.path(), std::slice::from_ref(&db), None)
+                .expect("discovery should succeed");
 
         assert_eq!(
             served.len(),
@@ -384,7 +416,7 @@ mod tests {
     fn empty_union_returns_empty_vec_not_an_error() {
         let root = temp_root();
         // Root exists but is empty and no candidates were supplied.
-        let served = discover_served_databases(root.path(), root.path(), &[])
+        let served = discover_served_databases(root.path(), root.path(), &[], None)
             .expect("empty root is not an error");
         assert!(served.is_empty());
     }
@@ -399,7 +431,7 @@ mod tests {
         touch(root.path(), "readme.txt");
         let db = touch(root.path(), "real.db");
 
-        let served = discover_served_databases(root.path(), root.path(), &[])
+        let served = discover_served_databases(root.path(), root.path(), &[], None)
             .expect("discovery should succeed");
 
         assert_eq!(served, vec![validate_path(&db, root.path()).unwrap()]);
@@ -412,7 +444,7 @@ mod tests {
         touch(root.path(), "nested/other.db");
         let top_level = touch(root.path(), "top_level.db");
 
-        let served = discover_served_databases(root.path(), root.path(), &[])
+        let served = discover_served_databases(root.path(), root.path(), &[], None)
             .expect("discovery should succeed");
 
         assert_eq!(
@@ -430,7 +462,7 @@ mod tests {
         touch(root.path(), "sidecar.db-shm");
         touch(root.path(), "sidecar.db-journal");
 
-        let served = discover_served_databases(root.path(), root.path(), &[])
+        let served = discover_served_databases(root.path(), root.path(), &[], None)
             .expect("discovery should succeed");
 
         assert_eq!(served, vec![validate_path(&db, root.path()).unwrap()]);
@@ -441,7 +473,7 @@ mod tests {
         let root = temp_root();
         let outside = root.path().join("..").join("outside.db");
 
-        let error = discover_served_databases(root.path(), root.path(), &[outside])
+        let error = discover_served_databases(root.path(), root.path(), &[outside], None)
             .expect_err("a candidate escaping root must be rejected");
         assert!(
             matches!(error, GraphtorError::PathViolation { .. }),
@@ -479,7 +511,7 @@ mod tests {
             }
         }
 
-        let served = discover_served_databases(root.path(), root.path(), &[])
+        let served = discover_served_databases(root.path(), root.path(), &[], None)
             .expect("discovery should succeed");
         assert!(
             served.is_empty(),
@@ -499,6 +531,7 @@ mod tests {
             root.path(),
             root.path(),
             std::slice::from_ref(&future_target),
+            None,
         )
         .expect("a not-yet-created candidate must still validate");
 
@@ -526,6 +559,7 @@ mod tests {
             &graphtor_dir,
             project_root.path(),
             std::slice::from_ref(&explicit_outside_graphtor),
+            None,
         )
         .expect(
             "an explicit candidate outside .graphtor/ but inside the project root must validate",
@@ -544,10 +578,167 @@ mod tests {
         // No other `.db` files exist in root — the root scan alone would
         // find exactly this one file, but the candidate must be honoured
         // regardless (characterizes the "no-config --db-path" path).
-        let served =
-            discover_served_databases(root.path(), root.path(), std::slice::from_ref(&explicit))
-                .expect("discovery should succeed");
+        let served = discover_served_databases(
+            root.path(),
+            root.path(),
+            std::slice::from_ref(&explicit),
+            None,
+        )
+        .expect("discovery should succeed");
         assert_eq!(served, vec![validate_path(&explicit, root.path()).unwrap()]);
+    }
+
+    // ── P1-T6: explicit `type: database` entry merge ────────────────────
+
+    fn database_source(id: &str, path: &Path) -> Source {
+        Source::Database(graphtor_core::DatabaseSource {
+            id: id.to_string(),
+            path: path.to_path_buf(),
+        })
+    }
+
+    #[test]
+    fn explicit_database_entry_is_merged_into_the_served_union() {
+        let root = temp_root();
+        let db = touch(root.path(), "legacy.db");
+        let config = config_with(vec![database_source("legacy", &db)]);
+
+        let served = discover_served_databases(root.path(), root.path(), &[], Some(&config))
+            .expect("discovery should succeed");
+
+        assert_eq!(served, vec![validate_path(&db, root.path()).unwrap()]);
+    }
+
+    #[test]
+    fn explicit_database_entry_matching_an_auto_discovered_file_collapses_to_one_entry() {
+        let root = temp_root();
+        let db = touch(root.path(), "shared.db");
+        // The SAME underlying file is BOTH auto-discoverable (dropped in
+        // root) AND explicitly declared — canonical-path dedup must
+        // collapse these to one served store, not two.
+        let config = config_with(vec![database_source("shared-alias", &db)]);
+
+        let served = discover_served_databases(root.path(), root.path(), &[], Some(&config))
+            .expect("discovery should succeed");
+
+        assert_eq!(
+            served.len(),
+            1,
+            "explicit entry + auto-discovery for the same file must collapse"
+        );
+    }
+
+    #[test]
+    fn explicit_database_entry_escaping_root_via_dotdot_is_rejected_not_served() {
+        let root = temp_root();
+        let outside = root.path().join("..").join("outside.db");
+        let config = config_with(vec![database_source("escaping", &outside)]);
+
+        // Unlike an escaping `existing_candidate` (which is a hard Err —
+        // upstream code produced it), an operator-authored explicit entry
+        // that escapes the root is silently excluded so a single bad entry
+        // does not abort serving every other database.
+        let served = discover_served_databases(root.path(), root.path(), &[], Some(&config))
+            .expect("discovery must not hard-fail on an escaping explicit entry");
+        assert!(
+            served.is_empty(),
+            "an out-of-root explicit entry must never be served"
+        );
+    }
+
+    #[test]
+    fn explicit_database_entry_via_windows_junction_is_rejected_not_served() {
+        let root = temp_root();
+        let external = temp_root();
+        let external_db = touch(external.path(), "external.db");
+
+        let junction_path = root.path().join("escape_junction");
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                junction_path.to_str().unwrap(),
+                external.path().to_str().unwrap(),
+            ])
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            _ => {
+                eprintln!(
+                    "skipping junction test: unable to create a junction in this environment"
+                );
+                return;
+            }
+        }
+
+        // The explicit entry's path traverses THROUGH the in-root junction
+        // to reach a file that canonicalizes outside `root` — rejected.
+        let escaping_path = junction_path.join(external_db.file_name().unwrap());
+        let config = config_with(vec![database_source("via-junction", &escaping_path)]);
+
+        let served = discover_served_databases(root.path(), root.path(), &[], Some(&config))
+            .expect("discovery must not hard-fail on a junction-escaping explicit entry");
+        assert!(
+            served.is_empty(),
+            "an explicit entry resolving outside root via a junction must never be served"
+        );
+    }
+
+    #[test]
+    fn explicit_database_entry_is_always_classified_read_only() {
+        let root = temp_root();
+        let db = touch(root.path(), "legacy.db");
+        let config = config_with(vec![database_source("legacy", &db)]);
+
+        let served = discover_served_databases(root.path(), root.path(), &[], Some(&config))
+            .expect("discovery should succeed");
+        let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::ReadOnly)],
+            "an explicit type: database entry is inherently read-only and never Generation"
+        );
+        assert!(classified.generation_sources.is_empty());
+    }
+
+    #[test]
+    fn mixed_local_and_database_config_serves_database_read_only_via_served_db_path() {
+        let root = temp_root();
+        let docs_dir = root.path().join("docs");
+        touch(&docs_dir, "guide.md");
+        let generation_db = root.path().join("graph.db");
+        let legacy_db = touch(root.path(), "legacy.db");
+
+        let config = config_with(vec![
+            local_source("docs", &docs_dir, None),
+            database_source("legacy", &legacy_db),
+        ]);
+
+        let served = discover_served_databases(
+            root.path(),
+            root.path(),
+            std::slice::from_ref(&generation_db),
+            Some(&config),
+        )
+        .expect("discovery should succeed");
+        assert_eq!(
+            served.len(),
+            2,
+            "expected the generation target + the explicit database entry"
+        );
+
+        let classified =
+            classify_serve_postures(&served, Some(&config), &generation_db, root.path());
+        let legacy_path = validate_path(&legacy_db, root.path()).unwrap();
+        let mode_of_legacy = classified
+            .postures
+            .iter()
+            .find(|(p, _)| *p == legacy_path)
+            .map(|(_, mode)| *mode)
+            .unwrap();
+        assert_eq!(mode_of_legacy, ServeMode::ReadOnly);
     }
 
     // ── P1-T2: classify_serve_postures ──────────────────────────────────
@@ -647,6 +838,7 @@ mod tests {
             root.path(),
             root.path(),
             std::slice::from_ref(&generation_db),
+            None,
         )
         .expect("union should include both the configured target and the dropped db");
         assert_eq!(
