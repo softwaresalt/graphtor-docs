@@ -45,12 +45,12 @@ ingestion).
 
 | # | Requirement (from decision) | Implementation action | Phase |
 |---|---|---|---|
-| R1 | `serve` auto-discovers `*.db` in `.graphtor/` root | Add a root-scan discovery step feeding the new `serve_discovery` module; it does NOT feed or modify `discover_db_files` | P1 / T1 |
+| R1 | `serve` auto-discovers `*.db` in `.graphtor/` root | Add a root-scan discovery step feeding the new `serve_discovery` module; the served set is a UNION that PRESERVES the existing `discover_db_files` candidates (configured targets incl. not-yet-created, explicit `--db-path`) plus the root-scan entries; the auto-discovered subset does NOT feed or modify `discover_db_files` | P1 / T1 |
 | R2 | Mode is content-derived; stale/empty `sources.yaml` never enables sync | Add resolvable-source classification; default read-only | P1 / T2 |
 | R3 | No-real-source dbs are served read-only and never background-synced | Gate rw-store open + pass ONLY filtered `Generation` source groups to `spawn_background_sync` | P1 / T2+T3 |
 | R4 | v4 pre-sync gate applies to auto-discovered read-only dbs | Engine-enforced read-only open + no-write proof; reuse `needs_v4_migration` gate | P1 / T4 |
 | R5 | `status` + MCP list-sources span multiple discovered dbs | Synthesize source metadata from stored `doc_sources` | P1 / T5 |
-| R6 | Optional explicit read-only db entry in `sources.yaml` | Parse an additive `read_only`/database entry kind; workspace-contained (out-of-root paths rejected) | P1 / T6 |
+| R6 | Optional explicit read-only db entry in `sources.yaml` | Parse an additive `type: database` variant, workspace-contained (out-of-root paths rejected), after the P1-RF1..P1-RF4 variant-safe consumer pre-refactors make the additive variant compile-safe | P1 / T6 |
 | R7 | Optional `--read-only` override escape hatch | Add serve CLI flag forcing consumption posture | P1 / T7 |
 | R8 | Docs: pipeline + dev-workspace exception + read-only serve | Phase-1 docs in product-specs/design-docs | P1 / T8 |
 | R9 | `install` default creates only `.graphtor/` root + minimal serve `.mcp.json` | Consumption-first install path | P2 / T1 |
@@ -65,11 +65,14 @@ ingestion).
 
 Each unit follows the 2-hour rule (< 3 files, < 5 functions, < 4 test
 scenarios), width isolation (single domain), and produces a verifiable outcome.
-Phase 1 has 9 units (P1-T0..P1-T8); Phase 2 has 11 units after the review-thread
+Phase 1 has 9 primary units (P1-T0..P1-T8) plus 4 `Source`-variant compatibility
+pre-refactor units (P1-RF1..P1-RF4) added after the PR #88 third-pass review = 13
+Phase-1 units; Phase 2 has 11 units after the review-thread
 splits (P2-T1, P2-T2a, P2-T2b, P2-T3, P2-T4, P2-T5a, P2-T5b, P2-T5c, P2-T6,
-P2-T7a, P2-T7b). With the two covering features (050-F, 051-F) this is 22 items
+P2-T7a, P2-T7b). With the two covering features (050-F, 051-F) this is 26 items
 in shipment 045-S. Backlog IDs: P1-T0 = 050.009-T; P1-T1..T8 =
 050.002/050.004/050.001/050.003/050.005/050.006/050.007/050.008-T;
+P1-RF1..RF4 = 050.010/050.011/050.012/050.013-T;
 P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 051.004/051.001/051.002/051.008/051.003/051.006/051.005/051.009/051.010/051.007/
 051.011-T.
@@ -81,11 +84,16 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 > `src/workspace/serve_discovery.rs` (library code: `Result<_, GraphtorError>`,
 > no `unwrap`/`expect`, `thiserror`). It owns: (a) the `.graphtor/` root scan +
 > filter + containment, (b) resolvable-source classification, (c) explicit-entry
-> merge, and (d) canonical-path dedup. It MUST NOT modify the shared
-> `discover_db_files` (`src/main.rs:244`) or `split_plan_by_database`
-> (`src/main.rs:273`), which feed the SYNC/write path — injecting discovery
-> there would pull dropped consumption dbs into background sync (the INV-1
-> hazard). Posture is **per-db** (`ServeMode::ReadOnly | Generation`), not
+> merge, (d) canonical-path dedup, and (e) UNION assembly that PRESERVES the
+> existing serve candidate inputs — the configured source target db paths
+> (including not-yet-created generation targets) and the explicit `--db-path`
+> candidate returned by `discover_db_files` — so the served set is a strict
+> superset of today's candidates, not a replacement (review thread 1 / PR #88
+> comments 3588875971, 3588876019). It CONSUMES the OUTPUT of `discover_db_files`
+> but MUST NOT modify the shared `discover_db_files` (`src/main.rs:244`) or
+> `split_plan_by_database` (`src/main.rs:273`), which feed the SYNC/write path —
+> injecting discovery there would pull dropped consumption dbs into background
+> sync (the INV-1 hazard). Posture is **per-db** (`ServeMode::ReadOnly | Generation`), not
 > per-workspace, so a workspace may hold both source-backed and dropped
 > read-only dbs.
 
@@ -121,9 +129,19 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   feature-disable fallback. Resolve by proving engine read-only, or escalate for
   an explicit decision.
 
-**P1-T1 — Serve/status-scoped `.graphtor/*.db` discovery with containment** (code, test-first)
+**P1-T1 — Serve/status-scoped `.graphtor/*.db` discovery + candidate union with containment** (code, test-first)
 * Changes: add a serve/status-scoped discovery helper in the new
-  `serve_discovery` module that scans ONLY the `.graphtor/` root for `*.db`.
+  `serve_discovery` module that scans the `.graphtor/` root for `*.db` AND
+  assembles the served set as a UNION preserving the existing serve candidate
+  inputs (review thread 1 / PR #88 comments 3588875971, 3588876019): (a) the
+  configured source TARGET db paths from `discover_db_files`
+  (`src/main.rs:244-255`) INCLUDING generation targets not yet on disk; (b) the
+  explicit `--db-path` / no-config candidate (`src/main.rs:2408-2417`); (c)
+  workspace-contained `type: database` entries (merged by P1-T6); and (d) newly
+  auto-discovered EXISTING `*.db` files in the `.graphtor/` root. Only the (d)
+  root-scan subset is force-classified read-only and MUST NEVER feed back into
+  `discover_db_files`/`split_plan_by_database`; the zero-db exit fires ONLY when
+  the FULL union is empty.
   Containment mechanism: canonicalize the root and each candidate, normalize the
   Windows `\\?\` UNC prefix, assert the canonical candidate is prefixed by the
   canonical root, and reject `..`, POSIX symlinks, AND Windows junctions/reparse
@@ -131,9 +149,14 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   generated artifacts; served set = `*.db` by extension minus skip-list. Do NOT
   touch `discover_db_files`/`split_plan_by_database`.
 * Files: `src/workspace/serve_discovery.rs` (new), `src/workspace/mod.rs` (wire).
-* Tests: discovers a dropped `.db`; skips `*.lock`/models/non-`.db`; rejects
-  `..`/symlink/junction escape (Windows junction case).
-* Posture: test-first.
+* Tests: served set = canonical-deduped union of the existing `discover_db_files`
+  candidates + the auto-discovered root `*.db`; **regression — a fresh
+  source-backed workspace whose configured target db does not exist yet still
+  reaches serve (not the zero-db exit); regression — an explicit `--db-path`
+  candidate is served even with no root-scan hit**; discovers a dropped `.db`;
+  skips `*.lock`/models/non-`.db`; rejects `..`/symlink/junction escape (Windows
+  junction case); auto-discovered entries never reach `discover_db_files`/sync.
+* Posture: test-first. Depends on P1-T0.
 
 **P1-T2 — Content-derived posture classification (three-way, fail-safe)** (code, test-first)
 * Changes: in `serve_discovery`, classify each candidate db into a per-db
@@ -239,8 +262,14 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   — no other fields in Phase 1 (the variant IS read-only; no `read_only` field).
   Adding `Database(DatabaseSource)` to the existing internally-tagged `Source`
   enum (`#[serde(tag = "type", rename_all = "lowercase")]`,
-  `src/config/source.rs:51-56`) is purely additive — existing `type: local`
-  entries parse unchanged; `git`/`url` stay rejected. Merged through
+  `src/config/source.rs:51-56`) is additive at the serde level AND compile-safe
+  for consumers because P1-RF1..P1-RF4 first route every external irrefutable
+  `Source::Local` binding (config validation, acquire/plan, acquire/mod,
+  pipeline/mod, sync/mod, main.rs) through variant-safe accessors (review threads
+  2/2b / PR #88 comments 3588876057, 3588876095) — existing `type: local` entries
+  parse unchanged and `git`/`url` stay rejected; adding the variant then only
+  extends the `src/config/source.rs` accessor match arms and breaks no external
+  consumer. Merged through
   `serve_discovery` with CANONICAL-path dedup against auto-discovery (same
   underlying file collapses to one served store; the explicit entry's `id` is the
   served alias/name). Phase-1 explicit entries MUST remain **workspace-contained**:
@@ -252,11 +281,20 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   round-trips with zero risk (the original `deny_unknown_fields` concern is moot).
 * Files: `sources.yaml` schema/parse module, `src/workspace/serve_discovery.rs`.
 * Tests: explicit workspace-contained read-only entry served read-only + never
-  synced; explicit entry + auto-discovery for the same file collapse to one
-  store; an entry using `..`/POSIX symlink/Windows junction/outside-root path →
-  rejected with a path-violation error; a pre-change `sources.yaml` round-trips
-  (backward-compat parse).
-* Posture: test-first. Depends on P1-T3 (behaviour owned by T3; review thread 5).
+  synced; **mixed local+database config through BOTH `serve` (database served
+  read-only, local source keeps generation posture) AND `sync` (`cmd_sync`
+  ingests only the local source; the database entry is ignored via the
+  P1-RF2/P1-RF3 gates)**; explicit entry + auto-discovery for the same file
+  collapse to one store; an entry using `..`/POSIX symlink/Windows
+  junction/outside-root path → rejected with a path-violation error; a pre-change
+  `sources.yaml` round-trips (backward-compat parse); the additive variant
+  compiles with only `src/config/source.rs` match-arm changes (clippy-pedantic
+  clean).
+* Posture: test-first. Depends on P1-T3 and P1-RF4 (050.013-T, the last
+  variant-safe pre-refactor) — the variant is added only after every external
+  `Source::Local` consumer is variant-safe (review threads 2/2b, 5). Ingestion
+  filtering is owned by P1-RF2/P1-RF3, so this unit does NOT touch
+  `cmd_sync`/main.rs and stays at 2 source files.
 
 **P1-T7 — Optional `--read-only` serve override flag** (config/CLI, test-first)
 * Changes: add a `--read-only` escape-hatch flag to `serve` that forces
@@ -275,6 +313,64 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Files: `docs/product-specs/*.md`, `docs/design-docs/*.md`.
 * Tests: n/a (docs); `backlogit_docs_lint` clean.
 * Posture: docs. Depends on P1-T3 (document actual behaviour).
+
+### Phase 1 — `Source`-variant compatibility pre-refactors (P1-RF1..P1-RF4)
+
+> **Added after the PR #88 third-pass review (comments 3588876057, 3588876095).**
+> The `Source` enum today has ONLY `Local(LocalSource)`
+> (`src/config/source.rs:53-56`), so EVERY consumer destructures it irrefutably
+> (`let Source::Local(...) = ...`). Adding `Database(DatabaseSource)` in P1-T6
+> would break compilation at 8 external sites. These four pre-refactors route
+> every external consumer through variant-safe accessors FIRST; each is a pure
+> structural refactor with NO behaviour change while only `Local` exists
+> (independently green), each ≤ 2 source files, chained
+> P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-T6. "Filter/ignore `Database` by design"
+> is the emergent effect of these gates: once the variant lands, non-ingestible
+> sources are skipped by every acquisition/sync consumer with no separate
+> top-level filter needed.
+
+**P1-RF1 — Variant-safe `Source` accessors + config-validation refactor** (050.010-T; code, test-first)
+* Changes: add `Source::as_local(&self) -> Option<&LocalSource>` and
+  `Source::is_ingestible(&self) -> bool` to `src/config/source.rs` (today always
+  `Some`/`true`); refactor the two irrefutable bindings in
+  `src/config/validation.rs` (`validate` ~L67, `detect_with_context` ~L210) to
+  route through `as_local()` / existing accessors. NO variant is added here.
+* Files: `src/config/source.rs`, `src/config/validation.rs`.
+* Tests: `as_local()`/`is_ingestible()` unit behaviour; `validate` and
+  `detect_with_context` produce identical results for local-only configs; clean
+  under clippy pedantic (refutable `Option` let-else — no irrefutable-pattern lint).
+* Posture: test-first. Depends on P1-T3.
+
+**P1-RF2 — Acquire plan/dispatch variant-safe refactor** (050.011-T; code, test-first)
+* Changes: route `validate_sources` (`src/acquire/plan.rs:90`),
+  `resolve_source_dir` (`src/acquire/plan.rs:135`), and `execute_scan_local`
+  (`src/acquire/mod.rs:143`) through `as_local()` so acquisition ignores
+  non-ingestible sources by design.
+* Files: `src/acquire/plan.rs`, `src/acquire/mod.rs`.
+* Tests: `validate_sources`/`resolve_source_dir`/`execute_scan_local` identical for
+  local-only configs; existing acquire tests green.
+* Posture: test-first. Depends on P1-RF1.
+
+**P1-RF3 — Pipeline record + sync-cycle variant-safe refactor** (050.012-T; code, test-first)
+* Changes: route `build_source_record` (`src/pipeline/mod.rs:709`), `sync_source`
+  (`src/sync/mod.rs:227`), and `build_new_state` (`src/sync/mod.rs:1059`) through
+  `as_local()`/`is_ingestible()` so the per-source sync path ignores non-ingestible
+  sources by design.
+* Files: `src/pipeline/mod.rs`, `src/sync/mod.rs`.
+* Tests: `build_source_record`/`sync_source`/`build_new_state` identical for local
+  sources; existing pipeline/sync tests green.
+* Posture: test-first. Depends on P1-RF2.
+
+**P1-RF4 — v4-migration source-helper variant-safe refactor** (050.013-T; code, test-first)
+* Changes: route `source_id` (`src/main.rs:655`) via the existing `Source::id()`
+  accessor and `changed_source_fields` (`src/main.rs:661`) via `as_local()` on both
+  operands (defensive empty set when non-local). This closes the LAST external
+  irrefutable consumer.
+* Files: `src/main.rs`.
+* Tests: `source_id`/`changed_source_fields` identical for local sources; after
+  this unit ZERO external `let Source::Local(...)` bindings remain, so P1-T6 adds
+  the variant with only `src/config/source.rs` arm updates.
+* Posture: test-first. Depends on P1-RF3.
 
 ### Phase 2 — B333B9B8 (covering feature: consumption-first install + opt-in ingestion)
 
@@ -321,17 +417,29 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
 * Posture: test-first. Depends on P2-T1.
 
 **P2-T2b — Opt-in full-ingestion scaffold + managed marker** (code, test-first)
-* Changes: when `--with-ingestion` is set, invoke the PRESERVED full-scaffold
-  `install()` (already creates config + data/cache/logs + bin/binary copy; kept
-  intact by P2-T1) and complete the generation footprint — write the template
-  `sources.yaml` and write `.mcp.json` via the shared P2-T3 writer so the managed
+* Changes: when `--with-ingestion` is set (routed by P2-T2a), OWN the full-path
+  install orchestration. Invoke the PRESERVED full-scaffold `install()` (already
+  creates config + data/cache/logs + bin/binary copy; kept intact by P2-T1) AND
+  own the post-install orchestration currently UNCONDITIONAL in `cmd_install`
+  (`src/main.rs:3017-3028`): write the template `sources.yaml`
+  (`init_sources_yaml`), manage the `.gitignore` block (unless `--no-gitignore`;
+  thread 8), and write `.mcp.json` via the shared P2-T3 writer so the managed
   server entry uses the pinned `.graphtor/bin` path AND carries the managed marker
-  (review thread 13); retain the existing managed `.gitignore` behaviour (unless
-  `--no-gitignore`; thread 8). The graphtor dev workspace uses this path.
-* Files: `src/workspace/install.rs`.
+  (review thread 13). These `sources.yaml`/`.gitignore`/`.mcp.json` calls MUST be
+  guarded to the `--with-ingestion` path so the consumption-first DEFAULT
+  (`install_minimal()`, P2-T1) never runs them. P2-T2a stays routing-only (flag +
+  branch selection, no scaffold behaviour); this split resolves the boundary
+  conflict where neither a routing-only T2a nor a one-file T2b could own the
+  `cmd_install` orchestration (PR #88 comments 3588876203, 3588876245). The
+  graphtor dev workspace uses this full path.
+* Files: `src/workspace/install.rs`, `src/main.rs` (`cmd_install` full-path
+  orchestration; still < 3 files).
 * Tests: `--with-ingestion` → full layout + `sources.yaml` + copied binary +
-  `.mcp.json` pinned bin path WITH managed marker + managed `.gitignore`; default
-  → none of these and no `.gitignore`.
+  `.mcp.json` pinned bin path WITH managed marker + managed `.gitignore`; the
+  full-path `sources.yaml`/`.gitignore`/`.mcp.json` orchestration runs ONLY on
+  `--with-ingestion`; default (no flag) routes to `install_minimal()` and creates
+  none of these (no `sources.yaml`, no `.gitignore`, minimal serve `.mcp.json`);
+  P2-T2a implements no scaffold behaviour.
 * Posture: test-first. Depends on P2-T2a and P2-T3.
 
 **P2-T3 — Shared `.mcp.json` writer: resolution ladder + managed marker + atomic write** (code, test-first) — Phase-2 root
@@ -346,20 +454,30 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   collision contract for the `graphtor-docs` key (review thread E / comment
   3585938864) — the current writer does `servers.insert("graphtor-docs", ...)`
   (`mcp_config.rs:131-134`), overwriting an unmarked user entry with that key.
-  Replace it with a three-way decision: key ABSENT → insert a marked managed entry
-  atomically; PRESENT AND carrying the provenance marker → UPDATE atomically in
-  place; PRESENT but UNMARKED (user-authored) → FAIL CLOSED with a
-  `GraphtorError::Config` collision error, leaving the file byte-for-byte
-  unchanged (never overwrite). The current writer hardcodes `.graphtor/bin/...`
+  Replace it with a FOUR-way decision (review thread E / comment 3585938864,
+  extended by PR #88 comments 3588876135, 3588876172): key ABSENT → insert a
+  marked managed entry atomically; PRESENT AND carrying the provenance marker →
+  UPDATE atomically in place; PRESENT, UNMARKED, but EXACTLY matching the legacy
+  generated shape (exact NORMALIZED command equality to `.graphtor/bin/graphtor-docs`
+  OR `.graphtor/bin/graphtor-docs.exe` AND args == `["serve"]` AND stdio
+  transport) → MIGRATE IN PLACE atomically by ADDING the provenance marker and
+  refreshing the managed value (this is the current release's OWN pre-marker entry
+  — R14 backward-compat for existing installs / reinstall / `--with-ingestion` —
+  NOT a user collision); PRESENT, UNMARKED, and any OTHER shape (user-authored) →
+  FAIL CLOSED with a `GraphtorError::Config` collision error, leaving the file
+  byte-for-byte unchanged (never overwrite). The legacy shape uses EXACT equality
+  (the SAME predicate as P2-T5b removal), never CONTAINS. The current writer hardcodes `.graphtor/bin/...`
   (`mcp_config.rs:86`) and always creates it; restructured as the Phase-2 ROOT so
   binary resolution + marker + atomic write + collision contract exist BEFORE the
   minimal install (P2-T1) claims a working install (review thread 7).
 * Files: `src/workspace/mcp_config.rs`.
 * Tests: ladder pure-function (managed binary → pinned path+ext; none → bare PATH
   command, no `.exe`); managed marker present; atomic write with stable ordering;
-  collision — absent key → created, marked entry → updated in place, UNMARKED user
-  `graphtor-docs` key → install fails closed and the user entry is preserved
-  byte-for-byte; unrelated user servers preserved.
+  collision — absent key → created; marked entry → updated in place; **UNMARKED
+  entry EXACTLY matching the legacy generated shape → migrated in place (marker
+  added, managed value refreshed), NOT a collision (R14 backward-compat)**;
+  UNMARKED user `graphtor-docs` key of any OTHER shape → install fails closed and
+  the user entry is preserved byte-for-byte; unrelated user servers preserved.
 * Posture: test-first. Depends on Phase 1 (050-F).
 
 **P2-T4 — `doctor` tolerates the minimal consumption layout** (code, test-first)
@@ -392,16 +510,22 @@ P2-T3/T1/T2a/T2b/T4/T6/T5a/T5b/T5c/T7a/T7b =
   removes the managed server entry matched by (a) the P2-T3 provenance marker
   (primary) OR (b) a NARROW LEGACY MATCH for entries generated by the current
   pre-marker writer, which have no provenance field (review thread F / comment
-  3585938909). LEGACY MATCH (exact): the shape emitted by `managed_server_value`
-  (`mcp_config.rs:273-279`) — command CONTAINS `.graphtor/bin/graphtor-docs` (±
-  `.exe`) AND args == `["serve"]` AND transport == `"stdio"`. Remove/migrate ONLY
-  marker-matched or exact-legacy-matched entries; leave all other unmarked/user
-  entries untouched; atomic rewrite.
+  3585938909; tightened by PR #88 comments 3588876275, 3588876318). LEGACY MATCH
+  (EXACT equality): the shape emitted by `managed_server_value`
+  (`mcp_config.rs:273-279`) — command EQUALS the normalized value
+  `.graphtor/bin/graphtor-docs` OR `.graphtor/bin/graphtor-docs.exe` (exact string
+  equality after path normalization; NEVER a CONTAINS/substring test) AND args ==
+  `["serve"]` AND transport == `"stdio"`. Remove/migrate ONLY marker-matched or
+  exact-legacy-matched entries; leave all other unmarked/user entries untouched;
+  atomic rewrite.
 * Files: `src/workspace/mcp_config.rs`, `src/workspace/uninstall.rs`.
 * Tests: a MARKED managed entry is removed while a user-authored entry SURVIVES;
-  an UNMARKED LEGACY entry (current generated shape) is ALSO removed so upgraders
-  do not retain a stale registration; a user entry that merely references the
-  binary path but does NOT match the exact legacy shape is PRESERVED; a user-only
+  an UNMARKED LEGACY entry (exact generated shape) is ALSO removed so upgraders
+  do not retain a stale registration; **a user command with an extra PREFIX or
+  SUFFIX around the legacy path (e.g. `/opt/tools/.graphtor/bin/graphtor-docs` or
+  `.graphtor/bin/graphtor-docs-wrapper`) SURVIVES even when args are `["serve"]`
+  and transport is `"stdio"` (exact-equality, not CONTAINS)**; a user entry that
+  references the binary path but with different args is PRESERVED; a user-only
   `.mcp.json` is unchanged; rewrite is atomic.
 * Posture: test-first. Depends on P2-T5a and P2-T3.
 
@@ -453,8 +577,11 @@ Phase 1 (feature) ──blocks──> Phase 2 (feature)
 Phase 1 internal (P1-T0 is the root gate):
   P1-T0 ──> P1-T1 ──> P1-T2 ──> P1-T3 ──> {P1-T7, P1-T8}
   P1-T1 ──> P1-T5
-  P1-T3 ──> P1-T6 ──> P1-T4        (P1-T4 also depends on P1-T3; hardens the RO
-                                    primitive proven in P1-T0)
+  P1-T3 ──> P1-RF1 ──> P1-RF2 ──> P1-RF3 ──> P1-RF4 ──> P1-T6 ──> P1-T4
+                                    (the four variant-safe pre-refactors gate P1-T6;
+                                     P1-T6 also depends on P1-T3; P1-T4 also depends
+                                     on P1-T3 and hardens the RO primitive proven in
+                                     P1-T0)
 
 Phase 2 internal (P2-T3 is the root):
   P2-T3 ──> P2-T1 ──> {P2-T2a, P2-T4, P2-T6, P2-T7a}
@@ -465,10 +592,14 @@ Phase 2 internal (P2-T3 is the root):
 ```
 
 No cycles. Suggested execution order (matches shipment 045-S): P1-T0 → P1-T1 →
-P1-T2 → P1-T3 → P1-T6 → P1-T4 → P1-T5 → P1-T7 → P1-T8 → P2-T3 → P2-T1 → P2-T2a →
-P2-T2b → P2-T4 → P2-T6 → P2-T5a → P2-T5b → P2-T5c → P2-T7a → P2-T7b. Notes: P1-T0
+P1-T2 → P1-T3 → P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-T6 → P1-T4 → P1-T5 →
+P1-T7 → P1-T8 → P2-T3 → P2-T1 → P2-T2a → P2-T2b → P2-T4 → P2-T6 → P2-T5a →
+P2-T5b → P2-T5c → P2-T7a → P2-T7b. Notes: P1-T0
 proves the engine read-only primitive first (de-risks the shipment's primary
-invariant before any dependent work); P1-T3 and P1-T4
+invariant before any dependent work); the four `Source`-variant pre-refactors
+(P1-RF1..P1-RF4) run after P1-T3 and BEFORE P1-T6 so every external
+`Source::Local` consumer is variant-safe before the additive `type: database`
+variant is added (review threads 2/2b); P1-T3 and P1-T4
 both edit the read-only open / `open_serve_databases` — sequence T3 then T4. P1-T6
 introduces the explicit read-only entry that P1-T4's hardening exercises, so T6
 precedes T4 (review threads 4–6). P2-T3 (shared `.mcp.json` writer) is the Phase-2
@@ -507,6 +638,11 @@ root so the marker/atomic-write exist before the minimal install (review thread 
 | uninstall/upgrade break on minimal layout | Footprint-safe uninstall (P2-T5a) + managed MCP-entry removal (P2-T5b) + upgrade parity (P2-T5c) |
 | Existing full installs disrupted | Backward-compat detection + idempotency (P2-T6) |
 | Path traversal in discovery | Resolve within `.graphtor/` root; reject `..`/symlink escapes (P1-T1) |
+| Adding `Source::Database` breaks 8 irrefutable `Source::Local` consumers | Variant-safe accessor pre-refactors (P1-RF1..P1-RF4) route every external consumer through `as_local()`/`is_ingestible()` BEFORE the variant is added; each independently green (PR #88 threads 2/2b) |
+| Root-scan discovery drops existing serve candidates (fresh generation target / explicit `--db-path`) | Union preserves `discover_db_files` candidates incl. not-yet-created targets + explicit `--db-path`; zero-db exit only when the full union is empty (P1-T1; PR #88 thread 1) |
+| Reinstall/`--with-ingestion` fails on the release's own pre-marker `.mcp.json` entry | Four-way collision matrix migrates the exact legacy shape in place by adding the marker (R14); fail-closed only for other unmarked entries (P2-T3; PR #88 thread 3) |
+| `CONTAINS` legacy match deletes a look-alike user `.mcp.json` command | Exact normalized command equality to `.graphtor/bin/graphtor-docs`[.exe] (never CONTAINS) + prefix/suffix preservation test (P2-T3, P2-T5b; PR #88 threads 3, 5) |
+| Install orchestration split leaves T2a or T2b unable to meet acceptance | T2b owns the full-path `cmd_install` orchestration (adds `src/main.rs`, < 3 files); T2a stays routing-only (P2-T2b; PR #88 thread 4) |
 
 ## Plan Hardening Signals (REQUIRED)
 
@@ -882,3 +1018,51 @@ The 7 planning/backlog threads from the second review were remediated in-place
 Backlog impact (second review): Phase 1 grew from 8 to 9 task units (1 new:
 050.009-T); shipment 045-S is now 22 items; the dependency DAG was re-validated
 acyclic and the manifest is topologically ordered (P1-T0 first).
+
+### Third-Review Remediation (PR #88 third pass / 12 threads)
+
+The 12 Copilot threads from the third review were remediated in-place
+(planning/backlog only; no code, no build), grouped into 7 fixes:
+
+* **Serve candidate union (3588875971 plan, 3588876019 050.002-T)** — P1-T1's
+  served set is now a UNION preserving the existing `discover_db_files` candidates
+  (configured targets incl. not-yet-created generation targets, explicit
+  `--db-path`) plus root-scan entries; only auto-discovered entries are kept out of
+  `discover_db_files`/sync; the zero-db exit fires only when the full union is
+  empty; regression tests for a missing generation target and an explicit
+  `--db-path` were added.
+* **`Source::Database` consumer refactors (3588876057 plan, 3588876095 050.006-T)**
+  — the additive variant breaks 8 irrefutable `Source::Local` consumers, so four
+  dependency-ordered variant-safe pre-refactors P1-RF1..P1-RF4
+  (050.010 → 050.011 → 050.012 → 050.013-T, each ≤ 2 files, independently green)
+  route config validation, acquire/plan, acquire/mod, pipeline/mod, sync/mod, and
+  main.rs through `as_local()`/`is_ingestible()` BEFORE P1-T6 adds the variant;
+  acquisition and sync ignore `Database` by design (per-consumer gates); P1-T6 adds
+  the variant + a mixed local+database serve+sync test.
+* **Writer collision migration (3588876135 plan, 3588876172 051.004-T)** — the
+  P2-T3 collision matrix is now FOUR-way: absent → create marked; marked → update
+  in place; UNMARKED but exact legacy shape → migrate in place by adding the marker
+  (R14 backward-compat for the release's own pre-marker entry); any other unmarked
+  entry → fail closed. Exact normalized command equality, `["serve"]` args, stdio
+  transport; tests for both new cases.
+* **T2b full-path scaffold (3588876203 plan, 3588876245 051.008-T)** — P2-T2b adds
+  `src/main.rs` (still < 3 files) and owns the full-path `cmd_install` orchestration
+  (`sources.yaml`, managed `.gitignore`, `.mcp.json` writer calls), guarded to
+  `--with-ingestion`; P2-T2a stays routing-only.
+* **Legacy removal exact match (3588876275 plan, 3588876318 051.009-T)** — P2-T5b's
+  legacy predicate is EXACT normalized equality to `.graphtor/bin/graphtor-docs` or
+  `.graphtor/bin/graphtor-docs.exe` (never CONTAINS); a prefix/suffix look-alike
+  command with `["serve"]` args + stdio survives (new preservation test). This
+  supersedes the imprecise "narrow match" wording in second-review thread F and
+  aligns with the P2-T3 case-3 migration predicate (extends thread E to four-way).
+* **050-F summary (3588876360)** — the feature summary now reads P1-T0..P1-T8 plus
+  the four P1-RF1..P1-RF4 compatibility sub-units.
+* **051-F summary (3588876398)** — the feature summary now lists the actual 11
+  Phase-2 units (P2-T1, P2-T2a, P2-T2b, P2-T3, P2-T4, P2-T5a, P2-T5b, P2-T5c, P2-T6,
+  P2-T7a, P2-T7b).
+
+Backlog impact (third review): Phase 1 grew from 9 to 13 task units (4 new
+variant-safe pre-refactors: 050.010/050.011/050.012/050.013-T); shipment 045-S is
+now 26 items; the dependency DAG was re-validated acyclic
+(P1-T3 → P1-RF1 → P1-RF2 → P1-RF3 → P1-RF4 → P1-T6) and the manifest stays
+topologically ordered (P1-T0 first).
