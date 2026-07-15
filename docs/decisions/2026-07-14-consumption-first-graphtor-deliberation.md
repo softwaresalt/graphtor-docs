@@ -269,11 +269,11 @@ path.
    `config/bin/cache/data/logs`. A new `install --with-ingestion` (and/or the
    existing `init`) opt-in creates the full generation scaffold (config +
    `sources.yaml` + data/cache/logs + bin/binary copy). The graphtor dev
-   workspace uses the ingestion    path. Binary resolution precedence: prefer the
-      managed `.graphtor/bin/graphtor-docs` binary copy when the ingestion scaffold
-      created it — serialized in `.mcp.json` as its cwd-independent ABSOLUTE
-      `<canonical_project_root>/.graphtor/bin/graphtor-docs` path (see the locked
-      `.mcp.json` command value below) — otherwise reference the PATH command. `uninstall`, `upgrade`, and `doctor`
+   workspace uses the ingestion path. Binary resolution precedence: prefer the
+   managed `.graphtor/bin/graphtor-docs` binary copy when the ingestion scaffold
+   created it — serialized in `.mcp.json` as its cwd-independent ABSOLUTE
+   `<canonical_project_root>/.graphtor/bin/graphtor-docs` path (see the locked
+   `.mcp.json` command value below) — otherwise reference the PATH command. `uninstall`, `upgrade`, and `doctor`
    are updated to tolerate both footprints; behaviour stays idempotent and
    backward-compatible with existing full installs. *Rationale*: consumers get a
    minimal, sync-free footprint; authors are one flag away from the full scaffold.
