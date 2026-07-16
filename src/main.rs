@@ -155,12 +155,13 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
 
     match cli.command {
         Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path.as_deref(), &args, fmt),
-        Command::Serve(_) => {
+        Command::Serve(args) => {
             cmd_serve(
                 &db_path,
                 &cwd,
                 sources_path.as_deref(),
                 has_explicit_db_target,
+                args.read_only,
             )
             .await
         }
@@ -2447,6 +2448,7 @@ async fn cmd_serve(
     cwd: &std::path::Path,
     config_override: Option<&std::path::Path>,
     has_explicit_db_target: bool,
+    force_read_only: bool,
 ) -> anyhow::Result<i32> {
     let source_config_result = load_source_config(cwd, db_path, config_override);
 
@@ -2510,9 +2512,20 @@ async fn cmd_serve(
     // `Generation`; everything else — absent/empty/stale sources.yaml, or
     // an auto-discovered dropped db with no source targeting it — stays
     // `ReadOnly` (the fail-safe default).
+    //
+    // `--read-only` (P1-T7) is an escape hatch on top of this: passing
+    // `None` here regardless of the resolved `source_config` means NO
+    // source can ever promote a target to `Generation`, so every database
+    // in `served_paths` classifies `ReadOnly` and `generation_sources`
+    // stays empty — which in turn skips the duplicate-intake preflight and
+    // the background sync spawn below, exactly like an absent registry.
     let mut classified = workspace::serve_discovery::classify_serve_postures(
         &served_paths,
-        source_config.as_ref(),
+        if force_read_only {
+            None
+        } else {
+            source_config.as_ref()
+        },
         db_path,
         cwd,
     );

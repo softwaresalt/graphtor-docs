@@ -75,6 +75,26 @@ fn run_serve_with_closed_stdin(workspace: &Path) -> (String, Option<i32>) {
     )
 }
 
+/// Same as [`run_serve_with_closed_stdin`], but with additional CLI arguments
+/// appended after `serve` (e.g. `--read-only`).
+fn run_serve_with_closed_stdin_and_args(
+    workspace: &Path,
+    extra_args: &[&str],
+) -> (String, Option<i32>) {
+    let output = Command::new(graphtor_bin())
+        .current_dir(workspace)
+        .arg("serve")
+        .args(extra_args)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run graphtor-docs serve");
+
+    (
+        strip_ansi(&String::from_utf8_lossy(&output.stderr)),
+        output.status.code(),
+    )
+}
+
 fn write_sources_yaml(workspace: &Path, contents: &str) {
     let config_dir = workspace.join(".graphtor").join("config");
     std::fs::create_dir_all(&config_dir).expect("create config dir");
@@ -276,5 +296,98 @@ fn auto_discovered_pre_v4_db_is_refused_via_the_same_v4_gate() {
     assert!(
         stderr.contains("run `graphtor-docs sync` to rebuild the index before starting serve"),
         "serve should explain how to clear the migration gate: {stderr}"
+    );
+}
+
+// ── P1-T7: --read-only escape-hatch flag ────────────────────────────────
+
+#[test]
+fn read_only_flag_forces_readonly_posture_even_with_a_real_source_present() {
+    // Same mixed-workspace fixture as
+    // `mixed_workspace_gates_generation_and_readonly_independently`: a real,
+    // resolvable `local` source that would normally promote its target to
+    // `Generation`, plus an unrelated dropped db. `--read-only` must force
+    // EVERY database to `ReadOnly`, skip the background sync task, and never
+    // open a read-write store, regardless of the resolved sources.
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(
+        docs_dir.join("guide.md"),
+        b"---\ntitle: Guide\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nHello world.\n",
+    )
+    .expect("write guide.md");
+    write_sources_yaml(
+        workspace.path(),
+        "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
+    );
+    let graphtor_dir = workspace.path().join(".graphtor");
+    let dropped = graphtor_dir.join("dropped-unrelated.db");
+    build_v4_fixture(&dropped, workspace.path());
+
+    let (stderr, code) = run_serve_with_closed_stdin_and_args(workspace.path(), &["--read-only"]);
+
+    assert_eq!(
+        code,
+        Some(2),
+        "closed-stdin startup exits via the transport error: {stderr}"
+    );
+    assert!(
+        stderr.contains("generation_count=0"),
+        "--read-only must force every database to ReadOnly, even the real source's resolved \
+         target: {stderr}"
+    );
+    assert!(
+        !stderr.contains("opened SQLite DataStore"),
+        "--read-only must never open a read-write store: {stderr}"
+    );
+    assert!(
+        stderr.contains("opened engine-enforced read-only SQLite DataStore"),
+        "--read-only must open every database via the engine-enforced read-only primitive: \
+         {stderr}"
+    );
+    assert!(
+        stderr.contains("no generation sources resolved; background sync skipped"),
+        "--read-only must skip the background sync task even with a real source present: \
+         {stderr}"
+    );
+    assert!(
+        !stderr.contains("background sync task spawned"),
+        "--read-only must never spawn a background sync task: {stderr}"
+    );
+}
+
+#[test]
+fn without_read_only_flag_the_same_workspace_still_promotes_generation() {
+    // Control case: the identical fixture WITHOUT `--read-only` must still
+    // resolve the real source's target to `Generation`, proving the flag
+    // (not some unrelated change) is what forces read-only posture above.
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(
+        docs_dir.join("guide.md"),
+        b"---\ntitle: Guide\nsource: /test/s\ningested_at: 2026-01-01T00:00:00Z\ndoc_type: markdown\nsource_path: guide.md\n---\n# Guide\n\nHello world.\n",
+    )
+    .expect("write guide.md");
+    write_sources_yaml(
+        workspace.path(),
+        "sources:\n  - type: local\n    id: guide\n    path: docs\n    include:\n      - \"**/*.md\"\n",
+    );
+    let graphtor_dir = workspace.path().join(".graphtor");
+    let dropped = graphtor_dir.join("dropped-unrelated.db");
+    build_v4_fixture(&dropped, workspace.path());
+
+    let (stderr, code) = run_serve_with_closed_stdin(workspace.path());
+
+    assert_eq!(
+        code,
+        Some(2),
+        "closed-stdin startup exits via the transport error: {stderr}"
+    );
+    assert!(
+        stderr.contains("generation_count=1"),
+        "without --read-only the real source's target must still resolve to Generation: \
+         {stderr}"
     );
 }

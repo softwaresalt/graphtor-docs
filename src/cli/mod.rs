@@ -250,7 +250,17 @@ pub struct SyncArgs {
 /// Arguments for the `serve` subcommand.
 #[derive(Debug, clap::Args)]
 pub struct ServeArgs {
-    // Currently no extra arguments; kept as a struct for future flags.
+    /// Force every database to `ReadOnly` posture, regardless of resolved
+    /// sources.
+    ///
+    /// An escape hatch on top of the content-derived default (P1-T2): even a
+    /// database with a real, resolvable `local` source pointing at it is
+    /// served read-only and never background-synced when this flag is set.
+    /// There is no corresponding "force read-write" flag in this phase —
+    /// the content-derived default is authoritative unless explicitly
+    /// overridden toward the safer (read-only) posture.
+    #[arg(long)]
+    pub read_only: bool,
 }
 
 /// Arguments for the `status` subcommand.
