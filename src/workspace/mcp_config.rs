@@ -362,15 +362,19 @@ enum PruneOutcome {
     Rewrite(serde_json::Value),
 }
 
-/// Remove graphtor-docs-managed server entries from an MCP config document.
+/// Remove the graphtor-docs-managed server entry from an MCP config document.
 ///
-/// A server is "managed" when it carries the managed-entry provenance marker
-/// ([`MANAGED_MARKER_KEY`]) — the primary, forward-looking recognition path —
-/// OR, as a narrow backward-compat path for entries written before the
-/// marker existed, when it EXACTLY matches the historical pre-marker shape
-/// ([`is_exact_legacy_shape`]). Non-JSON input and configs without a managed
-/// entry yield [`PruneOutcome::Unchanged`], so shared configs holding
-/// unrelated servers are never destroyed.
+/// Pruning is restricted to the fixed [`MCP_SERVER_KEY`] (`graphtor-docs`): a
+/// user-authored copy or alias under a DIFFERENT key is ALWAYS preserved,
+/// even if it happens to carry the managed marker or the legacy shape. Under
+/// that fixed key, the entry is treated as "managed" when it carries the
+/// managed-entry provenance marker ([`MANAGED_MARKER_KEY`]) — the primary,
+/// forward-looking recognition path — OR, as a narrow backward-compat path
+/// for entries written before the marker existed, when it EXACTLY matches the
+/// historical pre-marker shape ([`is_exact_legacy_shape`]). Non-JSON input, a
+/// config without the managed key, or a `graphtor-docs` entry that is not
+/// recognized as managed yields [`PruneOutcome::Unchanged`], so shared
+/// configs holding unrelated servers are never destroyed.
 fn prune_managed_server(content: &str) -> PruneOutcome {
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
         return PruneOutcome::Unchanged;
@@ -384,7 +388,7 @@ fn prune_managed_server(content: &str) -> PruneOutcome {
 
     let managed_keys: Vec<String> = servers
         .iter()
-        .filter(|(_, cfg)| is_managed_for_removal(cfg))
+        .filter(|(key, cfg)| key.as_str() == MCP_SERVER_KEY && is_managed_for_removal(cfg))
         .map(|(key, _)| key.clone())
         .collect();
 
@@ -893,6 +897,51 @@ mod tests {
         assert!(
             !after.contains(".graphtor/bin/graphtor-docs"),
             "managed entry pruned"
+        );
+    }
+
+    #[test]
+    fn remove_prunes_only_the_managed_key_not_a_user_copy_under_another_key() {
+        // Copilot mcp_config.rs:389: pruning must be restricted to the fixed
+        // MCP_SERVER_KEY. A user-authored copy under a DIFFERENT key that
+        // happens to carry the managed marker (or the legacy shape) must be
+        // preserved — only `graphtor-docs` is ever pruned.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": "graphtor-docs",
+      "args": ["serve"],
+      "transport": "stdio",
+      "x-graphtor-managed": true
+    },
+    "my-graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs",
+      "args": ["serve"],
+      "transport": "stdio",
+      "x-graphtor-managed": true
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcomes = remove_mcp_config(tmp.path()).expect("remove");
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].action, McpConfigAction::Updated);
+        assert!(path.exists(), "file with the user copy must be kept");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+        let servers = parsed["mcpServers"].as_object().expect("mcpServers object");
+        assert!(
+            !servers.contains_key("graphtor-docs"),
+            "the managed graphtor-docs key must be pruned"
+        );
+        assert!(
+            servers.contains_key("my-graphtor-docs"),
+            "a user copy under another key must be preserved even when it carries the marker"
         );
     }
 
