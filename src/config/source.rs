@@ -196,8 +196,12 @@ pub struct LocalSource {
 ///
 /// LOCKED serialized contract (Phase 1): exactly two REQUIRED fields, `id`
 /// and `path`, and no others — this variant is inherently read-only, so
-/// there is deliberately no `read_only` field.
+/// there is deliberately no `read_only` field. `#[serde(deny_unknown_fields)]`
+/// enforces the closed shape: any extra key (e.g. a `read_only` typo) is
+/// rejected at parse time rather than silently ignored and still served
+/// read-only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseSource {
     /// Unique alias/name for this served database (e.g. `"legacy-docs"`).
     pub id: String,
@@ -373,12 +377,10 @@ sources:
 
     #[test]
     fn database_source_has_exactly_id_and_path_fields() {
-        // LOCKED contract: no `read_only` field and no other fields — an
-        // unknown field must be rejected the same way YAML would reject any
-        // other unrecognised key on a struct without `deny_unknown_fields`
-        // (i.e. it is simply ignored, matching `LocalSource`'s existing
-        // permissive-unknown-field behaviour) rather than silently adding
-        // new semantics.
+        // LOCKED contract: no `read_only` field and no other fields. A valid
+        // `{id, path}` entry parses into exactly those two fields; the
+        // unknown-field rejection is covered by
+        // `database_source_rejects_an_unknown_field`.
         const YAML: &str =
             "sources:\n  - type: database\n    id: legacy-docs\n    path: legacy.db\n";
         let config: SourceConfig = serde_yaml::from_str(YAML).expect("parse");
@@ -387,6 +389,44 @@ sources:
         };
         assert_eq!(d.id, "legacy-docs");
         assert_eq!(d.path, PathBuf::from("legacy.db"));
+    }
+
+    #[test]
+    fn database_source_rejects_an_unknown_field() {
+        // LOCKED contract (Copilot source.rs:201): the variant carries exactly
+        // `id` and `path`. An extra field such as `read_only: false` is a typo
+        // (or an attempt to override the inherent read-only posture) and MUST
+        // be rejected at parse time, not silently ignored and still served
+        // read-only. `#[serde(deny_unknown_fields)]` enforces this.
+        const YAML: &str = "sources:\n  - type: database\n    id: legacy-docs\n    \
+             path: legacy.db\n    read_only: false\n";
+        let result: Result<SourceConfig, _> = serde_yaml::from_str(YAML);
+        assert!(
+            result.is_err(),
+            "a `type: database` entry carrying an unknown field must be rejected"
+        );
+    }
+
+    #[test]
+    fn database_source_valid_entry_still_parses_with_deny_unknown_fields() {
+        // Prove `deny_unknown_fields` on the variant struct does NOT reject the
+        // internally-tagged enum's own `type` discriminator: serde strips the
+        // tag before handing the remaining content to `DatabaseSource`, so a
+        // valid `{type, id, path}` entry round-trips unchanged.
+        const YAML: &str =
+            "sources:\n  - type: database\n    id: legacy-docs\n    path: legacy.db\n";
+        let config: SourceConfig =
+            serde_yaml::from_str(YAML).expect("a valid type: database entry must still parse");
+        let Source::Database(d) = &config.sources[0] else {
+            panic!("expected a Database source");
+        };
+        assert_eq!(d.id, "legacy-docs");
+        assert_eq!(d.path, PathBuf::from("legacy.db"));
+
+        let reserialized = serde_yaml::to_string(&config).expect("reserialize");
+        let round_tripped: SourceConfig =
+            serde_yaml::from_str(&reserialized).expect("parse reserialized yaml");
+        assert_eq!(config, round_tripped);
     }
 
     #[test]
