@@ -785,3 +785,4 @@
 {"seq":786,"timestamp":"2026-07-16T00:07:42.9613528Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["status"],"item_id":"050.005-T","schema_version":1}}
 {"seq":787,"timestamp":"2026-07-16T00:30:27.4555773Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["status"],"item_id":"050.005-T","schema_version":1,"status_delta":{"from":"active","to":"done"}}}
 {"seq":788,"timestamp":"2026-07-16T00:40:47.7571335Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["status"],"item_id":"050.007-T","schema_version":1,"status_delta":{"from":"active","to":"done"}}}
+{"seq":789,"timestamp":"2026-07-16T00:49:47.1894347Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["status"],"item_id":"050.008-T","schema_version":1,"status_delta":{"from":"active","to":"done"}}}

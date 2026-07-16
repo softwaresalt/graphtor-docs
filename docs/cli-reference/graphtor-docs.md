@@ -81,31 +81,62 @@ graphtor-docs --verbose sync
 Start the MCP STDIO server.
 
 ```text
-graphtor-docs serve
+graphtor-docs serve [--read-only]
 ```
 
 Binds to STDIO (localhost only) and serves the 8 graphtor-docs MCP tools.
 Blocks until stdin closes (i.e., until the MCP client disconnects).
 
+`serve` auto-discovers the databases to open as the union of: any
+`sources.yaml`-resolved target (including an explicit `--db-path`), any
+explicit `type: database` entry (see
+[Configuration Guide](../configuration.md#source-type-database-type-database)),
+and any `.db` file dropped directly inside `.graphtor/` — no configuration is
+required to serve a dropped database. See
+[Consumption-first serve: auto-discovery, posture, and the operator trust boundary](../design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md)
+for the full discovery, posture, and trust-boundary design.
+
+Each discovered database is classified **independently**, purely from
+content:
+
+* A database with a real, resolvable `local` source targeting it (an
+  existing, non-empty directory matching that source's filters) is opened
+  read-write and kept in sync by the normal background sync task.
+* Every other database — no `sources.yaml`, an empty/stale registry, or a
+  dropped file with no source targeting it — is opened through the
+  engine-enforced **read-only** primitive and is never background-synced.
+  This is the fail-safe default on any ambiguity.
+
 On startup:
-1. Opens the CozoDB database
-2. Attempts to load the `all-MiniLM-L6-v2` embedding model
+
+1. Resolves the served database set and each database's posture (above)
+2. Opens each database according to its resolved posture
+3. Attempts to load the `all-MiniLM-L6-v2` embedding model
    - If the model loads successfully, `search_semantic` is enabled
    - If the model is unavailable, `search_semantic` returns a descriptive
      error; all other tools continue to work normally
-3. Starts the JSON-RPC STDIO server
+4. Starts the JSON-RPC STDIO server
 
-No additional flags. Configure the database path and sources file via the
-global `--db-path` and `--config` flags if needed.
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--read-only` | Force every discovered database to read-only posture, even one with a real, resolvable source. There is no corresponding "force read-write" flag — read-only is already the default posture on any ambiguity. |
+
+Configure the database path and sources file via the global `--db-path` and
+`--config` flags if needed.
 
 **Example:**
 
 ```sh
-# Start the MCP server (normal use)
+# Start the MCP server (auto-discovers .graphtor/*.db with zero config)
 graphtor-docs serve
 
 # Start with a custom database location
 graphtor-docs --db-path /data/myproject.db serve
+
+# Force read-only even in a workspace with real sources
+graphtor-docs serve --read-only
 ```
 
 ---
@@ -121,6 +152,11 @@ graphtor-docs status [FLAGS]
 Reports registered sources, their kind (`local`), path, and last-sync
 timestamp. If the database does not exist, prints a helpful message and exits
 with code `0`.
+
+`status` shares the same database auto-discovery `serve` uses (see the
+`serve` section above): a `.db` file dropped directly into `.graphtor/` with
+no `sources.yaml` at all is reported here too, with source metadata
+synthesized from that database's own stored records.
 
 | Flag | Default | Description |
 |---|---|---|
