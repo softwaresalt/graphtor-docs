@@ -17,20 +17,11 @@ use std::path::{Path, PathBuf};
 
 use crate::workspace::doctor::{detect_footprint, WorkspaceFootprint};
 use crate::workspace::gitignore::remove_gitignore_entry;
-use crate::workspace::mcp_config::{remove_mcp_config, McpConfigAction};
+use crate::workspace::mcp_config::{
+    managed_config_candidates, remove_mcp_config_from, McpConfigAction,
+};
 use crate::workspace::paths::{GRAPHTOR_DIR, GRAPHTOR_SUBDIRS};
 use graphtor_core::GraphtorError;
-
-/// MCP client config paths uninstall inspects for a managed graphtor-docs
-/// entry, mirroring the set managed by `crate::workspace::mcp_config`. Kept as
-/// a local copy because those path constants are private to that module; if
-/// the managed set there changes, update this list to match.
-const MCP_CONFIG_CANDIDATES: &[&str] = &[
-    ".mcp.json",
-    ".vscode/mcp.json",
-    ".cursor/mcp.json",
-    ".github/copilot/mcp.json",
-];
 
 /// Filename of the workspace advisory lock created inside `.graphtor/`.
 /// Mirrors `graphtor_core::lock`'s private `WORKSPACE_LOCK_FILE` — the root
@@ -137,11 +128,13 @@ pub fn plan_uninstall_full(project_root: &Path, keep_config: bool) -> UninstallP
     // MCP client config files that currently exist and may therefore have the
     // graphtor-docs entry pruned (or the file deleted if it was the sole
     // server). Files that exist without a managed entry are left untouched by
-    // execution, so this is a conservative "may be modified" preview.
-    let mcp_config_files: Vec<String> = MCP_CONFIG_CANDIDATES
-        .iter()
+    // execution, so this is a conservative "may be modified" preview. The
+    // candidate set comes from `mcp_config::managed_config_candidates` (its
+    // single source of truth) so there is no drift between what is enumerated
+    // here and what execution prunes.
+    let mcp_config_files: Vec<String> = managed_config_candidates()
+        .into_iter()
         .filter(|rel| project_root.join(rel).is_file())
-        .map(|rel| (*rel).to_string())
         .collect();
     let root_removal = predict_root_removal(&workspace_dir, &managed_dirs);
     UninstallPlan {
@@ -216,29 +209,36 @@ pub fn remove_empty_workspace_root(workspace_dir: &Path) -> Result<Option<String
     Ok(Some(workspace_dir.display().to_string()))
 }
 
-/// Execute a previously-computed uninstall plan EXACTLY (PA-3).
+/// Execute a previously-computed uninstall plan EXACTLY (PA-3 / F5).
 ///
-/// NEVER recomputes [`plan_uninstall`] internally — it operates only on the
-/// `planned` entries the caller passes in. This closes the TOCTOU window
-/// that would otherwise exist between "compute and display the
-/// approval-set plan" and "compute and execute the deletion plan" as two
-/// separate [`plan_uninstall`] calls, which could observe different
-/// filesystem states (for example, a directory created between the two
-/// calls that was never shown to the operator for approval).
+/// NEVER recomputes any part of the plan internally — it operates only on the
+/// approved [`UninstallPlan`] the caller passes in. This closes the TOCTOU
+/// window that would otherwise exist between "compute and display the
+/// approval-set plan" and "compute and execute the mutations": every
+/// destructive effect (managed subdirectory removals, the `.gitignore`
+/// cleanup, and the MCP config pruning) is replayed from the approved plan, so
+/// a directory, `.gitignore` block, or managed MCP config file that appeared
+/// AFTER the plan was shown is never mutated without operator approval.
 ///
-/// Each entry in `planned` is re-validated immediately before removal —
-/// it must still resolve to exactly one of the known graphtor-managed
-/// subdirectory names directly under `.graphtor/`, still be a real
-/// directory, and still not be a symlink — so a plan that has gone stale
-/// since it was computed (an entry deleted, replaced, or turned into a
-/// symlink in the interim) fails safe by skipping that entry rather than
-/// deleting it unconditionally or using it to justify deleting something
-/// else. This never EXPANDS the approved set: only entries present in
-/// `planned` are ever considered. As a second, independent layer of
-/// defence, `config/` is never deleted when `keep_config` is `true`
-/// regardless of whether it appears in `planned` — a caller does not need
-/// to trust that the plan it is replaying was itself built with the same
-/// `keep_config` value.
+/// Re-validation only ever SHRINKS the approved set (skip), never EXPANDS it:
+///
+/// * Each managed directory in `plan.managed_dirs` is re-validated immediately
+///   before removal — it must still resolve to exactly one of the known
+///   graphtor-managed subdirectory names directly under `.graphtor/`, still be
+///   a real directory, and still not be a symlink — so a stale plan (an entry
+///   deleted, replaced, or turned into a symlink in the interim) fails safe by
+///   skipping that entry. As a second, independent layer of defence, `config/`
+///   is never deleted when `keep_config` is `true` regardless of the plan.
+/// * `.gitignore` is cleaned ONLY when `plan.gitignore_cleanup` is `true`
+///   (never when the plan said `false`).
+/// * MCP configs are pruned ONLY for the files in `plan.mcp_config_files`; a
+///   listed file that no longer holds a managed entry is skipped inside
+///   [`remove_mcp_config_from`].
+///
+/// Root removal is deliberately NOT performed here — it is solely the caller's
+/// responsibility, gated on `plan.root_removal` and performed AFTER releasing
+/// the workspace lock (see `cmd_uninstall`), so the lock file never blocks an
+/// otherwise-empty root and an unapproved root is never removed.
 ///
 /// # Errors
 ///
@@ -247,16 +247,12 @@ pub fn remove_empty_workspace_root(workspace_dir: &Path) -> Result<Option<String
 pub fn uninstall_planned(
     project_root: &Path,
     keep_config: bool,
-    planned: &[PathBuf],
+    plan: &UninstallPlan,
 ) -> Result<UninstallResult, GraphtorError> {
     let workspace_dir = project_root.join(GRAPHTOR_DIR);
-    // Footprint MUST be captured before any deletion — afterward every
-    // subdirectory may be gone, which would misreport a full install as
-    // minimal and skip its .gitignore cleanup.
-    let footprint = detect_footprint(&workspace_dir);
     let mut removed: Vec<String> = Vec::new();
 
-    for dir in planned {
+    for dir in &plan.managed_dirs {
         let is_known_managed_subdir = dir.parent() == Some(workspace_dir.as_path())
             && dir.file_name().is_some_and(|name| {
                 GRAPHTOR_SUBDIRS
@@ -271,7 +267,7 @@ pub fn uninstall_planned(
         // known graphtor-managed subdirectory names directly under
         // `workspace_dir`, still a real directory, still not a symlink,
         // and never `config/` when `keep_config` is `true` — independent
-        // of whether the passed-in `planned` slice already honoured that.
+        // of whether the passed-in plan already honoured that.
         if !is_known_managed_subdir || is_protected_config || !dir.is_dir() || is_symlink(dir) {
             continue;
         }
@@ -282,27 +278,21 @@ pub fn uninstall_planned(
         removed.push(dir.display().to_string());
     }
 
-    // Clean up the now-possibly-empty workspace root itself, but ONLY when it
-    // is genuinely empty afterward. Anything left — a user-dropped `.db` file,
-    // a preserved `config/`, or a symlinked subdirectory we deliberately
-    // skipped — means the root must survive. Note that when a caller holds the
-    // workspace lock (its `.graphtor/graphtor.lock` file lives in this
-    // directory), the root is never empty here; such callers release the lock
-    // and call [`remove_empty_workspace_root`] afterward (see `cmd_uninstall`).
-    if let Some(removed_root) = remove_empty_workspace_root(&workspace_dir)? {
-        removed.push(removed_root);
-    }
-
-    // .gitignore parity (P2-T5a): only a full-footprint install ever wrote
-    // the managed `.gitignore` block (P2-T2b); a minimal install never
-    // touched `.gitignore` and uninstall must not either.
-    if footprint == WorkspaceFootprint::Full {
+    // .gitignore parity (P2-T5a) / F5: clean ONLY when the approved plan said
+    // so. `plan.gitignore_cleanup` already captured the pre-deletion footprint
+    // (only a full-footprint install ever wrote the managed block), so this
+    // never cleans a `.gitignore` a minimal install never touched, and never
+    // cleans a block that appeared after the plan was shown.
+    if plan.gitignore_cleanup {
         remove_gitignore_entry(project_root)?;
     }
 
-    // Prune the graphtor-docs entry from MCP client configs.
+    // Prune the graphtor-docs entry from ONLY the MCP client configs the
+    // approved plan enumerated (F5). A managed config file created after the
+    // plan was shown is never in this list and is therefore never mutated; a
+    // listed file that no longer holds a managed entry is a harmless skip.
     let mut updated: Vec<String> = Vec::new();
-    for outcome in remove_mcp_config(project_root)? {
+    for outcome in remove_mcp_config_from(project_root, &plan.mcp_config_files)? {
         match outcome.action {
             McpConfigAction::Removed => removed.push(outcome.path),
             McpConfigAction::Updated => updated.push(outcome.path),
@@ -319,17 +309,22 @@ mod tests {
     use crate::workspace::gitignore::add_gitignore_entry;
     use crate::workspace::install::{install, install_minimal};
 
-    /// Test-only convenience wrapper: computes a fresh [`plan_uninstall`]
-    /// result and immediately executes it via [`uninstall_planned`]. Real
-    /// callers (`cmd_uninstall` in `main.rs`) MUST reuse a single
-    /// already-computed plan across "display" and "execute" — see
-    /// [`uninstall_planned`]'s doc comment — so this two-calls-in-one
-    /// shorthand exists only for tests that do not care about that
-    /// PA-3 exact-plan guarantee.
+    /// Test-only convenience wrapper mirroring `cmd_uninstall`'s flow: compute
+    /// the full plan once, execute it via [`uninstall_planned`], then perform
+    /// the gated root removal (only when `plan.root_removal` was approved).
+    /// Real callers (`cmd_uninstall` in `main.rs`) additionally hold and
+    /// release the workspace lock around this sequence.
     fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResult, GraphtorError> {
-        let workspace_dir = project_root.join(GRAPHTOR_DIR);
-        let planned = plan_uninstall(&workspace_dir, keep_config);
-        uninstall_planned(project_root, keep_config, &planned)
+        let plan = plan_uninstall_full(project_root, keep_config);
+        let mut result = uninstall_planned(project_root, keep_config, &plan)?;
+        if plan.root_removal {
+            if let Some(removed_root) =
+                remove_empty_workspace_root(&project_root.join(GRAPHTOR_DIR))?
+            {
+                result.removed.push(removed_root);
+            }
+        }
+        Ok(result)
     }
 
     #[test]
@@ -372,7 +367,12 @@ mod tests {
         // BEFORE execution.
         fs::create_dir_all(&late_dir).expect("simulate late-created subdir");
 
-        uninstall_planned(tmp.path(), false, &planned).expect("uninstall_planned");
+        // Replay the approved plan exactly (the manipulated managed_dirs set).
+        let plan = UninstallPlan {
+            managed_dirs: planned,
+            ..plan_uninstall_full(tmp.path(), false)
+        };
+        uninstall_planned(tmp.path(), false, &plan).expect("uninstall_planned");
 
         assert!(
             late_dir.exists(),
@@ -404,7 +404,11 @@ mod tests {
         #[cfg(windows)]
         std::os::windows::fs::symlink_dir(&real_target, &logs_dir).expect("create symlink");
 
-        uninstall_planned(tmp.path(), false, &planned).expect("uninstall_planned");
+        let plan = UninstallPlan {
+            managed_dirs: planned,
+            ..plan_uninstall_full(tmp.path(), false)
+        };
+        uninstall_planned(tmp.path(), false, &plan).expect("uninstall_planned");
 
         assert!(
             real_target.exists(),
@@ -685,6 +689,117 @@ mod tests {
         assert!(
             non_empty.exists(),
             "a non-empty root must never be removed (remove_dir, not remove_dir_all)"
+        );
+    }
+
+    #[test]
+    fn uninstall_planned_does_not_mutate_config_created_after_the_plan() {
+        // F5: execution replays the APPROVED plan, never a fresh rescan. A
+        // managed `.mcp.json` created AFTER the plan was computed is not in the
+        // approved list and must NOT be pruned; the approved `.gitignore`
+        // cleanup still runs.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        add_gitignore_entry(tmp.path()).expect("gitignore");
+
+        let plan = plan_uninstall_full(tmp.path(), false);
+        assert!(
+            plan.mcp_config_files.is_empty(),
+            "precondition: no MCP config existed at plan time"
+        );
+        assert!(
+            plan.gitignore_cleanup,
+            "precondition: a full install plans to clean its gitignore block"
+        );
+
+        // A managed MCP config appears AFTER the plan was shown for approval.
+        let mcp_path = tmp.path().join(".mcp.json");
+        fs::write(
+            &mcp_path,
+            "{\"mcpServers\":{\"graphtor-docs\":{\"command\":\"graphtor-docs\",\
+             \"x-graphtor-managed\":true}}}",
+        )
+        .expect("write late mcp config");
+
+        uninstall_planned(tmp.path(), false, &plan).expect("uninstall_planned");
+
+        assert!(
+            mcp_path.exists(),
+            "an MCP config created after the plan must not be pruned by execution"
+        );
+        let mcp_after = fs::read_to_string(&mcp_path).expect("read mcp");
+        assert!(
+            mcp_after.contains("graphtor-docs"),
+            "the unapproved managed entry must be left intact: {mcp_after}"
+        );
+        let gitignore_after =
+            fs::read_to_string(tmp.path().join(".gitignore")).expect("read gitignore");
+        assert!(
+            !gitignore_after.contains(".graphtor/"),
+            "the approved gitignore cleanup must still run: {gitignore_after}"
+        );
+    }
+
+    #[test]
+    fn uninstall_cleans_the_approved_gitignore_and_mcp_entries() {
+        // F5 positive path: entries present at plan time ARE cleaned/pruned.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        add_gitignore_entry(tmp.path()).expect("gitignore");
+        let mcp_path = tmp.path().join(".mcp.json");
+        fs::write(
+            &mcp_path,
+            "{\"mcpServers\":{\"graphtor-docs\":{\"command\":\"graphtor-docs\",\
+             \"x-graphtor-managed\":true}}}",
+        )
+        .expect("write mcp config");
+
+        uninstall(tmp.path(), false).expect("uninstall");
+
+        assert!(
+            !mcp_path.exists(),
+            "an approved .mcp.json whose sole server was graphtor-docs must be removed"
+        );
+        let gitignore_after =
+            fs::read_to_string(tmp.path().join(".gitignore")).expect("read gitignore");
+        assert!(
+            !gitignore_after.contains(".graphtor/"),
+            "the approved managed gitignore block must be cleaned: {gitignore_after}"
+        );
+    }
+
+    #[test]
+    fn uninstall_root_removal_is_gated_on_plan_approval() {
+        // F6: root removal must be gated on the APPROVED plan, not on emptiness
+        // alone. A dropped `.db` makes the plan predict the root stays
+        // (`root_removal == false`); if that entry vanishes concurrently after
+        // the managed removals, the now-empty root must STILL NOT be removed —
+        // it was never in the approved plan (PA-3).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let dropped_db = tmp.path().join(GRAPHTOR_DIR).join("dropped.db");
+        fs::write(&dropped_db, b"marker").expect("write dropped db");
+
+        let plan = plan_uninstall_full(tmp.path(), false);
+        assert!(
+            !plan.root_removal,
+            "precondition: a dropped .db keeps the root in the approved plan"
+        );
+
+        uninstall_planned(tmp.path(), false, &plan).expect("uninstall_planned");
+        // The dropped db vanishes concurrently, leaving the root otherwise empty.
+        fs::remove_file(&dropped_db).expect("remove dropped db");
+
+        // Gated root removal (as `cmd_uninstall` does): because the plan did
+        // NOT approve it, the caller must not remove the root even though it is
+        // now empty.
+        let ws = tmp.path().join(GRAPHTOR_DIR);
+        if plan.root_removal {
+            remove_empty_workspace_root(&ws).expect("remove");
+        }
+        assert!(
+            ws.exists(),
+            "an unapproved root must never be removed even after it becomes empty"
         );
     }
 }

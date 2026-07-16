@@ -3550,28 +3550,32 @@ fn cmd_uninstall(
         }
     }
 
-    // Execute the EXACT managed-directory plan just displayed above (PA-3) —
-    // never recompute `plan_uninstall` internally, which would open a TOCTOU
-    // window where the set actually deleted could differ from the set the
-    // operator was just shown. This also cleans `.gitignore` and prunes the
-    // MCP config entries while the workspace lock is still held.
-    let mut result = workspace::uninstall::uninstall_planned(cwd, args.keep_config, planned)
+    // Execute the EXACT approved plan just displayed above (PA-3 / F5) — never
+    // recompute any part of it internally, which would open a TOCTOU window
+    // where the mutations actually performed (managed-dir removals, `.gitignore`
+    // cleanup, MCP config pruning) could differ from what the operator was
+    // shown. This runs while the workspace lock is still held.
+    let mut result = workspace::uninstall::uninstall_planned(cwd, args.keep_config, &plan)
         .context("uninstall failed")?;
 
     // F4: release the workspace lock BEFORE removing the root. While the lock
-    // is held, `.graphtor/graphtor.lock` keeps the directory non-empty, so
-    // `uninstall_planned` above could never remove an otherwise-empty root.
-    // Dropping the guard deletes that lock file; only then can the emptied
-    // root be reclaimed.
+    // is held, `.graphtor/graphtor.lock` keeps the directory non-empty, so an
+    // otherwise-empty root could never be reclaimed. Dropping the guard deletes
+    // that lock file; only then can the emptied root be removed.
     drop(lock_guard);
 
-    // Remove the root only if it is genuinely empty now (re-checked inside),
-    // using `fs::remove_dir` — never `remove_dir_all` — so a concurrent
-    // re-install that repopulated it is a harmless failure, not data loss.
-    if let Some(removed_root) = workspace::uninstall::remove_empty_workspace_root(&ws_dir)
-        .context("failed to remove the emptied workspace root")?
-    {
-        result.removed.push(removed_root);
+    // F6: remove the root ONLY when the approved plan said so (`root_removal`),
+    // AND it is genuinely empty now (re-checked inside `remove_empty_workspace_root`).
+    // Gating on the approved plan prevents deleting a root that a concurrently
+    // vanished non-managed entry left empty but that was never approved for
+    // removal; using `fs::remove_dir` — never `remove_dir_all` — makes a
+    // concurrent re-install that repopulated it a harmless failure, not data loss.
+    if plan.root_removal {
+        if let Some(removed_root) = workspace::uninstall::remove_empty_workspace_root(&ws_dir)
+            .context("failed to remove the emptied workspace root")?
+        {
+            result.removed.push(removed_root);
+        }
     }
 
     if fmt == OutputFormat::Json {

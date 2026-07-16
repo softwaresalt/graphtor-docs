@@ -295,27 +295,21 @@ fn is_exact_legacy_shape(entry: &serde_json::Value) -> bool {
     args_match && transport_match
 }
 
-/// Remove the graphtor-docs-managed MCP server from workspace configs.
+/// The full set of MCP client config paths (relative to the project root)
+/// graphtor-docs manages: the workspace-root `.mcp.json` plus the legacy
+/// editor-specific files (`.vscode/mcp.json`, `.cursor/mcp.json`,
+/// `.github/copilot/mcp.json`).
 ///
-/// Scans the workspace-root `.mcp.json` and legacy editor-specific config
-/// files (`.vscode/mcp.json`, `.cursor/mcp.json`, `.github/copilot/mcp.json`).
-/// For each, it removes only the server entry whose command references the
-/// managed `.graphtor/bin/graphtor-docs` binary — other MCP servers in a
-/// shared config are preserved. The file is deleted only when the managed
-/// entry was its sole content; otherwise it is rewritten in place. Files that
-/// are not valid JSON or contain no managed entry are left untouched.
-///
-/// Returns the per-file outcomes (deleted files vs in-place-pruned files).
-///
-/// # Errors
-///
-/// Returns [`GraphtorError::Config`] on I/O failure.
-pub fn remove_mcp_config(project_root: &Path) -> Result<Vec<McpConfigOutcome>, GraphtorError> {
-    let candidates: Vec<String> = std::iter::once(MCP_CONFIG_PATH)
+/// This is the single source of truth for the managed candidate set. Uninstall
+/// consumes it to enumerate — for operator approval — which config files may
+/// have their graphtor-docs entry pruned, then replays that exact approved
+/// list through [`remove_mcp_config_from`].
+#[must_use]
+pub fn managed_config_candidates() -> Vec<String> {
+    std::iter::once(MCP_CONFIG_PATH)
         .chain(LEGACY_CONFIG_PATHS.iter().copied())
         .map(str::to_string)
-        .collect();
-    remove_mcp_config_from(project_root, &candidates)
+        .collect()
 }
 
 /// Prune the managed graphtor-docs entry from ONLY the explicitly-listed
@@ -526,6 +520,14 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test-only convenience mirroring the old full-scan `remove_mcp_config`:
+    /// prune the managed entry across the ENTIRE managed candidate set. Real
+    /// callers (uninstall) instead enumerate the candidates for approval and
+    /// replay that exact list through [`remove_mcp_config_from`].
+    fn remove_mcp_config(project_root: &Path) -> Result<Vec<McpConfigOutcome>, GraphtorError> {
+        remove_mcp_config_from(project_root, &managed_config_candidates())
+    }
 
     /// A shared config document holding an UNMARKED legacy-shape managed
     /// entry (the exact shape the pre-P2-T3 writer produced). Used both to
@@ -1183,11 +1185,7 @@ mod tests {
         // Merge graphtor-docs in, exercising the temp-file + rename write path.
         generate_mcp_config(tmp.path()).expect("generate merges into existing config");
 
-        let mode = fs::metadata(&path)
-            .expect("metadata")
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
         assert_eq!(
             mode, 0o600,
             "the rewrite must preserve the destination's original 0600 mode, not widen to 0644"
