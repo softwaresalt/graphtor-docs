@@ -56,6 +56,17 @@ pub enum WorkspaceFootprint {
     Minimal,
 }
 
+impl WorkspaceFootprint {
+    /// Lowercase string form for structured (JSON) output.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Minimal => "minimal",
+        }
+    }
+}
+
 /// Detect whether `workspace_dir` uses the full or minimal footprint.
 ///
 /// A workspace is [`WorkspaceFootprint::Full`] when ANY of the

@@ -3188,8 +3188,13 @@ fn cmd_install(
     // Consumption-first default (P2-T1): the minimal footprint creates ONLY
     // `.graphtor/` plus a minimal serve `.mcp.json` — no `sources.yaml`, no
     // ingestion subdirectories (bin/data/cache/config/logs), and no
-    // `.gitignore` side effect.
+    // `.gitignore` side effect. `install_minimal` NEVER removes an existing
+    // full scaffold (P2-T6/INV-6), so the reported footprint reflects the
+    // ACTUAL on-disk state afterward, not merely "which install path ran" —
+    // running the default command over an existing full install continues
+    // to report `full`.
     let result = workspace::install::install_minimal(cwd).context("install failed")?;
+    let footprint = workspace::doctor::detect_footprint(&result.workspace_dir);
 
     // Generate or merge the graphtor-docs entry in the workspace-root .mcp.json.
     let mcp_outcome =
@@ -3207,7 +3212,7 @@ fn cmd_install(
             cli::jsonrpc::wrap_success(serde_json::json!({
                 "created": result.created,
                 "workspace_dir": result.workspace_dir.display().to_string(),
-                "footprint": "minimal",
+                "footprint": footprint.as_str(),
                 "mcp_config": mcp_config,
             }))
         );
@@ -3216,6 +3221,11 @@ fn cmd_install(
 
     if result.created {
         println!("created: {}", result.workspace_dir.display());
+    } else if footprint == workspace::doctor::WorkspaceFootprint::Full {
+        println!(
+            "workspace already exists: {} (existing full ingestion-capable install preserved)",
+            result.workspace_dir.display()
+        );
     } else {
         println!(
             "workspace already exists: {}",
@@ -4296,6 +4306,122 @@ mod tests {
             entry["x-graphtor-managed"], true,
             "the with-ingestion .mcp.json entry must carry the managed-entry provenance marker"
         );
+    }
+
+    #[test]
+    fn cmd_install_default_over_existing_full_layout_preserves_it() {
+        // An operator with an existing full (--with-ingestion) install runs
+        // plain `install` (the new default) — this must NOT strip the
+        // existing scaffold down to the minimal footprint.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let full_args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        cmd_install(tmp.path(), &full_args, OutputFormat::Human).expect("full install first");
+
+        let default_args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        let code = cmd_install(tmp.path(), &default_args, OutputFormat::Human)
+            .expect("default install over existing full layout should succeed");
+
+        assert_eq!(code, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                ws.join(sub).is_dir(),
+                "default install must preserve the existing full layout's {sub} subdirectory"
+            );
+        }
+        assert!(
+            ws.join("config").join("sources.yaml").exists(),
+            "default install must preserve the existing sources.yaml"
+        );
+        assert!(
+            workspace::install::installed_binary_path(&ws).exists(),
+            "default install must preserve the existing copied binary"
+        );
+    }
+
+    #[test]
+    fn cmd_install_default_over_existing_full_layout_reports_full_footprint() {
+        // JSON footprint reporting reflects ACTUAL on-disk state (via
+        // detect_footprint), not merely "which install function ran" — see
+        // the tests/install_footprint_test.rs integration test for the
+        // subprocess-level stdout assertion on the JSON "footprint" field.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let full_args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        cmd_install(tmp.path(), &full_args, OutputFormat::Human).expect("full install first");
+
+        let default_args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        let code = cmd_install(tmp.path(), &default_args, OutputFormat::Json)
+            .expect("default install over existing full layout should succeed");
+        assert_eq!(code, 0);
+
+        let ws = tmp.path().join(".graphtor");
+        assert_eq!(
+            workspace::doctor::detect_footprint(&ws),
+            workspace::doctor::WorkspaceFootprint::Full,
+            "the workspace must still be detected as Full after a default install on top of it"
+        );
+    }
+
+    #[test]
+    fn cmd_install_default_repeated_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let first = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("first install");
+        let second = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("second install");
+
+        assert_eq!(first, 0);
+        assert_eq!(second, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                !ws.join(sub).exists(),
+                "repeated default install must stay minimal, not accumulate subdirs"
+            );
+        }
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_repeated_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let first = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("first install");
+        let second = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("second install");
+
+        assert_eq!(first, 0);
+        assert_eq!(second, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                ws.join(sub).is_dir(),
+                "repeated --with-ingestion install must stay full"
+            );
+        }
     }
 
     #[test]
