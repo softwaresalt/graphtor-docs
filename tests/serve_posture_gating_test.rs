@@ -23,6 +23,15 @@ fn build_v4_fixture(db_path: &Path, root: &Path) {
     store.ensure_schema().expect("ensure_schema for fixture");
 }
 
+/// Build a pre-v4 (schema version 3) fixture database at `db_path`.
+fn build_v3_fixture(db_path: &Path, root: &Path) {
+    let store = DataStore::open_sqlite(db_path, root).expect("open_sqlite for fixture");
+    store.ensure_schema().expect("ensure_schema for fixture");
+    store
+        .set_schema_version_for_test(3)
+        .expect("downgrade schema version to 3 for fixture");
+}
+
 /// Strip ANSI CSI escape sequences (`\x1b[...<final-byte>`) from captured
 /// output. This codebase's `tracing_subscriber::fmt()` setup does not call
 /// `.with_ansi(false)`, so `info!` log lines are colourised even when piped
@@ -232,5 +241,40 @@ fn startup_log_reports_resolved_posture_and_discovered_count() {
             && stderr.contains("readonly_count=2"),
         "startup log must positively report the discovered-db count and resolved posture \
          breakdown: {stderr}"
+    );
+}
+
+// ── P1-T4: v4 gate parity for an auto-discovered read-only db ───────────
+
+#[test]
+fn auto_discovered_pre_v4_db_is_refused_via_the_same_v4_gate() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let graphtor_dir = workspace.path().join(".graphtor");
+    std::fs::create_dir_all(&graphtor_dir).expect("create .graphtor");
+    // A dropped, auto-discovered db with pre-v4 schema — no source config
+    // and no explicit --db-path, so this is discovered purely via the
+    // `.graphtor/` root scan and classified ReadOnly.
+    build_v3_fixture(&graphtor_dir.join("pre-v4-dropped.db"), workspace.path());
+
+    let output = Command::new(graphtor_bin())
+        .current_dir(workspace.path())
+        .arg("serve")
+        .output()
+        .expect("run graphtor-docs serve");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "serve should fail at the v4 migration gate for an auto-discovered pre-v4 db"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("pre-v4 schema"),
+        "serve should reach the same v4 gate message for an auto-discovered db as for an \
+         explicit --db-path target: {stderr}"
+    );
+    assert!(
+        stderr.contains("run `graphtor-docs sync` to rebuild the index before starting serve"),
+        "serve should explain how to clear the migration gate: {stderr}"
     );
 }

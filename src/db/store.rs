@@ -901,4 +901,85 @@ mod tests {
             "open_sqlite must clear the stale readonly attribute"
         );
     }
+
+    // ── P1-T4: ATTACH / loadable-extension hardening ───────────────────────
+    //
+    // Cozo's query language (CozoScript) has no raw-SQL escape hatch: its
+    // parser (a Pest grammar) does not define `ATTACH DATABASE` as valid
+    // syntax, and its built-in function library has no `load_extension`
+    // equivalent. The underlying SQLite connection is used purely as an
+    // internal single-table key-value store (`cozo(k BLOB, v BLOB)`) that
+    // only Cozo's own storage layer ever touches directly — a served
+    // read-only store (auto-discovered OR an explicit workspace-contained
+    // entry; the primitive is identical either way) can therefore never be
+    // asked, via any query this crate exposes, to ATTACH another file or
+    // load a native-code extension. These tests PROVE that architectural
+    // invariant empirically rather than merely asserting it.
+
+    #[test]
+    fn engine_readonly_store_rejects_attach_database_as_invalid_cozoscript() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("attach-hardening.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+            .expect("open_engine_readonly should succeed");
+
+        let result = readonly.query("ATTACH DATABASE 'other.db' AS evil", BTreeMap::new());
+
+        assert!(
+            result.is_err(),
+            "ATTACH DATABASE is not valid CozoScript syntax and must be rejected, proving no \
+             raw-SQL escape hatch exists for a served read-only store"
+        );
+    }
+
+    #[test]
+    fn engine_readonly_store_has_no_load_extension_function() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("extension-hardening.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+            .expect("open_engine_readonly should succeed");
+
+        let result = readonly.query(
+            "?[loaded] := loaded = load_extension('evil.so')",
+            BTreeMap::new(),
+        );
+
+        assert!(
+            result.is_err(),
+            "load_extension is not a CozoScript built-in function and must be rejected, \
+             proving no loadable-extension surface exists for a served read-only store"
+        );
+    }
+
+    #[test]
+    fn engine_readonly_store_explicit_entry_scenario_is_identically_hardened() {
+        // The hardening primitive does not distinguish HOW a served path was
+        // discovered (auto-discovery vs. an explicit workspace-contained
+        // `type: database` entry, P1-T6) — both flow through
+        // `open_engine_readonly` identically, so the SAME ATTACH/extension
+        // immunity applies uniformly. This test opens a second, differently
+        // named fixture standing in for an explicit entry to make that
+        // uniformity explicit in the test suite rather than merely implicit
+        // in the shared code path.
+        let dir = temp_dir();
+        let db_path = dir.path().join("explicit-entry-served.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path()).expect(
+            "open_engine_readonly should succeed for an explicit workspace-contained entry",
+        );
+
+        let attach_result = readonly.query("ATTACH DATABASE 'other.db' AS evil", BTreeMap::new());
+        let extension_result = readonly.query(
+            "?[loaded] := loaded = load_extension('evil.so')",
+            BTreeMap::new(),
+        );
+
+        assert!(attach_result.is_err());
+        assert!(extension_result.is_err());
+    }
 }
