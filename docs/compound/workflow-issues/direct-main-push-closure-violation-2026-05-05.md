@@ -8,7 +8,7 @@ root_cause: "Post-merge closure commits pushed directly to main using admin bypa
 resolution_type: "process_correction"
 severity: "high"
 message: "Bypassed rule violations for refs/heads/main: Changes must be made through a pull request."
-file_path: "docs/memory/2026-05-05/pr28-pr31-review-followups.md"
+file_path: "docs/archive/memory/2026-05-05/pr28-pr31-review-followups.md"
 citations:
   - "https://github.com/softwaresalt/graphtor-docs/commit/a35d5dd"
   - "https://github.com/softwaresalt/graphtor-docs/pull/32"
