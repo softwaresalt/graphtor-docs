@@ -46,21 +46,26 @@ const DB_EXTENSION: &str = "db";
 /// journal/WAL sidecars, and anything inside a subdirectory such as
 /// `models/`) are never root-scan candidates.
 ///
-/// `existing_candidates` AND explicit `type: database` entries are both
-/// validated against the BROADER `candidate_root` instead of `scan_root`:
+/// `existing_candidates` are validated against the BROADER `candidate_root`:
 /// today's `serve`/`status` already accept an explicit `--db-path` anywhere
 /// within the overall project root, not only inside `.graphtor/`
 /// (characterized by
 /// `serve_explicit_db_path_without_registry_reaches_v4_gate` in
 /// `tests/explicit_db_target_no_registry_test.rs`), and auto-discovery must
 /// not narrow that existing contract. An explicit `type: database` entry
-/// whose canonical `served_db_path()` equals an existing candidate or an
-/// auto-discovered entry collapses to the SAME single served store
-/// (canonical-path dedup) rather than opening it twice. Auto-discovery
-/// itself stays strictly scoped to `scan_root` — it never widens to scan
-/// the full `candidate_root` project tree, and out-of-root explicit
-/// entries are REJECTED (not served) rather than broadening the authorized
-/// root — external-path support is explicitly out of Phase-1 scope.
+/// (P1-T6), by contrast, is validated against `scan_root` — the SAME
+/// authorized root as auto-discovery, per the LOCKED plan requirement that
+/// explicit entries stay workspace-contained and MUST NOT broaden the
+/// authorized root beyond what auto-discovery itself scans. A `type:
+/// database` entry whose canonical `served_db_path()` equals an existing
+/// candidate or an auto-discovered entry collapses to the SAME single
+/// served store (canonical-path dedup) rather than opening it twice.
+/// Auto-discovery itself stays strictly scoped to `scan_root` — it never
+/// widens to scan the full `candidate_root` project tree, and any
+/// out-of-root entry (an explicit `type: database` entry outside
+/// `scan_root`, or an `existing_candidate` outside `candidate_root`) is
+/// REJECTED (not served) rather than broadening the authorized root —
+/// external-path support is explicitly out of Phase-1 scope.
 ///
 /// The zero-database case is represented by an empty returned `Vec` —
 /// callers decide how to react (for example, exiting with a "no databases
@@ -72,10 +77,10 @@ const DB_EXTENSION: &str = "db";
 /// Returns [`GraphtorError::PathViolation`] if one of `existing_candidates`
 /// escapes `candidate_root`, or [`GraphtorError::Io`] if `scan_root` exists
 /// but cannot be read. An explicit `type: database` entry that escapes
-/// `candidate_root` is silently excluded rather than propagated as an
-/// error — it is operator-authored workspace configuration, not a
-/// programming-error candidate, so a single out-of-root entry does not
-/// abort serving every other database.
+/// `scan_root` is silently excluded rather than propagated as an error — it
+/// is operator-authored workspace configuration, not a programming-error
+/// candidate, so a single out-of-root entry does not abort serving every
+/// other database.
 pub fn discover_served_databases(
     scan_root: &Path,
     candidate_root: &Path,
@@ -97,13 +102,16 @@ pub fn discover_served_databases(
     }
 
     // Merge explicit workspace-contained `type: database` entries (P1-T6).
-    // An out-of-root path (`..`, symlink, Windows junction/reparse escape)
-    // is REJECTED — never served — rather than broadening the authorized
-    // root; Phase-1 external-path support is explicitly out of scope.
+    // Validated against `scan_root` (`.graphtor/`) — the SAME authorized
+    // root as auto-discovery, per the LOCKED plan requirement that explicit
+    // entries MUST NOT broaden the authorized root beyond what
+    // auto-discovery itself scans. An out-of-root path (`..`, symlink,
+    // Windows junction/reparse escape, or simply a path elsewhere in the
+    // project tree outside `.graphtor/`) is REJECTED — never served.
     if let Some(config) = explicit_sources {
         for source in &config.sources {
             if let Some(path) = source.served_db_path() {
-                let Ok(canonical) = validate_path(path, candidate_root) else {
+                let Ok(canonical) = validate_path(path, scan_root) else {
                     continue;
                 };
                 if seen.insert(canonical.clone()) {
@@ -643,6 +651,32 @@ mod tests {
         assert!(
             served.is_empty(),
             "an out-of-root explicit entry must never be served"
+        );
+    }
+
+    #[test]
+    fn explicit_database_entry_outside_graphtor_but_inside_project_root_is_rejected() {
+        // LOCKED plan requirement (P1-T6): an explicit `type: database` entry
+        // must stay within the SAME authorized root as auto-discovery
+        // (`.graphtor/` — `scan_root`), not merely the broader project root
+        // (`candidate_root`) that `existing_candidates`/`--db-path` are
+        // allowed to use. A db file dropped in the project root but OUTSIDE
+        // `.graphtor/` must be rejected, never served, even though it is
+        // still fully within `candidate_root`.
+        let project_root = temp_root();
+        let scan_root = project_root.path().join(".graphtor");
+        fs::create_dir_all(&scan_root).expect("create .graphtor");
+        let outside_graphtor_db = touch(project_root.path(), "outside.db");
+        let config = config_with(vec![database_source("outside-alias", &outside_graphtor_db)]);
+
+        let served = discover_served_databases(&scan_root, project_root.path(), &[], Some(&config))
+            .expect("discovery must not hard-fail on a rejected explicit entry");
+
+        assert!(
+            served.is_empty(),
+            "an explicit type: database entry outside .graphtor/ (but inside the project \
+             root) must be rejected — it must stay within the same authorized root as \
+             auto-discovery, not the broader project root"
         );
     }
 

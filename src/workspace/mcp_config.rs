@@ -336,11 +336,8 @@ pub fn remove_mcp_config(project_root: &Path) -> Result<Vec<McpConfigOutcome>, G
                     action: McpConfigAction::Removed,
                 });
             }
-            PruneOutcome::Rewrite(new_content) => {
-                fs::write(&dest, new_content).map_err(|e| GraphtorError::Config {
-                    message: format!("failed to rewrite {rel_path}: {e}"),
-                    field: None,
-                })?;
+            PruneOutcome::Rewrite(new_value) => {
+                write_json(&dest, &new_value, rel_path)?;
                 outcomes.push(McpConfigOutcome {
                     path: rel_path.to_string(),
                     action: McpConfigAction::Updated,
@@ -357,8 +354,12 @@ enum PruneOutcome {
     Unchanged,
     /// The managed entry was the file's sole server; delete the file.
     RemoveFile,
-    /// The managed entry was removed but other servers remain; rewrite content.
-    Rewrite(String),
+    /// The managed entry was removed but other servers remain; rewrite
+    /// content. Carries the parsed [`serde_json::Value`] (not a
+    /// pre-serialized string) so the caller can route the write through the
+    /// shared atomic `write_json` helper, matching `generate_mcp_config`'s
+    /// temp-file + rename guarantee.
+    Rewrite(serde_json::Value),
 }
 
 /// Remove graphtor-docs-managed server entries from an MCP config document.
@@ -406,13 +407,7 @@ fn prune_managed_server(content: &str) -> PruneOutcome {
         return PruneOutcome::RemoveFile;
     }
 
-    match serde_json::to_string_pretty(&value) {
-        Ok(mut serialized) => {
-            serialized.push('\n');
-            PruneOutcome::Rewrite(serialized)
-        }
-        Err(_) => PruneOutcome::Unchanged,
-    }
+    PruneOutcome::Rewrite(value)
 }
 
 /// Returns `true` when `cfg` should be treated as a graphtor-docs-managed
@@ -1002,5 +997,51 @@ mod tests {
             "the exact Windows .exe legacy shape must still be recognized and removed"
         );
         assert_eq!(outcomes[0].action, McpConfigAction::Removed);
+    }
+
+    #[test]
+    fn remove_prune_rewrite_is_atomic_leaves_no_stray_temp_file() {
+        // The in-place prune rewrite (a managed entry removed, other servers
+        // kept) must go through the SAME atomic temp-file + rename path as
+        // `generate_mcp_config`, not a direct `fs::write`.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "engram": { "command": "engram", "args": ["shim"] },
+    "graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs",
+      "args": ["serve"],
+      "transport": "stdio"
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcomes = remove_mcp_config(tmp.path()).expect("remove");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].action, McpConfigAction::Updated);
+
+        let stray: Vec<_> = fs::read_dir(tmp.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.contains(".tmp-"))
+            })
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "prune rewrite must be atomic (temp-file + rename), leaving no stray temp file: \
+             {stray:?}"
+        );
+        let after = fs::read_to_string(&path).expect("read after prune");
+        assert!(
+            after.contains("engram"),
+            "unrelated server preserved: {after}"
+        );
     }
 }
