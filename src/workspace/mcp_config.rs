@@ -356,6 +356,19 @@ pub fn remove_mcp_config_from(
     for rel_path in rel_paths {
         let rel_path = rel_path.as_str();
         let dest = project_root.join(rel_path);
+        // Workspace-containment guard (Constitution III/IV): a legacy candidate
+        // like `.vscode/mcp.json` can traverse a symlinked/junction parent
+        // (`.vscode`), so the remove or rewrite below would mutate a file
+        // OUTSIDE the project. Resolve the destination and confirm it stays
+        // within `project_root` before any read or mutation. A candidate that
+        // does not exist yet resolves within root (validation walks up to the
+        // deepest existing ancestor), so it still reaches the NotFound skip
+        // below; only a genuine escape is a `PathViolation`, which we skip.
+        match validate_path(&dest, project_root) {
+            Ok(_) => {}
+            Err(GraphtorError::PathViolation { .. }) => continue,
+            Err(other) => return Err(other),
+        }
         let content = match fs::read_to_string(&dest) {
             Ok(s) => s,
             Err(e) if e.kind() == ErrorKind::NotFound => continue,
@@ -1219,6 +1232,56 @@ mod tests {
         assert_eq!(
             mode, 0o600,
             "the rewrite must preserve the destination's original 0600 mode, not widen to 0644"
+        );
+    }
+
+    // ── workspace containment: symlinked config parent (X3) ─────────────────
+
+    /// Create a directory symlink cross-platform, returning `Err` when the
+    /// platform refuses (e.g. Windows without the symlink privilege) so the
+    /// caller can self-skip rather than fail.
+    fn try_symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link)
+        }
+    }
+
+    #[test]
+    fn remove_skips_a_candidate_whose_parent_is_a_symlink_out_of_project() {
+        // A legacy candidate `.vscode/mcp.json` whose `.vscode` parent is a
+        // symlink/junction pointing OUTSIDE the project must never be read or
+        // mutated — the remove branch would otherwise delete the external file
+        // (MANAGED_DOC holds only the managed server, so prune => RemoveFile).
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let external_cfg = external.path().join("mcp.json");
+        fs::write(&external_cfg, MANAGED_DOC).expect("write external mcp.json");
+
+        let vscode_link = project.path().join(".vscode");
+        if try_symlink_dir(external.path(), &vscode_link).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let outcomes = remove_mcp_config_from(project.path(), &[".vscode/mcp.json".to_string()])
+            .expect("remove_mcp_config_from");
+
+        assert!(
+            outcomes.is_empty(),
+            "a candidate escaping the project via a symlinked parent must be skipped"
+        );
+        assert!(
+            external_cfg.exists(),
+            "the external config behind a symlinked parent must never be deleted"
+        );
+        assert_eq!(
+            fs::read_to_string(&external_cfg).expect("read external"),
+            MANAGED_DOC,
+            "the external config must be left byte-for-byte unchanged"
         );
     }
 }

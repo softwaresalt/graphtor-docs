@@ -20,6 +20,7 @@ use crate::workspace::mcp_config::{
     file_has_managed_entry, managed_config_candidates, remove_mcp_config_from, McpConfigAction,
 };
 use crate::workspace::paths::{GRAPHTOR_DIR, GRAPHTOR_SUBDIRS};
+use graphtor_core::path::is_reparse_point;
 use graphtor_core::GraphtorError;
 
 /// Filename of the workspace advisory lock created inside `.graphtor/`.
@@ -68,11 +69,11 @@ pub struct UninstallPlan {
 }
 
 /// Returns `true` when `path` is itself a symlink (Unix) or a
-/// junction/reparse point (Windows) — checked via `symlink_metadata` so the
-/// check itself never follows the link.
+/// junction/reparse point (Windows). Thin alias over
+/// [`graphtor_core::path::is_reparse_point`] so this module's deletion guards
+/// read locally; the check uses `symlink_metadata` and never follows the link.
 fn is_symlink(path: &Path) -> bool {
-    path.symlink_metadata()
-        .is_ok_and(|m| m.file_type().is_symlink())
+    is_reparse_point(path)
 }
 
 /// Compute the graphtor-created filesystem artifacts that [`uninstall`]
@@ -91,7 +92,12 @@ fn is_symlink(path: &Path) -> bool {
 /// graphtor-created subdirectory names are ever deletion candidates.
 #[must_use]
 pub fn plan_uninstall(workspace_dir: &Path, keep_config: bool) -> Vec<PathBuf> {
-    if !workspace_dir.is_dir() {
+    // Workspace-containment guard (Constitution III/IV): if the `.graphtor`
+    // root itself is a symlink/junction, every `workspace_dir.join(sub)`
+    // resolves THROUGH the link, so a planned `remove_dir_all` would delete a
+    // directory OUTSIDE the project. A linked root has no in-project managed
+    // subdirectories to remove — plan nothing.
+    if is_symlink(workspace_dir) || !workspace_dir.is_dir() {
         return Vec::new();
     }
     GRAPHTOR_SUBDIRS
@@ -157,6 +163,13 @@ pub fn plan_uninstall_full(project_root: &Path, keep_config: bool) -> UninstallP
 /// `.db`, a preserved `config/` under `--keep-config`, or a skipped symlinked
 /// subdirectory — keeps the root alive.
 fn predict_root_removal(workspace_dir: &Path, managed_dirs: &[PathBuf]) -> bool {
+    // Containment (Constitution III/IV): a symlinked/junction `.graphtor` root
+    // is never removed by `remove_empty_workspace_root` (it fails safe), so the
+    // plan must not predict its removal either — following the link to report an
+    // empty external target as a removable root would misstate the blast radius.
+    if is_symlink(workspace_dir) {
+        return false;
+    }
     if !workspace_dir.is_dir() {
         return false;
     }
@@ -198,6 +211,15 @@ fn predict_root_removal(workspace_dir: &Path, managed_dirs: &[PathBuf]) -> bool 
 /// Returns [`GraphtorError::Config`] if the (verified-empty) directory cannot
 /// be removed.
 pub fn remove_empty_workspace_root(workspace_dir: &Path) -> Result<Option<String>, GraphtorError> {
+    // Workspace-containment guard (Constitution III/IV): never operate on a
+    // symlinked/junction `.graphtor` root. `is_dir()`/`read_dir()` below follow
+    // the link, so the emptiness check would pass for a link to an empty
+    // external directory and `fs::remove_dir` would then unlink the operator's
+    // reparse point (Windows) or hard-error with ENOTDIR (Unix) instead of
+    // failing safe. A linked root is never a graphtor-created empty root — skip.
+    if is_symlink(workspace_dir) {
+        return Ok(None);
+    }
     if !workspace_dir.is_dir() {
         return Ok(None);
     }
@@ -255,6 +277,16 @@ pub fn uninstall_planned(
     let workspace_dir = project_root.join(GRAPHTOR_DIR);
     let mut removed: Vec<String> = Vec::new();
 
+    // Workspace-containment guard (Constitution III/IV): never delete THROUGH a
+    // symlinked/junction `.graphtor` root. `plan_uninstall` already returns an
+    // empty managed set for a linked root, but re-validate here so a STALE plan
+    // (root turned into a link after planning) can never drive `remove_dir_all`
+    // into an external directory. The per-subdir `is_symlink` check below only
+    // catches a linked SUBDIR, not a linked ROOT whose real child dirs report
+    // as non-links. The `.gitignore`/MCP cleanup further down operates on
+    // separately-guarded project files (not on `.graphtor`) and is unaffected.
+    let root_is_link = is_symlink(&workspace_dir);
+
     for dir in &plan.managed_dirs {
         let is_known_managed_subdir = dir.parent() == Some(workspace_dir.as_path())
             && dir.file_name().is_some_and(|name| {
@@ -266,12 +298,18 @@ pub fn uninstall_planned(
             keep_config && dir.file_name() == Some(std::ffi::OsStr::new("config"));
         // Re-validate immediately before deletion instead of trusting the
         // plan blindly (defence-in-depth against a plan that has gone
-        // stale since it was computed): must still be exactly one of the
-        // known graphtor-managed subdirectory names directly under
-        // `workspace_dir`, still a real directory, still not a symlink,
-        // and never `config/` when `keep_config` is `true` — independent
-        // of whether the passed-in plan already honoured that.
-        if !is_known_managed_subdir || is_protected_config || !dir.is_dir() || is_symlink(dir) {
+        // stale since it was computed): the root must not be a link, and the
+        // entry must still be exactly one of the known graphtor-managed
+        // subdirectory names directly under `workspace_dir`, still a real
+        // directory, still not a symlink, and never `config/` when
+        // `keep_config` is `true` — independent of whether the passed-in plan
+        // already honoured that.
+        if root_is_link
+            || !is_known_managed_subdir
+            || is_protected_config
+            || !dir.is_dir()
+            || is_symlink(dir)
+        {
             continue;
         }
         fs::remove_dir_all(dir).map_err(|e| GraphtorError::Config {
@@ -839,6 +877,114 @@ mod tests {
         assert!(
             ws.exists(),
             "an unapproved root must never be removed even after it becomes empty"
+        );
+    }
+
+    // ── workspace containment: symlinked `.graphtor` root (X2) ──────────────
+
+    /// Create a directory symlink cross-platform, returning `Err` when the
+    /// platform refuses (e.g. Windows without the symlink privilege) so the
+    /// caller can self-skip rather than fail.
+    fn try_symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link)
+        }
+    }
+
+    #[test]
+    fn plan_uninstall_plans_nothing_for_a_symlinked_workspace_root() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        // The link target contains a real, managed-looking `bin/` subdir.
+        fs::create_dir_all(external.path().join("bin")).expect("external/bin");
+
+        let workspace_dir = project.path().join(GRAPHTOR_DIR);
+        if try_symlink_dir(external.path(), &workspace_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        // A linked root resolves its `bin/` through the link, so nothing under
+        // it is an in-project managed directory: plan must be empty.
+        assert!(
+            plan_uninstall(&workspace_dir, false).is_empty(),
+            "a symlinked .graphtor root must plan no deletions"
+        );
+    }
+
+    #[test]
+    fn uninstall_planned_never_deletes_through_a_symlinked_root_with_a_stale_plan() {
+        // A STALE plan lists `.graphtor/bin` (as if the root were real when the
+        // plan was computed), then the root becomes a symlink to an external
+        // directory before execution. `remove_dir_all` must NOT delete the
+        // external `bin/`; the root-link guard blocks the whole loop.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let external_bin = external.path().join("bin");
+        fs::create_dir_all(&external_bin).expect("external/bin");
+        fs::write(external_bin.join("keep.txt"), b"external data").expect("write external file");
+
+        let workspace_dir = project.path().join(GRAPHTOR_DIR);
+        if try_symlink_dir(external.path(), &workspace_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let stale_plan = UninstallPlan {
+            managed_dirs: vec![workspace_dir.join("bin")],
+            gitignore_cleanup: false,
+            mcp_config_files: Vec::new(),
+            root_removal: false,
+        };
+        let result =
+            uninstall_planned(project.path(), false, &stale_plan).expect("uninstall_planned");
+
+        assert!(
+            result.removed.is_empty(),
+            "no deletion must be recorded when the root is a symlink"
+        );
+        assert!(
+            external_bin.join("keep.txt").exists(),
+            "the external directory behind a symlinked .graphtor root must never be deleted"
+        );
+    }
+
+    #[test]
+    fn root_removal_is_skipped_for_a_symlinked_empty_workspace_root() {
+        // A `.graphtor` root that is a symlink/junction to an EMPTY external
+        // directory must not be treated as a removable empty root: predicting
+        // removal would follow the link, and `fs::remove_dir` would unlink the
+        // operator's reparse point (Windows) or hard-error with ENOTDIR (Unix)
+        // instead of failing safe. Both the prediction and the mutation must
+        // skip it, and the external target must survive.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir"); // empty
+
+        let workspace_dir = project.path().join(GRAPHTOR_DIR);
+        if try_symlink_dir(external.path(), &workspace_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        assert!(
+            !predict_root_removal(&workspace_dir, &[]),
+            "a symlinked .graphtor root must never be predicted for removal"
+        );
+        assert!(
+            remove_empty_workspace_root(&workspace_dir)
+                .expect("guarded removal must fail safe, not error")
+                .is_none(),
+            "a symlinked .graphtor root must never be removed"
+        );
+        assert!(
+            external.path().exists(),
+            "the external target behind a symlinked .graphtor root must survive"
+        );
+        assert!(
+            is_symlink(&workspace_dir),
+            "the symlinked root itself must be left intact"
         );
     }
 }

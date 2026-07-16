@@ -20,4 +20,4 @@ pub fn v4_migration_snapshot_dir(data_root: &Path) -> PathBuf {
 }
 
 pub(crate) use security::canonicalize_clean;
-pub use security::validate_path;
+pub use security::{is_reparse_point, validate_path};

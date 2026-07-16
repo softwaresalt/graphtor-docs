@@ -155,6 +155,37 @@ pub fn validate_path(path: &Path, allowed_root: &Path) -> Result<PathBuf, Grapht
     Ok(resolved)
 }
 
+/// Returns `true` when `path` is itself a symlink (Unix) or a
+/// junction/reparse point (Windows).
+///
+/// The probe uses [`Path::symlink_metadata`], so it inspects the link entry
+/// directly and never follows it. A path that does not exist, or whose
+/// metadata cannot be read, returns `false` — callers treat a missing path as
+/// "nothing to guard" and a real (non-link) file or directory as safe.
+///
+/// This is the companion primitive to [`validate_path`] for the case that
+/// canonicalisation cannot catch: a managed workspace root (or a config
+/// parent) that is ITSELF a link is its own trust anchor, so
+/// `validate_path(child, linked_root)` would still accept every descendant.
+/// Reject the link at the root before any read, mutation, or deletion so
+/// workspace-contained file operations can never reach outside the project
+/// (Constitution Principles III/IV).
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+/// use graphtor_core::path::is_reparse_point;
+///
+/// // A real directory is not a reparse point.
+/// assert!(!is_reparse_point(Path::new("/data/workspace")));
+/// ```
+#[must_use]
+pub fn is_reparse_point(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -291,5 +322,46 @@ mod tests {
             result.is_ok(),
             "deeply nested path within root must be accepted: {result:?}"
         );
+    }
+
+    // ── is_reparse_point ──────────────────────────────────────────────────
+
+    /// Create a directory symlink cross-platform, returning `Err` when the
+    /// platform refuses (e.g. Windows without the symlink privilege), so the
+    /// caller can self-skip rather than fail.
+    fn try_symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link)
+        }
+    }
+
+    #[test]
+    fn is_reparse_point_false_for_real_directory() {
+        let root = setup_root();
+        assert!(!is_reparse_point(root.path()));
+    }
+
+    #[test]
+    fn is_reparse_point_false_for_missing_path() {
+        let root = setup_root();
+        let missing = root.path().join("does-not-exist");
+        assert!(!is_reparse_point(&missing));
+    }
+
+    #[test]
+    fn is_reparse_point_true_for_symlinked_directory() {
+        let root = setup_root();
+        let target = root.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let link = root.path().join("link");
+        if try_symlink_dir(&target, &link).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+        assert!(is_reparse_point(&link));
     }
 }

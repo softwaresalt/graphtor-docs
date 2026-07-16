@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::Path;
 
+use graphtor_core::path::is_reparse_point;
 use graphtor_core::GraphtorError;
 
 /// The gitignore entry managed by graphtor-docs.
@@ -76,6 +77,14 @@ pub fn add_gitignore_entry(project_root: &Path) -> Result<(), GraphtorError> {
 #[must_use]
 pub fn has_managed_gitignore_block(project_root: &Path) -> bool {
     let path = project_root.join(".gitignore");
+    // Workspace-containment guard (Constitution III/IV): `read_to_string`
+    // FOLLOWS a symlinked/junction `.gitignore`, so reading a linked file would
+    // report a managed block that lives OUTSIDE the project — and drive
+    // uninstall into rewriting that external file. Treat a linked `.gitignore`
+    // as having no managed block so cleanup is never planned for it.
+    if is_reparse_point(&path) {
+        return false;
+    }
     let Ok(existing) = fs::read_to_string(&path) else {
         return false;
     };
@@ -101,6 +110,16 @@ pub fn has_managed_gitignore_block(project_root: &Path) -> bool {
 pub fn remove_gitignore_entry(project_root: &Path) -> Result<(), GraphtorError> {
     let path = project_root.join(".gitignore");
     if !path.exists() {
+        return Ok(());
+    }
+    // Workspace-containment guard (Constitution III/IV): `read_to_string` and
+    // `fs::write` both FOLLOW a symlinked/junction `.gitignore`, so touching a
+    // linked file would rewrite a file OUTSIDE the project. Refuse to modify a
+    // `.gitignore` that is itself a link — skip cleanup rather than reach out of
+    // the workspace. Planning already excludes this case (see
+    // `has_managed_gitignore_block`); this is defence-in-depth against a plan
+    // that went stale after the file became a link.
+    if is_reparse_point(&path) {
         return Ok(());
     }
 
@@ -223,6 +242,51 @@ mod tests {
         assert!(
             has_managed_gitignore_block(tmp3.path()),
             "marker written by add -> managed block present"
+        );
+    }
+
+    // ── workspace containment: symlinked `.gitignore` (X4) ──────────────────
+
+    /// Create a file symlink cross-platform, returning `Err` when the platform
+    /// refuses (e.g. Windows without the symlink privilege) so the caller can
+    /// self-skip rather than fail.
+    fn try_symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+    }
+
+    #[test]
+    fn symlinked_gitignore_is_never_treated_as_managed_or_rewritten() {
+        // A `.gitignore` that is itself a symlink/junction points at a file
+        // OUTSIDE the project. `has_managed_gitignore_block` must not read it as
+        // managed, and `remove_gitignore_entry` must not rewrite the external
+        // target (Constitution III/IV).
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let external_file = external.path().join("real-gitignore");
+        let original = format!("{MARKER_HEADER}\n{GITIGNORE_ENTRY}\nnode_modules/\n");
+        fs::write(&external_file, &original).expect("write external gitignore");
+
+        let link = project.path().join(".gitignore");
+        if try_symlink_file(&external_file, &link).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        assert!(
+            !has_managed_gitignore_block(project.path()),
+            "a symlinked .gitignore must not be reported as holding a managed block"
+        );
+        remove_gitignore_entry(project.path()).expect("remove must skip a symlinked .gitignore");
+        assert_eq!(
+            fs::read_to_string(&external_file).expect("read external"),
+            original,
+            "the external file behind a symlinked .gitignore must be left unchanged"
         );
     }
 }

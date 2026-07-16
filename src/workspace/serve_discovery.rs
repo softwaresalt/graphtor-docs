@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use graphtor_core::config::{resolve_source_db_path, LocalSource, Source, SourceConfig};
-use graphtor_core::path::validate_path;
+use graphtor_core::path::{is_reparse_point, validate_path};
 use graphtor_core::GraphtorError;
 
 /// The only file extension eligible for auto-discovery.
@@ -96,6 +96,24 @@ pub fn discover_served_databases(
 ) -> Result<Vec<PathBuf>, GraphtorError> {
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
     let mut served: Vec<PathBuf> = Vec::new();
+
+    // Workspace-containment guard (Constitution III/IV): the `.graphtor`
+    // `scan_root` is its OWN trust anchor for the flat auto-discovery scan and
+    // the explicit `type: database` containment check below. If that root is a
+    // symlink/junction — or otherwise resolves outside the project
+    // `candidate_root` — the scan (and the subsequent read-only permission
+    // normalization in `open_engine_readonly`) would reach files OUTSIDE the
+    // workspace. Reject such a root before any read. A missing root is fine:
+    // no scan happens and only preserved existing candidates are returned.
+    if scan_root.exists() {
+        if is_reparse_point(scan_root) {
+            return Err(GraphtorError::PathViolation {
+                attempted: scan_root.to_path_buf(),
+                allowed_root: candidate_root.to_path_buf(),
+            });
+        }
+        validate_path(scan_root, candidate_root)?;
+    }
 
     // Preserve existing candidates FIRST and in their given order — this is
     // the union's stability guarantee: a fresh generation target that does
@@ -1025,5 +1043,93 @@ mod tests {
         let malformed = "sources:\n  - type: local\n    id: broken\n    path: [unterminated\n";
         let result: Result<SourceConfig, _> = serde_yaml::from_str(malformed);
         assert!(result.is_err(), "malformed sources.yaml must fail to parse");
+    }
+
+    // ── workspace containment: symlinked `.graphtor` scan root (X1) ─────────
+
+    /// Create a directory symlink cross-platform, returning `Err` when the
+    /// platform refuses (e.g. Windows without the symlink privilege) so the
+    /// caller can self-skip rather than fail.
+    fn try_symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link)
+        }
+    }
+
+    #[test]
+    fn symlinked_graphtor_scan_root_pointing_outside_project_is_rejected() {
+        // A `.graphtor` root that is a symlink/junction pointing OUTSIDE the
+        // project is its own trust anchor for the flat scan, so scanning it and
+        // normalizing permissions on what it finds would reach external files.
+        // Discovery must reject such a root before scanning (Constitution
+        // III/IV), not silently serve an external database.
+        let project = temp_root();
+        let external = temp_root();
+        // A `.db` sitting in the external target the link points at.
+        touch(external.path(), "escaped.db");
+
+        let scan_root = project.path().join(".graphtor");
+        if try_symlink_dir(external.path(), &scan_root).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let result = discover_served_databases(&scan_root, project.path(), &[], None);
+        assert!(
+            matches!(result, Err(GraphtorError::PathViolation { .. })),
+            "a symlinked .graphtor root escaping the project must be rejected: {result:?}"
+        );
+    }
+
+    #[test]
+    fn symlinked_graphtor_scan_root_pointing_inside_project_is_still_rejected() {
+        // Isolation guard for the `is_reparse_point` check: a `.graphtor` root
+        // that is a symlink/junction whose target is INSIDE the project would
+        // PASS `validate_path` (canonicalization stays within candidate_root),
+        // so ONLY the `is_reparse_point` guard rejects it. This test fails if
+        // that guard line is ever dropped, unlike the outside-pointing case
+        // which `validate_path` also rejects.
+        let project = temp_root();
+        // A real in-project directory the link will point at, holding a `.db`.
+        let real_dir = project.path().join(".graphtor_real");
+        fs::create_dir_all(&real_dir).expect("create in-project real dir");
+        touch(&real_dir, "inside.db");
+
+        let scan_root = project.path().join(".graphtor");
+        if try_symlink_dir(&real_dir, &scan_root).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        // Precondition: the link target is inside the project, so `validate_path`
+        // alone accepts it — proving this case isolates the reparse-point guard.
+        assert!(
+            validate_path(&scan_root, project.path()).is_ok(),
+            "precondition: an in-project symlink target must pass validate_path"
+        );
+
+        let result = discover_served_databases(&scan_root, project.path(), &[], None);
+        assert!(
+            matches!(result, Err(GraphtorError::PathViolation { .. })),
+            "a symlinked .graphtor root must be rejected even when its target is in-project: {result:?}"
+        );
+    }
+
+    #[test]
+    fn real_graphtor_scan_root_still_discovers_after_containment_guard() {
+        // Regression guard: the containment check must NOT reject a normal,
+        // real `.graphtor` directory that lives inside the project.
+        let project = temp_root();
+        let scan_root = project.path().join(".graphtor");
+        fs::create_dir_all(&scan_root).expect("create real .graphtor");
+        let dropped = touch(&scan_root, "real.db");
+
+        let served = discover_served_databases(&scan_root, project.path(), &[], None)
+            .expect("a real in-project .graphtor root must be accepted");
+        assert_eq!(served.len(), 1);
+        assert_eq!(served[0], validate_path(&dropped, project.path()).unwrap());
     }
 }
