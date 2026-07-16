@@ -311,8 +311,37 @@ fn is_exact_legacy_shape(entry: &serde_json::Value) -> bool {
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure.
 pub fn remove_mcp_config(project_root: &Path) -> Result<Vec<McpConfigOutcome>, GraphtorError> {
+    let candidates: Vec<String> = std::iter::once(MCP_CONFIG_PATH)
+        .chain(LEGACY_CONFIG_PATHS.iter().copied())
+        .map(str::to_string)
+        .collect();
+    remove_mcp_config_from(project_root, &candidates)
+}
+
+/// Prune the managed graphtor-docs entry from ONLY the explicitly-listed
+/// `rel_paths` (each relative to `project_root`), rather than rescanning the
+/// full managed candidate set.
+///
+/// This is the exact-plan execution counterpart to [`remove_mcp_config`]: an
+/// uninstall enumerates the config files it will touch UP FRONT (for operator
+/// approval), then replays that exact list here so a managed config file
+/// created AFTER the plan was shown is never silently mutated. A listed file
+/// that no longer exists, is not valid JSON, or no longer holds a managed
+/// entry is simply skipped (the set only ever SHRINKS at execution, never
+/// expands). Pruning otherwise follows [`prune_managed_server`]: only the
+/// fixed `graphtor-docs` key is removed, other servers are preserved, and the
+/// file is deleted only when that entry was its sole content.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Config`] on I/O failure.
+pub fn remove_mcp_config_from(
+    project_root: &Path,
+    rel_paths: &[String],
+) -> Result<Vec<McpConfigOutcome>, GraphtorError> {
     let mut outcomes: Vec<McpConfigOutcome> = Vec::new();
-    for rel_path in std::iter::once(MCP_CONFIG_PATH).chain(LEGACY_CONFIG_PATHS.iter().copied()) {
+    for rel_path in rel_paths {
+        let rel_path = rel_path.as_str();
         let dest = project_root.join(rel_path);
         let content = match fs::read_to_string(&dest) {
             Ok(s) => s,
@@ -954,6 +983,31 @@ mod tests {
         assert!(
             servers.contains_key("my-graphtor-docs"),
             "a user copy under another key must be preserved even when it carries the marker"
+        );
+    }
+
+    #[test]
+    fn remove_mcp_config_from_only_prunes_listed_files() {
+        // Fix 5 support: execution must touch ONLY the approved list. A managed
+        // config file NOT in the list is left untouched, even though a full
+        // rescan would have pruned it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let listed = tmp.path().join(".mcp.json");
+        let unlisted_dir = tmp.path().join(".vscode");
+        fs::create_dir_all(&unlisted_dir).expect("mkdir .vscode");
+        let unlisted = unlisted_dir.join("mcp.json");
+        fs::write(&listed, MARKED_DOC).expect("write listed");
+        fs::write(&unlisted, MARKED_DOC).expect("write unlisted");
+
+        let outcomes =
+            remove_mcp_config_from(tmp.path(), &[".mcp.json".to_string()]).expect("remove listed");
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].path, ".mcp.json");
+        assert!(!listed.exists(), "the listed managed file must be pruned");
+        assert!(
+            unlisted.exists(),
+            "a managed file NOT in the approved list must never be touched"
         );
     }
 
