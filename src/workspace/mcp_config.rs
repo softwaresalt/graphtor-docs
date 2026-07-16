@@ -312,6 +312,25 @@ pub fn managed_config_candidates() -> Vec<String> {
         .collect()
 }
 
+/// Returns `true` when `rel_path` (relative to `project_root`) exists, parses
+/// as JSON, and currently holds a graphtor-docs entry that [`remove_mcp_config_from`]
+/// would actually prune.
+///
+/// Uninstall planning uses this so the operator-approval preview lists ONLY the
+/// config files execution will really modify — a candidate file that exists but
+/// holds no managed entry (e.g. a user's own `.mcp.json` with unrelated
+/// servers) is left off the plan, matching execution's shrink-only behavior.
+/// The predicate is the same one pruning uses ([`prune_managed_server`]), so
+/// there is no drift between what the plan advertises and what execution does.
+#[must_use]
+pub fn file_has_managed_entry(project_root: &Path, rel_path: &str) -> bool {
+    let dest = project_root.join(rel_path);
+    let Ok(content) = fs::read_to_string(&dest) else {
+        return false;
+    };
+    !matches!(prune_managed_server(&content), PruneOutcome::Unchanged)
+}
+
 /// Prune the managed graphtor-docs entry from ONLY the explicitly-listed
 /// `rel_paths` (each relative to `project_root`), rather than rescanning the
 /// full managed candidate set.
@@ -505,8 +524,19 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
     // credentials for OTHER MCP servers) would be widened to `0644` after the
     // rename, exposing its contents. On Windows `Permissions` only tracks the
     // readonly bit, so this call is harmless there.
+    //
+    // Fail CLOSED: if the destination's permissions cannot be reapplied to the
+    // temp file, abort the write (removing the temp file) rather than renaming
+    // a broader-perm temp over a restrictive config and silently widening it —
+    // the exact credential-exposure case this block exists to prevent.
     if let Ok(meta) = fs::metadata(dest) {
-        let _ = fs::set_permissions(&tmp_path, meta.permissions());
+        if let Err(e) = fs::set_permissions(&tmp_path, meta.permissions()) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(GraphtorError::Config {
+                message: format!("failed to preserve destination permissions for {rel_path}: {e}"),
+                field: None,
+            });
+        }
     }
     fs::rename(&tmp_path, dest).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
