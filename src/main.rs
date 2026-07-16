@@ -3181,13 +3181,45 @@ fn cmd_install(
     let _lock = workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
         .context("workspace is locked by another process")?;
 
+    if args.with_ingestion {
+        // Full ingestion-capable scaffold, opted into via --with-ingestion
+        // (P2-T2a: flag + routing only). The preserved full `install()`
+        // creates `bin/`, `data/`, `cache/`, `config/`, `logs/` and copies
+        // the running binary — unchanged since before this shipment.
+        // P2-T2b (051.008-T) adds the full-path `sources.yaml`/
+        // `.gitignore`/`.mcp.json` orchestration on top of this routing.
+        let result = workspace::install::install(cwd).context("install failed")?;
+
+        if fmt == OutputFormat::Json {
+            println!(
+                "{}",
+                cli::jsonrpc::wrap_success(serde_json::json!({
+                    "created": result.created,
+                    "workspace_dir": result.workspace_dir.display().to_string(),
+                    "binary_path": result.binary_path.display().to_string(),
+                    "footprint": "full",
+                }))
+            );
+            return Ok(0);
+        }
+
+        if result.created {
+            println!("created: {}", result.workspace_dir.display());
+        } else {
+            println!(
+                "workspace already exists: {}",
+                result.workspace_dir.display()
+            );
+        }
+        println!("binary:  {}", result.binary_path.display());
+
+        return Ok(0);
+    }
+
     // Consumption-first default (P2-T1): the minimal footprint creates ONLY
     // `.graphtor/` plus a minimal serve `.mcp.json` — no `sources.yaml`, no
     // ingestion subdirectories (bin/data/cache/config/logs), and no
-    // `.gitignore` side effect. The full, ingestion-capable scaffold
-    // (`workspace::install::install`) remains fully intact and unchanged
-    // for `upgrade`; the `--with-ingestion` flag (P2-T2a) wires it back into
-    // this CLI surface as an explicit opt-in.
+    // `.gitignore` side effect.
     let result = workspace::install::install_minimal(cwd).context("install failed")?;
 
     // Generate or merge the graphtor-docs entry in the workspace-root .mcp.json.
@@ -4034,6 +4066,7 @@ mod tests {
     fn cmd_install_writes_root_mcp_json() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let args = cli::InstallArgs {
+            with_ingestion: false,
             no_gitignore: true,
             force_unlock: false,
         };
@@ -4052,6 +4085,7 @@ mod tests {
     fn cmd_install_default_creates_only_minimal_footprint() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let args = cli::InstallArgs {
+            with_ingestion: false,
             no_gitignore: true,
             force_unlock: false,
         };
@@ -4082,6 +4116,7 @@ mod tests {
         // (--with-ingestion) path only.
         let tmp = tempfile::tempdir().expect("tempdir");
         let args = cli::InstallArgs {
+            with_ingestion: false,
             no_gitignore: false,
             force_unlock: false,
         };
@@ -4091,6 +4126,32 @@ mod tests {
         assert!(
             !tmp.path().join(".gitignore").exists(),
             "consumption-first default install must not create or modify .gitignore"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_routes_to_full_scaffold() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let code =
+            cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert_eq!(code, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                ws.join(sub).is_dir(),
+                "--with-ingestion must create the full scaffold's {sub} subdirectory"
+            );
+        }
+        assert!(
+            workspace::install::installed_binary_path(&ws).exists(),
+            "--with-ingestion must copy the running binary into .graphtor/bin/"
         );
     }
 

@@ -12,13 +12,6 @@ use crate::workspace::paths::{GRAPHTOR_DIR, GRAPHTOR_SUBDIRS};
 use graphtor_core::GraphtorError;
 
 /// Result of a workspace install operation.
-// TEMPORARY (P2-T1): `cmd_install`'s default path now calls
-// `install_minimal` instead, so this full-scaffold path has no production
-// call site until P2-T2a wires the `--with-ingestion` flag back into
-// `cmd_install`. It remains fully intact for `upgrade`'s test fixtures and
-// is exercised directly by this module's own tests. Remove this attribute
-// once P2-T2a restores a production caller.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct InstallResult {
     /// Path to the created or pre-existing `.graphtor/` directory.
@@ -34,14 +27,14 @@ pub struct InstallResult {
 /// 1. Creates `.graphtor/{bin,data,cache,config,logs}/` (idempotent).
 /// 2. Copies the currently-executing binary to `.graphtor/bin/graphtor-docs[.exe]`.
 ///
+/// This is the full, ingestion-capable scaffold used by `upgrade` and by
+/// `install --with-ingestion` (P2-T2a); the consumption-first default
+/// install path uses [`install_minimal`] instead.
+///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure or when the running
 /// executable path cannot be determined.
-// TEMPORARY (P2-T1): see the `#[allow(dead_code)]` note on `InstallResult`
-// above — this full-scaffold install path is preserved unchanged for
-// `--with-ingestion` (P2-T2a) to wire back into `cmd_install`.
-#[allow(dead_code)]
 pub fn install(project_root: &Path) -> Result<InstallResult, GraphtorError> {
     let workspace_dir = project_root.join(GRAPHTOR_DIR);
     let already_existed = workspace_dir.exists();
