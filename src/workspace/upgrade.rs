@@ -45,7 +45,10 @@ pub struct UpgradeResult {
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure or when the running
-/// binary path cannot be determined.
+/// binary path cannot be determined. Returns [`GraphtorError::PathViolation`]
+/// when the installed-binary destination — the `.graphtor/bin/` directory or
+/// the binary file itself — is a symlink or junction, since copying through a
+/// linked destination would escape the workspace.
 pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, GraphtorError> {
     // `detect_footprint` returns `Minimal` both for a genuine minimal
     // install AND for a workspace that was never installed at all (no
