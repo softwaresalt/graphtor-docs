@@ -16,6 +16,15 @@ pub const GRAPHTOR_DIR: &str = ".graphtor";
 /// Sub-directories created under `.graphtor/`.
 pub const GRAPHTOR_SUBDIRS: &[&str] = &["bin", "data", "cache", "config", "logs"];
 
+/// The ingestion-scaffold sub-directories: the subset of [`GRAPHTOR_SUBDIRS`]
+/// created only by `install --with-ingestion`. `config/` is deliberately
+/// excluded — it holds `sources.yaml`, which a consumption-only workspace
+/// legitimately uses for explicit `type: database` entries WITHOUT any
+/// ingestion scaffold — so its presence alone is not a signal of a full
+/// ingestion footprint. Used by footprint detection to avoid misclassifying a
+/// valid consumption-only workspace as a (broken) full install.
+pub const GRAPHTOR_INGESTION_SUBDIRS: &[&str] = &["bin", "data", "cache", "logs"];
+
 /// Locate the `.graphtor/` workspace directory.
 ///
 /// Searches upward from `start_dir` until a `.graphtor/` directory is found

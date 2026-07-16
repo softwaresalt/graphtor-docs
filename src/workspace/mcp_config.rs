@@ -274,24 +274,36 @@ fn is_marked(entry: &serde_json::Value) -> bool {
 }
 
 /// Returns `true` when `entry` EXACTLY matches the historical pre-marker
-/// managed shape: `command` equals one of [`LEGACY_COMMAND_SHAPES`] exactly,
-/// `args == ["serve"]`, and `transport == "stdio"`. This is deliberately an
-/// exact-equality check, never a substring/contains test — a user command
-/// that merely embeds a legacy path as a prefix or suffix must NOT be
-/// mistaken for this release's own pre-marker entry.
+/// managed shape: a JSON object containing EXACTLY the three keys
+/// `{command, args, transport}` where `command` equals one of
+/// [`LEGACY_COMMAND_SHAPES`] exactly, `args == ["serve"]`, and
+/// `transport == "stdio"`. This is deliberately an exact-equality check on
+/// both the values AND the key set, never a substring/contains test — a user
+/// command that merely embeds a legacy path, or an entry that carries these
+/// three fields PLUS any extra key (e.g. `env`, `cwd`, `type`), is a genuine
+/// collision (case 4) to preserve, NOT this release's own pre-marker entry to
+/// migrate in place. Requiring an exact key count prevents install from
+/// overwriting — or uninstall from removing — a user-authored entry that
+/// happens to share the three historical fields (data loss).
 fn is_exact_legacy_shape(entry: &serde_json::Value) -> bool {
-    let Some(command) = entry.get("command").and_then(serde_json::Value::as_str) else {
+    let Some(object) = entry.as_object() else {
+        return false;
+    };
+    if object.len() != 3 {
+        return false;
+    }
+    let Some(command) = object.get("command").and_then(serde_json::Value::as_str) else {
         return false;
     };
     if !LEGACY_COMMAND_SHAPES.contains(&command) {
         return false;
     }
-    let args_match = entry
+    let args_match = object
         .get("args")
         .and_then(serde_json::Value::as_array)
         .is_some_and(|args| args.len() == 1 && args[0].as_str() == Some("serve"));
     let transport_match =
-        entry.get("transport").and_then(serde_json::Value::as_str) == Some("stdio");
+        object.get("transport").and_then(serde_json::Value::as_str) == Some("stdio");
     args_match && transport_match
 }
 
@@ -1180,6 +1192,42 @@ mod tests {
         assert!(
             outcomes.is_empty(),
             "an unmarked entry with the pinned legacy command but DIFFERENT args must survive"
+        );
+    }
+
+    #[test]
+    fn remove_preserves_unmarked_entry_with_legacy_fields_plus_extra_key() {
+        // An unmarked user entry that carries the three historical fields
+        // (command/args/transport) PLUS an extra key (`env`) is a genuine
+        // collision to preserve — NOT this release's exact pre-marker shape.
+        // The exact-key-count guard must classify it as a collision so
+        // uninstall does not silently remove a user-authored entry (data loss).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs",
+      "args": ["serve"],
+      "transport": "stdio",
+      "env": { "RUST_LOG": "debug" }
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcomes = remove_mcp_config(tmp.path()).expect("remove");
+
+        assert!(
+            outcomes.is_empty(),
+            "an unmarked entry with the legacy fields PLUS an extra key must survive (exact key \
+             set required, not a subset match)"
+        );
+        let after = fs::read_to_string(&path).expect("read");
+        assert!(
+            after.contains("RUST_LOG"),
+            "the user-authored entry (with its extra env key) must be preserved intact"
         );
     }
 

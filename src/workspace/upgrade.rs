@@ -197,4 +197,33 @@ mod tests {
         assert!(!second.upgraded);
         assert!(!installed_binary_path(&ws).exists());
     }
+
+    #[test]
+    fn upgrade_on_config_only_consumption_workspace_is_a_safe_noop() {
+        // A consumption-only workspace with `config/sources.yaml` (declaring
+        // only `type: database` sources) but no ingestion scaffold must be
+        // treated as Minimal: upgrade must no-op instead of trying to copy the
+        // running binary into a nonexistent `bin/` (which would error).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+        let config_dir = ws.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+        fs::write(
+            config_dir.join("sources.yaml"),
+            "sources:\n  - type: database\n    path: ./external.db\n",
+        )
+        .expect("write sources.yaml");
+
+        let result =
+            upgrade(&ws, false).expect("upgrade on a config-only workspace must not error");
+
+        assert!(
+            !result.upgraded,
+            "a config-only consumption workspace has no managed binary to upgrade"
+        );
+        assert!(
+            !installed_binary_path(&ws).exists(),
+            "upgrade must never create a bin/ scaffold on a consumption workspace"
+        );
+    }
 }

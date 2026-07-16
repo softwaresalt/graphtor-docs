@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::workspace::install::installed_binary_path;
-use crate::workspace::paths::GRAPHTOR_SUBDIRS;
+use crate::workspace::paths::{GRAPHTOR_INGESTION_SUBDIRS, GRAPHTOR_SUBDIRS};
 
 /// Severity of a diagnostic finding.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,17 +70,25 @@ impl WorkspaceFootprint {
 /// Detect whether `workspace_dir` uses the full or minimal footprint.
 ///
 /// A workspace is [`WorkspaceFootprint::Full`] when ANY of the
-/// ingestion-capable subdirectories (`bin/`, `data/`, `cache/`, `config/`,
-/// `logs/`) exist — matching conservatively toward `Full` for a partially
-/// scaffolded or in-transition workspace, so `doctor` never silently
-/// suppresses a real problem in an otherwise-full install. Otherwise it is
-/// [`WorkspaceFootprint::Minimal`].
+/// ingestion-scaffold subdirectories ([`GRAPHTOR_INGESTION_SUBDIRS`]: `bin/`,
+/// `data/`, `cache/`, `logs/`) exist — matching conservatively toward `Full`
+/// for a partially scaffolded or in-transition ingestion install, so `doctor`
+/// never silently suppresses a real problem in an otherwise-full install.
+/// Otherwise it is [`WorkspaceFootprint::Minimal`].
+///
+/// `config/` is intentionally EXCLUDED from this signal even though it is a
+/// managed subdirectory: it holds `sources.yaml`, which a consumption-only
+/// workspace legitimately uses for explicit `type: database` entries with no
+/// ingestion scaffold at all. Treating a bare `config/` as `Full` would
+/// misclassify that valid consumption-only workspace as a broken full install,
+/// making `doctor` report the missing ingestion scaffold as failures and
+/// `upgrade` attempt to copy a binary into a nonexistent `bin/`.
 #[must_use]
 pub fn detect_footprint(workspace_dir: &Path) -> WorkspaceFootprint {
-    let any_subdir_exists = GRAPHTOR_SUBDIRS
+    let any_ingestion_subdir_exists = GRAPHTOR_INGESTION_SUBDIRS
         .iter()
         .any(|sub| workspace_dir.join(sub).is_dir());
-    if any_subdir_exists {
+    if any_ingestion_subdir_exists {
         WorkspaceFootprint::Full
     } else {
         WorkspaceFootprint::Minimal
@@ -341,6 +349,40 @@ mod tests {
         install(tmp.path()).expect("install");
         let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
         assert_eq!(detect_footprint(&ws), WorkspaceFootprint::Full);
+    }
+
+    #[test]
+    fn detect_footprint_returns_minimal_for_config_only_consumption_workspace() {
+        // A consumption-only workspace legitimately has `config/sources.yaml`
+        // (declaring only `type: database` sources) with NO ingestion scaffold.
+        // A bare `config/` must NOT promote the workspace to `Full`.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+        let config_dir = ws.join("config");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("sources.yaml"),
+            "sources:\n  - type: database\n    path: ./external.db\n",
+        )
+        .expect("write sources.yaml");
+
+        assert_eq!(
+            detect_footprint(&ws),
+            WorkspaceFootprint::Minimal,
+            "a config-only consumption workspace must be Minimal, not Full"
+        );
+
+        // Layout-aware doctor must not flag the missing ingestion scaffold as a
+        // failure for this valid consumption workspace.
+        for check in &run_doctor(&ws) {
+            assert_ne!(
+                check.severity,
+                Severity::Fail,
+                "config-only consumption layout must report no Fail: {} — {}",
+                check.name,
+                check.message
+            );
+        }
     }
 
     #[test]
