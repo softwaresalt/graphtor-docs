@@ -47,6 +47,23 @@ pub struct UpgradeResult {
 /// Returns [`GraphtorError::Config`] on I/O failure or when the running
 /// binary path cannot be determined.
 pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, GraphtorError> {
+    // `detect_footprint` returns `Minimal` both for a genuine minimal
+    // install AND for a workspace that was never installed at all (no
+    // ingestion-capable subdirectory ever existing is exactly how it
+    // detects "minimal" — see its doc comment). Without this check, running
+    // `upgrade` before `install` would silently report a successful
+    // minimal-install no-op instead of the actionable error an
+    // uninstalled workspace deserves.
+    if !workspace_dir.is_dir() {
+        return Err(GraphtorError::Config {
+            message: format!(
+                "no {} directory found; run `graphtor-docs install` first",
+                crate::workspace::paths::GRAPHTOR_DIR
+            ),
+            field: None,
+        });
+    }
+
     if crate::workspace::doctor::detect_footprint(workspace_dir)
         == crate::workspace::doctor::WorkspaceFootprint::Minimal
     {
@@ -146,6 +163,26 @@ mod tests {
 
         assert!(!result.upgraded);
         assert!(!installed_binary_path(&ws).exists());
+    }
+
+    #[test]
+    fn upgrade_on_never_installed_workspace_is_an_actionable_error_not_a_silent_noop() {
+        // A workspace where `.graphtor/` never existed at all must NOT be
+        // confused with a genuine minimal install: `detect_footprint`
+        // returns `Minimal` for both, so `upgrade` must check workspace
+        // existence FIRST and fail with an actionable message instead of
+        // reporting a misleading successful no-op.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+        assert!(!ws.exists(), "precondition: workspace must not exist");
+
+        let err = upgrade(&ws, false)
+            .expect_err("upgrade on a never-installed workspace must be an error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("install"),
+            "error must point the operator at `graphtor-docs install`: {msg}"
+        );
     }
 
     #[test]

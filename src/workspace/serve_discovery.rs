@@ -246,6 +246,19 @@ pub fn classify_serve_postures(
             let Some(local) = source.as_local() else {
                 continue;
             };
+            // Validate the source's content path against the SAME
+            // authorized root the real background acquisition plan
+            // enforces (`acquire::plan::plan`/`validate_sources` both
+            // validate `local.path` against this identical `root`/
+            // `allowed_root` value) BEFORE trusting its on-disk state. An
+            // out-of-root `local.path` must never promote its target
+            // database to `Generation` (read-write) here — even though
+            // the real sync pipeline would separately reject the same
+            // path, that later rejection must not be preceded by a
+            // read-write open decided from unvalidated filesystem state.
+            if validate_path(&local.path, root).is_err() {
+                continue;
+            }
             if !local.path.exists() || !source_has_ingestible_content(local) {
                 // Absent, empty, or stale — this source resolves no
                 // database to `Generation`; fail-safe default applies.
@@ -824,6 +837,34 @@ mod tests {
             vec![(served[0].clone(), ServeMode::Generation)]
         );
         assert_eq!(classified.generation_sources.len(), 1);
+    }
+
+    #[test]
+    fn local_source_path_outside_root_never_promotes_to_generation() {
+        // A `local` source whose content `path` escapes `root` must never
+        // promote its target to `Generation`, even when that external
+        // directory genuinely exists and has ingestible content — the same
+        // containment boundary the real background acquisition plan
+        // (`acquire::plan::validate_sources`) enforces on `local.path` must
+        // also gate this posture decision, not just the eventual sync.
+        let root = temp_root();
+        let outside = temp_root();
+        touch(outside.path(), "guide.md");
+        let db = root.path().join("graph.db");
+        let served = vec![validate_path(&db, root.path()).unwrap()];
+        let config = config_with(vec![local_source("docs", outside.path(), None)]);
+
+        let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::ReadOnly)],
+            "an out-of-root local source path must never grant Generation posture"
+        );
+        assert!(
+            classified.generation_sources.is_empty(),
+            "an out-of-root source must not be surfaced as a generation source either"
+        );
     }
 
     #[test]

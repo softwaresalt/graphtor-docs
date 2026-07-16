@@ -65,22 +65,39 @@ pub fn plan_uninstall(workspace_dir: &Path, keep_config: bool) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Uninstall graphtor-docs from the workspace.
+/// Execute a previously-computed uninstall plan EXACTLY (PA-3).
 ///
-/// Removes ONLY the graphtor-created subdirectories reported by
-/// [`plan_uninstall`] (optionally preserving `.graphtor/config` when
-/// `keep_config` is `true`), then removes the `.graphtor/` root itself ONLY
-/// if it is left completely empty afterward — so a user-dropped `.db` file,
-/// a preserved `config/`, or a skipped symlinked subdirectory always keeps
-/// the root (and its contents) intact. Cleans the managed `.gitignore`
-/// block ONLY for a full-footprint workspace (a minimal install never wrote
-/// one), and removes MCP client config entries.
+/// NEVER recomputes [`plan_uninstall`] internally — it operates only on the
+/// `planned` entries the caller passes in. This closes the TOCTOU window
+/// that would otherwise exist between "compute and display the
+/// approval-set plan" and "compute and execute the deletion plan" as two
+/// separate [`plan_uninstall`] calls, which could observe different
+/// filesystem states (for example, a directory created between the two
+/// calls that was never shown to the operator for approval).
+///
+/// Each entry in `planned` is re-validated immediately before removal —
+/// it must still resolve to exactly one of the known graphtor-managed
+/// subdirectory names directly under `.graphtor/`, still be a real
+/// directory, and still not be a symlink — so a plan that has gone stale
+/// since it was computed (an entry deleted, replaced, or turned into a
+/// symlink in the interim) fails safe by skipping that entry rather than
+/// deleting it unconditionally or using it to justify deleting something
+/// else. This never EXPANDS the approved set: only entries present in
+/// `planned` are ever considered. As a second, independent layer of
+/// defence, `config/` is never deleted when `keep_config` is `true`
+/// regardless of whether it appears in `planned` — a caller does not need
+/// to trust that the plan it is replaying was itself built with the same
+/// `keep_config` value.
 ///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] when `project_root` cannot be
 /// resolved or on I/O failure.
-pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResult, GraphtorError> {
+pub fn uninstall_planned(
+    project_root: &Path,
+    keep_config: bool,
+    planned: &[PathBuf],
+) -> Result<UninstallResult, GraphtorError> {
     let workspace_dir = project_root.join(GRAPHTOR_DIR);
     // Footprint MUST be captured before any deletion — afterward every
     // subdirectory may be gone, which would misreport a full install as
@@ -88,8 +105,26 @@ pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResu
     let footprint = detect_footprint(&workspace_dir);
     let mut removed: Vec<String> = Vec::new();
 
-    for dir in plan_uninstall(&workspace_dir, keep_config) {
-        fs::remove_dir_all(&dir).map_err(|e| GraphtorError::Config {
+    for dir in planned {
+        let is_known_managed_subdir = dir.parent() == Some(workspace_dir.as_path())
+            && dir.file_name().is_some_and(|name| {
+                GRAPHTOR_SUBDIRS
+                    .iter()
+                    .any(|sub| name == std::ffi::OsStr::new(*sub))
+            });
+        let is_protected_config =
+            keep_config && dir.file_name() == Some(std::ffi::OsStr::new("config"));
+        // Re-validate immediately before deletion instead of trusting the
+        // plan blindly (defence-in-depth against a plan that has gone
+        // stale since it was computed): must still be exactly one of the
+        // known graphtor-managed subdirectory names directly under
+        // `workspace_dir`, still a real directory, still not a symlink,
+        // and never `config/` when `keep_config` is `true` — independent
+        // of whether the passed-in `planned` slice already honoured that.
+        if !is_known_managed_subdir || is_protected_config || !dir.is_dir() || is_symlink(dir) {
+            continue;
+        }
+        fs::remove_dir_all(dir).map_err(|e| GraphtorError::Config {
             message: format!("failed to remove {}: {e}", dir.display()),
             field: None,
         })?;
@@ -138,6 +173,19 @@ mod tests {
     use crate::workspace::gitignore::add_gitignore_entry;
     use crate::workspace::install::{install, install_minimal};
 
+    /// Test-only convenience wrapper: computes a fresh [`plan_uninstall`]
+    /// result and immediately executes it via [`uninstall_planned`]. Real
+    /// callers (`cmd_uninstall` in `main.rs`) MUST reuse a single
+    /// already-computed plan across "display" and "execute" — see
+    /// [`uninstall_planned`]'s doc comment — so this two-calls-in-one
+    /// shorthand exists only for tests that do not care about that
+    /// PA-3 exact-plan guarantee.
+    fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResult, GraphtorError> {
+        let workspace_dir = project_root.join(GRAPHTOR_DIR);
+        let planned = plan_uninstall(&workspace_dir, keep_config);
+        uninstall_planned(project_root, keep_config, &planned)
+    }
+
     #[test]
     fn uninstall_removes_workspace_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -145,6 +193,78 @@ mod tests {
         add_gitignore_entry(tmp.path()).expect("gitignore");
         uninstall(tmp.path(), false).expect("uninstall");
         assert!(!tmp.path().join(GRAPHTOR_DIR).exists());
+    }
+
+    #[test]
+    fn uninstall_planned_never_deletes_a_directory_created_after_the_plan_was_computed() {
+        // PA-3: the executed deletion set must be provably identical to
+        // the plan an operator was shown for approval. Simulate the exact
+        // TOCTOU window: `logs/` is absent when `planned` is computed (as
+        // `cmd_uninstall` does, to print the approval set) — for example
+        // because keep_config/a partial layout left it missing — THEN the
+        // filesystem changes (the directory is created), THEN execute —
+        // the late-appearing directory must survive because it was never
+        // part of the approved plan, even though it now exists on disk
+        // and structurally matches a known managed subdirectory name.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let ws = tmp.path().join(GRAPHTOR_DIR);
+        let late_dir = ws.join("logs");
+        fs::remove_dir_all(&late_dir).expect("remove logs/ so it is absent at planning time");
+
+        let planned = plan_uninstall(&ws, false);
+        assert!(
+            !planned.is_empty(),
+            "precondition: a full install still has a non-empty plan without logs/"
+        );
+        assert!(
+            !planned.contains(&late_dir),
+            "precondition: logs/ must be absent from the plan computed while it did not exist"
+        );
+
+        // Filesystem changes AFTER the plan was computed and shown, but
+        // BEFORE execution.
+        fs::create_dir_all(&late_dir).expect("simulate late-created subdir");
+
+        uninstall_planned(tmp.path(), false, &planned).expect("uninstall_planned");
+
+        assert!(
+            late_dir.exists(),
+            "a directory that appeared after the plan was computed must survive — it was never \
+             part of the approved deletion set"
+        );
+    }
+
+    #[test]
+    fn uninstall_planned_skips_a_planned_entry_that_became_a_symlink_before_execution() {
+        // Defence-in-depth: if a planned entry's nature changed between
+        // planning and execution (here, replaced with a symlink), it must
+        // be re-validated and skipped rather than deleted unconditionally.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let ws = tmp.path().join(GRAPHTOR_DIR);
+        let planned = plan_uninstall(&ws, false);
+
+        let logs_dir = ws.join("logs");
+        assert!(
+            planned.contains(&logs_dir),
+            "precondition: logs/ is planned"
+        );
+        fs::remove_dir_all(&logs_dir).expect("remove real logs dir to replace with a symlink");
+        let real_target = tmp.path().join("outside-logs-target");
+        fs::create_dir_all(&real_target).expect("create real external target");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_target, &logs_dir).expect("create symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&real_target, &logs_dir).expect("create symlink");
+
+        uninstall_planned(tmp.path(), false, &planned).expect("uninstall_planned");
+
+        assert!(
+            real_target.exists(),
+            "a planned entry that became a symlink before execution must be skipped, never \
+             followed and deleted"
+        );
     }
 
     #[test]

@@ -100,25 +100,28 @@ should open.
 ```yaml
 sources:
   - type: database
-    id: shared-runbooks   # required; unique alias/name for this entry
-    path: ./shared.db     # required; must stay within the workspace root
+    id: shared-runbooks          # required; unique alias/name for this entry
+    path: .graphtor/shared.db    # required; must stay within .graphtor/
 ```
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `id` | string | **yes** | — | Unique alias/name for this served database |
-| `path` | string | **yes** | — | Path to the database file; must resolve within the workspace root |
+| `path` | string | **yes** | — | Path to the database file; must resolve within `.graphtor/` |
 
 There is no `database`, `include`, `exclude`, or `formats` field for this
 type — it names a database to serve, it does not describe content to
 ingest. The `path` is canonicalized and validated to stay within the same
-authorized root as auto-discovery: an out-of-root path (`..`, a symlink, or a
-Windows junction/reparse point escape) is rejected rather than served.
-External (outside the workspace) database paths are not supported.
+authorized root as auto-discovery — `.graphtor/` itself, not the broader
+project root: an out-of-root path (`..`, a symlink, or a Windows
+junction/reparse point escape, or any path outside `.graphtor/`) is rejected
+rather than served. External (outside `.graphtor/`) database paths are not
+supported.
 
-If the same underlying file is also reachable through auto-discovery (for
-example, the entry's `path` points directly into `.graphtor/`), both resolve
-to the same served database rather than being opened twice.
+If the same underlying file is also reachable through auto-discovery
+(the entry's `path` necessarily resolves into `.graphtor/`, the same
+directory auto-discovery scans), both resolve to the same served database
+rather than being opened twice.
 
 See
 [Consumption-first serve: auto-discovery, posture, and the operator trust boundary](design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md)

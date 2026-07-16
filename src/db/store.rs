@@ -469,39 +469,61 @@ impl DataStore {
 /// sidecar it did not find pre-existing, restoring the workspace to
 /// exactly its prior state.
 struct EngineReadonlyGuard {
-    /// Paths that existed before locking; marked readonly and restored on drop.
-    guarded: Vec<PathBuf>,
-    /// Sidecar paths that did NOT exist before locking; removed on drop if
-    /// `SQLite`'s WAL-reader machinery transiently created them.
-    transient_sidecars: Vec<PathBuf>,
+    /// (path, was-already-readonly) pairs for paths that existed before
+    /// locking; marked readonly and restored to their CAPTURED ORIGINAL
+    /// state (not unconditionally writable) on drop, so a file the operator
+    /// had already marked readonly for their own reasons is never left
+    /// writable once this guard releases it.
+    guarded: Vec<(PathBuf, bool)>,
+    /// (path, `requires_empty_to_remove`) pairs for sidecar paths that did
+    /// NOT exist before locking. `-shm` is `SQLite`'s shared-memory WAL
+    /// index: purely derived, regenerable bookkeeping with no durable
+    /// content of its own (`SQLite` recreates it from the main file + `-wal`
+    /// whenever anything next opens the database), so it is always
+    /// removed if transient regardless of size. `-wal`/`-journal` CAN hold
+    /// real pending-transaction bytes, so removal is gated on the file
+    /// still being empty at drop-time — see [`Drop`].
+    transient_sidecars: Vec<(PathBuf, bool)>,
 }
 
 impl EngineReadonlyGuard {
     /// Mark `db_path` and any existing WAL/SHM/journal sidecars
     /// filesystem-readonly, rolling back any partial change if a later
-    /// sidecar cannot be locked. Also records which sidecar paths do not
-    /// yet exist so they can be cleaned up on [`Drop`] if the read-only
-    /// engine open transiently creates them.
+    /// sidecar cannot be locked. Captures each guarded path's ORIGINAL
+    /// readonly state (so [`Drop`] can restore it exactly rather than
+    /// unconditionally forcing writable) and records which sidecar paths
+    /// do not yet exist so they can be cleaned up on [`Drop`] if the
+    /// read-only engine open transiently creates them.
     fn lock(db_path: &Path) -> Result<Self, GraphtorError> {
-        let mut guarded: Vec<PathBuf> = Vec::new();
-        let mut transient_sidecars: Vec<PathBuf> = Vec::new();
+        let mut guarded: Vec<(PathBuf, bool)> = Vec::new();
+        let mut transient_sidecars: Vec<(PathBuf, bool)> = Vec::new();
         let candidates = sidecar_candidates(db_path);
         for (index, candidate) in candidates.into_iter().enumerate() {
             if !candidate.exists() {
                 // Index 0 is the main db file, which callers already verified
                 // exists; only sidecars (index > 0) reach this branch.
+                // Index 2 is `-shm` (see `sidecar_candidates`): a purely
+                // regenerable shared-memory index, safe to remove
+                // unconditionally. Index 1 (`-wal`) and index 3
+                // (`-journal`) can hold real pending-transaction data, so
+                // their removal requires the empty-at-drop-time check.
                 if index > 0 {
-                    transient_sidecars.push(candidate);
+                    let requires_empty = index != 2;
+                    transient_sidecars.push((candidate, requires_empty));
                 }
                 continue;
             }
+            let was_readonly = fs::metadata(&candidate)
+                .map_err(GraphtorError::from)?
+                .permissions()
+                .readonly();
             if let Err(error) = set_readonly(&candidate, true) {
-                for already_locked in guarded.iter().rev() {
-                    let _ = set_readonly(already_locked, false);
+                for (already_locked, original) in guarded.iter().rev() {
+                    let _ = set_readonly(already_locked, *original);
                 }
                 return Err(error);
             }
-            guarded.push(candidate);
+            guarded.push((candidate, was_readonly));
         }
         Ok(Self {
             guarded,
@@ -518,13 +540,32 @@ impl Drop for EngineReadonlyGuard {
         // `clear_stale_readonly_lock`, and the file itself is untouched
         // (still fully readable) regardless of whether this restore
         // succeeds.
-        for path in &self.guarded {
-            let _ = set_readonly(path, false);
+        //
+        // Restore each guarded path's CAPTURED ORIGINAL readonly state
+        // rather than unconditionally forcing writable: a file that was
+        // already filesystem-readonly before this guard ever touched it
+        // (for example, an operator's own deliberate protection) must stay
+        // readonly afterward, not be silently made writable.
+        for (path, original_readonly) in &self.guarded {
+            let _ = set_readonly(path, *original_readonly);
         }
-        // Remove any WAL-reader bookkeeping sidecar this session created so
-        // the workspace shows no persistent trace of having been served.
-        for path in &self.transient_sidecars {
-            if path.exists() {
+        // Remove a transient WAL-reader bookkeeping sidecar this session
+        // may have created. `-shm` (`requires_empty == false`) is always
+        // removed if transient — it is purely derived shared-memory index
+        // data with no durable content, so even a genuinely concurrent
+        // writer's `-shm` is safe to unlink (SQLite regenerates it on next
+        // open). `-wal`/`-journal` (`requires_empty == true`) CAN hold
+        // real pending-transaction bytes, so they are only removed while
+        // still empty — a non-empty file here may belong to a genuinely
+        // concurrent writer, and unlinking it could corrupt or lose
+        // committed data this guard has no way to prove it does not own.
+        for (path, requires_empty) in &self.transient_sidecars {
+            let safe_to_remove = if *requires_empty {
+                fs::metadata(path).is_ok_and(|meta| meta.len() == 0)
+            } else {
+                path.exists()
+            };
+            if safe_to_remove {
                 let _ = fs::remove_file(path);
             }
         }
@@ -873,6 +914,93 @@ mod tests {
         let rw = DataStore::open_sqlite(&db_path, dir.path())
             .expect("a subsequent read-write open must succeed after the guard is released");
         rw.ensure_schema().expect("ensure_schema after restore");
+    }
+
+    #[test]
+    fn open_engine_readonly_preserves_a_pre_existing_readonly_db_after_drop() {
+        // A file the operator had ALREADY marked filesystem-readonly for
+        // their own reasons, before `open_engine_readonly` ever touched it,
+        // must remain readonly once the guard releases it — restoring
+        // must recover the file's CAPTURED ORIGINAL state, not
+        // unconditionally force it writable.
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-preexisting.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        set_readonly(&db_path, true).expect("mark pre-existing readonly for fixture setup");
+        assert!(
+            fs::metadata(&db_path).unwrap().permissions().readonly(),
+            "precondition: db file must already be readonly before serving"
+        );
+
+        {
+            let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+                .expect("open_engine_readonly should succeed against an already-readonly file");
+            assert!(
+                fs::metadata(&db_path).unwrap().permissions().readonly(),
+                "db file must remain filesystem-readonly while the guard is held"
+            );
+            drop(readonly);
+        }
+
+        assert!(
+            fs::metadata(&db_path).unwrap().permissions().readonly(),
+            "a db file that was ALREADY readonly before serving must remain readonly after the \
+             guard drops"
+        );
+    }
+
+    #[test]
+    fn open_engine_readonly_removes_an_empty_transient_sidecar_on_drop() {
+        // The common single-process case: SQLite's read-only WAL-reader
+        // machinery creates an EMPTY placeholder sidecar that did not
+        // exist before this session; that placeholder must still be
+        // cleaned up on drop so the workspace shows no persistent trace.
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-empty-sidecar.db");
+        build_populated_fixture(&db_path, dir.path());
+        let wal_path = sidecar_paths_for_test(&db_path)[0].clone();
+        assert!(!wal_path.exists(), "precondition: no -wal sidecar yet");
+
+        {
+            let _readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+                .expect("open_engine_readonly should succeed");
+            // Simulate the engine's own transient, still-empty placeholder
+            // artifact appearing while the guard is held.
+            fs::write(&wal_path, b"").expect("simulate empty transient sidecar");
+        }
+
+        assert!(
+            !wal_path.exists(),
+            "an EMPTY transient sidecar must be cleaned up on drop"
+        );
+    }
+
+    #[test]
+    fn open_engine_readonly_never_removes_a_non_empty_transient_sidecar_on_drop() {
+        // If a concurrent process created a REAL, live WAL file in the
+        // narrow window this guard was held (a scenario this guard cannot
+        // rule out), that file is virtually guaranteed to be non-empty.
+        // Cleanup must leave it alone rather than risk deleting another
+        // connection's committed data.
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-live-sidecar.db");
+        build_populated_fixture(&db_path, dir.path());
+        let wal_path = sidecar_paths_for_test(&db_path)[0].clone();
+        assert!(!wal_path.exists(), "precondition: no -wal sidecar yet");
+
+        {
+            let _readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+                .expect("open_engine_readonly should succeed");
+            // Simulate a genuinely concurrent writer's live, non-empty WAL
+            // sidecar appearing while the guard is held.
+            fs::write(&wal_path, b"not-empty-live-wal-frame").expect("simulate live sidecar");
+        }
+
+        assert!(
+            wal_path.exists(),
+            "a NON-EMPTY sidecar must never be removed — it may be another connection's live data"
+        );
     }
 
     #[test]

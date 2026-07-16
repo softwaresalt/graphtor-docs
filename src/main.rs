@@ -3506,8 +3506,12 @@ fn cmd_uninstall(
         }
     }
 
-    let result =
-        workspace::uninstall::uninstall(cwd, args.keep_config).context("uninstall failed")?;
+    // Execute the EXACT plan just displayed above (PA-3) — never
+    // recompute `plan_uninstall` internally, which would open a TOCTOU
+    // window where the set actually deleted could differ from the set the
+    // operator was just shown.
+    let result = workspace::uninstall::uninstall_planned(cwd, args.keep_config, &planned)
+        .context("uninstall failed")?;
 
     if fmt == OutputFormat::Json {
         println!(
