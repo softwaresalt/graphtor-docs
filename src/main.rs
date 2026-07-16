@@ -2676,7 +2676,7 @@ fn discover_status_db_paths(
         }
     };
 
-    let existing_candidates: Vec<PathBuf> = if let Some(config) = &source_config {
+    let mut existing_candidates: Vec<PathBuf> = if let Some(config) = &source_config {
         discover_db_files(db_path, config)
     } else {
         // `load_source_config` returns `Ok(None)` for two distinct reasons:
@@ -2707,16 +2707,35 @@ fn discover_status_db_paths(
         }
     };
 
+    // Shared-set parity with `serve` (P1-T5): `discover_db_files` injects the
+    // `base_db_path` fallback (a phantom default database path) when a source
+    // registry resolves to ZERO ingestible (local) sources, purely so `sync`
+    // always has somewhere to write. `serve` drops that nonexistent phantom via
+    // its posture `retain` (a `ReadOnly` candidate that does not exist is
+    // excluded); if `status`/`list-sources` kept it, they would report a
+    // `graph.db` that was never created and that no source targets — diverging
+    // from what `serve` opens. Drop it here under the SAME condition: the
+    // registry has no ingestible sources AND the fallback file does not exist.
+    // A real not-yet-created GENERATION target (from an actual local source) is
+    // a resolved local path, not this empty-registry fallback, so it is never
+    // dropped.
+    if let Some(config) = &source_config {
+        let has_ingestible = config.sources.iter().any(|s| s.as_local().is_some());
+        if !has_ingestible {
+            existing_candidates.retain(|p| p.as_path() != db_path || p.exists());
+        }
+    }
+
     // Merge in any `.db` file dropped directly into `.graphtor/`, and any
     // explicit workspace-contained `type: database` entry (P1-T6), using the
     // SAME shared auto-discovery `serve` relies on (P1-T1) — so `status` and
     // the `list-sources` surface (which shares this helper via
     // `QueryCtx::open_stores`) never diverge from what `serve` would open
-    // (P1-T5). `existing_candidates` is preserved unchanged in full —
-    // including a not-yet-created generation target or the
-    // `discover_db_files` empty-registry fallback to `base_db_path` — the
-    // merge can only ADD genuinely-existing auto-discovered files, never
-    // drop an existing candidate.
+    // (P1-T5). A not-yet-created generation target is preserved (mirroring
+    // serve's `Generation`-kept rule); the empty-registry `base_db_path`
+    // phantom was already dropped above (mirroring serve's nonexistent-`ReadOnly`
+    // drop). The merge can only ADD genuinely-existing auto-discovered files,
+    // never drop an existing candidate.
     let graphtor_dir = cwd.join(".graphtor");
     workspace::serve_discovery::discover_served_databases(
         &graphtor_dir,
@@ -3989,6 +4008,54 @@ mod tests {
             vec![PathBuf::from("/workspace/.graphtor/docs.db")],
             "the Database entry must contribute no generation target — it must not fall \
              through to base_db_path, and only the local source's target remains"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_drop_the_phantom_fallback_for_a_database_only_registry() {
+        // W6-4: `discover_db_files` injects the `base_db_path` fallback (a
+        // phantom default `graph.db`) when a registry resolves to zero
+        // ingestible sources, purely so `sync` has a write target. `serve` drops
+        // that nonexistent phantom via its posture `retain`; `status` /
+        // `list-sources` must not diverge by reporting a `graph.db` that was
+        // never created and that no source targets. A database-only registry
+        // (one explicit `type: database` entry, no local sources) must therefore
+        // report ONLY the served database, never the phantom.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        let config_dir = graphtor_dir.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+
+        // The empty-registry phantom fallback — deliberately NOT created on disk.
+        let base_db_path = graphtor_dir.join("graph.db");
+
+        // A real, served database the registry explicitly points at.
+        let served_db = graphtor_dir.join("legacy.db");
+        fs::write(&served_db, b"db").expect("seed served db");
+
+        let served_db_yaml = served_db.display().to_string().replace('\\', "/");
+        fs::write(
+            config_dir.join("sources.yaml"),
+            format!("sources:\n  - type: database\n    id: legacy\n    path: {served_db_yaml}\n"),
+        )
+        .expect("write database-only sources.yaml");
+
+        let db_paths = discover_status_db_paths(&base_db_path, root.path(), None, false)
+            .expect("status discovery should succeed");
+
+        // Compare on file names to stay robust against path canonicalization.
+        let names: Vec<String> = db_paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "graph.db"),
+            "the nonexistent empty-registry phantom `graph.db` must not be reported \
+             by status (parity with serve's drop): {db_paths:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "legacy.db"),
+            "the explicitly-configured served database must still be reported: {db_paths:?}"
         );
     }
 

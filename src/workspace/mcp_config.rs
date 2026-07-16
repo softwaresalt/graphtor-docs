@@ -24,8 +24,8 @@
 //! A file is deleted outright only when the managed entry was its sole server.
 
 use std::fs;
-use std::io::ErrorKind;
-use std::path::Path;
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 
 use graphtor_core::path::validate_path;
 use graphtor_core::GraphtorError;
@@ -325,6 +325,17 @@ pub fn managed_config_candidates() -> Vec<String> {
 #[must_use]
 pub fn file_has_managed_entry(project_root: &Path, rel_path: &str) -> bool {
     let dest = project_root.join(rel_path);
+    // Workspace-containment guard (Constitution III/IV): mirror the execution
+    // guard in `remove_mcp_config_from`. A legacy candidate like
+    // `.vscode/mcp.json` can traverse a symlinked/junction parent (`.vscode`),
+    // so reading it here during PLANNING would cross the workspace boundary and
+    // could advertise a prune of an external file that execution then (correctly)
+    // skips. Treat an out-of-root candidate as "no managed entry" so planning
+    // never reads outside the project and never previews a mutation that
+    // execution's own guard would refuse — keeping plan and execution aligned.
+    if validate_path(&dest, project_root).is_err() {
+        return false;
+    }
     let Ok(content) = fs::read_to_string(&dest) else {
         return false;
     };
@@ -518,19 +529,58 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
     serialized.push('\n');
 
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    let tmp_name = format!(
-        ".{}.tmp-{}",
-        dest.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("mcp-config"),
-        std::process::id()
-    );
-    let tmp_path = parent.join(tmp_name);
+    let base_name = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("mcp-config");
+    let pid = std::process::id();
 
-    fs::write(&tmp_path, &serialized).map_err(|e| GraphtorError::Config {
-        message: format!("failed to write temporary file for {rel_path}: {e}"),
-        field: None,
-    })?;
+    // Create the temp file with EXCLUSIVE creation (`create_new` -> O_EXCL /
+    // CREATE_NEW). The temp path is derived from the PID and is therefore
+    // predictable, so a pre-planted symlink or a stale temp file left at that
+    // path could otherwise be FOLLOWED by a plain `fs::write`, redirecting the
+    // write OUTSIDE the workspace (containment escape) or letting a colliding
+    // concurrent writer share our temp file. `create_new` fails closed on any
+    // pre-existing path (including a symlink), so it never follows one; on
+    // collision we retry with an incrementing suffix and write through the
+    // returned handle.
+    let mut opened: Option<(PathBuf, fs::File)> = None;
+    for attempt in 0..256u32 {
+        let candidate = parent.join(format!(".{base_name}.tmp-{pid}-{attempt}"));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                opened = Some((candidate, file));
+                break;
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                return Err(GraphtorError::Config {
+                    message: format!("failed to create temporary file for {rel_path}: {e}"),
+                    field: None,
+                });
+            }
+        }
+    }
+    let Some((tmp_path, mut file)) = opened else {
+        return Err(GraphtorError::Config {
+            message: format!("failed to create a unique temporary file for {rel_path}"),
+            field: None,
+        });
+    };
+    if let Err(e) = file.write_all(serialized.as_bytes()) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(GraphtorError::Config {
+            message: format!("failed to write temporary file for {rel_path}: {e}"),
+            field: None,
+        });
+    }
+    // Close the handle before the permission set / rename below: Windows cannot
+    // rename a file that is still open.
+    drop(file);
     // Preserve the destination's existing permissions across the atomic
     // replace. The temp file was created fresh with umask-default permissions;
     // without this, a user-owned `0600` shared `.mcp.json` (which may hold
@@ -1282,6 +1332,111 @@ mod tests {
             fs::read_to_string(&external_cfg).expect("read external"),
             MANAGED_DOC,
             "the external config must be left byte-for-byte unchanged"
+        );
+    }
+
+    #[test]
+    fn plan_predicate_skips_a_candidate_whose_parent_is_a_symlink_out_of_project() {
+        // W6-1: the uninstall PLANNING predicate `file_has_managed_entry` must
+        // apply the same workspace-containment guard the remove branch does. A
+        // legacy candidate `.vscode/mcp.json` reached through a symlinked
+        // `.vscode` parent pointing OUTSIDE the project must not be read during
+        // planning — otherwise the plan would preview a prune of an external
+        // file that execution then (correctly) skips. The predicate reports
+        // `false` for the escaping candidate even though the external file
+        // genuinely holds a managed entry.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        fs::write(external.path().join("mcp.json"), MANAGED_DOC).expect("write external mcp.json");
+
+        // Isolation proof: read in-root of the external dir → detected managed.
+        assert!(
+            file_has_managed_entry(external.path(), "mcp.json"),
+            "precondition: the external file must genuinely hold a managed entry"
+        );
+
+        let vscode_link = project.path().join(".vscode");
+        if try_symlink_dir(external.path(), &vscode_link).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        assert!(
+            !file_has_managed_entry(project.path(), ".vscode/mcp.json"),
+            "a candidate reached through a symlinked parent must not be read or \
+             detected as managed during planning"
+        );
+    }
+
+    /// Create a file symlink cross-platform, returning `Err` when the platform
+    /// refuses so the caller can self-skip rather than fail.
+    fn try_symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+    }
+
+    #[test]
+    fn write_json_never_follows_a_symlink_planted_at_the_predictable_temp_path() {
+        // W6-2: the temp path is PID-derived and therefore predictable. If a
+        // symlink is planted there (by an attacker or a stale run) pointing at
+        // an external file, a plain `fs::write` to the temp path would FOLLOW it
+        // and clobber the external target. Exclusive creation (`create_new` /
+        // O_EXCL) refuses to open any pre-existing path — including a symlink —
+        // so the write is redirected to a fresh suffix and the external target
+        // is never touched.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let victim = external.path().join("victim.txt");
+        fs::write(&victim, b"external data that must survive").expect("seed victim");
+
+        let dest = project.path().join(".mcp.json");
+        let pid = std::process::id();
+        // Plant a symlink at BOTH the current first-candidate temp path (`-0`)
+        // and the historical single-temp path (no suffix). The current writer
+        // must collide on `-0` and retry; a regression to the old
+        // symlink-following `fs::write` would clobber the victim through the
+        // no-suffix path and fail this test.
+        let planted_new = project
+            .path()
+            .join(format!(".{}.tmp-{}-0", ".mcp.json", pid));
+        let planted_old = project.path().join(format!(".{}.tmp-{}", ".mcp.json", pid));
+        if try_symlink_file(&victim, &planted_new).is_err()
+            || try_symlink_file(&victim, &planted_old).is_err()
+        {
+            return; // platform refused symlink creation — skip
+        }
+
+        let value = serde_json::json!({ "mcpServers": {} });
+        write_json(&dest, &value, ".mcp.json")
+            .expect("write_json must succeed by selecting a fresh, uncontended temp path");
+
+        assert_eq!(
+            fs::read_to_string(&victim).expect("victim still readable"),
+            "external data that must survive",
+            "write_json must not follow a planted symlink and overwrite an external file"
+        );
+        assert!(
+            fs::symlink_metadata(&planted_new)
+                .expect("planted symlink metadata")
+                .file_type()
+                .is_symlink(),
+            "the planted temp-path symlink must be left intact (create_new refused it), \
+             proving it was neither followed nor replaced"
+        );
+        assert!(
+            dest.exists(),
+            "the destination config must still be written"
+        );
+        assert!(
+            fs::read_to_string(&dest)
+                .expect("read dest")
+                .contains("mcpServers"),
+            "the destination must hold the intended serialized content"
         );
     }
 }

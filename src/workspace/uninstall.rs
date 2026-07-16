@@ -227,10 +227,31 @@ pub fn remove_empty_workspace_root(workspace_dir: &Path) -> Result<Option<String
     if !is_empty {
         return Ok(None);
     }
-    fs::remove_dir(workspace_dir).map_err(|e| GraphtorError::Config {
-        message: format!("failed to remove {}: {e}", workspace_dir.display()),
-        field: None,
-    })?;
+    if let Err(e) = fs::remove_dir(workspace_dir) {
+        // Race tolerance: a concurrent re-install can repopulate the
+        // just-verified-empty root between the emptiness check above and this
+        // unlink, making `remove_dir` fail with "directory not empty". That is
+        // a benign no-op (the freshly-written data must survive and the other
+        // approved removals already succeeded), so surfacing it as an uninstall
+        // failure would be misleading. Distinguish that race from a genuine
+        // removal error WITHOUT the MSRV-1.75-unstable `ErrorKind::DirectoryNotEmpty`
+        // (stabilized in 1.83): re-inspect the root. If it vanished (another
+        // process removed it) or is now non-empty, treat it as `Ok(None)`; if it
+        // is still an empty directory, the removal genuinely failed (permissions,
+        // a lock) — surface that error.
+        if !workspace_dir.exists() {
+            return Ok(None);
+        }
+        let now_nonempty =
+            fs::read_dir(workspace_dir).is_ok_and(|mut entries| entries.next().is_some());
+        if now_nonempty {
+            return Ok(None);
+        }
+        return Err(GraphtorError::Config {
+            message: format!("failed to remove {}: {e}", workspace_dir.display()),
+            field: None,
+        });
+    }
     Ok(Some(workspace_dir.display().to_string()))
 }
 
@@ -766,6 +787,53 @@ mod tests {
         assert!(
             non_empty.exists(),
             "a non-empty root must never be removed (remove_dir, not remove_dir_all)"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn remove_empty_workspace_root_propagates_a_genuine_removal_error() {
+        // W6-3 makes `remove_dir` failures race-tolerant: a benign
+        // concurrent-repopulation race is swallowed as `Ok(None)`. This must NOT
+        // over-swallow a GENUINE removal failure. Deny write on the parent so
+        // `remove_dir` on the still-empty child fails with EACCES while the child
+        // remains an empty, existing directory — that must surface as an error,
+        // not be misclassified as a race.
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let parent = tmp.path().join("locked-parent");
+        let empty = parent.join("empty-ws");
+        fs::create_dir_all(&empty).expect("mkdir empty child");
+
+        let original = fs::metadata(&parent).expect("parent meta").permissions();
+        // r-x: entries are listable (emptiness check passes) but not removable.
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o500)).expect("lock parent");
+
+        // Some CI environments run as root, which bypasses DAC permission bits;
+        // there the removal would succeed and the error path cannot be exercised.
+        // Probe by attempting a write into the now-read-only parent: if it
+        // succeeds we are privileged — restore and self-skip.
+        let probe = parent.join(".probe");
+        if fs::write(&probe, b"x").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(&parent, original).expect("restore parent perms");
+            return;
+        }
+
+        let result = remove_empty_workspace_root(&empty);
+
+        // Restore permissions BEFORE asserting so the tempdir always cleans up.
+        fs::set_permissions(&parent, original).expect("restore parent perms");
+
+        assert!(
+            result.is_err(),
+            "a genuine removal failure on a still-empty root must propagate, \
+             not be swallowed as a race: {result:?}"
+        );
+        assert!(
+            empty.exists(),
+            "the child directory must still exist after a failed removal"
         );
     }
 
