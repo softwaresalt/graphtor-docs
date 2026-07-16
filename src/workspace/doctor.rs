@@ -70,11 +70,17 @@ impl WorkspaceFootprint {
 /// Detect whether `workspace_dir` uses the full or minimal footprint.
 ///
 /// A workspace is [`WorkspaceFootprint::Full`] when ANY of the
-/// ingestion-scaffold subdirectories ([`GRAPHTOR_INGESTION_SUBDIRS`]: `bin/`,
-/// `data/`, `cache/`, `logs/`) exist — matching conservatively toward `Full`
-/// for a partially scaffolded or in-transition ingestion install, so `doctor`
-/// never silently suppresses a real problem in an otherwise-full install.
-/// Otherwise it is [`WorkspaceFootprint::Minimal`].
+/// ingestion-scaffold paths ([`GRAPHTOR_INGESTION_SUBDIRS`]: `bin/`, `data/`,
+/// `cache/`, `logs/`) is occupied by SOME filesystem entry — a directory, or
+/// (in a corrupt/partial install) a regular file or symlink standing in for
+/// the scaffold directory. Detection deliberately keys off "any entry present"
+/// rather than "is a directory": a regular file at `.graphtor/bin` is a
+/// corrupt partial full install, and classifying it `Minimal` would hide that
+/// corruption (doctor would downgrade the missing scaffold to informational
+/// and `upgrade` would no-op). Matching conservatively toward `Full` here lets
+/// the full-footprint checks surface the problem — including reporting that the
+/// occupied path is not a directory. Otherwise it is
+/// [`WorkspaceFootprint::Minimal`].
 ///
 /// `config/` is intentionally EXCLUDED from this signal even though it is a
 /// managed subdirectory: it holds `sources.yaml`, which a consumption-only
@@ -85,10 +91,10 @@ impl WorkspaceFootprint {
 /// `upgrade` attempt to copy a binary into a nonexistent `bin/`.
 #[must_use]
 pub fn detect_footprint(workspace_dir: &Path) -> WorkspaceFootprint {
-    let any_ingestion_subdir_exists = GRAPHTOR_INGESTION_SUBDIRS
+    let any_ingestion_entry_exists = GRAPHTOR_INGESTION_SUBDIRS
         .iter()
-        .any(|sub| workspace_dir.join(sub).is_dir());
-    if any_ingestion_subdir_exists {
+        .any(|sub| workspace_dir.join(sub).symlink_metadata().is_ok());
+    if any_ingestion_entry_exists {
         WorkspaceFootprint::Full
     } else {
         WorkspaceFootprint::Minimal
@@ -127,6 +133,15 @@ fn check_subdirs(workspace_dir: &Path, footprint: WorkspaceFootprint) -> Vec<Che
                     name: "subdir",
                     severity: Severity::Pass,
                     message: format!("{sub}/ present"),
+                }
+            } else if dir.symlink_metadata().is_ok() {
+                Check {
+                    name: "subdir",
+                    severity: Severity::Fail,
+                    message: format!(
+                        "{sub} exists but is not a directory; remove it and re-run \
+                         `graphtor-docs install`"
+                    ),
                 }
             } else if footprint == WorkspaceFootprint::Minimal {
                 Check {
@@ -383,6 +398,33 @@ mod tests {
                 check.message
             );
         }
+    }
+
+    #[test]
+    fn detect_footprint_returns_full_when_an_ingestion_path_is_a_file_not_a_dir() {
+        // A regular file occupying `.graphtor/bin` is a corrupt partial full
+        // install, not a consumption-only workspace. `is_dir()` would treat it
+        // as absent and classify the workspace `Minimal`, hiding the corruption;
+        // "any entry present" detection must classify it `Full` so doctor
+        // surfaces the problem.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+        std::fs::create_dir_all(&ws).expect("create ws");
+        std::fs::write(ws.join("bin"), b"not a dir").expect("write bin file");
+
+        assert_eq!(
+            detect_footprint(&ws),
+            WorkspaceFootprint::Full,
+            "a file occupying an ingestion scaffold path must classify as Full, not Minimal"
+        );
+
+        let checks = run_doctor(&ws);
+        assert!(
+            checks.iter().any(|c| c.name == "subdir"
+                && c.severity == Severity::Fail
+                && c.message.contains("bin")),
+            "doctor must report a Fail for the `bin` path that exists but is not a directory"
+        );
     }
 
     #[test]

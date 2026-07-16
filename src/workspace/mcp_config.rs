@@ -532,6 +532,13 @@ fn managed_server_value(command: &str) -> serde_json::Value {
 /// already exists, its permissions are captured and reapplied to the temp
 /// file before the rename, so replacing a user-owned `0600` shared config
 /// never widens it to the umask default.
+///
+/// On Unix the temp file is created owner-only (`0600`) atomically, so the
+/// credential-bearing config is never — even while empty — group/other-readable
+/// at the predictable temp path. As a consequence a FRESHLY-created `.mcp.json`
+/// (no pre-existing `dest`, so nothing to preserve) lands at `0600` rather than
+/// the umask default: owner-only is the correct posture for a file that carries
+/// the managed launch command and may sit alongside other servers' credentials.
 fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<(), GraphtorError> {
     let mut serialized =
         serde_json::to_string_pretty(value).map_err(|e| GraphtorError::Config {
@@ -559,11 +566,25 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
     let mut opened: Option<(PathBuf, fs::File)> = None;
     for attempt in 0..256u32 {
         let candidate = parent.join(format!(".{base_name}.tmp-{pid}-{attempt}"));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
+        let mut open_opts = fs::OpenOptions::new();
+        open_opts.write(true).create_new(true);
+        // Create the credential temp file owner-only (`0600`) from the FIRST
+        // inode so it is never — even while empty — group/other-readable at the
+        // predictable temp path. Applying the mode as a SEPARATE `chmod` after
+        // `create_new` would leave a `[create -> chmod]` window in which a local
+        // attacker could `open()` the umask-default (0644) empty inode, retain
+        // the read fd, and read the credential bytes once they are written
+        // (Unix permission checks happen at `open()`, not per-read). `.mode()`
+        // is masked by umask, which can only NARROW it; the explicit `0600`
+        // restore below guarantees owner-write even under a pathological
+        // owner-write-stripping umask. Unix-only: Windows tracks only a readonly
+        // bit, with no mode-bit exposure.
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            open_opts.mode(0o600);
+        }
+        match open_opts.open(&candidate) {
             Ok(file) => {
                 opened = Some((candidate, file));
                 break;
@@ -583,6 +604,26 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
             field: None,
         });
     };
+    // Guarantee the temp file is owner-writable before the write. The atomic
+    // `.mode(0600)` at creation (above) is masked by umask, so a pathological
+    // owner-write-stripping umask could have narrowed it below owner-write; this
+    // ABSOLUTE `set_permissions(0600)` restores it (it never widens beyond
+    // `0600`, so it adds no group/other exposure). The atomic create is what
+    // closes the TOCTOU window; this is a belt-and-suspenders write guarantee.
+    // The destination's exact perms are reapplied after the write, below. Fail
+    // CLOSED on error. Unix-only — Windows tracks only a readonly bit and
+    // marking the temp readonly would block the write.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Err(e) = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600)) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(GraphtorError::Config {
+                message: format!("failed to secure temporary file for {rel_path}: {e}"),
+                field: None,
+            });
+        }
+    }
     if let Err(e) = file.write_all(serialized.as_bytes()) {
         let _ = fs::remove_file(&tmp_path);
         return Err(GraphtorError::Config {
@@ -1330,6 +1371,29 @@ mod tests {
         assert_eq!(
             mode, 0o600,
             "the rewrite must preserve the destination's original 0600 mode, not widen to 0644"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_json_creates_new_config_owner_only() {
+        // A freshly-created `.mcp.json` carries the managed launch command and
+        // may sit alongside credentials for OTHER MCP servers. With no
+        // pre-existing destination to preserve, it must still be created
+        // owner-only (0600), not the umask default (~0644).
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        assert!(!path.exists(), "precondition: no pre-existing config");
+
+        generate_mcp_config(tmp.path()).expect("generate creates config");
+
+        assert!(path.exists(), "config was created");
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "a freshly-created .mcp.json must be owner-only (0600), not umask-default"
         );
     }
 

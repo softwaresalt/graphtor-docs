@@ -336,10 +336,18 @@ fn source_has_ingestible_content(local: &LocalSource) -> bool {
     }
 
     let mut relative_candidates: Vec<PathBuf> = Vec::new();
-    for entry in walkdir::WalkDir::new(&local.path)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in walkdir::WalkDir::new(&local.path) {
+        // Fail closed on any walk error. An unreadable subtree (or an entry
+        // that vanished mid-walk) means the REAL acquisition walk — which
+        // propagates `WalkDir` errors (see `graphtor_core::acquire::local`) —
+        // would also fail. Refuse to classify the source as cleanly ingestible
+        // (and therefore promote its target to a read-WRITE `Generation`
+        // posture) merely because some OTHER readable file happened to match:
+        // treat the source as not-ingestible so its target stays read-only,
+        // matching the acquisition pipeline's own behaviour.
+        let Ok(entry) = entry else {
+            return false;
+        };
         if !entry.file_type().is_file() {
             continue;
         }
@@ -1032,6 +1040,51 @@ mod tests {
             classified.postures,
             vec![(served[0].clone(), ServeMode::ReadOnly)],
             "an include filter that matches nothing must not promote the target to Generation"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_with_an_unreadable_subtree_stays_read_only() {
+        // A readable matching file exists at the top level, but a subtree is
+        // unreadable so the walk yields an error. The real acquisition walk
+        // would fail on that subtree, so posture classification must fail
+        // closed to ReadOnly rather than opening the target read-write on the
+        // strength of the readable file.
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = temp_root();
+        let docs_dir = root.path().join("docs");
+        touch(&docs_dir, "guide.md");
+        let locked = docs_dir.join("locked");
+        fs::create_dir_all(&locked).expect("create locked subdir");
+        touch(&locked, "inner.md");
+        // Drop read+exec so descending into `locked` yields a WalkDir error.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+
+        // If the environment does not enforce the 0o000 restriction (e.g. the
+        // test runs as root in a CI container, where DAC is bypassed), the walk
+        // would NOT error and this test cannot exercise the fail-closed path.
+        // Probe with a read_dir and self-skip rather than emit a false failure.
+        if fs::read_dir(&locked).is_ok() {
+            let _ = fs::set_permissions(&locked, fs::Permissions::from_mode(0o755));
+            return;
+        }
+
+        let db = touch(root.path(), "graph.db");
+        let served = vec![validate_path(&db, root.path()).unwrap()];
+        let source = local_source("docs", &docs_dir, None);
+        let config = config_with(vec![source]);
+
+        let classified = classify_serve_postures(&served, Some(&config), &db, root.path());
+
+        // Restore perms so TempDir cleanup can remove the tree.
+        let _ = fs::set_permissions(&locked, fs::Permissions::from_mode(0o755));
+
+        assert_eq!(
+            classified.postures,
+            vec![(served[0].clone(), ServeMode::ReadOnly)],
+            "an unreadable subtree must fail closed to ReadOnly, matching the acquisition walk"
         );
     }
 
