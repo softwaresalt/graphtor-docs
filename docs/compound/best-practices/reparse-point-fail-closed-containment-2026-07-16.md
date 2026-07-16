@@ -31,7 +31,7 @@ workspace containment (Constitution Principles III/IV).
 ## Solution
 
 Add one companion primitive that inspects the link entry directly and reject a
-linked root **before** any read, mutation, or deletion:
+linked root **before** any traversal, mutation, or deletion:
 
 ```rust
 // src/path/security.rs

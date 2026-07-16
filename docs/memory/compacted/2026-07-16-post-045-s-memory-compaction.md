@@ -34,7 +34,9 @@ Verified each pre-05-08 memory original against its archive copy by SHA-256:
 
 ## Result
 
-* `docs/memory/` file count: 41 → 21 (under the 40 threshold)
+* `docs/memory/` file count: 41 → 21 after removals; this compaction report
+  (committed under `docs/memory/compacted/`) brings the post-PR committed total
+  to 22 — still well under the 40 trigger threshold
 * Files removed (duplicates): 20
 * Active/recent checkpoints preserved: all 2026-05-13 onward untouched
 * Traceability: every removed original has an identical retained copy under
