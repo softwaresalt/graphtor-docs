@@ -3181,16 +3181,14 @@ fn cmd_install(
     let _lock = workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
         .context("workspace is locked by another process")?;
 
-    let result = workspace::install::install(cwd).context("install failed")?;
-
-    // Initialise sources.yaml (non-destructive).
-    let init_result = workspace::init::init_sources_yaml(&result.workspace_dir, false)
-        .context("failed to initialise sources.yaml")?;
-
-    // Manage .gitignore (side effect only; print deferred below).
-    if !args.no_gitignore {
-        workspace::gitignore::add_gitignore_entry(cwd).context("failed to update .gitignore")?;
-    }
+    // Consumption-first default (P2-T1): the minimal footprint creates ONLY
+    // `.graphtor/` plus a minimal serve `.mcp.json` — no `sources.yaml`, no
+    // ingestion subdirectories (bin/data/cache/config/logs), and no
+    // `.gitignore` side effect. The full, ingestion-capable scaffold
+    // (`workspace::install::install`) remains fully intact and unchanged
+    // for `upgrade`; the `--with-ingestion` flag (P2-T2a) wires it back into
+    // this CLI surface as an explicit opt-in.
+    let result = workspace::install::install_minimal(cwd).context("install failed")?;
 
     // Generate or merge the graphtor-docs entry in the workspace-root .mcp.json.
     let mcp_outcome =
@@ -3208,7 +3206,7 @@ fn cmd_install(
             cli::jsonrpc::wrap_success(serde_json::json!({
                 "created": result.created,
                 "workspace_dir": result.workspace_dir.display().to_string(),
-                "binary_path": result.binary_path.display().to_string(),
+                "footprint": "minimal",
                 "mcp_config": mcp_config,
             }))
         );
@@ -3223,15 +3221,6 @@ fn cmd_install(
             result.workspace_dir.display()
         );
     }
-    println!("binary:  {}", result.binary_path.display());
-
-    if init_result.created {
-        println!("created: {}", init_result.path.display());
-    }
-
-    if !args.no_gitignore {
-        println!("updated: .gitignore (added .graphtor/)");
-    }
 
     if let Some(outcome) = &mcp_outcome {
         match outcome.action {
@@ -3245,10 +3234,11 @@ fn cmd_install(
         }
     }
 
-    println!("\ninstallation complete. next steps:");
-    println!("  1. edit .graphtor/config/sources.yaml to add documentation sources");
-    println!("  2. run `graphtor-docs sync` to ingest");
-    println!("  3. run `graphtor-docs serve` or configure your MCP client");
+    println!("\ninstallation complete.");
+    println!(
+        "drop a `.db` file into {} and run `graphtor-docs serve` to serve it read-only.",
+        ws_dir.display()
+    );
 
     Ok(0)
 }
@@ -4056,6 +4046,52 @@ mod tests {
         assert!(!tmp.path().join(".vscode/mcp.json").exists());
         assert!(!tmp.path().join(".cursor/mcp.json").exists());
         assert!(!tmp.path().join(".github/copilot/mcp.json").exists());
+    }
+
+    #[test]
+    fn cmd_install_default_creates_only_minimal_footprint() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let code =
+            cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert_eq!(code, 0);
+        let ws = tmp.path().join(".graphtor");
+        assert!(ws.is_dir(), ".graphtor/ root must exist");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                !ws.join(sub).exists(),
+                "consumption-first default install must not create the {sub} subdirectory"
+            );
+        }
+        assert!(
+            !ws.join("config").join("sources.yaml").exists(),
+            "consumption-first default install must not write sources.yaml"
+        );
+    }
+
+    #[test]
+    fn cmd_install_default_never_touches_gitignore() {
+        // Even when the operator explicitly asks for gitignore management
+        // (no_gitignore: false), the minimal path has no managed .gitignore
+        // side effect in this phase — that behavior belongs to the full
+        // (--with-ingestion) path only.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            no_gitignore: false,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert!(
+            !tmp.path().join(".gitignore").exists(),
+            "consumption-first default install must not create or modify .gitignore"
+        );
     }
 
     #[test]

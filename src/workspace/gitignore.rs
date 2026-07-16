@@ -23,6 +23,13 @@ const MARKER_HEADER: &str = "# graphtor-docs — managed by graphtor-docs instal
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure.
+// TEMPORARY (P2-T1): the consumption-first minimal install path has no
+// managed `.gitignore` side effect, so `cmd_install`'s default path no
+// longer calls this. It remains fully intact for the full
+// (`--with-ingestion`, P2-T2b) install path to call, and is exercised
+// directly by this module's own tests and `uninstall`'s test fixtures.
+// Remove this attribute once P2-T2b restores a production caller.
+#[allow(dead_code)]
 pub fn add_gitignore_entry(project_root: &Path) -> Result<(), GraphtorError> {
     let path = project_root.join(".gitignore");
 

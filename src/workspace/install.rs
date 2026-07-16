@@ -12,6 +12,13 @@ use crate::workspace::paths::{GRAPHTOR_DIR, GRAPHTOR_SUBDIRS};
 use graphtor_core::GraphtorError;
 
 /// Result of a workspace install operation.
+// TEMPORARY (P2-T1): `cmd_install`'s default path now calls
+// `install_minimal` instead, so this full-scaffold path has no production
+// call site until P2-T2a wires the `--with-ingestion` flag back into
+// `cmd_install`. It remains fully intact for `upgrade`'s test fixtures and
+// is exercised directly by this module's own tests. Remove this attribute
+// once P2-T2a restores a production caller.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct InstallResult {
     /// Path to the created or pre-existing `.graphtor/` directory.
@@ -31,6 +38,10 @@ pub struct InstallResult {
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure or when the running
 /// executable path cannot be determined.
+// TEMPORARY (P2-T1): see the `#[allow(dead_code)]` note on `InstallResult`
+// above — this full-scaffold install path is preserved unchanged for
+// `--with-ingestion` (P2-T2a) to wire back into `cmd_install`.
+#[allow(dead_code)]
 pub fn install(project_root: &Path) -> Result<InstallResult, GraphtorError> {
     let workspace_dir = project_root.join(GRAPHTOR_DIR);
     let already_existed = workspace_dir.exists();
@@ -105,6 +116,49 @@ pub fn installed_binary_path(workspace_dir: &Path) -> PathBuf {
     ))
 }
 
+/// Result of a minimal (consumption-first) workspace install operation.
+#[derive(Debug)]
+pub struct MinimalInstallResult {
+    /// Path to the created or pre-existing `.graphtor/` directory.
+    pub workspace_dir: PathBuf,
+    /// Whether the workspace was freshly created (`true`) or already existed (`false`).
+    pub created: bool,
+}
+
+/// Install graphtor-docs into `project_root` using the consumption-first
+/// MINIMAL footprint (P2-T1).
+///
+/// Creates ONLY the `.graphtor/` root directory: no `bin/`, `data/`,
+/// `cache/`, `config/`, or `logs/` subdirectories are created, no binary is
+/// copied, and no `sources.yaml` is written. The `.graphtor/` root is the
+/// operator's drop location for an already-generated `.db` file — `serve`
+/// auto-discovers it with zero further configuration (P1-T1).
+///
+/// This is a SIBLING to [`install`], not a replacement: [`install`] is
+/// unchanged and continues to provide the full ingestion-capable scaffold
+/// for `upgrade` and the `--with-ingestion` install path.
+///
+/// Idempotent — running it on an already-installed workspace (minimal OR
+/// full) is safe and never removes an existing full-footprint scaffold.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Config`] on I/O failure.
+pub fn install_minimal(project_root: &Path) -> Result<MinimalInstallResult, GraphtorError> {
+    let workspace_dir = project_root.join(GRAPHTOR_DIR);
+    let already_existed = workspace_dir.exists();
+
+    fs::create_dir_all(&workspace_dir).map_err(|e| GraphtorError::Config {
+        message: format!("failed to create {}: {e}", workspace_dir.display()),
+        field: None,
+    })?;
+
+    Ok(MinimalInstallResult {
+        workspace_dir,
+        created: !already_existed,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +167,11 @@ mod tests {
     fn install_creates_subdirs() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let result = install(tmp.path()).expect("install");
+        assert!(result.created, "fresh install should report created");
+        assert!(
+            result.binary_path.exists(),
+            "the running binary should be copied to .graphtor/bin/"
+        );
         for sub in GRAPHTOR_SUBDIRS {
             assert!(result.workspace_dir.join(sub).is_dir(), "missing {sub}");
         }
@@ -121,12 +180,77 @@ mod tests {
     #[test]
     fn install_is_idempotent() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        install(tmp.path()).expect("first");
-        install(tmp.path()).expect("second");
+        let first = install(tmp.path()).expect("first");
+        assert!(first.created);
+        let second = install(tmp.path()).expect("second");
+        assert!(
+            !second.created,
+            "second run should report the workspace already existed"
+        );
         // Verify subdirs still exist after second run.
         let ws = tmp.path().join(GRAPHTOR_DIR);
         for sub in GRAPHTOR_SUBDIRS {
             assert!(ws.join(sub).is_dir());
         }
+    }
+
+    #[test]
+    fn install_minimal_creates_only_graphtor_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let result = install_minimal(tmp.path()).expect("install_minimal");
+
+        assert!(result.created);
+        assert!(result.workspace_dir.is_dir(), ".graphtor/ root must exist");
+        for sub in GRAPHTOR_SUBDIRS {
+            assert!(
+                !result.workspace_dir.join(sub).exists(),
+                "minimal install must not create the {sub} subdirectory"
+            );
+        }
+    }
+
+    #[test]
+    fn install_minimal_does_not_write_sources_yaml_or_copy_a_binary() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let result = install_minimal(tmp.path()).expect("install_minimal");
+
+        assert!(!result
+            .workspace_dir
+            .join("config")
+            .join("sources.yaml")
+            .exists());
+        assert!(!installed_binary_path(&result.workspace_dir).exists());
+    }
+
+    #[test]
+    fn install_minimal_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let first = install_minimal(tmp.path()).expect("first");
+        assert!(first.created);
+        let second = install_minimal(tmp.path()).expect("second");
+        assert!(!second.created, "second run should report already-existing");
+        assert!(second.workspace_dir.is_dir());
+    }
+
+    #[test]
+    fn install_minimal_does_not_disturb_an_existing_full_scaffold() {
+        // Running the minimal path against a workspace that already has the
+        // full scaffold must not remove any of it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("full install first");
+
+        install_minimal(tmp.path()).expect("install_minimal on top of full");
+
+        let ws = tmp.path().join(GRAPHTOR_DIR);
+        for sub in GRAPHTOR_SUBDIRS {
+            assert!(
+                ws.join(sub).is_dir(),
+                "minimal install must not remove the existing {sub} subdirectory"
+            );
+        }
+        assert!(
+            installed_binary_path(&ws).exists(),
+            "existing binary must be preserved"
+        );
     }
 }
