@@ -3505,7 +3505,7 @@ fn cmd_uninstall(
     }
 
     let ws_dir = cwd.join(".graphtor");
-    let _lock = if ws_dir.exists() {
+    let lock_guard = if ws_dir.exists() {
         Some(
             workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
                 .context("workspace is locked by another process")?,
@@ -3514,11 +3514,14 @@ fn cmd_uninstall(
         None
     };
 
-    // PA-3: enumerate the exact deletion set BEFORE performing any
-    // deletion. A user-dropped `.db` file directly in `.graphtor/` is never
-    // part of this plan (workspace::uninstall::plan_uninstall only ever
-    // considers the known graphtor-created subdirectories).
-    let planned = workspace::uninstall::plan_uninstall(&ws_dir, args.keep_config);
+    // PA-3 / F5: enumerate the EXACT deletion set AND every other destructive
+    // mutation BEFORE performing any of them. `plan_uninstall_full` computes
+    // the managed subdirectories (the PA-3 set — a user-dropped `.db` file in
+    // `.graphtor/` is never included), whether the managed `.gitignore` block
+    // will be cleaned, which MCP client config files may be pruned/deleted,
+    // and whether the now-empty `.graphtor/` root itself will be removed.
+    let plan = workspace::uninstall::plan_uninstall_full(cwd, args.keep_config);
+    let planned = &plan.managed_dirs;
     if fmt != OutputFormat::Json {
         if planned.is_empty() {
             println!(
@@ -3526,27 +3529,62 @@ fn cmd_uninstall(
             );
         } else {
             println!("the following graphtor-managed directories will be removed:");
-            for dir in &planned {
+            for dir in planned {
                 println!("  {}", dir.display());
             }
         }
+        if plan.gitignore_cleanup {
+            println!("the managed `.graphtor/` block will be removed from .gitignore");
+        }
+        if !plan.mcp_config_files.is_empty() {
+            println!(
+                "the graphtor-docs entry will be pruned from these MCP config files (a file is \
+                 deleted only if graphtor-docs was its sole server):"
+            );
+            for path in &plan.mcp_config_files {
+                println!("  {path}");
+            }
+        }
+        if plan.root_removal {
+            println!("the now-empty `.graphtor/` workspace root will be removed");
+        }
     }
 
-    // Execute the EXACT plan just displayed above (PA-3) — never
-    // recompute `plan_uninstall` internally, which would open a TOCTOU
+    // Execute the EXACT managed-directory plan just displayed above (PA-3) —
+    // never recompute `plan_uninstall` internally, which would open a TOCTOU
     // window where the set actually deleted could differ from the set the
-    // operator was just shown.
-    let result = workspace::uninstall::uninstall_planned(cwd, args.keep_config, &planned)
+    // operator was just shown. This also cleans `.gitignore` and prunes the
+    // MCP config entries while the workspace lock is still held.
+    let mut result = workspace::uninstall::uninstall_planned(cwd, args.keep_config, planned)
         .context("uninstall failed")?;
+
+    // F4: release the workspace lock BEFORE removing the root. While the lock
+    // is held, `.graphtor/graphtor.lock` keeps the directory non-empty, so
+    // `uninstall_planned` above could never remove an otherwise-empty root.
+    // Dropping the guard deletes that lock file; only then can the emptied
+    // root be reclaimed.
+    drop(lock_guard);
+
+    // Remove the root only if it is genuinely empty now (re-checked inside),
+    // using `fs::remove_dir` — never `remove_dir_all` — so a concurrent
+    // re-install that repopulated it is a harmless failure, not data loss.
+    if let Some(removed_root) = workspace::uninstall::remove_empty_workspace_root(&ws_dir)
+        .context("failed to remove the emptied workspace root")?
+    {
+        result.removed.push(removed_root);
+    }
 
     if fmt == OutputFormat::Json {
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
-                "planned_removal": planned
+                "planned_removal": plan.managed_dirs
                     .iter()
                     .map(|p| p.display().to_string())
                     .collect::<Vec<_>>(),
+                "planned_gitignore_cleanup": plan.gitignore_cleanup,
+                "planned_mcp_config_changes": plan.mcp_config_files,
+                "planned_root_removal": plan.root_removal,
                 "removed": result.removed,
                 "updated": result.updated,
             }))

@@ -21,6 +21,23 @@ use crate::workspace::mcp_config::{remove_mcp_config, McpConfigAction};
 use crate::workspace::paths::{GRAPHTOR_DIR, GRAPHTOR_SUBDIRS};
 use graphtor_core::GraphtorError;
 
+/// MCP client config paths uninstall inspects for a managed graphtor-docs
+/// entry, mirroring the set managed by `crate::workspace::mcp_config`. Kept as
+/// a local copy because those path constants are private to that module; if
+/// the managed set there changes, update this list to match.
+const MCP_CONFIG_CANDIDATES: &[&str] = &[
+    ".mcp.json",
+    ".vscode/mcp.json",
+    ".cursor/mcp.json",
+    ".github/copilot/mcp.json",
+];
+
+/// Filename of the workspace advisory lock created inside `.graphtor/`.
+/// Mirrors `graphtor_core::lock`'s private `WORKSPACE_LOCK_FILE` — the root
+/// cleanup planner must ignore it because the caller releases the lock (which
+/// deletes this file) before attempting to remove the now-empty root.
+const WORKSPACE_LOCK_FILE: &str = "graphtor.lock";
+
 /// Result of an uninstall operation.
 #[derive(Debug)]
 pub struct UninstallResult {
@@ -28,6 +45,36 @@ pub struct UninstallResult {
     pub removed: Vec<String>,
     /// Shared MCP configs updated in place (graphtor-docs entry pruned, file kept).
     pub updated: Vec<String>,
+}
+
+/// The complete set of destructive mutations an uninstall will perform,
+/// computed WITHOUT changing anything so it can be shown to the operator and
+/// serialized before execution (see [`plan_uninstall_full`]).
+///
+/// This is the richer, whole-operation counterpart to [`plan_uninstall`]
+/// (which enumerates only the managed subdirectories). It exists so every
+/// destructive effect — not just directory removals — is enumerated up front:
+/// the `.gitignore` cleanup, the MCP client config files that may be pruned or
+/// deleted, and whether the `.graphtor/` root itself is expected to be
+/// removed.
+#[derive(Debug)]
+pub struct UninstallPlan {
+    /// Managed subdirectories under `.graphtor/` that will be removed (the
+    /// exact PA-3 deletion set — see [`plan_uninstall`]).
+    pub managed_dirs: Vec<PathBuf>,
+    /// Whether the managed `.graphtor/` block will be removed from
+    /// `.gitignore` (only a full-footprint install ever wrote it).
+    pub gitignore_cleanup: bool,
+    /// MCP client config files (relative to the project root) that currently
+    /// exist and may have their graphtor-docs entry pruned — or be deleted
+    /// entirely if that entry was the file's sole server.
+    pub mcp_config_files: Vec<String>,
+    /// Best-effort prediction of whether the `.graphtor/` root itself will be
+    /// removed: `true` only when nothing non-managed (a dropped `.db`, a
+    /// preserved `config/`, a skipped symlink) would remain after the managed
+    /// removals and lock release. A late concurrent write simply leaves the
+    /// root in place, which is safe.
+    pub root_removal: bool,
 }
 
 /// Returns `true` when `path` is itself a symlink (Unix) or a
@@ -63,6 +110,110 @@ pub fn plan_uninstall(workspace_dir: &Path, keep_config: bool) -> Vec<PathBuf> {
         .map(|sub| workspace_dir.join(sub))
         .filter(|dir| dir.is_dir() && !is_symlink(dir))
         .collect()
+}
+
+/// Enumerate EVERY destructive mutation an uninstall of `project_root` will
+/// perform, WITHOUT changing anything.
+///
+/// Expands [`plan_uninstall`] (managed subdirectories only) into the full
+/// operation footprint so an operator can be shown — and JSON can serialize —
+/// the complete blast radius before any deletion: the managed subdirectories,
+/// whether the `.gitignore` managed block will be cleaned, which MCP client
+/// config files may be pruned or deleted, and whether the `.graphtor/` root
+/// itself is expected to be removed once emptied.
+///
+/// The root-removal field is best-effort: it predicts emptiness from the
+/// current directory contents (ignoring the workspace lock file, which the
+/// caller releases before removing the root). A late concurrent write simply
+/// leaves the root in place, which is safe.
+#[must_use]
+pub fn plan_uninstall_full(project_root: &Path, keep_config: bool) -> UninstallPlan {
+    let workspace_dir = project_root.join(GRAPHTOR_DIR);
+    let managed_dirs = plan_uninstall(&workspace_dir, keep_config);
+    // Only a full-footprint install ever wrote the managed `.gitignore`
+    // block, so only that footprint has a block to clean (matches the
+    // execution guard in `uninstall_planned`).
+    let gitignore_cleanup = detect_footprint(&workspace_dir) == WorkspaceFootprint::Full;
+    // MCP client config files that currently exist and may therefore have the
+    // graphtor-docs entry pruned (or the file deleted if it was the sole
+    // server). Files that exist without a managed entry are left untouched by
+    // execution, so this is a conservative "may be modified" preview.
+    let mcp_config_files: Vec<String> = MCP_CONFIG_CANDIDATES
+        .iter()
+        .filter(|rel| project_root.join(rel).is_file())
+        .map(|rel| (*rel).to_string())
+        .collect();
+    let root_removal = predict_root_removal(&workspace_dir, &managed_dirs);
+    UninstallPlan {
+        managed_dirs,
+        gitignore_cleanup,
+        mcp_config_files,
+        root_removal,
+    }
+}
+
+/// Predict whether the `.graphtor/` root will be empty (and thus removed)
+/// after the managed removals and lock release.
+///
+/// The root is expected to be removed only when every current entry is either
+/// a managed directory slated for removal or the workspace lock file (which
+/// the caller releases before root removal). Any other entry — a user-dropped
+/// `.db`, a preserved `config/` under `--keep-config`, or a skipped symlinked
+/// subdirectory — keeps the root alive.
+fn predict_root_removal(workspace_dir: &Path, managed_dirs: &[PathBuf]) -> bool {
+    if !workspace_dir.is_dir() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(workspace_dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // The workspace lock file is deleted when the caller releases the lock
+        // before root removal, so it does not block emptiness.
+        if path.file_name() == Some(std::ffi::OsStr::new(WORKSPACE_LOCK_FILE)) {
+            continue;
+        }
+        // A managed directory that will actually be removed does not block
+        // removal either.
+        if managed_dirs.contains(&path) {
+            continue;
+        }
+        // Anything else keeps the root intact.
+        return false;
+    }
+    true
+}
+
+/// Remove the `.graphtor/` workspace root, but ONLY when it is genuinely
+/// empty right now.
+///
+/// Emptiness is re-checked immediately before removal to keep the window
+/// between the check and the unlink as small as possible, and removal uses
+/// [`fs::remove_dir`] — never `remove_dir_all` — so a concurrent re-install
+/// that repopulated the directory in that window causes a harmless failure
+/// rather than destroying freshly-written data.
+///
+/// Returns `Ok(Some(path))` when the root was removed and `Ok(None)` when it
+/// was left intact (missing or non-empty).
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::Config`] if the (verified-empty) directory cannot
+/// be removed.
+pub fn remove_empty_workspace_root(workspace_dir: &Path) -> Result<Option<String>, GraphtorError> {
+    if !workspace_dir.is_dir() {
+        return Ok(None);
+    }
+    let is_empty = fs::read_dir(workspace_dir).is_ok_and(|mut entries| entries.next().is_none());
+    if !is_empty {
+        return Ok(None);
+    }
+    fs::remove_dir(workspace_dir).map_err(|e| GraphtorError::Config {
+        message: format!("failed to remove {}: {e}", workspace_dir.display()),
+        field: None,
+    })?;
+    Ok(Some(workspace_dir.display().to_string()))
 }
 
 /// Execute a previously-computed uninstall plan EXACTLY (PA-3).
@@ -131,20 +282,15 @@ pub fn uninstall_planned(
         removed.push(dir.display().to_string());
     }
 
-    // Clean up the now-possibly-empty workspace root itself, but ONLY when
-    // it is genuinely empty afterward. Anything left — a user-dropped
-    // `.db` file, a preserved `config/`, or a symlinked subdirectory we
-    // deliberately skipped — means the root must survive.
-    if workspace_dir.is_dir() {
-        let is_empty =
-            fs::read_dir(&workspace_dir).is_ok_and(|mut entries| entries.next().is_none());
-        if is_empty {
-            fs::remove_dir(&workspace_dir).map_err(|e| GraphtorError::Config {
-                message: format!("failed to remove {}: {e}", workspace_dir.display()),
-                field: None,
-            })?;
-            removed.push(workspace_dir.display().to_string());
-        }
+    // Clean up the now-possibly-empty workspace root itself, but ONLY when it
+    // is genuinely empty afterward. Anything left — a user-dropped `.db` file,
+    // a preserved `config/`, or a symlinked subdirectory we deliberately
+    // skipped — means the root must survive. Note that when a caller holds the
+    // workspace lock (its `.graphtor/graphtor.lock` file lives in this
+    // directory), the root is never empty here; such callers release the lock
+    // and call [`remove_empty_workspace_root`] afterward (see `cmd_uninstall`).
+    if let Some(removed_root) = remove_empty_workspace_root(&workspace_dir)? {
+        removed.push(removed_root);
     }
 
     // .gitignore parity (P2-T5a): only a full-footprint install ever wrote
@@ -455,5 +601,90 @@ mod tests {
         let ws = tmp.path().join(GRAPHTOR_DIR);
 
         assert!(plan_uninstall(&ws, false).is_empty());
+    }
+
+    #[test]
+    fn plan_uninstall_full_enumerates_every_destructive_mutation() {
+        // F5: the plan must enumerate not just managed subdirectories but also
+        // the `.gitignore` cleanup, the MCP config files that may change, and
+        // the `.graphtor/` root removal — all before any deletion.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        add_gitignore_entry(tmp.path()).expect("gitignore");
+        fs::write(
+            tmp.path().join(".mcp.json"),
+            "{\"mcpServers\":{\"graphtor-docs\":{\"command\":\"graphtor-docs\",\
+             \"x-graphtor-managed\":true}}}",
+        )
+        .expect("write mcp config");
+
+        let plan = plan_uninstall_full(tmp.path(), false);
+
+        assert!(
+            !plan.managed_dirs.is_empty(),
+            "managed subdirectories must be enumerated"
+        );
+        assert!(
+            plan.gitignore_cleanup,
+            "a full install must plan to clean its managed .gitignore block"
+        );
+        assert!(
+            plan.mcp_config_files.iter().any(|p| p == ".mcp.json"),
+            "an existing .mcp.json must be listed as a planned MCP change: {:?}",
+            plan.mcp_config_files
+        );
+        assert!(
+            plan.root_removal,
+            "an otherwise-empty full install must plan to remove the .graphtor/ root"
+        );
+    }
+
+    #[test]
+    fn plan_uninstall_full_keeps_root_when_a_dropped_db_remains() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        fs::write(tmp.path().join(GRAPHTOR_DIR).join("dropped.db"), b"marker")
+            .expect("write dropped db");
+
+        let plan = plan_uninstall_full(tmp.path(), false);
+
+        assert!(
+            !plan.root_removal,
+            "a user-dropped .db in .graphtor/ must keep the root (root_removal=false)"
+        );
+    }
+
+    #[test]
+    fn plan_uninstall_full_keeps_root_when_keep_config_preserves_config() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+
+        let plan = plan_uninstall_full(tmp.path(), true);
+
+        assert!(
+            !plan.root_removal,
+            "a preserved config/ under --keep-config must keep the root"
+        );
+    }
+
+    #[test]
+    fn remove_empty_workspace_root_removes_empty_and_keeps_non_empty() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let empty = tmp.path().join("empty-ws");
+        fs::create_dir_all(&empty).expect("mkdir empty");
+        let removed = remove_empty_workspace_root(&empty).expect("remove empty root");
+        assert_eq!(removed, Some(empty.display().to_string()));
+        assert!(!empty.exists(), "an empty root must be removed");
+
+        let non_empty = tmp.path().join("non-empty-ws");
+        fs::create_dir_all(&non_empty).expect("mkdir non-empty");
+        fs::write(non_empty.join("keep.db"), b"x").expect("write marker");
+        let kept = remove_empty_workspace_root(&non_empty).expect("no-op on non-empty root");
+        assert_eq!(kept, None);
+        assert!(
+            non_empty.exists(),
+            "a non-empty root must never be removed (remove_dir, not remove_dir_all)"
+        );
     }
 }
