@@ -3497,6 +3497,21 @@ fn cmd_upgrade(
         }
     };
 
+    // Containment guard (parity with install W7-1 / uninstall W7-2): a
+    // `.graphtor` that is itself a symlink/junction is its own trust anchor.
+    // `find_workspace_dir` matches it via `candidate.is_dir()`, which FOLLOWS
+    // the link, so the resolved `workspace_dir` points at an external target.
+    // Without this guard `WorkspaceLock::acquire` (and `--force-unlock`
+    // replacing external lock artifacts) creates/removes/replaces
+    // `graphtor.lock` inside that external target — an out-of-workspace
+    // mutation — before upgrade proceeds. Reject a reparse-point root BEFORE
+    // the lock is ever touched and fail closed (Constitution Principles III/IV).
+    if graphtor_core::path::is_reparse_point(&workspace_dir) {
+        anyhow::bail!(
+            ".graphtor is a symlink or junction; refusing to upgrade through a linked workspace root"
+        );
+    }
+
     let _lock = workspace::lock::WorkspaceLock::acquire(&workspace_dir, args.force_unlock)
         .context("workspace is locked by another process")?;
 
@@ -4550,6 +4565,101 @@ mod tests {
             fs::read(&foreign_lock).expect("read foreign lock"),
             b"foreign",
             "uninstall must not force-replace the link target lock"
+        );
+    }
+
+    #[test]
+    fn cmd_upgrade_refuses_a_symlinked_graphtor_root() {
+        // 2D49BDDF / containment parity with install (W7-1) and uninstall
+        // (W7-2): `find_workspace_dir` matches `.graphtor` via
+        // `candidate.is_dir()`, which FOLLOWS a symlink/junction, so the
+        // resolved workspace_dir points at an external target. Without a guard,
+        // `WorkspaceLock::acquire` (and `--force-unlock` replacing external lock
+        // artifacts) creates/removes/replaces `graphtor.lock` inside that
+        // external target before upgrade proceeds. The new guard must reject a
+        // reparse-point root BEFORE the lock is ever touched and fail closed.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        // Seed a foreign artifact at the managed lock filename in the link
+        // target. With `--force-unlock`, an unguarded acquire would replace this
+        // file and its guard drop would then remove it — an out-of-workspace
+        // mutation. The guard must reject the linked root first, so this foreign
+        // artifact survives byte-for-byte.
+        let foreign_lock = external.path().join("graphtor.lock");
+        fs::write(&foreign_lock, b"foreign").expect("seed foreign lock");
+        let ws_dir = project.path().join(".graphtor");
+        if try_symlink_dir(external.path(), &ws_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let args = cli::UpgradeArgs {
+            force: false,
+            force_unlock: true,
+        };
+        let result = cmd_upgrade(project.path(), &args, OutputFormat::Human);
+
+        assert!(
+            result.is_err(),
+            "upgrade through a symlinked .graphtor root must fail closed"
+        );
+        assert!(
+            foreign_lock.exists(),
+            "the foreign lock in the link target must not be removed by force-unlock"
+        );
+        assert_eq!(
+            fs::read(&foreign_lock).expect("read foreign lock"),
+            b"foreign",
+            "upgrade must not force-replace the link target lock"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_upgrade_refuses_a_junctioned_graphtor_root() {
+        // 2D49BDDF review follow-up: the symlinked-root test above self-skips
+        // when the platform refuses symlink creation (Developer Mode/elevation).
+        // `mklink /J` needs no elevation, so this junction variant exercises the
+        // primary Windows attack path rather than silently skipping it.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let foreign_lock = external.path().join("graphtor.lock");
+        fs::write(&foreign_lock, b"foreign").expect("seed foreign lock");
+        let ws_dir = project.path().join(".graphtor");
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                ws_dir.to_str().unwrap(),
+                external.path().to_str().unwrap(),
+            ])
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            _ => {
+                eprintln!("skipping junction test: unable to create a junction here");
+                return;
+            }
+        }
+
+        let args = cli::UpgradeArgs {
+            force: false,
+            force_unlock: true,
+        };
+        let result = cmd_upgrade(project.path(), &args, OutputFormat::Human);
+
+        assert!(
+            result.is_err(),
+            "upgrade through a junctioned .graphtor root must fail closed"
+        );
+        assert!(
+            foreign_lock.exists(),
+            "the foreign lock in the junction target must not be removed by force-unlock"
+        );
+        assert_eq!(
+            fs::read(&foreign_lock).expect("read foreign lock"),
+            b"foreign",
+            "upgrade must not force-replace the junction target lock"
         );
     }
 

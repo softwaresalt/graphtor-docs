@@ -31,6 +31,23 @@ const MARKER_HEADER: &str = "# graphtor-docs — managed by graphtor-docs instal
 pub fn add_gitignore_entry(project_root: &Path) -> Result<(), GraphtorError> {
     let path = project_root.join(".gitignore");
 
+    // Workspace-containment guard (Constitution III/IV): the `read_to_string`
+    // and `fs::write` below both FOLLOW a symlinked/junction `.gitignore`, so a
+    // `.gitignore` planted as a link before install would redirect the
+    // managed-block write into an external target OUTSIDE the project. The
+    // uninstall/read paths (`has_managed_gitignore_block`,
+    // `remove_gitignore_entry`) already refuse a linked `.gitignore`; the
+    // install WRITE path must refuse it too. Fail closed rather than write
+    // through the link.
+    if is_reparse_point(&path) {
+        return Err(GraphtorError::Config {
+            message: ".gitignore is a symlink or junction; refusing to write the managed \
+                      graphtor-docs entry through a linked file"
+                .to_string(),
+            field: None,
+        });
+    }
+
     // Read existing content; create if missing.
     let existing = if path.exists() {
         fs::read_to_string(&path).map_err(|e| GraphtorError::Config {
@@ -283,6 +300,36 @@ mod tests {
             "a symlinked .gitignore must not be reported as holding a managed block"
         );
         remove_gitignore_entry(project.path()).expect("remove must skip a symlinked .gitignore");
+        assert_eq!(
+            fs::read_to_string(&external_file).expect("read external"),
+            original,
+            "the external file behind a symlinked .gitignore must be left unchanged"
+        );
+    }
+
+    #[test]
+    fn add_refuses_to_write_through_a_symlinked_gitignore() {
+        // A6C7EDB3: a `.gitignore` planted as a symlink before install points at
+        // a file OUTSIDE the project. `add_gitignore_entry`'s read + write would
+        // FOLLOW the link and rewrite the external target (Constitution III/IV).
+        // The install WRITE path must refuse a linked `.gitignore` and fail
+        // closed, matching the uninstall/read guards.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let external_file = external.path().join("real-gitignore");
+        let original = "node_modules/\n".to_string();
+        fs::write(&external_file, &original).expect("write external gitignore");
+
+        let link = project.path().join(".gitignore");
+        if try_symlink_file(&external_file, &link).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let result = add_gitignore_entry(project.path());
+        assert!(
+            result.is_err(),
+            "add_gitignore_entry through a symlinked .gitignore must fail closed"
+        );
         assert_eq!(
             fs::read_to_string(&external_file).expect("read external"),
             original,
