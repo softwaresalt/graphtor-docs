@@ -39,10 +39,12 @@ const DB_EXTENSION: &str = "db";
 /// exist on disk), any explicit workspace-contained `type: database` entry
 /// in `explicit_sources` (P1-T6), and any EXISTING `*.db` file found
 /// directly inside `scan_root` (the `.graphtor/` workspace directory).
-/// Every returned path is canonicalized; an entry that is a symlink, or
-/// that would resolve outside its authorized root (a junction/reparse
-/// point target, or an escaping `..`), is silently excluded from the
-/// served set rather than served. Non-`.db` files (including `*.lock`,
+/// Every returned path is canonicalized. An AUTO-DISCOVERED root-scan entry
+/// that is a symlink, or that would resolve outside its authorized root (a
+/// junction/reparse point target, or an escaping `..`), is silently excluded
+/// from the served set rather than served; an EXPLICIT `type: database`
+/// entry that fails the same containment check instead PROPAGATES a
+/// validation error (see Errors below). Non-`.db` files (including `*.lock`,
 /// journal/WAL sidecars, and anything inside a subdirectory such as
 /// `models/`) are never root-scan candidates.
 ///
@@ -61,11 +63,15 @@ const DB_EXTENSION: &str = "db";
 /// candidate or an auto-discovered entry collapses to the SAME single
 /// served store (canonical-path dedup) rather than opening it twice.
 /// Auto-discovery itself stays strictly scoped to `scan_root` — it never
-/// widens to scan the full `candidate_root` project tree, and any
-/// out-of-root entry (an explicit `type: database` entry outside
-/// `scan_root`, or an `existing_candidate` outside `candidate_root`) is
-/// REJECTED (not served) rather than broadening the authorized root —
-/// external-path support is explicitly out of Phase-1 scope.
+/// widens to scan the full `candidate_root` project tree. Any out-of-root
+/// EXPLICIT `type: database` entry (outside `scan_root`) is REJECTED by
+/// PROPAGATING the validation error (050.006-T (b)) rather than being
+/// silently dropped — an operator-configured path that escapes containment
+/// is invalid config that must surface, not hide behind a misleading "no
+/// databases found". An `existing_candidate` outside `candidate_root` is
+/// likewise a hard error. Only the opportunistic AUTO-DISCOVERY root scan
+/// silently skips an out-of-root `.db`-suffixed junction. External-path
+/// support is explicitly out of Phase-1 scope.
 ///
 /// The zero-database case is represented by an empty returned `Vec` —
 /// callers decide how to react (for example, exiting with a "no databases
@@ -75,12 +81,13 @@ const DB_EXTENSION: &str = "db";
 /// # Errors
 ///
 /// Returns [`GraphtorError::PathViolation`] if one of `existing_candidates`
-/// escapes `candidate_root`, or [`GraphtorError::Io`] if `scan_root` exists
-/// but cannot be read. An explicit `type: database` entry that escapes
-/// `scan_root` is silently excluded rather than propagated as an error — it
-/// is operator-authored workspace configuration, not a programming-error
-/// candidate, so a single out-of-root entry does not abort serving every
-/// other database.
+/// escapes `candidate_root`, or if an EXPLICIT `type: database` entry
+/// escapes `scan_root` — an operator-authored path that fails containment is
+/// invalid config and is surfaced, not silently dropped (050.006-T (b)).
+/// Returns [`GraphtorError::Io`] if `scan_root` exists but cannot be read.
+/// Note the AUTO-DISCOVERY root scan, by contrast, silently skips an
+/// out-of-root `.db`-suffixed junction/reparse point rather than erroring —
+/// an opportunistic scan hit is not operator-declared config.
 pub fn discover_served_databases(
     scan_root: &Path,
     candidate_root: &Path,
@@ -107,13 +114,14 @@ pub fn discover_served_databases(
     // entries MUST NOT broaden the authorized root beyond what
     // auto-discovery itself scans. An out-of-root path (`..`, symlink,
     // Windows junction/reparse escape, or simply a path elsewhere in the
-    // project tree outside `.graphtor/`) is REJECTED — never served.
+    // project tree outside `.graphtor/`) is REJECTED by PROPAGATING the
+    // validation error (050.006-T (b)) — an EXPLICIT operator-configured
+    // path is a config error that must surface, not be silently dropped
+    // into a misleading "no databases found".
     if let Some(config) = explicit_sources {
         for source in &config.sources {
             if let Some(path) = source.served_db_path() {
-                let Ok(canonical) = validate_path(path, scan_root) else {
-                    continue;
-                };
+                let canonical = validate_path(path, scan_root)?;
                 if seen.insert(canonical.clone()) {
                     served.push(canonical);
                 }
@@ -655,15 +663,15 @@ mod tests {
         let outside = root.path().join("..").join("outside.db");
         let config = config_with(vec![database_source("escaping", &outside)]);
 
-        // Unlike an escaping `existing_candidate` (which is a hard Err —
-        // upstream code produced it), an operator-authored explicit entry
-        // that escapes the root is silently excluded so a single bad entry
-        // does not abort serving every other database.
-        let served = discover_served_databases(root.path(), root.path(), &[], Some(&config))
-            .expect("discovery must not hard-fail on an escaping explicit entry");
+        // Per 050.006-T (b): an EXPLICIT operator-configured `type: database`
+        // path that escapes the authorized root must PROPAGATE the validation
+        // error, not be silently dropped — silently ignoring it would surface a
+        // misleading "no databases found" while hiding invalid config.
+        let err = discover_served_databases(root.path(), root.path(), &[], Some(&config))
+            .expect_err("an out-of-root explicit entry must surface a validation error");
         assert!(
-            served.is_empty(),
-            "an out-of-root explicit entry must never be served"
+            matches!(err, GraphtorError::PathViolation { .. }),
+            "expected a PathViolation for the escaping explicit entry, got: {err:?}"
         );
     }
 
@@ -674,22 +682,24 @@ mod tests {
         // (`.graphtor/` — `scan_root`), not merely the broader project root
         // (`candidate_root`) that `existing_candidates`/`--db-path` are
         // allowed to use. A db file dropped in the project root but OUTSIDE
-        // `.graphtor/` must be rejected, never served, even though it is
-        // still fully within `candidate_root`.
+        // `.graphtor/` must be rejected with a validation error (050.006-T (b)),
+        // never silently ignored, even though it is still fully within
+        // `candidate_root`.
         let project_root = temp_root();
         let scan_root = project_root.path().join(".graphtor");
         fs::create_dir_all(&scan_root).expect("create .graphtor");
         let outside_graphtor_db = touch(project_root.path(), "outside.db");
         let config = config_with(vec![database_source("outside-alias", &outside_graphtor_db)]);
 
-        let served = discover_served_databases(&scan_root, project_root.path(), &[], Some(&config))
-            .expect("discovery must not hard-fail on a rejected explicit entry");
-
+        let err = discover_served_databases(&scan_root, project_root.path(), &[], Some(&config))
+            .expect_err(
+                "an explicit type: database entry outside .graphtor/ (but inside the project \
+                 root) must be rejected with a validation error — it must stay within the same \
+                 authorized root as auto-discovery, not the broader project root",
+            );
         assert!(
-            served.is_empty(),
-            "an explicit type: database entry outside .graphtor/ (but inside the project \
-             root) must be rejected — it must stay within the same authorized root as \
-             auto-discovery, not the broader project root"
+            matches!(err, GraphtorError::PathViolation { .. }),
+            "expected a PathViolation for the out-of-root explicit entry, got: {err:?}"
         );
     }
 
@@ -720,15 +730,19 @@ mod tests {
         }
 
         // The explicit entry's path traverses THROUGH the in-root junction
-        // to reach a file that canonicalizes outside `root` — rejected.
+        // to reach a file that canonicalizes outside `root` — rejected with a
+        // validation error (050.006-T (b)), never silently dropped.
         let escaping_path = junction_path.join(external_db.file_name().unwrap());
         let config = config_with(vec![database_source("via-junction", &escaping_path)]);
 
-        let served = discover_served_databases(root.path(), root.path(), &[], Some(&config))
-            .expect("discovery must not hard-fail on a junction-escaping explicit entry");
+        let err = discover_served_databases(root.path(), root.path(), &[], Some(&config))
+            .expect_err(
+                "an explicit entry resolving outside root via a junction must surface a \
+                 validation error",
+            );
         assert!(
-            served.is_empty(),
-            "an explicit entry resolving outside root via a junction must never be served"
+            matches!(err, GraphtorError::PathViolation { .. }),
+            "expected a PathViolation for the junction-escaping explicit entry, got: {err:?}"
         );
     }
 
