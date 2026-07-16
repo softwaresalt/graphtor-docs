@@ -15,10 +15,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::workspace::doctor::{detect_footprint, WorkspaceFootprint};
-use crate::workspace::gitignore::remove_gitignore_entry;
+use crate::workspace::gitignore::{has_managed_gitignore_block, remove_gitignore_entry};
 use crate::workspace::mcp_config::{
-    managed_config_candidates, remove_mcp_config_from, McpConfigAction,
+    file_has_managed_entry, managed_config_candidates, remove_mcp_config_from, McpConfigAction,
 };
 use crate::workspace::paths::{GRAPHTOR_DIR, GRAPHTOR_SUBDIRS};
 use graphtor_core::GraphtorError;
@@ -121,20 +120,24 @@ pub fn plan_uninstall(workspace_dir: &Path, keep_config: bool) -> Vec<PathBuf> {
 pub fn plan_uninstall_full(project_root: &Path, keep_config: bool) -> UninstallPlan {
     let workspace_dir = project_root.join(GRAPHTOR_DIR);
     let managed_dirs = plan_uninstall(&workspace_dir, keep_config);
-    // Only a full-footprint install ever wrote the managed `.gitignore`
-    // block, so only that footprint has a block to clean (matches the
-    // execution guard in `uninstall_planned`).
-    let gitignore_cleanup = detect_footprint(&workspace_dir) == WorkspaceFootprint::Full;
-    // MCP client config files that currently exist and may therefore have the
-    // graphtor-docs entry pruned (or the file deleted if it was the sole
-    // server). Files that exist without a managed entry are left untouched by
-    // execution, so this is a conservative "may be modified" preview. The
-    // candidate set comes from `mcp_config::managed_config_candidates` (its
-    // single source of truth) so there is no drift between what is enumerated
-    // here and what execution prunes.
+    // Clean the managed `.gitignore` block only when it is actually present —
+    // identified by the graphtor-docs marker header, NOT inferred from the
+    // workspace footprint. A Full install created with `--no-gitignore` (or one
+    // whose `.graphtor/` line is a user's own, unmarked entry) has no managed
+    // block, so uninstall must not touch `.gitignore` and risk deleting a line
+    // graphtor-docs never authored.
+    let gitignore_cleanup = has_managed_gitignore_block(project_root);
+    // MCP client config files that currently hold a managed graphtor-docs entry
+    // and will therefore have it pruned (or the file deleted if it was the sole
+    // server). The candidate set comes from `mcp_config::managed_config_candidates`
+    // (its single source of truth) and is filtered through the SAME managed-entry
+    // predicate execution uses (`file_has_managed_entry`), so the operator-approval
+    // preview lists only files that will actually be modified — a candidate that
+    // exists but holds no managed entry (a user's own `.mcp.json`) is left off the
+    // plan and untouched by execution.
     let mcp_config_files: Vec<String> = managed_config_candidates()
         .into_iter()
-        .filter(|rel| project_root.join(rel).is_file())
+        .filter(|rel| file_has_managed_entry(project_root, rel))
         .collect();
     let root_removal = predict_root_removal(&workspace_dir, &managed_dirs);
     UninstallPlan {
@@ -279,10 +282,11 @@ pub fn uninstall_planned(
     }
 
     // .gitignore parity (P2-T5a) / F5: clean ONLY when the approved plan said
-    // so. `plan.gitignore_cleanup` already captured the pre-deletion footprint
-    // (only a full-footprint install ever wrote the managed block), so this
-    // never cleans a `.gitignore` a minimal install never touched, and never
-    // cleans a block that appeared after the plan was shown.
+    // so. `plan.gitignore_cleanup` was set from the presence of the managed
+    // marker block at plan time (not merely the footprint), and
+    // `remove_gitignore_entry` is itself marker-scoped, so this never deletes a
+    // user's own unmarked `.graphtor/` line and never cleans a block that
+    // appeared after the plan was shown.
     if plan.gitignore_cleanup {
         remove_gitignore_entry(project_root)?;
     }
@@ -640,6 +644,41 @@ mod tests {
         assert!(
             plan.root_removal,
             "an otherwise-empty full install must plan to remove the .graphtor/ root"
+        );
+    }
+
+    #[test]
+    fn plan_no_gitignore_cleanup_when_marker_absent_despite_full_footprint() {
+        // W1: cleanup must be gated on the managed marker, NOT the footprint. A
+        // Full install whose `.gitignore` holds only a user's own unmarked
+        // `.graphtor/` line must NOT be scheduled for cleanup — doing so would
+        // delete a line graphtor-docs never authored.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install"); // Full footprint
+        fs::write(tmp.path().join(".gitignore"), ".graphtor/\n").expect("seed unmarked");
+        let plan = plan_uninstall_full(tmp.path(), false);
+        assert!(
+            !plan.gitignore_cleanup,
+            "an unmarked user .graphtor/ line must not schedule gitignore cleanup"
+        );
+    }
+
+    #[test]
+    fn plan_excludes_mcp_config_without_managed_entry() {
+        // W2: a candidate config that exists but holds no managed graphtor-docs
+        // entry must be left off the plan so the approval preview matches what
+        // execution actually prunes.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            tmp.path().join(".mcp.json"),
+            "{\"mcpServers\":{\"other-tool\":{\"command\":\"foo\",\"args\":[\"bar\"]}}}",
+        )
+        .expect("write user-only mcp config");
+        let plan = plan_uninstall_full(tmp.path(), false);
+        assert!(
+            !plan.mcp_config_files.iter().any(|p| p == ".mcp.json"),
+            "a user-only .mcp.json (no managed entry) must not be in the plan: {:?}",
+            plan.mcp_config_files
         );
     }
 
