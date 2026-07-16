@@ -453,7 +453,7 @@ impl DataStore {
 ///
 /// Marks the database file and any existing `-wal`/`-shm`/`-journal`
 /// sidecars filesystem-readonly for as long as this guard is alive, and
-/// restores their original writable state on [`Drop`]. Held inside an
+/// restores their EXACT original permissions on [`Drop`]. Held inside an
 /// [`Arc`] on [`DataStore`] so cloning the store shares one lock, released
 /// only when the last clone is dropped.
 ///
@@ -466,64 +466,76 @@ impl DataStore {
 /// served content — the main database file is proven byte-for-byte
 /// unchanged (see the `store::tests` module) — but to leave **no** on-disk
 /// trace once the read-only session ends, this guard also removes any such
-/// sidecar it did not find pre-existing, restoring the workspace to
-/// exactly its prior state.
+/// sidecar it did not find pre-existing, PROVIDED it is still empty at
+/// drop-time. A non-empty sidecar of any kind (including `-shm`) may belong
+/// to a genuinely concurrent writer and is always left intact.
 struct EngineReadonlyGuard {
-    /// (path, was-already-readonly) pairs for paths that existed before
-    /// locking; marked readonly and restored to their CAPTURED ORIGINAL
-    /// state (not unconditionally writable) on drop, so a file the operator
-    /// had already marked readonly for their own reasons is never left
-    /// writable once this guard releases it.
-    guarded: Vec<(PathBuf, bool)>,
-    /// (path, `requires_empty_to_remove`) pairs for sidecar paths that did
-    /// NOT exist before locking. `-shm` is `SQLite`'s shared-memory WAL
-    /// index: purely derived, regenerable bookkeeping with no durable
-    /// content of its own (`SQLite` recreates it from the main file + `-wal`
-    /// whenever anything next opens the database), so it is always
-    /// removed if transient regardless of size. `-wal`/`-journal` CAN hold
-    /// real pending-transaction bytes, so removal is gated on the file
-    /// still being empty at drop-time — see [`Drop`].
-    transient_sidecars: Vec<(PathBuf, bool)>,
+    /// (path, original permissions) pairs for paths that existed before
+    /// locking. Each path is marked filesystem-readonly while the guard is
+    /// held and restored to its EXACT captured original `fs::Permissions`
+    /// on drop — the full permission value, not merely a readonly boolean.
+    /// On Unix this preserves the original mode bits (a private `0o600`
+    /// database is restored to `0o600`, never widened to `0o622`/`0o644`,
+    /// because `Permissions::set_readonly(false)` would otherwise enable
+    /// every write bit and grant group/other write); on Windows it restores
+    /// the original readonly attribute. A file the operator had already
+    /// marked readonly for their own reasons is thus never left writable —
+    /// nor over-permissioned — once this guard releases it.
+    guarded: Vec<(PathBuf, fs::Permissions)>,
+    /// Sidecar paths (`-wal`, `-shm`, `-journal`) that did NOT exist before
+    /// locking. Every such transient sidecar is subject to the SAME
+    /// conservative rule: it is removed on drop ONLY if it still exists and
+    /// is still EMPTY. A non-empty sidecar of ANY kind — including `-shm` —
+    /// may belong to a genuinely concurrent writer: unlinking a live `-shm`
+    /// while another connection holds it defeats WAL coordination (existing
+    /// connections keep the old mapping while new connections create a
+    /// second `-shm`) and risks corruption, and a non-empty `-wal`/`-journal`
+    /// can hold committed pending-transaction bytes. Such files are always
+    /// left intact — see [`Drop`].
+    transient_sidecars: Vec<PathBuf>,
 }
 
 impl EngineReadonlyGuard {
     /// Mark `db_path` and any existing WAL/SHM/journal sidecars
     /// filesystem-readonly, rolling back any partial change if a later
-    /// sidecar cannot be locked. Captures each guarded path's ORIGINAL
-    /// readonly state (so [`Drop`] can restore it exactly rather than
-    /// unconditionally forcing writable) and records which sidecar paths
-    /// do not yet exist so they can be cleaned up on [`Drop`] if the
-    /// read-only engine open transiently creates them.
+    /// sidecar cannot be locked. Captures each guarded path's EXACT ORIGINAL
+    /// `fs::Permissions` (so [`Drop`] can restore them precisely rather than
+    /// forcing a coarse writable/readonly boolean that would widen Unix mode
+    /// bits) and records which sidecar paths do not yet exist so they can be
+    /// cleaned up on [`Drop`] if the read-only engine open transiently
+    /// creates them — but only while they remain empty.
     fn lock(db_path: &Path) -> Result<Self, GraphtorError> {
-        let mut guarded: Vec<(PathBuf, bool)> = Vec::new();
-        let mut transient_sidecars: Vec<(PathBuf, bool)> = Vec::new();
+        let mut guarded: Vec<(PathBuf, fs::Permissions)> = Vec::new();
+        let mut transient_sidecars: Vec<PathBuf> = Vec::new();
         let candidates = sidecar_candidates(db_path);
         for (index, candidate) in candidates.into_iter().enumerate() {
             if !candidate.exists() {
                 // Index 0 is the main db file, which callers already verified
-                // exists; only sidecars (index > 0) reach this branch.
-                // Index 2 is `-shm` (see `sidecar_candidates`): a purely
-                // regenerable shared-memory index, safe to remove
-                // unconditionally. Index 1 (`-wal`) and index 3
-                // (`-journal`) can hold real pending-transaction data, so
-                // their removal requires the empty-at-drop-time check.
+                // exists; only sidecars (index > 0) reach this branch. Every
+                // transient sidecar — `-wal`, `-shm`, and `-journal` alike —
+                // is subject to the same conservative empty-only cleanup on
+                // drop (see `Drop`): a sidecar that appears while the guard
+                // is held may belong to a concurrent writer, so it is only
+                // removed if it is still empty.
                 if index > 0 {
-                    let requires_empty = index != 2;
-                    transient_sidecars.push((candidate, requires_empty));
+                    transient_sidecars.push(candidate);
                 }
                 continue;
             }
-            let was_readonly = fs::metadata(&candidate)
+            // Capture the EXACT original permissions BEFORE marking the file
+            // readonly, so `Drop` can restore them precisely instead of
+            // forcing a coarse writable/readonly boolean that would enable
+            // every Unix write bit and widen e.g. `0o600` to `0o622`.
+            let original = fs::metadata(&candidate)
                 .map_err(GraphtorError::from)?
-                .permissions()
-                .readonly();
+                .permissions();
             if let Err(error) = set_readonly(&candidate, true) {
-                for (already_locked, original) in guarded.iter().rev() {
-                    let _ = set_readonly(already_locked, *original);
+                for (already_locked, original_perms) in guarded.iter().rev() {
+                    let _ = fs::set_permissions(already_locked, original_perms.clone());
                 }
                 return Err(error);
             }
-            guarded.push((candidate, was_readonly));
+            guarded.push((candidate, original));
         }
         Ok(Self {
             guarded,
@@ -541,31 +553,27 @@ impl Drop for EngineReadonlyGuard {
         // (still fully readable) regardless of whether this restore
         // succeeds.
         //
-        // Restore each guarded path's CAPTURED ORIGINAL readonly state
-        // rather than unconditionally forcing writable: a file that was
-        // already filesystem-readonly before this guard ever touched it
-        // (for example, an operator's own deliberate protection) must stay
-        // readonly afterward, not be silently made writable.
-        for (path, original_readonly) in &self.guarded {
-            let _ = set_readonly(path, *original_readonly);
+        // Restore each guarded path's EXACT captured original permissions
+        // rather than forcing a coarse writable/readonly boolean: a file
+        // that was already filesystem-readonly before this guard ever
+        // touched it (for example, an operator's own deliberate protection)
+        // must stay readonly afterward, and a private `0o600` database must
+        // come back as `0o600` — never widened to `0o622`/`0o644` by
+        // re-enabling every Unix write bit.
+        for (path, original) in &self.guarded {
+            let _ = fs::set_permissions(path, original.clone());
         }
-        // Remove a transient WAL-reader bookkeeping sidecar this session
-        // may have created. `-shm` (`requires_empty == false`) is always
-        // removed if transient — it is purely derived shared-memory index
-        // data with no durable content, so even a genuinely concurrent
-        // writer's `-shm` is safe to unlink (SQLite regenerates it on next
-        // open). `-wal`/`-journal` (`requires_empty == true`) CAN hold
-        // real pending-transaction bytes, so they are only removed while
-        // still empty — a non-empty file here may belong to a genuinely
-        // concurrent writer, and unlinking it could corrupt or lose
-        // committed data this guard has no way to prove it does not own.
-        for (path, requires_empty) in &self.transient_sidecars {
-            let safe_to_remove = if *requires_empty {
-                fs::metadata(path).is_ok_and(|meta| meta.len() == 0)
-            } else {
-                path.exists()
-            };
-            if safe_to_remove {
+        // Remove a transient WAL-reader bookkeeping sidecar this session may
+        // have created, but ONLY while it still exists and is still empty. A
+        // non-empty sidecar of ANY kind — `-wal`, `-shm`, or `-journal` —
+        // may belong to a genuinely concurrent writer: unlinking a live
+        // `-shm` defeats WAL coordination (existing connections keep the old
+        // mapping while new connections create a second `-shm`) and risks
+        // corruption, and unlinking a non-empty `-wal`/`-journal` could lose
+        // committed pending-transaction bytes this guard has no way to prove
+        // it does not own. Such files are always left intact.
+        for path in &self.transient_sidecars {
+            if fs::metadata(path).is_ok_and(|meta| meta.len() == 0) {
                 let _ = fs::remove_file(path);
             }
         }
@@ -850,10 +858,6 @@ mod tests {
             .expect("stat fixture db before open")
             .modified()
             .expect("mtime before open");
-        let sidecars_existed_before: Vec<bool> = sidecar_paths_for_test(&db_path)
-            .iter()
-            .map(|p| p.exists())
-            .collect();
 
         {
             let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
@@ -869,9 +873,16 @@ mod tests {
             .expect("stat fixture db after open")
             .modified()
             .expect("mtime after open");
-        let sidecars_exist_after: Vec<bool> = sidecar_paths_for_test(&db_path)
+        // Per the F7 conservative-cleanup rule, a WAL-reader coordination
+        // sidecar (`-shm`/`-wal`) that SQLite transiently materializes and
+        // fills with real coordination bytes during a read-only open may be
+        // left behind: the guard cannot prove no concurrent writer shares it,
+        // so it only reclaims EMPTY placeholder sidecars it created. The
+        // durable guarantee is therefore that the served db is byte-for-byte
+        // untouched and the guard never leaves an EMPTY placeholder trace.
+        let empty_sidecar_traces: Vec<bool> = sidecar_paths_for_test(&db_path)
             .iter()
-            .map(|p| p.exists())
+            .map(|p| fs::metadata(p).is_ok_and(|meta| meta.len() == 0))
             .collect();
 
         assert_eq!(
@@ -882,10 +893,12 @@ mod tests {
             mtime_before, mtime_after,
             "engine-readonly open must not touch mtime"
         );
-        assert_eq!(
-            sidecars_existed_before, sidecars_exist_after,
-            "engine-readonly open must not create -wal/-shm/-journal sidecars that did not \
-             already exist"
+        assert!(
+            empty_sidecar_traces
+                .iter()
+                .all(|&is_empty_trace| !is_empty_trace),
+            "engine-readonly open must never leave an EMPTY placeholder sidecar trace; only \
+             non-empty coordination sidecars are conservatively preserved (F7)"
         );
     }
 
@@ -1015,6 +1028,84 @@ mod tests {
         assert!(
             wal_path.exists(),
             "a NON-EMPTY sidecar must never be removed — it may be another connection's live data"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_engine_readonly_preserves_exact_unix_mode_after_drop() {
+        // Regression for F1: the guard must restore the EXACT original Unix
+        // mode bits, not a coarse writable/readonly boolean. A private
+        // `0o600` database must come back as `0o600` after the guard drops,
+        // never widened to `0o622`/`0o644` (which `Permissions::set_readonly(false)`
+        // would do by enabling every write bit, granting group/other write).
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-mode.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let mut perms = fs::metadata(&db_path)
+            .expect("stat fixture db")
+            .permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&db_path, perms).expect("set 0o600 mode for fixture setup");
+        assert_eq!(
+            fs::metadata(&db_path)
+                .expect("stat fixture db after chmod")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "precondition: fixture db must be mode 0o600 before serving"
+        );
+
+        {
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a mode-0o600 db");
+        }
+
+        assert_eq!(
+            fs::metadata(&db_path)
+                .expect("stat fixture db after drop")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "guard drop must restore the EXACT original mode 0o600, not widen it to 0o622/0o644"
+        );
+    }
+
+    #[test]
+    fn open_engine_readonly_never_removes_a_non_empty_shm_sidecar_on_drop() {
+        // Regression for F7: `-shm` must obey the SAME conservative
+        // empty-only cleanup rule as every other sidecar. A non-empty `-shm`
+        // may belong to a genuinely concurrent writer; unlinking a live
+        // `-shm` defeats WAL coordination (existing connections keep the old
+        // mapping while new connections create a second `-shm`) and risks
+        // corruption, so cleanup must leave it intact.
+        //
+        // Driven through `EngineReadonlyGuard` DIRECTLY (see the empty-case
+        // test above for why a full engine open cannot deterministically
+        // stage this state across platforms).
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-live-shm.db");
+        build_populated_fixture(&db_path, dir.path());
+        let shm_path = sidecar_paths_for_test(&db_path)[1].clone();
+        assert!(!shm_path.exists(), "precondition: no -shm sidecar yet");
+
+        {
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a db with no sidecars");
+            // Simulate a genuinely concurrent writer's live, non-empty `-shm`
+            // shared-memory index appearing while the guard is held.
+            fs::write(&shm_path, b"not-empty-live-shm-index").expect("simulate live shm");
+        }
+
+        assert!(
+            shm_path.exists(),
+            "a NON-EMPTY -shm sidecar must never be removed — it may be another connection's \
+             live coordination data"
         );
     }
 
