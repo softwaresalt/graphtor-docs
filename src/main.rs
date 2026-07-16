@@ -3182,38 +3182,7 @@ fn cmd_install(
         .context("workspace is locked by another process")?;
 
     if args.with_ingestion {
-        // Full ingestion-capable scaffold, opted into via --with-ingestion
-        // (P2-T2a: flag + routing only). The preserved full `install()`
-        // creates `bin/`, `data/`, `cache/`, `config/`, `logs/` and copies
-        // the running binary — unchanged since before this shipment.
-        // P2-T2b (051.008-T) adds the full-path `sources.yaml`/
-        // `.gitignore`/`.mcp.json` orchestration on top of this routing.
-        let result = workspace::install::install(cwd).context("install failed")?;
-
-        if fmt == OutputFormat::Json {
-            println!(
-                "{}",
-                cli::jsonrpc::wrap_success(serde_json::json!({
-                    "created": result.created,
-                    "workspace_dir": result.workspace_dir.display().to_string(),
-                    "binary_path": result.binary_path.display().to_string(),
-                    "footprint": "full",
-                }))
-            );
-            return Ok(0);
-        }
-
-        if result.created {
-            println!("created: {}", result.workspace_dir.display());
-        } else {
-            println!(
-                "workspace already exists: {}",
-                result.workspace_dir.display()
-            );
-        }
-        println!("binary:  {}", result.binary_path.display());
-
-        return Ok(0);
+        return cmd_install_full(cwd, args, fmt);
     }
 
     // Consumption-first default (P2-T1): the minimal footprint creates ONLY
@@ -3271,6 +3240,96 @@ fn cmd_install(
         "drop a `.db` file into {} and run `graphtor-docs serve` to serve it read-only.",
         ws_dir.display()
     );
+
+    Ok(0)
+}
+
+/// The full, ingestion-capable install path selected by `install --with-ingestion`
+/// (P2-T2a routing, P2-T2b orchestration).
+///
+/// Invokes the preserved full-scaffold [`workspace::install::install`]
+/// (`bin/`, `data/`, `cache/`, `config/`, `logs/` + copied binary), writes a
+/// template `sources.yaml`, manages `.gitignore` (unless `--no-gitignore`),
+/// and generates the workspace-root `.mcp.json` entry via the shared P2-T3
+/// writer. Because the binary now exists on disk, the writer's resolution
+/// ladder produces the absolute, cwd-independent pinned path rather than the
+/// bare PATH command used by the consumption-first minimal default.
+fn cmd_install_full(
+    cwd: &std::path::Path,
+    args: &cli::InstallArgs,
+    fmt: OutputFormat,
+) -> anyhow::Result<i32> {
+    let result = workspace::install::install(cwd).context("install failed")?;
+
+    // Initialise sources.yaml (non-destructive) — full path only.
+    let init_result = workspace::init::init_sources_yaml(&result.workspace_dir, false)
+        .context("failed to initialise sources.yaml")?;
+
+    // Manage .gitignore (side effect only; print deferred below) — full path
+    // only; the consumption-first minimal default never touches it.
+    if !args.no_gitignore {
+        workspace::gitignore::add_gitignore_entry(cwd).context("failed to update .gitignore")?;
+    }
+
+    // Generate or merge the graphtor-docs entry in the workspace-root
+    // .mcp.json.
+    let mcp_outcome =
+        workspace::mcp_config::generate_mcp_config(cwd).context("failed to generate MCP config")?;
+
+    if fmt == OutputFormat::Json {
+        let mcp_config = mcp_outcome.as_ref().map(|outcome| {
+            serde_json::json!({
+                "path": outcome.path,
+                "action": outcome.action.as_str(),
+            })
+        });
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "created": result.created,
+                "workspace_dir": result.workspace_dir.display().to_string(),
+                "binary_path": result.binary_path.display().to_string(),
+                "footprint": "full",
+                "mcp_config": mcp_config,
+            }))
+        );
+        return Ok(0);
+    }
+
+    if result.created {
+        println!("created: {}", result.workspace_dir.display());
+    } else {
+        println!(
+            "workspace already exists: {}",
+            result.workspace_dir.display()
+        );
+    }
+    println!("binary:  {}", result.binary_path.display());
+
+    if init_result.created {
+        println!("created: {}", init_result.path.display());
+    }
+
+    if !args.no_gitignore {
+        println!("updated: .gitignore (added .graphtor/)");
+    }
+
+    if let Some(outcome) = &mcp_outcome {
+        match outcome.action {
+            workspace::mcp_config::McpConfigAction::Created => {
+                println!("created: {} (registered graphtor-docs)", outcome.path);
+            }
+            workspace::mcp_config::McpConfigAction::Updated => {
+                println!("updated: {} (registered graphtor-docs)", outcome.path);
+            }
+            workspace::mcp_config::McpConfigAction::Removed => {}
+        }
+    }
+
+    println!("\ninstallation complete. next steps:");
+    println!("  1. edit .graphtor/config/sources.yaml to add documentation sources");
+    println!("  2. run `graphtor-docs sync` to ingest");
+    println!("  3. run `graphtor-docs serve` or configure your MCP client");
 
     Ok(0)
 }
@@ -4152,6 +4211,90 @@ mod tests {
         assert!(
             workspace::install::installed_binary_path(&ws).exists(),
             "--with-ingestion must copy the running binary into .graphtor/bin/"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_writes_sources_yaml() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert!(
+            tmp.path()
+                .join(".graphtor")
+                .join("config")
+                .join("sources.yaml")
+                .exists(),
+            "--with-ingestion must write a template sources.yaml"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_manages_gitignore_unless_no_gitignore() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: false,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        let gitignore_path = tmp.path().join(".gitignore");
+        assert!(
+            gitignore_path.exists(),
+            "--with-ingestion must manage .gitignore unless --no-gitignore is set"
+        );
+        let content = fs::read_to_string(&gitignore_path).expect("read .gitignore");
+        assert!(content.contains(".graphtor/"), "gitignore: {content}");
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_no_gitignore_skips_gitignore() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert!(
+            !tmp.path().join(".gitignore").exists(),
+            "--no-gitignore must suppress .gitignore management even with --with-ingestion"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_mcp_json_uses_absolute_path_and_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        let content = fs::read_to_string(tmp.path().join(".mcp.json")).expect("read .mcp.json");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        let entry = &parsed["mcpServers"]["graphtor-docs"];
+        let command = entry["command"].as_str().expect("command string");
+        assert!(
+            std::path::Path::new(command).is_absolute(),
+            "with a managed binary now installed, the .mcp.json command must be the absolute \
+             pinned path, not the bare PATH command: {command}"
+        );
+        assert_eq!(
+            entry["x-graphtor-managed"], true,
+            "the with-ingestion .mcp.json entry must carry the managed-entry provenance marker"
         );
     }
 
