@@ -78,17 +78,18 @@ Always reply before resolving so the thread has a clear audit trail.
 
 ### PowerShell quoting caveat for reply bodies
 
-The escape hazard is in how the body is **assigned**, not in `-f "body=$body"`
+The escape hazard is in how the body is **assigned**, not in `-f "b=$body"`
 — PowerShell does not re-parse characters already stored in an expanded
 variable, so the value passes through `-f` unchanged. Assign arbitrary reply
 text with a single-quoted here-string so apostrophes, `$`, backticks, and quotes
 are stored literally:
 
 ```powershell
+$q = 'mutation($tid:ID!,$b:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$tid,body:$b}){comment{id}}}'
 $body = @'
 Fixed in 2521240. The readiness block now records the current HEAD.
 '@
-gh api graphql -f "query=$q" -f "tid=$tid" -f "body=$body"
+gh api graphql -f "query=$q" -f "tid=$tid" -f "b=$body"
 ```
 
 A double-quoted assignment (`$body = "...$sha..."`) would expand `$sha` and

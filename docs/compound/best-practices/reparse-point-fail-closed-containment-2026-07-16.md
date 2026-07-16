@@ -71,11 +71,12 @@ Verified call sites in shipment 045-S:
   entry is safe. Containment does not depend on this probe failing closed —
   it depends on rejecting the link **when the probe returns `true`**.
 - Do not conflate this with fail-closed-on-error scanning. A **separate**
-  primitive, `source_has_ingestible_content`
-  (`src/workspace/serve_discovery.rs:333-342`), propagates `WalkDir` errors and
-  returns `false` so an unreadable subtree keeps the discovered target
-  `ReadOnly` — that boundary *does* fail closed on I/O error, because there the
-  safe default is "do not treat as ingestible."
+  function, `source_has_ingestible_content`
+  (`src/workspace/serve_discovery.rs:333-350`), returns `false` **immediately**
+  on any `WalkDir` error (a fail-closed short-circuit, not error propagation) so
+  an unreadable subtree keeps the discovered target `ReadOnly`. It mirrors the
+  real acquisition walk (`graphtor_core::acquire::local`), which is the code that
+  actually propagates those `WalkDir` errors.
 - MCP config generation (`generate_mcp_config`) does **not** call
   `is_reparse_point`; it relies on `validate_path` canonicalisation, and the
   upstream workspace-root guard already rejects a linked `.graphtor` before any
