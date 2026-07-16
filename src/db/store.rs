@@ -14,7 +14,7 @@ use sqlite::{Connection, OpenFlags, State};
 use tracing::info;
 
 use crate::error::GraphtorError;
-use crate::path::validate_path;
+use crate::path::{is_reparse_point, validate_path};
 
 /// A snapshot of the current state of the embedded database.
 ///
@@ -509,6 +509,31 @@ impl EngineReadonlyGuard {
         let mut transient_sidecars: Vec<PathBuf> = Vec::new();
         let candidates = sidecar_candidates(db_path);
         for (index, candidate) in candidates.into_iter().enumerate() {
+            // Containment (Constitution III/IV, NON-NEGOTIABLE): a sidecar that
+            // is a symlink/junction can redirect the `fs::metadata` +
+            // `set_readonly` below — and any subsequent engine write in WAL mode
+            // — to a file OUTSIDE the workspace. `candidate.exists()`,
+            // `fs::metadata`, and `set_readonly` all FOLLOW links, so a
+            // workspace holding `dropped.db-wal`/`-shm`/`-journal` as a symlink
+            // to an external target would let read-only serving chmod that
+            // target (and a crash could leave it read-only). Fail closed BEFORE
+            // any inspection or permission change so the read-only engine never
+            // opens through a linked sidecar. The main db (index 0) was already
+            // canonicalized by the caller's `validate_path`, so only sidecars
+            // (index > 0) can be a planted reparse point here.
+            if index > 0 && is_reparse_point(&candidate) {
+                for (already_locked, original_perms) in guarded.iter().rev() {
+                    let _ = fs::set_permissions(already_locked, original_perms.clone());
+                }
+                return Err(GraphtorError::Database {
+                    message: format!(
+                        "refusing read-only serve: database sidecar '{}' is a symlink or junction; \
+                         a linked sidecar could redirect permission changes outside the workspace",
+                        candidate.display()
+                    ),
+                    operation: "open_engine_readonly".to_string(),
+                });
+            }
             if !candidate.exists() {
                 // Index 0 is the main db file, which callers already verified
                 // exists; only sidecars (index > 0) reach this branch. Every
@@ -526,9 +551,19 @@ impl EngineReadonlyGuard {
             // readonly, so `Drop` can restore them precisely instead of
             // forcing a coarse writable/readonly boolean that would enable
             // every Unix write bit and widen e.g. `0o600` to `0o622`.
-            let original = fs::metadata(&candidate)
-                .map_err(GraphtorError::from)?
-                .permissions();
+            let original = match fs::metadata(&candidate) {
+                Ok(metadata) => metadata.permissions(),
+                Err(error) => {
+                    // Roll back any sidecars already locked in this pass before
+                    // propagating, mirroring the `set_readonly` failure path so
+                    // a mid-loop error never leaves an earlier sidecar readonly
+                    // with no live guard to restore it on drop.
+                    for (already_locked, original_perms) in guarded.iter().rev() {
+                        let _ = fs::set_permissions(already_locked, original_perms.clone());
+                    }
+                    return Err(GraphtorError::from(error));
+                }
+            };
             if let Err(error) = set_readonly(&candidate, true) {
                 for (already_locked, original_perms) in guarded.iter().rev() {
                     let _ = fs::set_permissions(already_locked, original_perms.clone());
@@ -613,6 +648,30 @@ fn set_readonly(path: &Path, readonly: bool) -> Result<(), GraphtorError> {
 /// locked.
 fn clear_stale_readonly_lock(db_path: &Path) -> Result<(), GraphtorError> {
     for candidate in sidecar_candidates(db_path) {
+        // Same containment guard as `EngineReadonlyGuard::lock` (Constitution
+        // III/IV, NON-NEGOTIABLE): never chmod through a linked sidecar. A
+        // symlinked/junction sidecar would make `set_readonly(false)` clear the
+        // read-only bit on an EXTERNAL target, and proceeding to a write-mode
+        // open could then let the engine write through that link. Fail closed
+        // so a write-mode open never mutates permissions or data outside the
+        // workspace. `db_path` (index 0) is the caller-canonicalized path, so
+        // only a planted sidecar can be a reparse point here.
+        //
+        // The check MUST run BEFORE the `exists()` short-circuit: `exists()`
+        // follows the link, so a DANGLING symlink sidecar (its target absent)
+        // reports `false` and would otherwise be skipped — letting the engine
+        // create and write the WAL/SHM THROUGH the link to an external path.
+        // Mirror `lock`, which also guards before its existence branch.
+        if is_reparse_point(&candidate) {
+            return Err(GraphtorError::Database {
+                message: format!(
+                    "refusing write-mode open: database sidecar '{}' is a symlink or junction; \
+                     a linked sidecar could redirect permission changes outside the workspace",
+                    candidate.display()
+                ),
+                operation: "open_sqlite".to_string(),
+            });
+        }
         if !candidate.exists() {
             continue;
         }
@@ -1215,5 +1274,152 @@ mod tests {
 
         assert!(attach_result.is_err());
         assert!(extension_result.is_err());
+    }
+
+    // ── W8-1: reparse-point sidecar containment ────────────────────────────
+    //
+    // A symlinked/junction `-wal`/`-shm`/`-journal` sidecar must never let the
+    // read-only guard (or the write-mode self-heal) follow the link to chmod a
+    // file OUTSIDE the workspace. These tests plant a symlinked sidecar pointing
+    // at an external target and prove both entry points fail closed WITHOUT
+    // touching that target's permissions. The guard is cross-platform via
+    // `is_reparse_point` (which also catches Windows junctions); the tests skip
+    // gracefully where the platform refuses unprivileged symlink creation.
+
+    fn try_symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+    }
+
+    #[test]
+    fn open_engine_readonly_refuses_a_symlinked_wal_sidecar() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-symlink.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        // An external target the attacker wants chmod'd, living OUTSIDE the
+        // served workspace, created writable so a widening to read-only is
+        // detectable.
+        let external_dir = temp_dir();
+        let external_target = external_dir.path().join("external-secret.txt");
+        fs::write(&external_target, b"external").expect("seed external target");
+        assert!(
+            !fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "precondition: external target must start writable"
+        );
+
+        // Plant a `-wal` sidecar that is a symlink to the external target.
+        let wal = append_suffix(&db_path, "-wal");
+        let _ = fs::remove_file(&wal);
+        if try_symlink_file(&external_target, &wal).is_err() {
+            return; // platform refused unprivileged symlink creation — skip
+        }
+
+        let result = DataStore::open_engine_readonly(&db_path, dir.path());
+        assert!(
+            result.is_err(),
+            "open_engine_readonly must fail closed on a symlinked sidecar rather than chmod \
+             an external target"
+        );
+        assert!(
+            !fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "the external symlink target must NOT be made read-only through the linked sidecar"
+        );
+    }
+
+    #[test]
+    fn open_sqlite_refuses_a_symlinked_wal_sidecar() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-rw-symlink.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        // An external target the attacker wants the readonly bit CLEARED on,
+        // seeded read-only so a stale-lock clear would widen it back to writable.
+        let external_dir = temp_dir();
+        let external_target = external_dir.path().join("external-locked.txt");
+        fs::write(&external_target, b"external").expect("seed external target");
+        set_readonly(&external_target, true).expect("mark external target read-only");
+        assert!(
+            fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "precondition: external target must start read-only"
+        );
+
+        // Plant a `-wal` sidecar that is a symlink to the external target.
+        let wal = append_suffix(&db_path, "-wal");
+        let _ = fs::remove_file(&wal);
+        if try_symlink_file(&external_target, &wal).is_err() {
+            return; // platform refused unprivileged symlink creation — skip
+        }
+
+        let result = DataStore::open_sqlite(&db_path, dir.path());
+        assert!(
+            result.is_err(),
+            "open_sqlite must fail closed on a symlinked sidecar rather than clear the readonly \
+             bit on an external target"
+        );
+        assert!(
+            fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "the external symlink target's read-only bit must NOT be cleared through the linked \
+             sidecar"
+        );
+    }
+
+    #[test]
+    fn open_sqlite_refuses_a_dangling_symlinked_wal_sidecar() {
+        // Regression for the write-path ordering gap: `clear_stale_readonly_lock`
+        // must reject a reparse-point sidecar BEFORE its `exists()` check.
+        // `exists()` follows the link, so a DANGLING `-wal` symlink (its target
+        // absent) reports `false`; if the guard ran after `exists()` the sidecar
+        // would be skipped and the engine would CREATE and write the WAL THROUGH
+        // the link, materializing a file at an external path outside the
+        // workspace — the exact containment breach the guard exists to prevent.
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-rw-dangling.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        // A NON-EXISTENT external target: writing through the link would create
+        // it. Its continued absence after the open proves no write escaped.
+        let external_dir = temp_dir();
+        let external_target = external_dir.path().join("must-not-be-created.wal");
+        assert!(
+            !external_target.exists(),
+            "precondition: external target must not exist yet"
+        );
+
+        // Plant a `-wal` sidecar that is a DANGLING symlink to the absent target.
+        let wal = append_suffix(&db_path, "-wal");
+        let _ = fs::remove_file(&wal);
+        if try_symlink_file(&external_target, &wal).is_err() {
+            return; // platform refused unprivileged symlink creation — skip
+        }
+
+        let result = DataStore::open_sqlite(&db_path, dir.path());
+        assert!(
+            result.is_err(),
+            "open_sqlite must fail closed on a DANGLING symlinked sidecar rather than create the \
+             WAL through the link at an external path"
+        );
+        assert!(
+            !external_target.exists(),
+            "no file may be created at the external dangling-symlink target"
+        );
     }
 }

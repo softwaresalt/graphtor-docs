@@ -2676,7 +2676,7 @@ fn discover_status_db_paths(
         }
     };
 
-    let mut existing_candidates: Vec<PathBuf> = if let Some(config) = &source_config {
+    let existing_candidates: Vec<PathBuf> = if let Some(config) = &source_config {
         discover_db_files(db_path, config)
     } else {
         // `load_source_config` returns `Ok(None)` for two distinct reasons:
@@ -2700,50 +2700,61 @@ fn discover_status_db_paths(
                 db_path = %db_path.display(),
                 "no source registry found; status will inspect the explicit database target"
             );
-            vec![db_path.to_path_buf()]
-        } else {
-            debug!("no source registry found; status will report an empty database list");
-            Vec::new()
+            // Return the explicit target DIRECTLY, bypassing the serve-posture
+            // retain below. Serve-posture parity governs REGISTRY-driven
+            // auto-discovery (dropping phantom/stale targets a `serve` would
+            // never open); an explicit `--db-path` with no registry is instead a
+            // direct request to inspect exactly that database. Running it through
+            // `retain(Generation || exists)` would drop a not-yet-created target
+            // and make `status` print "no sources configured" instead of the
+            // accurate "database not found — run sync", diverging from the
+            // pre-parity diagnostic. `status` and `serve` legitimately differ
+            // here: `serve` needs an openable file, `status` reports absence.
+            return Ok(vec![db_path.to_path_buf()]);
         }
+        debug!("no source registry found; status will report an empty database list");
+        Vec::new()
     };
 
-    // Shared-set parity with `serve` (P1-T5): `discover_db_files` injects the
-    // `base_db_path` fallback (a phantom default database path) when a source
-    // registry resolves to ZERO ingestible (local) sources, purely so `sync`
-    // always has somewhere to write. `serve` drops that nonexistent phantom via
-    // its posture `retain` (a `ReadOnly` candidate that does not exist is
-    // excluded); if `status`/`list-sources` kept it, they would report a
-    // `graph.db` that was never created and that no source targets — diverging
-    // from what `serve` opens. Drop it here under the SAME condition: the
-    // registry has no ingestible sources AND the fallback file does not exist.
-    // A real not-yet-created GENERATION target (from an actual local source) is
-    // a resolved local path, not this empty-registry fallback, so it is never
-    // dropped.
-    if let Some(config) = &source_config {
-        let has_ingestible = config.sources.iter().any(|s| s.as_local().is_some());
-        if !has_ingestible {
-            existing_candidates.retain(|p| p.as_path() != db_path || p.exists());
-        }
-    }
-
-    // Merge in any `.db` file dropped directly into `.graphtor/`, and any
-    // explicit workspace-contained `type: database` entry (P1-T6), using the
-    // SAME shared auto-discovery `serve` relies on (P1-T1) — so `status` and
-    // the `list-sources` surface (which shares this helper via
-    // `QueryCtx::open_stores`) never diverge from what `serve` would open
-    // (P1-T5). A not-yet-created generation target is preserved (mirroring
-    // serve's `Generation`-kept rule); the empty-registry `base_db_path`
-    // phantom was already dropped above (mirroring serve's nonexistent-`ReadOnly`
-    // drop). The merge can only ADD genuinely-existing auto-discovered files,
-    // never drop an existing candidate.
+    // Full posture parity with `serve` (P1-T5): build the served UNION exactly
+    // as `cmd_serve` does — merge any `.db` file dropped directly into
+    // `.graphtor/` and any explicit workspace-contained `type: database` entry
+    // (P1-T6) via the SAME shared auto-discovery (P1-T1) — then classify every
+    // path with `classify_serve_postures` and retain `Generation || exists`,
+    // the IDENTICAL rule `cmd_serve` applies. This drops every `ReadOnly`
+    // candidate whose file does not exist — not only the empty-registry
+    // `base_db_path` phantom (a registry with zero ingestible sources), but also
+    // a STALE or EMPTY `local` source whose target was never created: `serve`
+    // classifies such a nonexistent target `ReadOnly` and excludes it, so
+    // `status`/`list-sources` (which shares this helper via
+    // `QueryCtx::open_stores`) must not diverge by reporting a phantom database
+    // `serve` would never open. A real not-yet-created GENERATION target (a
+    // resolvable, ingestible local source) classifies `Generation` and is kept
+    // even when absent, exactly as `serve` keeps it.
     let graphtor_dir = cwd.join(".graphtor");
-    workspace::serve_discovery::discover_served_databases(
+    let served = workspace::serve_discovery::discover_served_databases(
         &graphtor_dir,
         cwd,
         &existing_candidates,
         source_config.as_ref(),
     )
-    .context("failed to discover databases for status")
+    .context("failed to discover databases for status")?;
+
+    let mut classified = workspace::serve_discovery::classify_serve_postures(
+        &served,
+        source_config.as_ref(),
+        db_path,
+        cwd,
+    );
+    classified.postures.retain(|(path, mode)| {
+        *mode == workspace::serve_discovery::ServeMode::Generation || path.exists()
+    });
+
+    Ok(classified
+        .postures
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect())
 }
 
 fn load_status_databases(
@@ -4079,6 +4090,129 @@ mod tests {
         assert!(
             names.iter().any(|n| n == "legacy.db"),
             "the explicitly-configured served database must still be reported: {db_paths:?}"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_drop_a_stale_local_sources_phantom_target() {
+        // W8-2: the W6-4 fix only dropped the phantom when a registry had ZERO
+        // ingestible sources. A registry that DOES contain a `local` source
+        // still slipped a phantom through when that source was stale/empty: its
+        // target database was never created, yet `has_ingestible` was true so
+        // the old special-case skipped the drop. `serve` classifies such a
+        // nonexistent target `ReadOnly` and excludes it, so `status` /
+        // `list-sources` must not report a database `serve` would never open.
+        // Full posture parity (`classify_serve_postures` + `Generation || exists`
+        // retain) drops it here too.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        let config_dir = graphtor_dir.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+
+        // The local source's default target — deliberately NOT created on disk.
+        let base_db_path = graphtor_dir.join("graph.db");
+
+        // A STALE local source: its content path does not exist, so it resolves
+        // no `Generation` target and its nonexistent database is a phantom.
+        let stale_source_dir = root.path().join("nonexistent-source-dir");
+        let stale_source_yaml = stale_source_dir.display().to_string().replace('\\', "/");
+        fs::write(
+            config_dir.join("sources.yaml"),
+            format!(
+                "sources:\n  - type: local\n    id: stale\n    path: {stale_source_yaml}\n    include:\n      - \"**/*.md\"\n"
+            ),
+        )
+        .expect("write stale-local sources.yaml");
+
+        let db_paths = discover_status_db_paths(&base_db_path, root.path(), None, false)
+            .expect("status discovery should succeed");
+
+        let names: Vec<String> = db_paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "graph.db"),
+            "a stale local source's nonexistent target `graph.db` must not be reported by \
+             status (parity with serve's ReadOnly-drop): {db_paths:?}"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_drop_an_empty_but_present_local_sources_phantom_target() {
+        // W8-2 (P3 coverage): the sibling test drives the drop through the
+        // `!local.path.exists()` half of the posture condition. This variant
+        // exercises the OTHER half — `!source_has_ingestible_content` — where
+        // the source directory EXISTS but holds no files matching its include
+        // globs. `serve` still classifies the never-created target `ReadOnly`
+        // and drops it, so `status` must too. This is the precise "stale/empty,
+        // has_ingestible was true" case the old coarse count mishandled.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        let config_dir = graphtor_dir.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+
+        let base_db_path = graphtor_dir.join("graph.db");
+
+        // An EMPTY-but-present local source: the directory exists, but contains
+        // only a non-matching file, so no `**/*.md` content is ingestible.
+        let empty_source_dir = root.path().join("empty-source");
+        fs::create_dir_all(&empty_source_dir).expect("create empty source dir");
+        fs::write(empty_source_dir.join("notes.txt"), b"not markdown")
+            .expect("seed non-matching file");
+        let empty_source_yaml = empty_source_dir.display().to_string().replace('\\', "/");
+        fs::write(
+            config_dir.join("sources.yaml"),
+            format!(
+                "sources:\n  - type: local\n    id: empty\n    path: {empty_source_yaml}\n    include:\n      - \"**/*.md\"\n"
+            ),
+        )
+        .expect("write empty-local sources.yaml");
+
+        let db_paths = discover_status_db_paths(&base_db_path, root.path(), None, false)
+            .expect("status discovery should succeed");
+
+        let names: Vec<String> = db_paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "graph.db"),
+            "an empty-but-present local source's nonexistent target `graph.db` must not be \
+             reported by status (parity with serve's ReadOnly-drop): {db_paths:?}"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_keep_an_explicit_missing_db_target_with_no_registry() {
+        // Regression guard for the serve-posture refactor: an explicit
+        // `--db-path` target with NO registry must be inspected DIRECTLY, even
+        // when it does not exist yet, so `cmd_status` can report the accurate
+        // "database not found — run sync" diagnostic. If the explicit target
+        // were routed through the `retain(Generation || exists)` serve-posture
+        // filter it would classify `ReadOnly`, get dropped, and `status` would
+        // misleadingly print "no sources configured". Serve-posture parity is
+        // for REGISTRY-driven discovery only; an explicit target is a direct
+        // inspection request that legitimately diverges from `serve`.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        fs::create_dir_all(&graphtor_dir).expect("create graphtor dir");
+
+        // An explicit target that does NOT exist and has no backing registry.
+        let explicit_target = graphtor_dir.join("explicit-missing.db");
+        assert!(
+            !explicit_target.exists(),
+            "precondition: explicit target must not exist"
+        );
+
+        let db_paths = discover_status_db_paths(&explicit_target, root.path(), None, true)
+            .expect("status discovery should succeed");
+
+        assert_eq!(
+            db_paths,
+            vec![explicit_target.clone()],
+            "an explicit missing --db-path target with no registry must be reported directly so \
+             status can emit `database not found`, not dropped as a phantom: {db_paths:?}"
         );
     }
 
