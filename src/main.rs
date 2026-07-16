@@ -3194,6 +3194,18 @@ fn cmd_install(
 ) -> anyhow::Result<i32> {
     // Always create the workspace directory scaffold first so the lock path exists.
     let ws_dir = cwd.join(".graphtor");
+    // Containment guard (W7-1; parity with serve X1 / uninstall X2): a
+    // pre-existing `.graphtor` that is itself a symlink/junction is its own
+    // trust anchor, so `validate_path` would accept every descendant.
+    // `create_dir_all` follows the link and `WorkspaceLock::acquire` plus the
+    // scaffold/binary copy would then write through it into an external target,
+    // bypassing containment. Reject the linked root before any write and fail
+    // closed (Constitution Principles III/IV).
+    if graphtor_core::path::is_reparse_point(&ws_dir) {
+        anyhow::bail!(
+            ".graphtor is a symlink or junction; refusing to install through a linked workspace root"
+        );
+    }
     // Capture whether the workspace already existed BEFORE the bootstrap
     // below: `create_dir_all` always makes `.graphtor/`, so `install_minimal`
     // / `install` would otherwise always observe an existing directory and
@@ -3524,6 +3536,17 @@ fn cmd_uninstall(
     }
 
     let ws_dir = cwd.join(".graphtor");
+    // Containment guard (W7-2): reject a linked `.graphtor` root BEFORE
+    // acquiring the lock. Otherwise `WorkspaceLock::acquire` (and
+    // `--force-unlock` replacing external lock artifacts) creates/removes
+    // `graphtor.lock` inside the external target — an out-of-workspace
+    // mutation — before `plan_uninstall`'s linked-root guard runs. Fail closed
+    // on a reparse-point root (Constitution Principles III/IV).
+    if graphtor_core::path::is_reparse_point(&ws_dir) {
+        anyhow::bail!(
+            ".graphtor is a symlink or junction; refusing to uninstall through a linked workspace root"
+        );
+    }
     let lock_guard = if ws_dir.exists() {
         Some(
             workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
@@ -4294,6 +4317,105 @@ mod tests {
         assert!(
             ts.ends_with('Z'),
             "timestamp should end with Z for UTC: {ts}"
+        );
+    }
+
+    /// Create a directory symlink cross-platform, returning `Err` when the
+    /// platform refuses (e.g. Windows without the symlink privilege) so the
+    /// caller can self-skip rather than fail.
+    fn try_symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link)
+        }
+    }
+
+    #[test]
+    fn cmd_install_refuses_a_symlinked_graphtor_root() {
+        // W7-1 / containment parity with serve (X1) and uninstall (X2): a
+        // pre-existing `.graphtor` that is itself a symlink/junction is its own
+        // trust anchor, so `validate_path` would accept every descendant.
+        // `create_dir_all` follows the link and `WorkspaceLock::acquire` +
+        // the scaffold/binary copy would then write through it into an external
+        // target. The reparse-point guard must reject the linked root and fail
+        // closed BEFORE any write.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let ws_dir = project.path().join(".graphtor");
+        if try_symlink_dir(external.path(), &ws_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        let result = cmd_install(project.path(), &args, OutputFormat::Human);
+
+        assert!(
+            result.is_err(),
+            "install through a symlinked .graphtor root must fail closed"
+        );
+        // Load-bearing containment check: the full (`--with-ingestion`) scaffold
+        // creates `bin/` and copies the binary into `.graphtor`. Without the
+        // guard those writes follow the link into the external target; the guard
+        // must abort before any of them run.
+        assert!(
+            !external.path().join("bin").exists(),
+            "install must not scaffold into the linked target"
+        );
+        assert!(
+            !external.path().join("sources.yaml").exists(),
+            "install must not write sources.yaml into the linked target"
+        );
+    }
+
+    #[test]
+    fn cmd_uninstall_refuses_a_symlinked_graphtor_root() {
+        // W7-2: the linked-root guard in plan/execute runs only AFTER the lock
+        // acquisition. If `.graphtor` is a symlink/junction, acquiring the lock
+        // (and `--force-unlock` replacing external lock artifacts) mutates the
+        // external target before uninstall decides to skip deletion. Reject a
+        // reparse-point root BEFORE acquiring the lock.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        // Seed a foreign artifact at the EXACT managed lock filename in the link
+        // target. With `--force-unlock`, `WorkspaceLock::acquire` would replace
+        // this file and its guard drop would then remove it — an out-of-workspace
+        // mutation — before `plan_uninstall`'s linked-root guard runs. The new
+        // guard must reject the linked root before the lock is ever touched, so
+        // this foreign artifact survives byte-for-byte.
+        let foreign_lock = external.path().join("graphtor.lock");
+        fs::write(&foreign_lock, b"foreign").expect("seed foreign lock");
+        let ws_dir = project.path().join(".graphtor");
+        if try_symlink_dir(external.path(), &ws_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let args = cli::UninstallArgs {
+            confirm: true,
+            keep_config: false,
+            force_unlock: true,
+        };
+        let result = cmd_uninstall(project.path(), &args, OutputFormat::Human);
+
+        assert!(
+            result.is_err(),
+            "uninstall through a symlinked .graphtor root must fail closed"
+        );
+        assert!(
+            foreign_lock.exists(),
+            "the foreign lock in the link target must not be removed by force-unlock"
+        );
+        assert_eq!(
+            fs::read(&foreign_lock).expect("read foreign lock"),
+            b"foreign",
+            "uninstall must not force-replace the link target lock"
         );
     }
 
