@@ -4613,6 +4613,56 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn cmd_upgrade_refuses_a_junctioned_graphtor_root() {
+        // 2D49BDDF review follow-up: the symlinked-root test above self-skips
+        // when the platform refuses symlink creation (Developer Mode/elevation).
+        // `mklink /J` needs no elevation, so this junction variant exercises the
+        // primary Windows attack path rather than silently skipping it.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let foreign_lock = external.path().join("graphtor.lock");
+        fs::write(&foreign_lock, b"foreign").expect("seed foreign lock");
+        let ws_dir = project.path().join(".graphtor");
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                ws_dir.to_str().unwrap(),
+                external.path().to_str().unwrap(),
+            ])
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            _ => {
+                eprintln!("skipping junction test: unable to create a junction here");
+                return;
+            }
+        }
+
+        let args = cli::UpgradeArgs {
+            force: false,
+            force_unlock: true,
+        };
+        let result = cmd_upgrade(project.path(), &args, OutputFormat::Human);
+
+        assert!(
+            result.is_err(),
+            "upgrade through a junctioned .graphtor root must fail closed"
+        );
+        assert!(
+            foreign_lock.exists(),
+            "the foreign lock in the junction target must not be removed by force-unlock"
+        );
+        assert_eq!(
+            fs::read(&foreign_lock).expect("read foreign lock"),
+            b"foreign",
+            "upgrade must not force-replace the junction target lock"
+        );
+    }
+
     #[test]
     fn cmd_install_writes_root_mcp_json() {
         let tmp = tempfile::tempdir().expect("tempdir");

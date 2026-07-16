@@ -76,6 +76,30 @@ pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, Graph
     }
 
     let dest = installed_binary_path(workspace_dir);
+
+    // Containment guard (052-F review follow-up): the `.graphtor` root guard in
+    // `cmd_upgrade` does not cover a linked `bin/` directory or a linked binary
+    // file. On an existing full install either component can itself be a
+    // symlink/junction; the `fs::copy` below FOLLOWS a linked destination and
+    // would overwrite the external target — an out-of-workspace mutation.
+    // Reject a reparse-point destination component before any read or write and
+    // fail closed (Constitution Principles III/IV). A non-existent destination
+    // is not a reparse point, so a first-time copy proceeds normally.
+    if let Some(bin_dir) = dest.parent() {
+        if graphtor_core::path::is_reparse_point(bin_dir) {
+            return Err(GraphtorError::PathViolation {
+                attempted: bin_dir.to_path_buf(),
+                allowed_root: workspace_dir.to_path_buf(),
+            });
+        }
+    }
+    if graphtor_core::path::is_reparse_point(&dest) {
+        return Err(GraphtorError::PathViolation {
+            attempted: dest.clone(),
+            allowed_root: workspace_dir.to_path_buf(),
+        });
+    }
+
     let exe = std::env::current_exe().map_err(|e| GraphtorError::Config {
         message: format!("failed to locate running binary: {e}"),
         field: None,
@@ -224,6 +248,56 @@ mod tests {
         assert!(
             !installed_binary_path(&ws).exists(),
             "upgrade must never create a bin/ scaffold on a consumption workspace"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn upgrade_refuses_a_junctioned_bin_directory() {
+        // 052-F review follow-up (comment on the linked-destination gap): the
+        // `.graphtor` root guard does not cover a linked `bin/` directory. On a
+        // full install `bin/` can be replaced by a junction pointing outside the
+        // workspace; `fs::copy` would then follow it and overwrite the external
+        // target. `mklink /J` needs no elevation, so this exercises the real
+        // Windows attack path rather than skipping it like a symlink test would.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        // A foreign binary at the copy destination inside the link target. The
+        // guard must reject before the copy, so this survives byte-for-byte.
+        let foreign_bin = external.path().join("graphtor-docs.exe");
+        fs::write(&foreign_bin, b"foreign").expect("seed foreign binary");
+
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+        fs::create_dir_all(&ws).expect("create workspace root");
+        let bin_dir = ws.join("bin");
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                bin_dir.to_str().unwrap(),
+                external.path().to_str().unwrap(),
+            ])
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            _ => {
+                eprintln!("skipping junction test: unable to create a junction here");
+                return;
+            }
+        }
+
+        // A junctioned `bin/` makes `detect_footprint` classify the workspace as
+        // Full, so `upgrade` reaches the copy path and the guard fires.
+        let err = upgrade(&ws, true).expect_err("upgrade through a junctioned bin/ must fail");
+        assert!(
+            matches!(err, GraphtorError::PathViolation { .. }),
+            "expected PathViolation, got: {err:?}"
+        );
+        assert_eq!(
+            fs::read(&foreign_bin).expect("read foreign binary"),
+            b"foreign",
+            "upgrade must not overwrite the external binary through the junction"
         );
     }
 }
