@@ -70,9 +70,23 @@ fn status_json_inspects_explicit_db_path_without_registry() {
         1,
         "explicit --db-path should inspect the target database even without a registry: {stdout}"
     );
+    // `status` now resolves the explicit target through the SAME shared
+    // `serve_discovery` union `serve` uses (P1-T5), which canonicalizes
+    // every candidate via `validate_path` for workspace-containment
+    // enforcement (Constitution Principle III). Compare against the
+    // canonicalized form rather than the raw, pre-canonicalization path —
+    // on some Windows environments `canonicalize` expands a component to
+    // its 8.3 short name, so a literal string comparison against the
+    // un-canonicalized input path is not portable.
+    let canonical_db_path = std::fs::canonicalize(&db_path).expect("db_path should canonicalize");
+    let reported_path = std::fs::canonicalize(
+        databases[0]["database"]
+            .as_str()
+            .expect("database path string"),
+    )
+    .expect("reported database path should canonicalize");
     assert_eq!(
-        databases[0]["database"].as_str(),
-        Some(db_path.display().to_string().as_str()),
+        reported_path, canonical_db_path,
         "status should report the explicit database path: {stdout}"
     );
     assert_eq!(

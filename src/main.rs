@@ -2654,41 +2654,64 @@ fn discover_status_db_paths(
     config_override: Option<&std::path::Path>,
     has_explicit_db_target: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    match load_source_config(cwd, db_path, config_override) {
-        Ok(Some(source_config)) => Ok(discover_db_files(db_path, &source_config)),
-        Ok(None) => {
-            // `load_source_config` returns `Ok(None)` for two distinct reasons:
-            //
-            // 1. An explicit `--config` path was supplied but the file does not
-            //    exist.  This is a misconfiguration — fail closed so the
-            //    operator sees the bad path instead of a silent empty result.
-            //
-            // 2. No `--config` was supplied and auto-discovery found nothing in
-            //    `.graphtor/config/`.  This is a valid "not yet configured"
-            //    state — return an empty list and exit 0 unless the operator
-            //    explicitly targeted a database, in which case inspect that DB.
-            if let Some(path) = config_override {
-                return Err(anyhow::anyhow!(
-                    "source registry '{}' not found; check the --config path",
-                    path.display()
-                ));
-            }
-            if has_explicit_db_target {
-                debug!(
-                    db_path = %db_path.display(),
-                    "no source registry found; status will inspect the explicit database target"
-                );
-                return Ok(vec![db_path.to_path_buf()]);
-            }
-            debug!("no source registry found; status will report an empty database list");
-            Ok(Vec::new())
-        }
+    let source_config = match load_source_config(cwd, db_path, config_override) {
+        Ok(config) => config,
         Err(e) => {
             // A registry file exists but is malformed — fail closed so the
             // operator sees the configuration error rather than stale data.
-            Err(e.context("source registry is invalid; fix it before running status"))
+            return Err(e.context("source registry is invalid; fix it before running status"));
         }
-    }
+    };
+
+    let existing_candidates: Vec<PathBuf> = if let Some(config) = &source_config {
+        discover_db_files(db_path, config)
+    } else {
+        // `load_source_config` returns `Ok(None)` for two distinct reasons:
+        //
+        // 1. An explicit `--config` path was supplied but the file does not
+        //    exist.  This is a misconfiguration — fail closed so the
+        //    operator sees the bad path instead of a silent empty result.
+        //
+        // 2. No `--config` was supplied and auto-discovery found nothing in
+        //    `.graphtor/config/`.  This is a valid "not yet configured"
+        //    state — return an empty list and exit 0 unless the operator
+        //    explicitly targeted a database, in which case inspect that DB.
+        if let Some(path) = config_override {
+            return Err(anyhow::anyhow!(
+                "source registry '{}' not found; check the --config path",
+                path.display()
+            ));
+        }
+        if has_explicit_db_target {
+            debug!(
+                db_path = %db_path.display(),
+                "no source registry found; status will inspect the explicit database target"
+            );
+            vec![db_path.to_path_buf()]
+        } else {
+            debug!("no source registry found; status will report an empty database list");
+            Vec::new()
+        }
+    };
+
+    // Merge in any `.db` file dropped directly into `.graphtor/`, and any
+    // explicit workspace-contained `type: database` entry (P1-T6), using the
+    // SAME shared auto-discovery `serve` relies on (P1-T1) — so `status` and
+    // the `list-sources` surface (which shares this helper via
+    // `QueryCtx::open_stores`) never diverge from what `serve` would open
+    // (P1-T5). `existing_candidates` is preserved unchanged in full —
+    // including a not-yet-created generation target or the
+    // `discover_db_files` empty-registry fallback to `base_db_path` — the
+    // merge can only ADD genuinely-existing auto-discovered files, never
+    // drop an existing candidate.
+    let graphtor_dir = cwd.join(".graphtor");
+    workspace::serve_discovery::discover_served_databases(
+        &graphtor_dir,
+        cwd,
+        &existing_candidates,
+        source_config.as_ref(),
+    )
+    .context("failed to discover databases for status")
 }
 
 fn load_status_databases(
