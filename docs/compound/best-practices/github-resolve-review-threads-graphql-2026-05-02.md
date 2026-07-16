@@ -78,12 +78,23 @@ Always reply before resolving so the thread has a clear audit trail.
 
 ### PowerShell quoting caveat for reply bodies
 
-On Windows, pre-assign the thread ID and body to `$tid`/`$body` variables and
-pass them via `-f "tid=$tid" -f "body=$body"`. Reply-body text must avoid
-apostrophes, `$`, backticks, and double quotes, which PowerShell interprets
-before `gh` sees them. Write plain prose (spell out parenthetical SHAs rather
-than backtick-quoting them) to sidestep the escape conflict documented in
-`gh-pr-body-powershell-backtick-conflict-2026-04-29.md`.
+The escape hazard is in how the body is **assigned**, not in `-f "body=$body"`
+— PowerShell does not re-parse characters already stored in an expanded
+variable, so the value passes through `-f` unchanged. Assign arbitrary reply
+text with a single-quoted here-string so apostrophes, `$`, backticks, and quotes
+are stored literally:
+
+```powershell
+$body = @'
+Fixed in 2521240. The readiness block now records the current HEAD.
+'@
+gh api graphql -f "query=$q" -f "tid=$tid" -f "body=$body"
+```
+
+A double-quoted assignment (`$body = "...$sha..."`) would expand `$sha` and
+interpret backticks *during assignment* — that is the conflict documented in
+`gh-pr-body-powershell-backtick-conflict-2026-04-29.md`. A single-quoted
+here-string sidesteps it without banning any characters from the reply text.
 
 ## Evidence
 

@@ -33,7 +33,7 @@ review waves and was updated; one genuinely new security learning was captured.
 
 | New entry | Rationale |
 |---|---|
-| `best-practices/reparse-point-fail-closed-containment-2026-07-16.md` | Hard-won across PR #90 review waves 5–10: a reusable security pattern (shared `is_reparse_point` primitive, fail-closed at every containment boundary) not previously in the library. |
+| `best-practices/reparse-point-fail-closed-containment-2026-07-16.md` | Hard-won across PR #90 review waves 5–10: the `is_reparse_point` guard (`src/path/security.rs`) that rejects a symlink/junction workspace root before write/mutate at the serve scan-root, install, and uninstall boundaries — a reusable containment pattern not previously in the library. |
 
 ## Files Changed by This Refresh
 
