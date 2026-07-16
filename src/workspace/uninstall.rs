@@ -1,15 +1,24 @@
 //! Workspace uninstall workflow.
 //!
-//! Removes the `.graphtor/` directory and cleans up MCP client config files
-//! and `.gitignore` entries. Requires explicit `--confirm` to prevent
-//! accidental data loss.
+//! Removes ONLY the graphtor-created filesystem artifacts (the known
+//! ingestion-capable subdirectories of a full install) and cleans up MCP
+//! client config files and a managed `.gitignore` entry. Requires explicit
+//! `--confirm` to prevent accidental data loss.
+//!
+//! Footprint-safe (P2-T5a): a user-dropped `.db` file living directly in
+//! `.graphtor/` — the read-only serve auto-discovery drop location (P1-T1)
+//! — is NEVER a deletion candidate, regardless of footprint or
+//! `keep_config`. A subdirectory that is itself a symlink is never followed
+//! or removed, so an operator's own reparse-point trick can never cause
+//! uninstall to reach outside `.graphtor/`.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::workspace::doctor::{detect_footprint, WorkspaceFootprint};
 use crate::workspace::gitignore::remove_gitignore_entry;
 use crate::workspace::mcp_config::{remove_mcp_config, McpConfigAction};
-use crate::workspace::paths::GRAPHTOR_DIR;
+use crate::workspace::paths::{GRAPHTOR_DIR, GRAPHTOR_SUBDIRS};
 use graphtor_core::GraphtorError;
 
 /// Result of an uninstall operation.
@@ -21,11 +30,51 @@ pub struct UninstallResult {
     pub updated: Vec<String>,
 }
 
+/// Returns `true` when `path` is itself a symlink (Unix) or a
+/// junction/reparse point (Windows) — checked via `symlink_metadata` so the
+/// check itself never follows the link.
+fn is_symlink(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// Compute the graphtor-created filesystem artifacts that [`uninstall`]
+/// would remove, WITHOUT removing anything.
+///
+/// Used to enumerate the exact deletion set for operator approval (PA-3)
+/// before [`uninstall`] runs, and as the single source of truth for the
+/// deletion allowlist [`uninstall`] itself applies.
+///
+/// Returns the subset of the known ingestion-capable subdirectories
+/// (`bin/`, `data/`, `cache/`, `config/`, `logs/`) that currently exist as
+/// real directories — skipping `config/` when `keep_config` is `true`, and
+/// skipping any subdirectory that is itself a symlink (those are never
+/// touched). A user-dropped file directly in `.graphtor/` (for example, an
+/// auto-discovered `.db` file) is NEVER included — only these specific,
+/// graphtor-created subdirectory names are ever deletion candidates.
+#[must_use]
+pub fn plan_uninstall(workspace_dir: &Path, keep_config: bool) -> Vec<PathBuf> {
+    if !workspace_dir.is_dir() {
+        return Vec::new();
+    }
+    GRAPHTOR_SUBDIRS
+        .iter()
+        .filter(|sub| !(keep_config && **sub == "config"))
+        .map(|sub| workspace_dir.join(sub))
+        .filter(|dir| dir.is_dir() && !is_symlink(dir))
+        .collect()
+}
+
 /// Uninstall graphtor-docs from the workspace.
 ///
-/// Removes `.graphtor/` (optionally preserving the config sub-directory
-/// when `keep_config` is `true`), cleans `.gitignore`, and removes MCP
-/// client config files.
+/// Removes ONLY the graphtor-created subdirectories reported by
+/// [`plan_uninstall`] (optionally preserving `.graphtor/config` when
+/// `keep_config` is `true`), then removes the `.graphtor/` root itself ONLY
+/// if it is left completely empty afterward — so a user-dropped `.db` file,
+/// a preserved `config/`, or a skipped symlinked subdirectory always keeps
+/// the root (and its contents) intact. Cleans the managed `.gitignore`
+/// block ONLY for a full-footprint workspace (a minimal install never wrote
+/// one), and removes MCP client config entries.
 ///
 /// # Errors
 ///
@@ -33,52 +82,42 @@ pub struct UninstallResult {
 /// resolved or on I/O failure.
 pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResult, GraphtorError> {
     let workspace_dir = project_root.join(GRAPHTOR_DIR);
+    // Footprint MUST be captured before any deletion — afterward every
+    // subdirectory may be gone, which would misreport a full install as
+    // minimal and skip its .gitignore cleanup.
+    let footprint = detect_footprint(&workspace_dir);
     let mut removed: Vec<String> = Vec::new();
 
-    if workspace_dir.exists() {
-        if keep_config {
-            // Remove everything except .graphtor/config/.
-            let entries = fs::read_dir(&workspace_dir).map_err(|e| GraphtorError::Config {
-                message: format!("failed to read workspace dir: {e}"),
-                field: None,
-            })?;
-            for entry_result in entries {
-                let entry: std::fs::DirEntry = match entry_result {
-                    Ok(e) => e,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "skipping unreadable entry in workspace dir");
-                        continue;
-                    }
-                };
-                let path = entry.path();
-                let name = entry.file_name();
-                if name == "config" {
-                    continue;
-                }
-                if path.is_dir() {
-                    fs::remove_dir_all(&path).map_err(|e| GraphtorError::Config {
-                        message: format!("failed to remove {}: {e}", path.display()),
-                        field: None,
-                    })?;
-                } else {
-                    fs::remove_file(&path).map_err(|e| GraphtorError::Config {
-                        message: format!("failed to remove {}: {e}", path.display()),
-                        field: None,
-                    })?;
-                }
-                removed.push(path.display().to_string());
-            }
-        } else {
-            fs::remove_dir_all(&workspace_dir).map_err(|e| GraphtorError::Config {
-                message: format!("failed to remove workspace dir: {e}"),
+    for dir in plan_uninstall(&workspace_dir, keep_config) {
+        fs::remove_dir_all(&dir).map_err(|e| GraphtorError::Config {
+            message: format!("failed to remove {}: {e}", dir.display()),
+            field: None,
+        })?;
+        removed.push(dir.display().to_string());
+    }
+
+    // Clean up the now-possibly-empty workspace root itself, but ONLY when
+    // it is genuinely empty afterward. Anything left — a user-dropped
+    // `.db` file, a preserved `config/`, or a symlinked subdirectory we
+    // deliberately skipped — means the root must survive.
+    if workspace_dir.is_dir() {
+        let is_empty =
+            fs::read_dir(&workspace_dir).is_ok_and(|mut entries| entries.next().is_none());
+        if is_empty {
+            fs::remove_dir(&workspace_dir).map_err(|e| GraphtorError::Config {
+                message: format!("failed to remove {}: {e}", workspace_dir.display()),
                 field: None,
             })?;
             removed.push(workspace_dir.display().to_string());
         }
     }
 
-    // Clean .gitignore.
-    remove_gitignore_entry(project_root)?;
+    // .gitignore parity (P2-T5a): only a full-footprint install ever wrote
+    // the managed `.gitignore` block (P2-T2b); a minimal install never
+    // touched `.gitignore` and uninstall must not either.
+    if footprint == WorkspaceFootprint::Full {
+        remove_gitignore_entry(project_root)?;
+    }
 
     // Prune the graphtor-docs entry from MCP client configs.
     let mut updated: Vec<String> = Vec::new();
@@ -97,7 +136,7 @@ pub fn uninstall(project_root: &Path, keep_config: bool) -> Result<UninstallResu
 mod tests {
     use super::*;
     use crate::workspace::gitignore::add_gitignore_entry;
-    use crate::workspace::install::install;
+    use crate::workspace::install::{install, install_minimal};
 
     #[test]
     fn uninstall_removes_workspace_dir() {
@@ -121,5 +160,180 @@ mod tests {
             config_dir.join("sources.yaml").exists(),
             "sources.yaml should be preserved"
         );
+    }
+
+    #[test]
+    fn uninstall_keep_config_false_still_retains_user_dropped_db() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let dropped_db = tmp.path().join(GRAPHTOR_DIR).join("dropped.db");
+        fs::write(&dropped_db, b"not a real sqlite file, just a marker").expect("write db");
+
+        uninstall(tmp.path(), false).expect("uninstall");
+
+        assert!(
+            dropped_db.exists(),
+            "a user-dropped .db file directly in .graphtor/ must survive uninstall"
+        );
+        for sub in GRAPHTOR_SUBDIRS {
+            assert!(
+                !tmp.path().join(GRAPHTOR_DIR).join(sub).exists(),
+                "the managed {sub} subdirectory must still be removed"
+            );
+        }
+    }
+
+    #[test]
+    fn uninstall_keep_config_true_still_retains_user_dropped_db() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let dropped_db = tmp.path().join(GRAPHTOR_DIR).join("dropped.db");
+        fs::write(&dropped_db, b"marker").expect("write db");
+
+        uninstall(tmp.path(), true).expect("uninstall keep-config");
+
+        assert!(
+            dropped_db.exists(),
+            "a user-dropped .db file must survive uninstall --keep-config too"
+        );
+        assert!(
+            tmp.path().join(GRAPHTOR_DIR).join("config").is_dir(),
+            "config/ must still be preserved"
+        );
+    }
+
+    #[test]
+    fn uninstall_minimal_workspace_preserves_dropped_db_and_leaves_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let dropped_db = tmp.path().join(GRAPHTOR_DIR).join("dropped.db");
+        fs::write(&dropped_db, b"marker").expect("write db");
+
+        uninstall(tmp.path(), false).expect("uninstall minimal");
+
+        assert!(
+            dropped_db.exists(),
+            "a minimal-footprint uninstall must never delete a dropped .db"
+        );
+        assert!(
+            tmp.path().join(GRAPHTOR_DIR).is_dir(),
+            ".graphtor/ itself must survive since it still holds a dropped db"
+        );
+    }
+
+    #[test]
+    fn uninstall_minimal_workspace_never_touches_a_gitignore_it_never_created() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let gitignore_path = tmp.path().join(".gitignore");
+        let unrelated_content = "node_modules/\ntarget/\n";
+        fs::write(&gitignore_path, unrelated_content).expect("write gitignore");
+
+        uninstall(tmp.path(), false).expect("uninstall minimal");
+
+        let after = fs::read_to_string(&gitignore_path).expect("read gitignore");
+        assert_eq!(
+            after, unrelated_content,
+            "a minimal-footprint uninstall must never modify a .gitignore it never created"
+        );
+    }
+
+    #[test]
+    fn uninstall_full_workspace_removes_its_own_managed_gitignore_block() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        add_gitignore_entry(tmp.path()).expect("gitignore");
+        let gitignore_path = tmp.path().join(".gitignore");
+        assert!(
+            fs::read_to_string(&gitignore_path)
+                .expect("read")
+                .contains(".graphtor/"),
+            "precondition: managed entry present"
+        );
+
+        uninstall(tmp.path(), false).expect("uninstall");
+
+        let after = fs::read_to_string(&gitignore_path).expect("read after uninstall");
+        assert!(
+            !after.contains(".graphtor/"),
+            "a full-footprint uninstall must remove its own managed .gitignore block: {after}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn uninstall_does_not_follow_a_symlinked_subdir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+
+        // Replace .graphtor/bin with a junction pointing at an EXTERNAL
+        // directory containing a canary file, simulating an operator's own
+        // reparse-point trick.
+        let bin_dir = tmp.path().join(GRAPHTOR_DIR).join("bin");
+        fs::remove_dir_all(&bin_dir).expect("remove real bin dir");
+        let external = tmp.path().join("external-target");
+        fs::create_dir_all(&external).expect("create external dir");
+        let canary = external.join("canary.txt");
+        fs::write(&canary, b"must survive").expect("write canary");
+
+        let junction_result = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                bin_dir.to_str().expect("utf-8 path"),
+                external.to_str().expect("utf-8 path"),
+            ])
+            .output();
+        let Ok(output) = junction_result else {
+            eprintln!("skipping junction test: unable to invoke mklink in this environment");
+            return;
+        };
+        if !output.status.success() {
+            eprintln!("skipping junction test: unable to create a junction in this environment");
+            return;
+        }
+
+        uninstall(tmp.path(), false).expect("uninstall");
+
+        assert!(
+            canary.exists(),
+            "uninstall must never follow a symlinked/junctioned subdirectory out of .graphtor/"
+        );
+    }
+
+    #[test]
+    fn plan_uninstall_enumerates_full_layout_subdirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let ws = tmp.path().join(GRAPHTOR_DIR);
+
+        let planned = plan_uninstall(&ws, false);
+
+        assert_eq!(planned.len(), GRAPHTOR_SUBDIRS.len());
+        for sub in GRAPHTOR_SUBDIRS {
+            assert!(planned.contains(&ws.join(sub)), "missing {sub} in plan");
+        }
+    }
+
+    #[test]
+    fn plan_uninstall_skips_config_when_keep_config_true() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let ws = tmp.path().join(GRAPHTOR_DIR);
+
+        let planned = plan_uninstall(&ws, true);
+
+        assert!(!planned.contains(&ws.join("config")));
+        assert_eq!(planned.len(), GRAPHTOR_SUBDIRS.len() - 1);
+    }
+
+    #[test]
+    fn plan_uninstall_returns_empty_for_minimal_layout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let ws = tmp.path().join(GRAPHTOR_DIR);
+
+        assert!(plan_uninstall(&ws, false).is_empty());
     }
 }

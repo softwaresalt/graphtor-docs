@@ -3483,6 +3483,24 @@ fn cmd_uninstall(
         None
     };
 
+    // PA-3: enumerate the exact deletion set BEFORE performing any
+    // deletion. A user-dropped `.db` file directly in `.graphtor/` is never
+    // part of this plan (workspace::uninstall::plan_uninstall only ever
+    // considers the known graphtor-created subdirectories).
+    let planned = workspace::uninstall::plan_uninstall(&ws_dir, args.keep_config);
+    if fmt != OutputFormat::Json {
+        if planned.is_empty() {
+            println!(
+                "no graphtor-managed directories to remove (workspace is minimal or already clean)"
+            );
+        } else {
+            println!("the following graphtor-managed directories will be removed:");
+            for dir in &planned {
+                println!("  {}", dir.display());
+            }
+        }
+    }
+
     let result =
         workspace::uninstall::uninstall(cwd, args.keep_config).context("uninstall failed")?;
 
@@ -3490,6 +3508,10 @@ fn cmd_uninstall(
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
+                "planned_removal": planned
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>(),
                 "removed": result.removed,
                 "updated": result.updated,
             }))
