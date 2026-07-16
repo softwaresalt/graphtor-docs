@@ -5,15 +5,29 @@
 //! the editor-agnostic standard understood by MCP clients; graphtor-docs no
 //! longer writes editor-specific config files.
 //!
+//! [`generate_mcp_config`] is the shared foundation both the minimal and full
+//! install paths consume. It resolves the server `command` via a binary
+//! resolution ladder (an absolute, canonicalized path when a managed binary
+//! exists under `.graphtor/bin/`, otherwise the bare `graphtor-docs` PATH
+//! command), writes a provenance marker into every managed entry so it can be
+//! recognized independent of the command string, and applies a locked
+//! four-way decision on the fixed `graphtor-docs` key: absent -> insert;
+//! present and marked -> refresh in place; present, unmarked, but exactly the
+//! legacy pre-marker shape -> migrate in place (marker added); present,
+//! unmarked, any other shape -> fail closed rather than overwrite a user's
+//! own entry. Writes are atomic (temp file + rename).
+//!
 //! Uninstall is surgical: it parses each candidate config and removes only the
-//! server entry graphtor-docs manages (identified by its `.graphtor/bin/`
-//! binary command), preserving any other MCP servers in a shared `.mcp.json`.
+//! server entry graphtor-docs manages (identified by the provenance marker,
+//! or by its `.graphtor/bin/` binary command for entries written before the
+//! marker existed), preserving any other MCP servers in a shared `.mcp.json`.
 //! A file is deleted outright only when the managed entry was its sole server.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
+use graphtor_core::path::validate_path;
 use graphtor_core::GraphtorError;
 
 /// Workspace-root MCP client config path (the current standard).
@@ -26,14 +40,39 @@ const LEGACY_CONFIG_PATHS: &[&str] = &[
     ".github/copilot/mcp.json",
 ];
 
+/// The fixed, LOCKED key graphtor-docs manages in `mcpServers`.
+const MCP_SERVER_KEY: &str = "graphtor-docs";
+
+/// Provenance marker key written into every graphtor-docs-managed server
+/// entry. Its presence (set to `true`), not the command string, is the
+/// forward-looking identity used to recognize a managed entry — the command
+/// value changes shape (bare PATH command vs. absolute pinned path)
+/// depending on whether a managed binary exists, so the marker is the only
+/// stable signal across that variation.
+const MANAGED_MARKER_KEY: &str = "x-graphtor-managed";
+
 /// Command substring identifying a graphtor-docs-managed MCP server entry.
 ///
 /// Keyed on the managed binary path rather than the bare project name so an
 /// incidental `graphtor-docs` occurrence (e.g. a workspace path) in an
 /// unrelated server does not cause its config to be treated as managed. This
 /// prefix matches both the Unix (`graphtor-docs`) and Windows
-/// (`graphtor-docs.exe`) generated commands.
+/// (`graphtor-docs.exe`) generated commands. Used ONLY as a fallback for
+/// removal, alongside the provenance marker, so entries written before the
+/// marker existed are still recognized.
 const MANAGED_COMMAND_MARKER: &str = ".graphtor/bin/graphtor-docs";
+
+/// Historical RELATIVE command shapes written by the pre-marker writer
+/// (before this module introduced the resolution ladder + provenance
+/// marker). Used ONLY for EXACT-equality backward-compat recognition when
+/// migrating an unmarked entry in place — NEVER a substring/contains test. A
+/// user-authored command that merely embeds one of these strings as a
+/// prefix or suffix (e.g. `/opt/tools/.graphtor/bin/graphtor-docs`) is a
+/// genuine collision (case 4), not a legacy entry to migrate.
+const LEGACY_COMMAND_SHAPES: &[&str] = &[
+    ".graphtor/bin/graphtor-docs",
+    ".graphtor/bin/graphtor-docs.exe",
+];
 
 /// The change applied to a single MCP config file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,20 +109,46 @@ pub struct McpConfigOutcome {
 
 /// Generate or merge the graphtor-docs server into the workspace `.mcp.json`.
 ///
-/// When `.mcp.json` does not exist it is created with the `graphtor-docs`
-/// server ([`McpConfigAction::Created`]). When it already exists and is a valid
-/// JSON object, the `graphtor-docs` entry is merged into its `mcpServers` map,
-/// preserving any other servers ([`McpConfigAction::Updated`]). Returns `None`
-/// when nothing changed — the entry is already registered, or the existing file
-/// is not a JSON object (in which case it is left untouched rather than
-/// clobbered).
+/// The server `command` is resolved via a binary resolution ladder: when a
+/// managed binary exists at `<project_root>/.graphtor/bin/graphtor-docs[.exe]`,
+/// the command is that binary's ABSOLUTE, canonicalized path (so the entry
+/// resolves regardless of the MCP client's launch working directory);
+/// otherwise it is the bare `graphtor-docs` PATH command (no platform
+/// extension — Windows resolves it via PATHEXT).
+///
+/// When `.mcp.json` does not exist it is created with a new managed
+/// `graphtor-docs` server entry, carrying the managed-entry provenance marker
+/// ([`McpConfigAction::Created`]). When it already exists and is a valid JSON
+/// object, the fixed `graphtor-docs` key is resolved through a locked
+/// four-way decision:
+///
+/// 1. **Absent** — a new marked managed entry is inserted.
+/// 2. **Present and marked** (carries the provenance marker) — refreshed in
+///    place via the resolution ladder; a no-op (`Ok(None)`) when the
+///    refreshed value is identical to what is already there.
+/// 3. **Present, unmarked, but exactly the legacy pre-marker shape** (the
+///    historical relative command, `args == ["serve"]`, `transport ==
+///    "stdio"`, no marker) — migrated in place: the provenance marker is
+///    added and the value is refreshed via the resolution ladder. This is
+///    the current release's own pre-marker entry, not a user collision.
+/// 4. **Present, unmarked, any other shape** — a genuine collision with a
+///    user-authored entry. The file is left byte-for-byte unchanged and this
+///    returns [`GraphtorError::Config`].
+///
+/// Any other server already present is always preserved untouched. Writes
+/// are atomic (temp file + rename). Returns `None` when the existing file is
+/// not a JSON object — it is left untouched rather than clobbered — or when
+/// case 2 above determines nothing changed.
 ///
 /// # Errors
 ///
-/// Returns [`GraphtorError::Config`] on I/O failure.
+/// Returns [`GraphtorError::Config`] on I/O failure, on a case-4 collision
+/// with an unmarked, non-legacy-shaped `graphtor-docs` entry, or
+/// [`GraphtorError::PathViolation`] if the managed binary path unexpectedly
+/// resolves outside `project_root`.
 pub fn generate_mcp_config(project_root: &Path) -> Result<Option<McpConfigOutcome>, GraphtorError> {
     let dest = project_root.join(MCP_CONFIG_PATH);
-    let binary_path = format!(".graphtor/bin/graphtor-docs{}", binary_ext());
+    let command = resolve_command(project_root)?;
 
     if !dest.exists() {
         if let Some(parent) = dest.parent() {
@@ -93,7 +158,7 @@ pub fn generate_mcp_config(project_root: &Path) -> Result<Option<McpConfigOutcom
             })?;
         }
         let document = serde_json::json!({
-            "mcpServers": { "graphtor-docs": managed_server_value(&binary_path) }
+            "mcpServers": { MCP_SERVER_KEY: managed_server_value(&command) }
         });
         write_json(&dest, &document, MCP_CONFIG_PATH)?;
         return Ok(Some(McpConfigOutcome {
@@ -120,23 +185,125 @@ pub fn generate_mcp_config(project_root: &Path) -> Result<Option<McpConfigOutcom
     let Some(servers) = servers.as_object_mut() else {
         return Ok(None);
     };
-    let already_registered = servers.values().any(|cfg| {
-        cfg.get("command")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|command| command.contains(MANAGED_COMMAND_MARKER))
-    });
-    if already_registered {
-        return Ok(None);
+
+    match classify_existing_entry(servers.get(MCP_SERVER_KEY)) {
+        ExistingEntryClass::Absent | ExistingEntryClass::LegacyShape => {
+            servers.insert(MCP_SERVER_KEY.to_string(), managed_server_value(&command));
+            write_json(&dest, &value, MCP_CONFIG_PATH)?;
+            Ok(Some(McpConfigOutcome {
+                path: MCP_CONFIG_PATH.to_string(),
+                action: McpConfigAction::Updated,
+            }))
+        }
+        ExistingEntryClass::Marked => {
+            let refreshed = managed_server_value(&command);
+            if servers.get(MCP_SERVER_KEY) == Some(&refreshed) {
+                return Ok(None);
+            }
+            servers.insert(MCP_SERVER_KEY.to_string(), refreshed);
+            write_json(&dest, &value, MCP_CONFIG_PATH)?;
+            Ok(Some(McpConfigOutcome {
+                path: MCP_CONFIG_PATH.to_string(),
+                action: McpConfigAction::Updated,
+            }))
+        }
+        ExistingEntryClass::Collision => Err(GraphtorError::Config {
+            message: format!(
+                "'{MCP_SERVER_KEY}' already exists in {MCP_CONFIG_PATH} and is not a \
+                 graphtor-docs-managed entry; refusing to overwrite it. Remove or rename the \
+                 conflicting entry to let graphtor-docs manage '{MCP_SERVER_KEY}'."
+            ),
+            field: Some(format!("mcpServers.{MCP_SERVER_KEY}")),
+        }),
     }
-    servers.insert(
-        "graphtor-docs".to_string(),
-        managed_server_value(&binary_path),
-    );
-    write_json(&dest, &value, MCP_CONFIG_PATH)?;
-    Ok(Some(McpConfigOutcome {
-        path: MCP_CONFIG_PATH.to_string(),
-        action: McpConfigAction::Updated,
-    }))
+}
+
+/// Classification of the existing value (if any) at the fixed
+/// [`MCP_SERVER_KEY`], used by [`generate_mcp_config`]'s four-way decision.
+enum ExistingEntryClass {
+    /// No entry exists at this key.
+    Absent,
+    /// An entry exists and carries the managed-entry provenance marker.
+    Marked,
+    /// An entry exists, is unmarked, but exactly matches the historical
+    /// pre-marker managed shape — the current release's own legacy entry.
+    LegacyShape,
+    /// An entry exists, is unmarked, and does not match the legacy shape —
+    /// a genuine collision with a user-authored entry.
+    Collision,
+}
+
+fn classify_existing_entry(existing: Option<&serde_json::Value>) -> ExistingEntryClass {
+    let Some(existing) = existing else {
+        return ExistingEntryClass::Absent;
+    };
+    if is_marked(existing) {
+        ExistingEntryClass::Marked
+    } else if is_exact_legacy_shape(existing) {
+        ExistingEntryClass::LegacyShape
+    } else {
+        ExistingEntryClass::Collision
+    }
+}
+
+/// Resolve the `command` value for the managed graphtor-docs MCP server
+/// entry via the binary resolution ladder.
+///
+/// When a managed binary exists at
+/// `<project_root>/.graphtor/bin/graphtor-docs[.exe]`, returns its ABSOLUTE,
+/// canonicalized path — computed from the canonical `project_root` — so the
+/// entry resolves regardless of the MCP client's launch working directory. A
+/// bare workspace-relative string is deliberately NOT used: an MCP client may
+/// start the server from a different working directory and would then fail
+/// to resolve it. When no managed binary exists, returns the bare
+/// `graphtor-docs` PATH command (no platform extension; Windows resolves it
+/// via PATHEXT). This bare-PATH fallback carries a documented binary-hijack
+/// trade-off; the absolute pinned path is always preferred when a managed
+/// binary is known to exist.
+///
+/// # Errors
+///
+/// Returns [`GraphtorError::PathViolation`] if the managed binary path
+/// unexpectedly resolves outside `project_root` (defence in depth — this
+/// path is always constructed from `project_root` itself).
+fn resolve_command(project_root: &Path) -> Result<String, GraphtorError> {
+    let workspace_dir = project_root.join(super::paths::GRAPHTOR_DIR);
+    let managed_binary = super::install::installed_binary_path(&workspace_dir);
+    if managed_binary.exists() {
+        let canonical = validate_path(&managed_binary, project_root)?;
+        return Ok(canonical.display().to_string());
+    }
+    Ok("graphtor-docs".to_string())
+}
+
+/// Returns `true` when `entry` carries the managed-entry provenance marker.
+fn is_marked(entry: &serde_json::Value) -> bool {
+    entry
+        .get(MANAGED_MARKER_KEY)
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+/// Returns `true` when `entry` EXACTLY matches the historical pre-marker
+/// managed shape: `command` equals one of [`LEGACY_COMMAND_SHAPES`] exactly,
+/// `args == ["serve"]`, and `transport == "stdio"`. This is deliberately an
+/// exact-equality check, never a substring/contains test — a user command
+/// that merely embeds a legacy path as a prefix or suffix must NOT be
+/// mistaken for this release's own pre-marker entry.
+fn is_exact_legacy_shape(entry: &serde_json::Value) -> bool {
+    let Some(command) = entry.get("command").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    if !LEGACY_COMMAND_SHAPES.contains(&command) {
+        return false;
+    }
+    let args_match = entry
+        .get("args")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|args| args.len() == 1 && args[0].as_str() == Some("serve"));
+    let transport_match =
+        entry.get("transport").and_then(serde_json::Value::as_str) == Some("stdio");
+    args_match && transport_match
 }
 
 /// Remove the graphtor-docs-managed MCP server from workspace configs.
@@ -207,10 +374,12 @@ enum PruneOutcome {
 
 /// Remove graphtor-docs-managed server entries from an MCP config document.
 ///
-/// A server is "managed" when its `command` references the
-/// [`MANAGED_COMMAND_MARKER`] binary path. Non-JSON input and configs without a
-/// managed entry yield [`PruneOutcome::Unchanged`], so shared configs holding
-/// unrelated servers are never destroyed.
+/// A server is "managed" when it carries the managed-entry provenance marker
+/// ([`MANAGED_MARKER_KEY`]) — the primary, forward-looking recognition path —
+/// OR, as a fallback for entries written before the marker existed, when its
+/// `command` references the [`MANAGED_COMMAND_MARKER`] binary path. Non-JSON
+/// input and configs without a managed entry yield [`PruneOutcome::Unchanged`],
+/// so shared configs holding unrelated servers are never destroyed.
 fn prune_managed_server(content: &str) -> PruneOutcome {
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
         return PruneOutcome::Unchanged;
@@ -224,11 +393,7 @@ fn prune_managed_server(content: &str) -> PruneOutcome {
 
     let managed_keys: Vec<String> = servers
         .iter()
-        .filter(|(_, cfg)| {
-            cfg.get("command")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|command| command.contains(MANAGED_COMMAND_MARKER))
-        })
+        .filter(|(_, cfg)| is_managed_for_removal(cfg))
         .map(|(key, _)| key.clone())
         .collect();
 
@@ -260,25 +425,44 @@ fn prune_managed_server(content: &str) -> PruneOutcome {
     }
 }
 
-/// Return platform-specific binary extension (`.exe` on Windows, empty elsewhere).
-fn binary_ext() -> &'static str {
-    if cfg!(windows) {
-        ".exe"
-    } else {
-        ""
+/// Returns `true` when `cfg` should be treated as a graphtor-docs-managed
+/// entry for REMOVAL purposes: it carries the provenance marker (primary
+/// path), or, as a fallback for entries written before the marker existed,
+/// its `command` references the [`MANAGED_COMMAND_MARKER`] binary path.
+fn is_managed_for_removal(cfg: &serde_json::Value) -> bool {
+    if is_marked(cfg) {
+        return true;
     }
+    cfg.get("command")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|command| command.contains(MANAGED_COMMAND_MARKER))
 }
 
-/// Build the graphtor-docs MCP server registration value.
-fn managed_server_value(binary_path: &str) -> serde_json::Value {
-    serde_json::json!({
-        "command": binary_path,
-        "args": ["serve"],
-        "transport": "stdio"
-    })
+/// Build the graphtor-docs MCP server registration value, including the
+/// managed-entry provenance marker ([`MANAGED_MARKER_KEY`]).
+fn managed_server_value(command: &str) -> serde_json::Value {
+    let mut entry = serde_json::Map::new();
+    entry.insert(
+        "command".to_string(),
+        serde_json::Value::String(command.to_string()),
+    );
+    entry.insert("args".to_string(), serde_json::json!(["serve"]));
+    entry.insert(
+        "transport".to_string(),
+        serde_json::Value::String("stdio".to_string()),
+    );
+    entry.insert(
+        MANAGED_MARKER_KEY.to_string(),
+        serde_json::Value::Bool(true),
+    );
+    serde_json::Value::Object(entry)
 }
 
-/// Serialize `value` as pretty JSON with a trailing newline and write it.
+/// Serialize `value` as pretty JSON with a trailing newline and write it
+/// ATOMICALLY: the serialized content is written to a temporary file in the
+/// same directory, then renamed into place. A reader can therefore never
+/// observe a partially-written file, and a crash mid-write leaves the
+/// original file (or no file) intact rather than a truncated one.
 fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<(), GraphtorError> {
     let mut serialized =
         serde_json::to_string_pretty(value).map_err(|e| GraphtorError::Config {
@@ -286,9 +470,27 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
             field: None,
         })?;
     serialized.push('\n');
-    fs::write(dest, serialized).map_err(|e| GraphtorError::Config {
-        message: format!("failed to write {rel_path}: {e}"),
+
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let tmp_name = format!(
+        ".{}.tmp-{}",
+        dest.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("mcp-config"),
+        std::process::id()
+    );
+    let tmp_path = parent.join(tmp_name);
+
+    fs::write(&tmp_path, &serialized).map_err(|e| GraphtorError::Config {
+        message: format!("failed to write temporary file for {rel_path}: {e}"),
         field: None,
+    })?;
+    fs::rename(&tmp_path, dest).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        GraphtorError::Config {
+            message: format!("failed to atomically write {rel_path}: {e}"),
+            field: None,
+        }
     })
 }
 
@@ -296,13 +498,33 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
 mod tests {
     use super::*;
 
-    /// A shared config document holding a managed graphtor-docs entry.
+    /// A shared config document holding an UNMARKED legacy-shape managed
+    /// entry (the exact shape the pre-P2-T3 writer produced). Used both to
+    /// characterize backward-compat migration and to prove the removal
+    /// fallback still recognizes pre-marker entries.
     const MANAGED_DOC: &str = r#"{
   "mcpServers": {
     "graphtor-docs": {
       "command": ".graphtor/bin/graphtor-docs",
       "args": ["serve"],
       "transport": "stdio"
+    }
+  }
+}
+"#;
+
+    /// A shared config document holding an ALREADY-MARKED managed entry
+    /// (post-migration shape) whose command is the bare PATH command — the
+    /// value a fresh `generate_mcp_config` call would ALSO resolve to in a
+    /// tempdir with no managed binary installed, so re-running it is a
+    /// genuine, content-verified no-op.
+    const MARKED_DOC: &str = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": "graphtor-docs",
+      "args": ["serve"],
+      "transport": "stdio",
+      "x-graphtor-managed": true
     }
   }
 }
@@ -317,7 +539,54 @@ mod tests {
         assert_eq!(outcome.action, McpConfigAction::Created);
         assert_eq!(outcome.path, ".mcp.json");
         let content = fs::read_to_string(tmp.path().join(".mcp.json")).expect("read");
-        assert!(content.contains(".graphtor/bin/graphtor-docs"));
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        let entry = &parsed["mcpServers"]["graphtor-docs"];
+        assert_eq!(
+            entry["command"], "graphtor-docs",
+            "no managed binary exists in a fresh tempdir, so the bare PATH command is used"
+        );
+        assert_eq!(
+            entry[MANAGED_MARKER_KEY], true,
+            "entry must carry the provenance marker"
+        );
+    }
+
+    #[test]
+    fn generate_uses_absolute_path_when_managed_binary_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        crate::workspace::install::install(tmp.path()).expect("install managed binary");
+
+        let outcome = generate_mcp_config(tmp.path())
+            .expect("generate")
+            .expect("outcome");
+        assert_eq!(outcome.action, McpConfigAction::Created);
+
+        let content = fs::read_to_string(tmp.path().join(".mcp.json")).expect("read");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        let command = parsed["mcpServers"]["graphtor-docs"]["command"]
+            .as_str()
+            .expect("command string");
+
+        let expected_binary = crate::workspace::install::installed_binary_path(
+            &tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR),
+        );
+        // Use the same public canonicalization helper production code uses
+        // (`validate_path`), not raw `std::fs::canonicalize` directly: on
+        // Windows the latter returns the verbatim `\\?\`-prefixed form,
+        // which `validate_path` deliberately strips for downstream
+        // comparisons — comparing against the verbatim form here would be
+        // an apples-to-oranges mismatch, not a real production bug.
+        let canonical_expected = graphtor_core::path::validate_path(&expected_binary, tmp.path())
+            .expect("validate_path");
+        assert_eq!(
+            Path::new(command),
+            canonical_expected,
+            "when a managed binary exists, the command must be its absolute canonical path"
+        );
+        assert!(
+            Path::new(command).is_absolute(),
+            "command must be absolute so it resolves regardless of the MCP client's launch cwd"
+        );
     }
 
     #[test]
@@ -326,6 +595,27 @@ mod tests {
         generate_mcp_config(tmp.path()).expect("first");
         let second = generate_mcp_config(tmp.path()).expect("second");
         assert!(second.is_none(), "second run should be a no-op");
+    }
+
+    #[test]
+    fn generate_is_noop_when_marked_entry_already_matches_ladder() {
+        // Case 2 (marked): the ladder resolves to the bare command in a
+        // fresh tempdir with no managed binary — identical to MARKED_DOC's
+        // existing value — so this must be a genuine, content-verified
+        // no-op, not merely "already registered by key name".
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        fs::write(&path, MARKED_DOC).expect("write");
+        let before = fs::read_to_string(&path).expect("read before");
+
+        let outcome = generate_mcp_config(tmp.path()).expect("generate");
+
+        assert!(outcome.is_none(), "matching marked entry is a no-op");
+        let after = fs::read_to_string(&path).expect("read after");
+        assert_eq!(
+            after, before,
+            "file must be byte-for-byte unchanged on a no-op"
+        );
     }
 
     #[test]
@@ -354,17 +644,143 @@ mod tests {
         assert_eq!(outcome.action, McpConfigAction::Updated);
         let after = fs::read_to_string(&path).expect("read");
         assert!(after.contains("engram"), "existing server preserved");
-        assert!(after.contains(".graphtor/bin/graphtor-docs"), "entry added");
+        let parsed: serde_json::Value = serde_json::from_str(&after).expect("valid json");
+        assert_eq!(
+            parsed["mcpServers"]["graphtor-docs"]["command"],
+            "graphtor-docs"
+        );
+        assert_eq!(
+            parsed["mcpServers"]["graphtor-docs"][MANAGED_MARKER_KEY],
+            true
+        );
         // preserve_order keeps the pre-existing server first.
         assert!(after.find("engram") < after.find("graphtor-docs"));
     }
 
     #[test]
-    fn generate_skips_when_already_registered() {
+    fn generate_migrates_unmarked_legacy_entry_in_place() {
+        // Case 3: an unmarked entry that EXACTLY matches the historical
+        // pre-marker shape is the current release's OWN legacy entry, not a
+        // user collision — it is migrated in place (marker added, command
+        // refreshed via the ladder), and this does NOT fail.
         let tmp = tempfile::tempdir().expect("tempdir");
-        fs::write(tmp.path().join(".mcp.json"), MANAGED_DOC).expect("write");
-        let outcome = generate_mcp_config(tmp.path()).expect("generate");
-        assert!(outcome.is_none(), "already-registered config is a no-op");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "engram": { "command": "engram", "args": ["shim"] },
+    "graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs",
+      "args": ["serve"],
+      "transport": "stdio"
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcome = generate_mcp_config(tmp.path())
+            .expect("legacy migration must not fail")
+            .expect("outcome");
+
+        assert_eq!(outcome.action, McpConfigAction::Updated);
+        let after = fs::read_to_string(&path).expect("read");
+        assert!(
+            after.contains("engram"),
+            "unrelated server preserved through migration"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&after).expect("valid json");
+        let entry = &parsed["mcpServers"]["graphtor-docs"];
+        assert_eq!(
+            entry[MANAGED_MARKER_KEY], true,
+            "migration must add the provenance marker"
+        );
+        assert_eq!(
+            entry["command"], "graphtor-docs",
+            "migration must refresh the command via the resolution ladder"
+        );
+    }
+
+    #[test]
+    fn generate_fails_closed_on_unmarked_user_collision() {
+        // Case 4: an unmarked entry with a completely different command is a
+        // genuine user collision — installation fails closed and the file
+        // is preserved byte-for-byte.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let user_doc = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": "my-custom-graphtor",
+      "args": ["run", "--custom"]
+    }
+  }
+}
+"#;
+        fs::write(&path, user_doc).expect("write");
+        let before = fs::read_to_string(&path).expect("read before");
+
+        let result = generate_mcp_config(tmp.path());
+
+        assert!(result.is_err(), "unmarked user collision must fail closed");
+        let after = fs::read_to_string(&path).expect("read after");
+        assert_eq!(
+            after, before,
+            "user's file must be byte-for-byte unchanged on collision"
+        );
+    }
+
+    #[test]
+    fn generate_fails_closed_on_pinned_command_with_different_args() {
+        // Case 4b: even when the command string matches the legacy shape
+        // exactly, DIFFERENT args or transport is still a genuine collision
+        // (not the current release's own shape), so it must also fail
+        // closed rather than being (mis)treated as a legacy migration.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let user_doc = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs",
+      "args": ["serve", "--verbose"],
+      "transport": "stdio"
+    }
+  }
+}
+"#;
+        fs::write(&path, user_doc).expect("write");
+        let before = fs::read_to_string(&path).expect("read before");
+
+        let result = generate_mcp_config(tmp.path());
+
+        assert!(
+            result.is_err(),
+            "pinned command with different args must fail closed, not migrate"
+        );
+        let after = fs::read_to_string(&path).expect("read after");
+        assert_eq!(
+            after, before,
+            "user's file must be byte-for-byte unchanged on collision"
+        );
+    }
+
+    #[test]
+    fn generate_write_leaves_no_stray_temp_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        generate_mcp_config(tmp.path()).expect("generate");
+        let stray: Vec<_> = fs::read_dir(tmp.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.contains(".tmp-"))
+            })
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "atomic write must not leave a stray temp file behind: {stray:?}"
+        );
     }
 
     #[test]
