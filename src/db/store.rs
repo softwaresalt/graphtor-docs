@@ -952,10 +952,19 @@ mod tests {
 
     #[test]
     fn open_engine_readonly_removes_an_empty_transient_sidecar_on_drop() {
-        // The common single-process case: SQLite's read-only WAL-reader
+        // The common single-process case: the read-only WAL-reader
         // machinery creates an EMPTY placeholder sidecar that did not
-        // exist before this session; that placeholder must still be
+        // exist before the guard was taken; that placeholder must still be
         // cleaned up on drop so the workspace shows no persistent trace.
+        //
+        // Driven through `EngineReadonlyGuard` DIRECTLY rather than a full
+        // engine open: a real read-only engine open creates its own `-wal`
+        // sidecar whose permissions differ across platforms (on Linux it is
+        // materialized read-only), which would prevent this test from
+        // deterministically staging the exact sidecar state it means to
+        // assert on. Locking the guard alone reproduces precisely the
+        // "sidecar absent at lock time, then transiently created while the
+        // guard is held" condition the Drop cleanup path guards against.
         let dir = temp_dir();
         let db_path = dir.path().join("engine-ro-empty-sidecar.db");
         build_populated_fixture(&db_path, dir.path());
@@ -963,8 +972,10 @@ mod tests {
         assert!(!wal_path.exists(), "precondition: no -wal sidecar yet");
 
         {
-            let _readonly = DataStore::open_engine_readonly(&db_path, dir.path())
-                .expect("open_engine_readonly should succeed");
+            // The `-wal` did not exist at lock time, so the guard records it
+            // as a transient sidecar eligible for empty-only cleanup.
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a db with no sidecars");
             // Simulate the engine's own transient, still-empty placeholder
             // artifact appearing while the guard is held.
             fs::write(&wal_path, b"").expect("simulate empty transient sidecar");
@@ -983,6 +994,10 @@ mod tests {
         // rule out), that file is virtually guaranteed to be non-empty.
         // Cleanup must leave it alone rather than risk deleting another
         // connection's committed data.
+        //
+        // Driven through `EngineReadonlyGuard` DIRECTLY (see the empty-case
+        // test above for why a full engine open cannot deterministically
+        // stage this state across platforms).
         let dir = temp_dir();
         let db_path = dir.path().join("engine-ro-live-sidecar.db");
         build_populated_fixture(&db_path, dir.path());
@@ -990,8 +1005,8 @@ mod tests {
         assert!(!wal_path.exists(), "precondition: no -wal sidecar yet");
 
         {
-            let _readonly = DataStore::open_engine_readonly(&db_path, dir.path())
-                .expect("open_engine_readonly should succeed");
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a db with no sidecars");
             // Simulate a genuinely concurrent writer's live, non-empty WAL
             // sidecar appearing while the guard is held.
             fs::write(&wal_path, b"not-empty-live-wal-frame").expect("simulate live sidecar");
