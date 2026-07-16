@@ -450,7 +450,10 @@ fn managed_server_value(command: &str) -> serde_json::Value {
 /// ATOMICALLY: the serialized content is written to a temporary file in the
 /// same directory, then renamed into place. A reader can therefore never
 /// observe a partially-written file, and a crash mid-write leaves the
-/// original file (or no file) intact rather than a truncated one.
+/// original file (or no file) intact rather than a truncated one. When `dest`
+/// already exists, its permissions are captured and reapplied to the temp
+/// file before the rename, so replacing a user-owned `0600` shared config
+/// never widens it to the umask default.
 fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<(), GraphtorError> {
     let mut serialized =
         serde_json::to_string_pretty(value).map_err(|e| GraphtorError::Config {
@@ -473,6 +476,15 @@ fn write_json(dest: &Path, value: &serde_json::Value, rel_path: &str) -> Result<
         message: format!("failed to write temporary file for {rel_path}: {e}"),
         field: None,
     })?;
+    // Preserve the destination's existing permissions across the atomic
+    // replace. The temp file was created fresh with umask-default permissions;
+    // without this, a user-owned `0600` shared `.mcp.json` (which may hold
+    // credentials for OTHER MCP servers) would be widened to `0644` after the
+    // rename, exposing its contents. On Windows `Permissions` only tracks the
+    // readonly bit, so this call is harmless there.
+    if let Ok(meta) = fs::metadata(dest) {
+        let _ = fs::set_permissions(&tmp_path, meta.permissions());
+    }
     fs::rename(&tmp_path, dest).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         GraphtorError::Config {
@@ -1091,6 +1103,40 @@ mod tests {
         assert!(
             after.contains("engram"),
             "unrelated server preserved: {after}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_json_preserves_destination_file_mode_across_rewrite() {
+        // Copilot mcp_config.rs:472: a pre-existing `.mcp.json` may be a
+        // user-owned 0600 file holding credentials for OTHER MCP servers. The
+        // temp-file + rename rewrite must not widen it to umask-default 0644.
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        // A pre-existing shared config with an unrelated server.
+        let shared = r#"{
+  "mcpServers": {
+    "secret-server": { "command": "secret", "args": ["--token", "hunter2"] }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("chmod 0600");
+
+        // Merge graphtor-docs in, exercising the temp-file + rename write path.
+        generate_mcp_config(tmp.path()).expect("generate merges into existing config");
+
+        let mode = fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "the rewrite must preserve the destination's original 0600 mode, not widen to 0644"
         );
     }
 }
