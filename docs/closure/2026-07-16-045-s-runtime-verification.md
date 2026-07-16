@@ -56,8 +56,32 @@ root removal (F4). Both `.mcp.json` and `.graphtor/` were removed cleanly. ✅
 (`bin/`, `data/`, `cache/`, `config/`, `logs/`, `sources.yaml`) with correct
 next-steps guidance; `uninstall --confirm` removed the entire footprint. ✅
 
+## Phase-1 Trust-Boundary Surfaces (auto-discovery, read-only posture, status)
+
+The shipment's primary trust-boundary changes — dropped-database
+auto-discovery, read-only posture classification, `serve` served-set gating, and
+`status` — were exercised through the shipped integration and unit suites run
+against the release binary, plus a live discovery smoke:
+
+| Surface | Evidence | Result |
+| --- | --- | --- |
+| Read-only `serve` posture gating | `cargo test --release --test serve_posture_gating_test` | ✅ 8 passed |
+| `status` on a discovered database | `cargo test --release --test db_status_test` | ✅ 4 passed |
+| `status` multi-database discovery | `cargo test --release --test status_multi_db_test` | ✅ 9 passed |
+| Auto-discovery + read-only classification (dropped `.db`, dedup union, junction rejection, explicit-db read-only, `..`-escape rejection, empty-config stays read-only) | `cargo test --release --bin graphtor-docs serve_discovery` | ✅ 31 passed |
+| Live dropped-`.db` discovery | minimal `install` → dropped `.graphtor/graph.db` → `status --json` | ✅ auto-discovery located the dropped path and opened it (cozo rejected the deliberately non-database placeholder content — expected, confirms the discovery→open path reaches the real db loader) |
+
+These 52 deterministic checks cover the read-only posture classification and
+dropped-database auto-discovery logic that install/doctor/uninstall smoke alone
+does not reach. The long-running `serve` STDIO loop itself was not started
+interactively; its served-set gating and posture classification are covered by
+the posture-gating and `serve_discovery` suites above.
+
 ## Result
 
-Runtime verification is **PASS** for the consumption-first install, doctor
-footprint classification, and enumerated uninstall surfaces. All observed
-behavior matches the shipped 045-S contract.
+Runtime verification is **PASS** for shipment `045-S`. The consumption-first
+install, doctor footprint classification, and enumerated uninstall surfaces
+behave as designed, and the Phase-1 trust-boundary surfaces (dropped-database
+auto-discovery, read-only posture classification, and `status`) are verified via
+the shipped integration and unit suites plus a live discovery smoke. All
+observed behavior matches the shipped 045-S contract.

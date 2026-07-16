@@ -14,11 +14,13 @@ owner: copilot
 PR `#90` merged shipment `045-S` at
 `479ac2b0e8deb66d036ab3c4eb8b79b272f501bc` (merge commit, P-009).
 
-Closure scope (27 manifest items):
+Closure scope — 27 manifest items (2 features + 25 tasks) plus the `045-S`
+shipment record, archived separately as its own artifact (28 archived artifacts
+total):
 
-* `045-S`, `050-F`, `051-F`
-* `050.001-T` → `050.014-T` (14 tasks)
-* `051.001-T` → `051.011-T` (11 tasks)
+* Manifest features: `050-F`, `051-F`
+* Manifest tasks: `050.001-T` → `050.014-T` (14), `051.001-T` → `051.011-T` (11)
+* Shipment record (archived as a single non-cascading artifact): `045-S`
 
 The merged PR already carried the implementation, tests, documentation, and 11
 waves of Copilot-review remediation. Post-merge closure adds shipment archival,
@@ -86,14 +88,17 @@ verification on the closure branch:
 | CI `build` on `d858bc2` | ✅ | success |
 | CI `copilot-pull-request-reviewer` on `d858bc2` | ✅ | success, 0 unresolved threads |
 | CI `detect code changes` on `d858bc2` | ✅ | success |
-| Runtime verification (install/doctor/uninstall) | ✅ | see runtime-verification record |
+| Runtime verification (install/doctor/uninstall + Phase-1 auto-discovery/posture/status suites) | ✅ | 52 checks; see runtime-verification record |
 | `cargo audit` | ⚠️ | pre-existing CI advisory allowlist unchanged by this shipment |
 
 ## Runtime Verification Handoff
 
 See `docs/closure/2026-07-16-045-s-runtime-verification.md`. Runtime
 verification is **PASS** for the install-footprint, doctor-classification, and
-uninstall surfaces.
+uninstall surfaces, and for the Phase-1 trust-boundary surfaces
+(dropped-database auto-discovery, read-only posture classification, and
+`status`) via the shipped integration and unit suites plus a live discovery
+smoke.
 
 ## Deployment / Rollout Path
 
@@ -158,7 +163,13 @@ Re-run the runtime install/doctor/uninstall checks after the revert.
 
 ## Validation Window
 
-Immediate verification after shipment archival and closure PR creation.
+Single bounded manual observation pass completed at closure time (2026-07-16).
+Duration: one verification cycle — runtime `install`/`doctor`/`uninstall` smoke
+plus the Phase-1 auto-discovery/read-only-posture/`status` integration and unit
+suites — executed immediately after shipment archival. Owner: Derek Williams
+(softwaresalt). graphtor-docs is a local CLI tool invoked on demand, not a
+long-running service, so no continuous runtime exists to observe and no extended
+observation window applies beyond this one-shot verification.
 
 ## Owner
 
