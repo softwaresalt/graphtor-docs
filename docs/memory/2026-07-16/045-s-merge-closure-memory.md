@@ -50,10 +50,12 @@ threads. Post-merge closure complete.
 
 ## Follow-up stashes (hand to next Stage — do NOT re-create)
 
-`0F6E3315` (F2/F6 x-process serve design spike), `1AC214CE` (served-alias),
+`970AE45A` (F2/F6 x-process serve design spike), `5868A7C5` (served-alias),
 `A6C7EDB3` (install-path write symmetry), `B88E37BF` (perf short-circuit),
-`2D49BDDF` (cmd_upgrade linked-root). Carry-forward git stash `0b694d99`
-(7 files) = next-shipment intake, left intact/unapplied.
+`2D49BDDF` (cmd_upgrade linked-root) — all persisted in `.backlogit/stash.jsonl`.
+Carry-forward git stash `0b694d99` (7 files) = next-shipment intake, left
+intact/unapplied. (Earlier notes cited `0F6E3315`/`1AC214CE`, which were never
+persisted; recreated as `970AE45A`/`5868A7C5` during closure.)
 
 ## Next Steps
 

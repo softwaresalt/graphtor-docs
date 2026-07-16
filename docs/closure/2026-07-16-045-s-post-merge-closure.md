@@ -175,11 +175,16 @@ observation window applies beyond this one-shot verification.
 
 Derek Williams (softwaresalt)
 
-## Follow-Up Items (stashes created this session — hand off to next Stage)
+## Follow-Up Items (stashes handed off to next Stage — all confirmed persisted in `.backlogit/stash.jsonl`)
 
-* `0F6E3315` — spike: read-only-serve cross-process coordination design (covers deferred Copilot F2 status/query open + F6 stale-lock liveness)
-* `1AC214CE` — served-alias handling follow-up
+* `970AE45A` — spike: read-only-serve cross-process coordination design (covers deferred Copilot F2 status/query open + F6 stale-lock liveness)
+* `5868A7C5` — served-alias handling follow-up
 * `A6C7EDB3` — install-path write symmetry (wave-5 security P3)
 * `B88E37BF` — serve-discovery perf short-circuit
 * `2D49BDDF` — `cmd_upgrade` linked-root handling
 * Carry-forward git stash `0b694d9955d8ad6acfb4a9d6194874dd061933de` (7 files) — next-shipment intake; **left intact and unapplied**
+
+> Note: a closure-review pass flagged that two earlier session notes referenced
+> stash IDs (`0F6E3315`, `1AC214CE`) that were never persisted to
+> `.backlogit/stash.jsonl`. The two deferred items were (re)created during
+> closure as `970AE45A` and `5868A7C5` so no follow-up work is lost.
