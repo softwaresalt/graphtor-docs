@@ -36,11 +36,28 @@ pub struct UpgradeResult {
 /// and installed binaries and skips the copy when they match.  Pass
 /// `force = true` to always replace regardless of content.
 ///
+/// A consumption-first MINIMAL install (P2-T1) has no managed binary to
+/// upgrade at all — `.graphtor/bin/` was never created — so this is a safe
+/// no-op success (never an error, and never creates a `bin/` scaffold as a
+/// side effect) regardless of `force`. A full install upgrades exactly as
+/// before.
+///
 /// # Errors
 ///
 /// Returns [`GraphtorError::Config`] on I/O failure or when the running
 /// binary path cannot be determined.
 pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, GraphtorError> {
+    if crate::workspace::doctor::detect_footprint(workspace_dir)
+        == crate::workspace::doctor::WorkspaceFootprint::Minimal
+    {
+        return Ok(UpgradeResult {
+            upgraded: false,
+            message: "consumption-first minimal install has no managed binary to upgrade \
+                      (graphtor-docs resolves via PATH)"
+                .to_string(),
+        });
+    }
+
     let dest = installed_binary_path(workspace_dir);
     let exe = std::env::current_exe().map_err(|e| GraphtorError::Config {
         message: format!("failed to locate running binary: {e}"),
@@ -89,7 +106,7 @@ pub fn upgrade(workspace_dir: &Path, force: bool) -> Result<UpgradeResult, Graph
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::install::install;
+    use crate::workspace::install::{install, install_minimal};
 
     #[test]
     fn upgrade_succeeds_after_install() {
@@ -98,5 +115,49 @@ mod tests {
         let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
         let result = upgrade(&ws, true).expect("upgrade");
         assert!(result.upgraded);
+    }
+
+    #[test]
+    fn upgrade_on_minimal_install_is_a_safe_noop() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+
+        let result = upgrade(&ws, false).expect("upgrade on a minimal install must not error");
+
+        assert!(
+            !result.upgraded,
+            "a minimal install has no managed binary to upgrade"
+        );
+        assert!(
+            !installed_binary_path(&ws).exists(),
+            "upgrade must never create a bin/ scaffold on a minimal install"
+        );
+    }
+
+    #[test]
+    fn upgrade_on_minimal_install_force_is_still_a_safe_noop() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+
+        let result =
+            upgrade(&ws, true).expect("upgrade --force on a minimal install must not error");
+
+        assert!(!result.upgraded);
+        assert!(!installed_binary_path(&ws).exists());
+    }
+
+    #[test]
+    fn upgrade_on_minimal_install_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+
+        upgrade(&ws, false).expect("first upgrade");
+        let second = upgrade(&ws, false).expect("second upgrade");
+
+        assert!(!second.upgraded);
+        assert!(!installed_binary_path(&ws).exists());
     }
 }
