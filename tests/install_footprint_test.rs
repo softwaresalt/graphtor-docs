@@ -63,3 +63,56 @@ fn default_install_json_footprint_is_minimal_on_a_fresh_workspace() {
     let parsed: Value = serde_json::from_str(stdout.trim()).expect("valid json");
     assert_eq!(parsed["result"]["footprint"], "minimal");
 }
+
+#[test]
+fn default_install_reports_created_true_on_first_run_and_false_on_second() {
+    // F3 regression: `cmd_install` bootstraps `.graphtor/` (for the lock)
+    // before `install_minimal` runs, so the library's own `created` flag is
+    // always false. The reported `created` must instead reflect genuine
+    // first-time creation, captured BEFORE the bootstrap: true on the first
+    // install of a fresh workspace, false on a repeat.
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+
+    let first = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .args(["install", "--json"])
+        .output()
+        .expect("run first graphtor-docs install --json");
+    assert!(
+        first.status.success(),
+        "first install failed: stderr={}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first_json: Value = serde_json::from_str(
+        String::from_utf8(first.stdout)
+            .expect("stdout utf-8")
+            .trim(),
+    )
+    .expect("valid json");
+    assert_eq!(
+        first_json["result"]["created"], true,
+        "a first install on a fresh workspace must report created=true: {first_json}"
+    );
+
+    let second = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .args(["install", "--json"])
+        .output()
+        .expect("run second graphtor-docs install --json");
+    assert!(
+        second.status.success(),
+        "second install failed: stderr={}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second_json: Value = serde_json::from_str(
+        String::from_utf8(second.stdout)
+            .expect("stdout utf-8")
+            .trim(),
+    )
+    .expect("valid json");
+    assert_eq!(
+        second_json["result"]["created"], false,
+        "a repeated install of an existing workspace must report created=false: {second_json}"
+    );
+}

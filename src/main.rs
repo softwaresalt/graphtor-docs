@@ -3175,6 +3175,11 @@ fn cmd_install(
 ) -> anyhow::Result<i32> {
     // Always create the workspace directory scaffold first so the lock path exists.
     let ws_dir = cwd.join(".graphtor");
+    // Capture whether the workspace already existed BEFORE the bootstrap
+    // below: `create_dir_all` always makes `.graphtor/`, so `install_minimal`
+    // / `install` would otherwise always observe an existing directory and
+    // report `created: false` even on a genuine first-time install.
+    let workspace_existed = ws_dir.exists();
     std::fs::create_dir_all(&ws_dir).context("failed to create .graphtor directory")?;
 
     // Always acquire a lock to prevent concurrent installs.
@@ -3182,7 +3187,7 @@ fn cmd_install(
         .context("workspace is locked by another process")?;
 
     if args.with_ingestion {
-        return cmd_install_full(cwd, args, fmt);
+        return cmd_install_full(cwd, args, fmt, workspace_existed);
     }
 
     // Consumption-first default (P2-T1): the minimal footprint creates ONLY
@@ -3195,6 +3200,16 @@ fn cmd_install(
     // to report `full`.
     let result = workspace::install::install_minimal(cwd).context("install failed")?;
     let footprint = workspace::doctor::detect_footprint(&result.workspace_dir);
+    // The bootstrap above created `.graphtor/` before `install_minimal` ran,
+    // so its own `created` flag is always false here (asserted below to pin
+    // that invariant); report genuine first-time creation from the
+    // pre-bootstrap existence check instead.
+    debug_assert!(
+        !result.created,
+        "the lock bootstrap creates .graphtor before install_minimal, so its created flag \
+         must be false; report created from the pre-bootstrap existence check instead"
+    );
+    let created = !workspace_existed;
 
     // Generate or merge the graphtor-docs entry in the workspace-root .mcp.json.
     let mcp_outcome =
@@ -3210,7 +3225,7 @@ fn cmd_install(
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
-                "created": result.created,
+                "created": created,
                 "workspace_dir": result.workspace_dir.display().to_string(),
                 "footprint": footprint.as_str(),
                 "mcp_config": mcp_config,
@@ -3219,7 +3234,7 @@ fn cmd_install(
         return Ok(0);
     }
 
-    if result.created {
+    if created {
         println!("created: {}", result.workspace_dir.display());
     } else if footprint == workspace::doctor::WorkspaceFootprint::Full {
         println!(
@@ -3273,8 +3288,19 @@ fn cmd_install_full(
     cwd: &std::path::Path,
     args: &cli::InstallArgs,
     fmt: OutputFormat,
+    workspace_existed: bool,
 ) -> anyhow::Result<i32> {
     let result = workspace::install::install(cwd).context("install failed")?;
+    // The caller's lock-directory bootstrap created `.graphtor/` before
+    // `install` ran, so its own `created` flag is always false here (asserted
+    // below to pin that invariant); report genuine first-time creation from
+    // the pre-bootstrap existence check instead.
+    debug_assert!(
+        !result.created,
+        "the lock bootstrap creates .graphtor before install, so its created flag must be \
+         false; report created from the pre-bootstrap existence check instead"
+    );
+    let created = !workspace_existed;
 
     // Initialise sources.yaml (non-destructive) — full path only.
     let init_result = workspace::init::init_sources_yaml(&result.workspace_dir, false)
@@ -3301,7 +3327,7 @@ fn cmd_install_full(
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
-                "created": result.created,
+                "created": created,
                 "workspace_dir": result.workspace_dir.display().to_string(),
                 "binary_path": result.binary_path.display().to_string(),
                 "footprint": "full",
@@ -3311,7 +3337,7 @@ fn cmd_install_full(
         return Ok(0);
     }
 
-    if result.created {
+    if created {
         println!("created: {}", result.workspace_dir.display());
     } else {
         println!(
