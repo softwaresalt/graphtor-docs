@@ -42,6 +42,40 @@ pub struct Check {
     pub message: String,
 }
 
+/// Whether a workspace uses the full ingestion-capable scaffold or the
+/// consumption-first minimal footprint (P2-T1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceFootprint {
+    /// The full scaffold: `.graphtor/{bin,data,cache,config,logs}` — created
+    /// by `install --with-ingestion` (or the legacy default before this
+    /// shipment).
+    Full,
+    /// The consumption-first minimal footprint: `.graphtor/` exists but
+    /// none of the ingestion-capable subdirectories were created — created
+    /// by the default `install` (P2-T1).
+    Minimal,
+}
+
+/// Detect whether `workspace_dir` uses the full or minimal footprint.
+///
+/// A workspace is [`WorkspaceFootprint::Full`] when ANY of the
+/// ingestion-capable subdirectories (`bin/`, `data/`, `cache/`, `config/`,
+/// `logs/`) exist — matching conservatively toward `Full` for a partially
+/// scaffolded or in-transition workspace, so `doctor` never silently
+/// suppresses a real problem in an otherwise-full install. Otherwise it is
+/// [`WorkspaceFootprint::Minimal`].
+#[must_use]
+pub fn detect_footprint(workspace_dir: &Path) -> WorkspaceFootprint {
+    let any_subdir_exists = GRAPHTOR_SUBDIRS
+        .iter()
+        .any(|sub| workspace_dir.join(sub).is_dir());
+    if any_subdir_exists {
+        WorkspaceFootprint::Full
+    } else {
+        WorkspaceFootprint::Minimal
+    }
+}
+
 /// Disk usage warning threshold: 5 GiB.
 const WARN_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
@@ -64,7 +98,7 @@ fn check_workspace_dir(workspace_dir: &Path) -> Check {
     }
 }
 
-fn check_subdirs(workspace_dir: &Path) -> Vec<Check> {
+fn check_subdirs(workspace_dir: &Path, footprint: WorkspaceFootprint) -> Vec<Check> {
     GRAPHTOR_SUBDIRS
         .iter()
         .map(|sub| {
@@ -74,6 +108,15 @@ fn check_subdirs(workspace_dir: &Path) -> Vec<Check> {
                     name: "subdir",
                     severity: Severity::Pass,
                     message: format!("{sub}/ present"),
+                }
+            } else if footprint == WorkspaceFootprint::Minimal {
+                Check {
+                    name: "subdir",
+                    severity: Severity::Pass,
+                    message: format!(
+                        "{sub}/ not created — consumption-first minimal install \
+                         (run `graphtor-docs install --with-ingestion` for the full scaffold)"
+                    ),
                 }
             } else {
                 Check {
@@ -86,13 +129,23 @@ fn check_subdirs(workspace_dir: &Path) -> Vec<Check> {
         .collect()
 }
 
-fn check_sources_yaml(workspace_dir: &Path) -> Check {
+fn check_sources_yaml(workspace_dir: &Path, footprint: WorkspaceFootprint) -> Check {
     let sources_yaml = workspace_dir.join("config").join("sources.yaml");
     if !sources_yaml.exists() {
-        return Check {
-            name: "sources-yaml",
-            severity: Severity::Warn,
-            message: "sources.yaml not found; run `graphtor-docs init`".to_string(),
+        return if footprint == WorkspaceFootprint::Minimal {
+            Check {
+                name: "sources-yaml",
+                severity: Severity::Pass,
+                message: "sources.yaml not created — consumption-first minimal install \
+                          has no ingestion source to configure"
+                    .to_string(),
+            }
+        } else {
+            Check {
+                name: "sources-yaml",
+                severity: Severity::Warn,
+                message: "sources.yaml not found; run `graphtor-docs init`".to_string(),
+            }
         };
     }
     match std::fs::read_to_string(&sources_yaml) {
@@ -120,12 +173,21 @@ fn check_sources_yaml(workspace_dir: &Path) -> Check {
 ///
 /// Returns a list of [`Check`] results. The caller determines overall
 /// pass/fail by inspecting the severities.
+///
+/// Layout-aware (P2-T4): when [`detect_footprint`] reports
+/// [`WorkspaceFootprint::Minimal`] — the consumption-first default install
+/// (P2-T1) — the missing `config/sources.yaml`, `bin/` (and the other
+/// ingestion subdirectories), and default `graph.db` checks are downgraded
+/// to informational ([`Severity::Pass`]) instead of [`Severity::Warn`] or
+/// [`Severity::Fail`], since none of these are expected to exist in a
+/// minimal install. [`WorkspaceFootprint::Full`] behaviour is unchanged.
 #[must_use]
 pub fn run_doctor(workspace_dir: &Path) -> Vec<Check> {
     let mut checks = Vec::new();
+    let footprint = detect_footprint(workspace_dir);
 
     checks.push(check_workspace_dir(workspace_dir));
-    checks.extend(check_subdirs(workspace_dir));
+    checks.extend(check_subdirs(workspace_dir, footprint));
 
     // Binary present.
     let bin_path = installed_binary_path(workspace_dir);
@@ -134,6 +196,14 @@ pub fn run_doctor(workspace_dir: &Path) -> Vec<Check> {
             name: "binary",
             severity: Severity::Pass,
             message: format!("binary present: {}", bin_path.display()),
+        }
+    } else if footprint == WorkspaceFootprint::Minimal {
+        Check {
+            name: "binary",
+            severity: Severity::Pass,
+            message: "binary not copied — consumption-first minimal install resolves \
+                      graphtor-docs via PATH"
+                .to_string(),
         }
     } else {
         Check {
@@ -146,7 +216,7 @@ pub fn run_doctor(workspace_dir: &Path) -> Vec<Check> {
         }
     });
 
-    checks.push(check_sources_yaml(workspace_dir));
+    checks.push(check_sources_yaml(workspace_dir, footprint));
 
     // Database file accessible (default path: .graphtor/graph.db).
     let db_path = workspace_dir.join("graph.db");
@@ -155,6 +225,14 @@ pub fn run_doctor(workspace_dir: &Path) -> Vec<Check> {
             name: "database",
             severity: Severity::Pass,
             message: format!("database present: {}", db_path.display()),
+        }
+    } else if footprint == WorkspaceFootprint::Minimal {
+        Check {
+            name: "database",
+            severity: Severity::Pass,
+            message: "no default database yet — drop a `.db` file into .graphtor/ for serve \
+                      to auto-discover"
+                .to_string(),
         }
     } else {
         Check {
@@ -217,6 +295,7 @@ fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::install::{install, install_minimal};
 
     #[test]
     fn doctor_reports_fail_when_dir_missing() {
@@ -235,5 +314,94 @@ mod tests {
         assert_eq!(human_bytes(512), "512 B");
         assert_eq!(human_bytes(1024 * 2), "2.0 KB");
         assert_eq!(human_bytes(1024 * 1024 * 3), "3.0 MB");
+    }
+
+    #[test]
+    fn detect_footprint_returns_minimal_when_only_graphtor_root_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+        assert_eq!(detect_footprint(&ws), WorkspaceFootprint::Minimal);
+    }
+
+    #[test]
+    fn detect_footprint_returns_full_when_any_subdir_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+        assert_eq!(detect_footprint(&ws), WorkspaceFootprint::Full);
+    }
+
+    #[test]
+    fn doctor_on_minimal_layout_reports_no_fail_or_warn() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install_minimal(tmp.path()).expect("install_minimal");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+
+        let checks = run_doctor(&ws);
+
+        for check in &checks {
+            assert_ne!(
+                check.severity,
+                Severity::Fail,
+                "minimal layout must report no Fail: {} — {}",
+                check.name,
+                check.message
+            );
+            assert_ne!(
+                check.severity,
+                Severity::Warn,
+                "minimal layout must report no Warn: {} — {}",
+                check.name,
+                check.message
+            );
+        }
+    }
+
+    #[test]
+    fn doctor_on_full_layout_matches_pre_existing_behavior() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        install(tmp.path()).expect("install");
+        let ws = tmp.path().join(crate::workspace::paths::GRAPHTOR_DIR);
+
+        let checks = run_doctor(&ws);
+
+        for sub in GRAPHTOR_SUBDIRS {
+            let subdir_checks: Vec<_> = checks
+                .iter()
+                .filter(|c| c.name == "subdir" && c.message.contains(sub))
+                .collect();
+            assert!(
+                subdir_checks.iter().all(|c| c.severity == Severity::Pass),
+                "full layout: {sub} subdir check must still Pass"
+            );
+        }
+        let sources_check = checks
+            .iter()
+            .find(|c| c.name == "sources-yaml")
+            .expect("sources-yaml check");
+        assert_eq!(
+            sources_check.severity,
+            Severity::Warn,
+            "full layout without sources.yaml must still Warn (pre-existing behaviour)"
+        );
+        let binary_check = checks
+            .iter()
+            .find(|c| c.name == "binary")
+            .expect("binary check");
+        assert_eq!(
+            binary_check.severity,
+            Severity::Pass,
+            "full layout copies the binary, so this must still Pass"
+        );
+        let db_check = checks
+            .iter()
+            .find(|c| c.name == "database")
+            .expect("database check");
+        assert_eq!(
+            db_check.severity,
+            Severity::Warn,
+            "full layout without a synced database must still Warn (pre-existing behaviour)"
+        );
     }
 }
