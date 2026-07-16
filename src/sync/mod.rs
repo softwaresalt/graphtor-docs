@@ -224,7 +224,12 @@ pub fn sync_source_with_frozen_mtimes_and_ignored_root<S: std::hash::BuildHasher
     let started_at = Instant::now();
     let source_id = source.id();
 
-    let Source::Local(local) = source;
+    let Some(local) = source.as_local() else {
+        return Err(GraphtorError::Sync {
+            message: "source is not a local ingestion source".to_string(),
+            source_id: source_id.to_string(),
+        });
+    };
     let source_path_str = local.path.to_str().unwrap_or("");
 
     let sync_span = info_span!("sync_source", source_id, source_kind = "local");
@@ -1056,7 +1061,12 @@ fn build_new_state(
     source_dir: &Path,
     ignored_root: Option<&Path>,
 ) -> Result<SourceSyncState, GraphtorError> {
-    let Source::Local(_) = source;
+    if !source.is_ingestible() {
+        return Err(GraphtorError::Sync {
+            message: "source is not a local ingestion source".to_string(),
+            source_id: source.id().to_string(),
+        });
+    }
     let file_mtimes = scan_tracked_source_mtimes(source, source_dir, ignored_root)?;
     Ok(build_new_state_from_mtimes(file_mtimes))
 }
@@ -1433,6 +1443,39 @@ mod tests {
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |duration| duration.as_secs())
+    }
+
+    // ── P1-T6/P1-RF3: a Database source is never ingested by sync ─────────
+
+    #[test]
+    fn sync_source_fails_closed_for_a_non_local_database_source() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let db_path = root.join("graph.db");
+        let store = DataStore::open_sqlite(&db_path, root).expect("open store");
+        ensure_schema(&store).expect("ensure schema");
+
+        let database_source = Source::Database(crate::DatabaseSource {
+            id: "legacy".to_string(),
+            path: root.join(".graphtor").join("legacy.db"),
+        });
+        let state_path = root.join(".sync_state.json");
+
+        let result = sync_source(
+            &store,
+            &database_source,
+            &root.join("unused-source-dir"),
+            &state_path,
+            root,
+            None,
+            None,
+        );
+
+        let error = result.expect_err("a Database source must never be ingested by sync");
+        assert!(
+            matches!(error, crate::GraphtorError::Sync { .. }),
+            "expected a Sync error, got: {error:?}"
+        );
     }
 
     #[test]

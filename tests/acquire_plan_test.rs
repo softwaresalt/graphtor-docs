@@ -124,6 +124,78 @@ fn s040_multiple_local_errors_collected_in_single_pass() {
     assert!(ids.contains(&"bad-local-2"));
 }
 
+// ── P1-T6/P1-RF2: mixed local + database source planning ──────────────────────
+
+/// A mixed local/database config plans ONLY the local source: the
+/// `Database` entry is filtered before `resolve_source_dir`, not failed —
+/// this is the real exercise of P1-RF2's plan-loop filter now that the
+/// variant exists.
+#[test]
+fn mixed_local_and_database_config_plans_only_the_local_source() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let local_dir = root.join("docs");
+    fs::create_dir_all(&local_dir).expect("create docs dir");
+    fs::write(local_dir.join("a.md"), "# a").expect("write a.md");
+
+    let config = SourceConfig {
+        sources: vec![
+            local_source("docs-source", &local_dir),
+            Source::Database(graphtor_core::DatabaseSource {
+                id: "legacy".to_string(),
+                path: root.join(".graphtor").join("legacy.db"),
+            }),
+        ],
+    };
+    let data_root = root.join("data");
+
+    let acquisition_plan = plan(&config, &data_root, root).expect("plan with a mixed config");
+
+    assert_eq!(
+        acquisition_plan.sources.len(),
+        1,
+        "the Database entry must be filtered out, not planned or failed: {acquisition_plan:?}"
+    );
+    assert_eq!(acquisition_plan.sources[0].source.id(), "docs-source");
+
+    let result = execute(&acquisition_plan, false);
+    assert_eq!(
+        result.failed, 0,
+        "the local source must still scan successfully: {result:?}"
+    );
+    assert_eq!(result.succeeded, 1);
+}
+
+/// `validate_sources` over a mixed local/database config validates only the
+/// local source — a `Database` entry has no ingestion path/globs/formats to
+/// validate and produces no error.
+#[test]
+fn mixed_local_and_database_config_validates_only_the_local_source() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let local_dir = root.join("docs");
+    fs::create_dir_all(&local_dir).expect("create docs dir");
+
+    let config = SourceConfig {
+        sources: vec![
+            local_source("local-docs", &local_dir),
+            Source::Database(graphtor_core::DatabaseSource {
+                id: "legacy".to_string(),
+                path: root.join(".graphtor").join("legacy.db"),
+            }),
+        ],
+    };
+
+    let report = validate_sources(&config, root);
+    assert!(
+        report.is_valid(),
+        "a Database entry must never produce a validation error: {report:?}"
+    );
+    assert_eq!(report.total_count, 2);
+    assert_eq!(report.valid_count, 2);
+    assert!(report.errors.is_empty());
+}
+
 // ── RI-008: non-**-prefix pattern regression ──────────────────────────────────
 
 #[test]

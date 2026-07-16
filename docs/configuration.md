@@ -4,8 +4,9 @@ description: "Complete sources.yaml reference for Git, local, and URL source typ
 ---
 
 graphtor-docs is configured via a single YAML file, `sources.yaml`, which
-defines the local documentation sources to validate, index, and serve.
-Every source must be a local directory of docline-emitted standardized
+defines the local documentation sources to validate, index, and serve, plus
+optional read-only database entries to serve without ingestion. Every
+ingestible source must be a local directory of docline-emitted standardized
 Markdown files. Git, URL, and web-crawl source types are not supported.
 
 ## Config File Location
@@ -48,13 +49,18 @@ an explicit `database` field so routing is unambiguous.
 
 ```yaml
 sources:
-  - type: local         # only supported type
+  - type: local         # ingests and generates a database
     id: my-source-id   # unique identifier for this source
     # … fields …
+
+  - type: database      # serves an existing database read-only; no ingestion
+    id: my-db-alias
+    path: ./some/existing.db
 ```
 
 The top-level key is `sources`, containing an ordered list of source entries.
-Each entry must have `type: local` and a unique `id` string.
+Every entry must have a `type` (`local` or `database`) and a unique `id`
+string.
 
 ## Source Type: Local (`type: local`)
 
@@ -82,6 +88,44 @@ sources:
 | `include` | list\<string\> | no | (all files) | Glob patterns — only matching files are indexed |
 | `exclude` | list\<string\> | no | (none) | Glob patterns — matching files are skipped |
 | `formats` | list\<string\> | no | `["md"]` | Extension allow-list; only `md` and `markdown` are accepted |
+
+## Source Type: Database (`type: database`)
+
+Names an existing database file that `serve` should expose read-only,
+independent of auto-discovery. Unlike `type: local`, this entry never
+ingests anything and is never handed to `sync` or the background sync task —
+it exists purely to make an explicit, named alias for a database `serve`
+should open.
+
+```yaml
+sources:
+  - type: database
+    id: shared-runbooks          # required; unique alias/name for this entry
+    path: .graphtor/shared.db    # required; must stay within .graphtor/
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `id` | string | **yes** | — | Unique alias/name for this served database |
+| `path` | string | **yes** | — | Path to the database file; must resolve within `.graphtor/` |
+
+There is no `database`, `include`, `exclude`, or `formats` field for this
+type — it names a database to serve, it does not describe content to
+ingest. The `path` is canonicalized and validated to stay within the same
+authorized root as auto-discovery — `.graphtor/` itself, not the broader
+project root: an out-of-root path (`..`, a symlink, or a Windows
+junction/reparse point escape, or any path outside `.graphtor/`) is rejected
+rather than served. External (outside `.graphtor/`) database paths are not
+supported.
+
+If the same underlying file is also reachable through auto-discovery
+(the entry's `path` necessarily resolves into `.graphtor/`, the same
+directory auto-discovery scans), both resolve to the same served database
+rather than being opened twice.
+
+See
+[Consumption-first serve: auto-discovery, posture, and the operator trust boundary](design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md)
+for how this entry participates in serve's discovery and posture rules.
 
 Every `.md` file in the directory must contain a valid docline v1 frontmatter
 block. Files that fail contract validation (missing required fields, bad

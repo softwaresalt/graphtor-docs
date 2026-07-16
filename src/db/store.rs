@@ -14,7 +14,7 @@ use sqlite::{Connection, OpenFlags, State};
 use tracing::info;
 
 use crate::error::GraphtorError;
-use crate::path::validate_path;
+use crate::path::{is_reparse_point, validate_path};
 
 /// A snapshot of the current state of the embedded database.
 ///
@@ -45,6 +45,12 @@ pub struct DataStore {
     pub(crate) db: Arc<DbInstance>,
     access_mode: AccessMode,
     backing_path: Option<PathBuf>,
+    /// Filesystem read-only lock for [`DataStore::open_engine_readonly`].
+    ///
+    /// `None` for every other constructor. Shared across clones via [`Arc`]
+    /// so the underlying file is restored to writable only when the last
+    /// clone is dropped, not when any single clone goes out of scope.
+    engine_readonly_guard: Option<Arc<EngineReadonlyGuard>>,
 }
 
 impl std::fmt::Debug for DataStore {
@@ -75,6 +81,7 @@ impl DataStore {
             db: Arc::new(db),
             access_mode: AccessMode::ReadWrite,
             backing_path: None,
+            engine_readonly_guard: None,
         })
     }
 
@@ -91,6 +98,12 @@ impl DataStore {
     pub fn open_sqlite(path: &Path, root: &Path) -> Result<Self, GraphtorError> {
         let safe_path = validate_path(path, root)?;
         ensure_database_parent_dir(&safe_path)?;
+        // Self-heal a filesystem-readonly lock left behind by a crashed
+        // `open_engine_readonly` session (see `EngineReadonlyGuard`). Without
+        // this, a stale lock would make SQLite silently fall back to a
+        // read-only connection here — a silent downgrade of a write-mode
+        // open — instead of failing loudly or working as expected.
+        clear_stale_readonly_lock(&safe_path)?;
         configure_sqlite_wal(&safe_path)?;
         let db = open_sqlite_instance(&safe_path, "open_sqlite")?;
         let path_str = path_to_utf8(&safe_path, "open_sqlite")?;
@@ -99,6 +112,7 @@ impl DataStore {
             db: Arc::new(db),
             access_mode: AccessMode::ReadWrite,
             backing_path: Some(safe_path),
+            engine_readonly_guard: None,
         })
     }
 
@@ -108,6 +122,13 @@ impl DataStore {
     /// flag, so this constructor enforces read-only behaviour at the
     /// `DataStore` boundary: immutable queries continue to work, while any
     /// mutable script routed through [`DataStore::mutate`] is rejected.
+    ///
+    /// This is an APPLICATION-level guard only — it does not stop a caller
+    /// that bypasses [`DataStore::mutate`] (or a bug in this crate) from
+    /// reaching the underlying engine. Callers that need an
+    /// engine/filesystem-enforced guarantee (for example, serving
+    /// auto-discovered databases from an untrusted or unattended workspace)
+    /// MUST use [`DataStore::open_engine_readonly`] instead.
     ///
     /// # Errors
     ///
@@ -130,6 +151,70 @@ impl DataStore {
             db: Arc::new(db),
             access_mode: AccessMode::ReadOnly,
             backing_path: Some(safe_path),
+            engine_readonly_guard: None,
+        })
+    }
+
+    /// Open a `DataStore` backed by an existing `SQLite` file with an
+    /// ENGINE/FILESYSTEM-enforced read-only guarantee.
+    ///
+    /// `CozoDB`'s public `SQLite` backend (`DbInstance::new("sqlite", ..)`)
+    /// always opens its underlying connections with
+    /// `SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE` and ignores the `options`
+    /// string entirely — there is no supported way to ask Cozo itself for a
+    /// read-only connection, and every new connection it opens from its
+    /// internal pool (one per concurrent transaction, opened lazily) uses
+    /// the same hard-coded flags. [`DataStore::open_sqlite_readonly`] only
+    /// prevents writes at the `DataStore` boundary (the [`AccessMode`]
+    /// guard in [`DataStore::mutate`]) — a caller that reaches the
+    /// underlying `cozo::DbInstance` directly is not stopped.
+    ///
+    /// This constructor closes that gap at the filesystem level instead:
+    /// before Cozo opens the file, it (and any existing `-wal`/`-shm`/
+    /// `-journal` sidecars) are marked filesystem-readonly. `SQLite`'s
+    /// documented open-path behaviour is to retry a `SQLITE_OPEN_READWRITE`
+    /// request as read-only when the file cannot be opened for writing
+    /// (rather than failing outright), so every connection Cozo opens
+    /// against this file for the remainder of this `DataStore`'s lifetime —
+    /// including ones opened later from its connection pool — becomes a
+    /// genuine engine-enforced read-only connection: an actual write
+    /// attempt is rejected by `SQLite` itself (`SQLITE_READONLY`), not merely
+    /// by this crate's `AccessMode` check.
+    ///
+    /// The filesystem lock is held for as long as ANY clone of the returned
+    /// `DataStore` is alive and is released automatically (best-effort) once
+    /// the last clone is dropped, so the file can be opened read-write again
+    /// later (for example, if the workspace is later reconfigured as a
+    /// generation source).
+    ///
+    /// # Errors
+    ///
+    /// - [`GraphtorError::PathViolation`] — `path` escapes `root`
+    /// - [`GraphtorError::Database`] — the database file does not exist, the
+    ///   path contains non-UTF-8 bytes, or `CozoDB` fails to open the database
+    /// - [`GraphtorError::Io`] — the filesystem read-only lock could not be
+    ///   applied to the database file or one of its sidecars
+    pub fn open_engine_readonly(path: &Path, root: &Path) -> Result<Self, GraphtorError> {
+        let safe_path = validate_path(path, root)?;
+        if !safe_path.exists() {
+            return Err(GraphtorError::Database {
+                message: format!("database file '{}' does not exist", safe_path.display()),
+                operation: "open_engine_readonly".to_string(),
+            });
+        }
+
+        let guard = EngineReadonlyGuard::lock(&safe_path)?;
+        let db = open_sqlite_instance(&safe_path, "open_engine_readonly")?;
+        let path_str = path_to_utf8(&safe_path, "open_engine_readonly")?;
+        info!(
+            path = path_str,
+            "opened engine-enforced read-only SQLite DataStore (filesystem lock active)"
+        );
+        Ok(Self {
+            db: Arc::new(db),
+            access_mode: AccessMode::ReadOnly,
+            backing_path: Some(safe_path),
+            engine_readonly_guard: Some(Arc::new(guard)),
         })
     }
 
@@ -139,6 +224,16 @@ impl DataStore {
     #[must_use]
     pub fn database_path(&self) -> Option<&Path> {
         self.backing_path.as_deref()
+    }
+
+    /// Returns `true` when this store was opened via
+    /// [`DataStore::open_engine_readonly`] and therefore holds an active
+    /// filesystem-level read-only lock on its backing file (and any
+    /// existing WAL/SHM/journal sidecars) for as long as this handle, or any
+    /// clone of it, remains alive.
+    #[must_use]
+    pub fn is_engine_enforced_readonly(&self) -> bool {
+        self.engine_readonly_guard.is_some()
     }
 
     /// Return the names of all stored relations present in the database.
@@ -354,6 +449,243 @@ impl DataStore {
     }
 }
 
+/// Filesystem-level read-only lock backing [`DataStore::open_engine_readonly`].
+///
+/// Marks the database file and any existing `-wal`/`-shm`/`-journal`
+/// sidecars filesystem-readonly for as long as this guard is alive, and
+/// restores their EXACT original permissions on [`Drop`]. Held inside an
+/// [`Arc`] on [`DataStore`] so cloning the store shares one lock, released
+/// only when the last clone is dropped.
+///
+/// A WAL-mode database's journal mode is recorded in the main file's own
+/// header, so ANY connection that opens it — including a read-only
+/// fallback connection — still expects the WAL shared-memory index and
+/// transiently (re)creates an empty `-wal` file and a `-shm` bookkeeping
+/// file if they are not already present, purely as an artifact of how
+/// `SQLite` readers cooperate with WAL writers. Neither file receives any
+/// served content — the main database file is proven byte-for-byte
+/// unchanged (see the `store::tests` module) — but to leave **no** on-disk
+/// trace once the read-only session ends, this guard also removes any such
+/// sidecar it did not find pre-existing, PROVIDED it is still empty at
+/// drop-time. A non-empty sidecar of any kind (including `-shm`) may belong
+/// to a genuinely concurrent writer and is always left intact.
+struct EngineReadonlyGuard {
+    /// (path, original permissions) pairs for paths that existed before
+    /// locking. Each path is marked filesystem-readonly while the guard is
+    /// held and restored to its EXACT captured original `fs::Permissions`
+    /// on drop — the full permission value, not merely a readonly boolean.
+    /// On Unix this preserves the original mode bits (a private `0o600`
+    /// database is restored to `0o600`, never widened to `0o622`/`0o644`,
+    /// because `Permissions::set_readonly(false)` would otherwise enable
+    /// every write bit and grant group/other write); on Windows it restores
+    /// the original readonly attribute. A file the operator had already
+    /// marked readonly for their own reasons is thus never left writable —
+    /// nor over-permissioned — once this guard releases it.
+    guarded: Vec<(PathBuf, fs::Permissions)>,
+    /// Sidecar paths (`-wal`, `-shm`, `-journal`) that did NOT exist before
+    /// locking. Every such transient sidecar is subject to the SAME
+    /// conservative rule: it is removed on drop ONLY if it still exists and
+    /// is still EMPTY. A non-empty sidecar of ANY kind — including `-shm` —
+    /// may belong to a genuinely concurrent writer: unlinking a live `-shm`
+    /// while another connection holds it defeats WAL coordination (existing
+    /// connections keep the old mapping while new connections create a
+    /// second `-shm`) and risks corruption, and a non-empty `-wal`/`-journal`
+    /// can hold committed pending-transaction bytes. Such files are always
+    /// left intact — see [`Drop`].
+    transient_sidecars: Vec<PathBuf>,
+}
+
+impl EngineReadonlyGuard {
+    /// Mark `db_path` and any existing WAL/SHM/journal sidecars
+    /// filesystem-readonly, rolling back any partial change if a later
+    /// sidecar cannot be locked. Captures each guarded path's EXACT ORIGINAL
+    /// `fs::Permissions` (so [`Drop`] can restore them precisely rather than
+    /// forcing a coarse writable/readonly boolean that would widen Unix mode
+    /// bits) and records which sidecar paths do not yet exist so they can be
+    /// cleaned up on [`Drop`] if the read-only engine open transiently
+    /// creates them — but only while they remain empty.
+    fn lock(db_path: &Path) -> Result<Self, GraphtorError> {
+        let mut guarded: Vec<(PathBuf, fs::Permissions)> = Vec::new();
+        let mut transient_sidecars: Vec<PathBuf> = Vec::new();
+        let candidates = sidecar_candidates(db_path);
+        for (index, candidate) in candidates.into_iter().enumerate() {
+            // Containment (Constitution III/IV, NON-NEGOTIABLE): a sidecar that
+            // is a symlink/junction can redirect the `fs::metadata` +
+            // `set_readonly` below — and any subsequent engine write in WAL mode
+            // — to a file OUTSIDE the workspace. `candidate.exists()`,
+            // `fs::metadata`, and `set_readonly` all FOLLOW links, so a
+            // workspace holding `dropped.db-wal`/`-shm`/`-journal` as a symlink
+            // to an external target would let read-only serving chmod that
+            // target (and a crash could leave it read-only). Fail closed BEFORE
+            // any inspection or permission change so the read-only engine never
+            // opens through a linked sidecar. The main db (index 0) was already
+            // canonicalized by the caller's `validate_path`, so only sidecars
+            // (index > 0) can be a planted reparse point here.
+            if index > 0 && is_reparse_point(&candidate) {
+                for (already_locked, original_perms) in guarded.iter().rev() {
+                    let _ = fs::set_permissions(already_locked, original_perms.clone());
+                }
+                return Err(GraphtorError::Database {
+                    message: format!(
+                        "refusing read-only serve: database sidecar '{}' is a symlink or junction; \
+                         a linked sidecar could redirect permission changes outside the workspace",
+                        candidate.display()
+                    ),
+                    operation: "open_engine_readonly".to_string(),
+                });
+            }
+            if !candidate.exists() {
+                // Index 0 is the main db file, which callers already verified
+                // exists; only sidecars (index > 0) reach this branch. Every
+                // transient sidecar — `-wal`, `-shm`, and `-journal` alike —
+                // is subject to the same conservative empty-only cleanup on
+                // drop (see `Drop`): a sidecar that appears while the guard
+                // is held may belong to a concurrent writer, so it is only
+                // removed if it is still empty.
+                if index > 0 {
+                    transient_sidecars.push(candidate);
+                }
+                continue;
+            }
+            // Capture the EXACT original permissions BEFORE marking the file
+            // readonly, so `Drop` can restore them precisely instead of
+            // forcing a coarse writable/readonly boolean that would enable
+            // every Unix write bit and widen e.g. `0o600` to `0o622`.
+            let original = match fs::metadata(&candidate) {
+                Ok(metadata) => metadata.permissions(),
+                Err(error) => {
+                    // Roll back any sidecars already locked in this pass before
+                    // propagating, mirroring the `set_readonly` failure path so
+                    // a mid-loop error never leaves an earlier sidecar readonly
+                    // with no live guard to restore it on drop.
+                    for (already_locked, original_perms) in guarded.iter().rev() {
+                        let _ = fs::set_permissions(already_locked, original_perms.clone());
+                    }
+                    return Err(GraphtorError::from(error));
+                }
+            };
+            if let Err(error) = set_readonly(&candidate, true) {
+                for (already_locked, original_perms) in guarded.iter().rev() {
+                    let _ = fs::set_permissions(already_locked, original_perms.clone());
+                }
+                return Err(error);
+            }
+            guarded.push((candidate, original));
+        }
+        Ok(Self {
+            guarded,
+            transient_sidecars,
+        })
+    }
+}
+
+impl Drop for EngineReadonlyGuard {
+    fn drop(&mut self) {
+        // Best-effort: Drop cannot propagate errors, and a failed restore
+        // here only affects a FUTURE write-mode open of this same file —
+        // `open_sqlite` self-heals exactly this case via
+        // `clear_stale_readonly_lock`, and the file itself is untouched
+        // (still fully readable) regardless of whether this restore
+        // succeeds.
+        //
+        // Restore each guarded path's EXACT captured original permissions
+        // rather than forcing a coarse writable/readonly boolean: a file
+        // that was already filesystem-readonly before this guard ever
+        // touched it (for example, an operator's own deliberate protection)
+        // must stay readonly afterward, and a private `0o600` database must
+        // come back as `0o600` — never widened to `0o622`/`0o644` by
+        // re-enabling every Unix write bit.
+        for (path, original) in &self.guarded {
+            let _ = fs::set_permissions(path, original.clone());
+        }
+        // Remove a transient WAL-reader bookkeeping sidecar this session may
+        // have created, but ONLY while it still exists and is still empty. A
+        // non-empty sidecar of ANY kind — `-wal`, `-shm`, or `-journal` —
+        // may belong to a genuinely concurrent writer: unlinking a live
+        // `-shm` defeats WAL coordination (existing connections keep the old
+        // mapping while new connections create a second `-shm`) and risks
+        // corruption, and unlinking a non-empty `-wal`/`-journal` could lose
+        // committed pending-transaction bytes this guard has no way to prove
+        // it does not own. Such files are always left intact.
+        for path in &self.transient_sidecars {
+            if fs::metadata(path).is_ok_and(|meta| meta.len() == 0) {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+/// Return the database file path plus its conventional `-wal`, `-shm`, and
+/// `-journal` sidecar paths (`SQLite` appends these suffixes directly to the
+/// filename; they are never present all at once, but any subset may exist
+/// depending on journal mode and checkpoint state).
+fn sidecar_candidates(db_path: &Path) -> [PathBuf; 4] {
+    [
+        db_path.to_path_buf(),
+        append_suffix(db_path, "-wal"),
+        append_suffix(db_path, "-shm"),
+        append_suffix(db_path, "-journal"),
+    ]
+}
+
+fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut os_string = path.as_os_str().to_owned();
+    os_string.push(suffix);
+    PathBuf::from(os_string)
+}
+
+fn set_readonly(path: &Path, readonly: bool) -> Result<(), GraphtorError> {
+    let metadata = fs::metadata(path).map_err(GraphtorError::from)?;
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(readonly);
+    fs::set_permissions(path, permissions).map_err(GraphtorError::from)
+}
+
+/// Clear a stale filesystem-readonly lock left behind by a crashed
+/// [`DataStore::open_engine_readonly`] session, so [`DataStore::open_sqlite`]
+/// never silently falls back to a read-only connection because of leftover
+/// state from a previous process. Idempotent and a no-op when nothing is
+/// locked.
+fn clear_stale_readonly_lock(db_path: &Path) -> Result<(), GraphtorError> {
+    for candidate in sidecar_candidates(db_path) {
+        // Same containment guard as `EngineReadonlyGuard::lock` (Constitution
+        // III/IV, NON-NEGOTIABLE): never chmod through a linked sidecar. A
+        // symlinked/junction sidecar would make `set_readonly(false)` clear the
+        // read-only bit on an EXTERNAL target, and proceeding to a write-mode
+        // open could then let the engine write through that link. Fail closed
+        // so a write-mode open never mutates permissions or data outside the
+        // workspace. `db_path` (index 0) is the caller-canonicalized path, so
+        // only a planted sidecar can be a reparse point here.
+        //
+        // The check MUST run BEFORE the `exists()` short-circuit: `exists()`
+        // follows the link, so a DANGLING symlink sidecar (its target absent)
+        // reports `false` and would otherwise be skipped — letting the engine
+        // create and write the WAL/SHM THROUGH the link to an external path.
+        // Mirror `lock`, which also guards before its existence branch.
+        if is_reparse_point(&candidate) {
+            return Err(GraphtorError::Database {
+                message: format!(
+                    "refusing write-mode open: database sidecar '{}' is a symlink or junction; \
+                     a linked sidecar could redirect permission changes outside the workspace",
+                    candidate.display()
+                ),
+                operation: "open_sqlite".to_string(),
+            });
+        }
+        if !candidate.exists() {
+            continue;
+        }
+        if fs::metadata(&candidate)
+            .map_err(GraphtorError::from)?
+            .permissions()
+            .readonly()
+        {
+            set_readonly(&candidate, false)?;
+        }
+    }
+    Ok(())
+}
+
 fn path_to_utf8(path: &Path, operation: &str) -> Result<String, GraphtorError> {
     path.to_str()
         .map(str::to_owned)
@@ -432,4 +764,662 @@ fn configure_sqlite_wal(path: &Path) -> Result<(), GraphtorError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use cozo::{DataValue, Num, ScriptMutability};
+
+    use super::*;
+
+    fn temp_dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("failed to create temp dir")
+    }
+
+    /// Build a populated fixture database (schema + one chunk row with an
+    /// embedding) at `db_path`, fully checkpoint the WAL into the main file,
+    /// and return once every handle has been dropped so the file is not held
+    /// open by this process.
+    fn build_populated_fixture(db_path: &Path, root: &Path) {
+        {
+            let store = DataStore::open_sqlite(db_path, root).expect("open_sqlite for fixture");
+            store.ensure_schema().expect("ensure_schema for fixture");
+            let mut params = BTreeMap::new();
+            params.insert(
+                "source_id".to_string(),
+                DataValue::Str("fixture-src".into()),
+            );
+            params.insert(
+                "url".to_string(),
+                DataValue::Str("https://example.com".into()),
+            );
+            params.insert("kind".to_string(), DataValue::Str("local".into()));
+            params.insert("name".to_string(), DataValue::Str("fixture-src".into()));
+            store
+                .mutate(
+                    "?[source_id, url, kind, name, synced_at] <- [[$source_id, $url, $kind, $name, null]] \
+                     :put doc_sources { source_id => url, kind, name, synced_at }",
+                    params,
+                )
+                .expect("seed doc_sources for fixture");
+        }
+        // Fully checkpoint + truncate the WAL into the main db file so the
+        // before/after fingerprint captures a stable, fully-flushed baseline.
+        let connection = sqlite::Connection::open_thread_safe(db_path)
+            .expect("open raw connection for checkpoint");
+        connection
+            .execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            .expect("checkpoint WAL before fingerprinting");
+        drop(connection);
+    }
+
+    fn sidecar_paths_for_test(db_path: &Path) -> Vec<PathBuf> {
+        sidecar_candidates(db_path)[1..].to_vec()
+    }
+
+    #[test]
+    fn open_engine_readonly_rejects_direct_engine_mutation_not_just_the_guard() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+            .expect("open_engine_readonly should succeed against an existing v4 fixture");
+
+        // Bypass `DataStore::mutate`'s own `AccessMode` guard entirely and call
+        // the underlying `cozo::DbInstance::run_script` DIRECTLY with
+        // `ScriptMutability::Mutable`. If the guard were the only thing
+        // enforcing read-only behaviour, this call would succeed (it never
+        // passes through `mutate()`). Proving this call itself fails
+        // demonstrates the rejection happens at the SQLite/engine boundary.
+        let mut params = BTreeMap::new();
+        params.insert(
+            "source_id".to_string(),
+            DataValue::Str("should-never-be-written".into()),
+        );
+        params.insert(
+            "url".to_string(),
+            DataValue::Str("https://example.com".into()),
+        );
+        params.insert("kind".to_string(), DataValue::Str("local".into()));
+        params.insert(
+            "name".to_string(),
+            DataValue::Str("should-never-be-written".into()),
+        );
+        let result = readonly.db.run_script(
+            "?[source_id, url, kind, name, synced_at] <- [[$source_id, $url, $kind, $name, null]] \
+             :put doc_sources { source_id => url, kind, name, synced_at }",
+            params,
+            ScriptMutability::Mutable,
+        );
+
+        assert!(
+            result.is_err(),
+            "a direct engine-level write against an engine-readonly store must be rejected \
+             by SQLite itself, not merely by the DataStore::mutate guard"
+        );
+
+        drop(readonly);
+    }
+
+    #[test]
+    fn open_engine_readonly_permits_a_full_query_search_semantic_read_cycle() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-read.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+            .expect("open_engine_readonly should succeed");
+
+        // query
+        let status = readonly
+            .get_status()
+            .expect("status query must succeed read-only");
+        assert_eq!(status.source_count, 1);
+
+        // search (text)
+        let names = readonly
+            .query("?[source_id] := *doc_sources{ source_id }", BTreeMap::new())
+            .expect("relation query must succeed read-only");
+        assert_eq!(names.rows.len(), 1);
+
+        // semantic (vector) — exercise the same query surface used by
+        // `search_by_vector`, without requiring a loaded embedding model.
+        let floats: Vec<DataValue> = vec![0.0_f32; 384]
+            .iter()
+            .map(|&x| DataValue::Num(Num::Float(f64::from(x))))
+            .collect();
+        let mut params = BTreeMap::new();
+        params.insert("query".to_string(), DataValue::List(floats));
+        let semantic = readonly.query(
+            "?[chunk_id, dist] := q = vec($query), *doc_chunks{ chunk_id, embedding }, \
+             !is_null(embedding), dist = cos_dist(q, embedding) :order dist :limit 5",
+            params,
+        );
+        assert!(
+            semantic.is_ok(),
+            "semantic-shaped query must succeed read-only: {semantic:?}"
+        );
+
+        drop(readonly);
+    }
+
+    #[test]
+    fn open_engine_readonly_leaves_db_and_sidecars_byte_identical_after_read_cycle() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-fingerprint.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let bytes_before = fs::read(&db_path).expect("read fixture db bytes before open");
+        let mtime_before = fs::metadata(&db_path)
+            .expect("stat fixture db before open")
+            .modified()
+            .expect("mtime before open");
+
+        {
+            let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+                .expect("open_engine_readonly should succeed");
+            let _ = readonly.get_status().expect("status read");
+            let _ = readonly
+                .query("?[source_id] := *doc_sources{ source_id }", BTreeMap::new())
+                .expect("relation read");
+        }
+
+        let bytes_after = fs::read(&db_path).expect("read fixture db bytes after open");
+        let mtime_after = fs::metadata(&db_path)
+            .expect("stat fixture db after open")
+            .modified()
+            .expect("mtime after open");
+        // Per the F7 conservative-cleanup rule, a WAL-reader coordination
+        // sidecar (`-shm`/`-wal`) that SQLite transiently materializes and
+        // fills with real coordination bytes during a read-only open may be
+        // left behind: the guard cannot prove no concurrent writer shares it,
+        // so it only reclaims EMPTY placeholder sidecars it created. The
+        // durable guarantee is therefore that the served db is byte-for-byte
+        // untouched and the guard never leaves an EMPTY placeholder trace.
+        let empty_sidecar_traces: Vec<bool> = sidecar_paths_for_test(&db_path)
+            .iter()
+            .map(|p| fs::metadata(p).is_ok_and(|meta| meta.len() == 0))
+            .collect();
+
+        assert_eq!(
+            bytes_before, bytes_after,
+            "engine-readonly open must not change a single byte of the served db file"
+        );
+        assert_eq!(
+            mtime_before, mtime_after,
+            "engine-readonly open must not touch mtime"
+        );
+        assert!(
+            empty_sidecar_traces
+                .iter()
+                .all(|&is_empty_trace| !is_empty_trace),
+            "engine-readonly open must never leave an EMPTY placeholder sidecar trace; only \
+             non-empty coordination sidecars are conservatively preserved (F7)"
+        );
+    }
+
+    #[test]
+    fn open_engine_readonly_restores_writability_on_drop() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-restore.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        {
+            let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+                .expect("open_engine_readonly should succeed");
+            assert!(
+                fs::metadata(&db_path).unwrap().permissions().readonly(),
+                "db file must be filesystem-readonly while the guard is held"
+            );
+            drop(readonly);
+        }
+
+        assert!(
+            !fs::metadata(&db_path).unwrap().permissions().readonly(),
+            "db file must be restored to writable once the engine-readonly store is dropped"
+        );
+
+        // A later legitimate read-write open (e.g. for `sync`) must still work.
+        let rw = DataStore::open_sqlite(&db_path, dir.path())
+            .expect("a subsequent read-write open must succeed after the guard is released");
+        rw.ensure_schema().expect("ensure_schema after restore");
+    }
+
+    #[test]
+    fn open_engine_readonly_preserves_a_pre_existing_readonly_db_after_drop() {
+        // A file the operator had ALREADY marked filesystem-readonly for
+        // their own reasons, before `open_engine_readonly` ever touched it,
+        // must remain readonly once the guard releases it — restoring
+        // must recover the file's CAPTURED ORIGINAL state, not
+        // unconditionally force it writable.
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-preexisting.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        set_readonly(&db_path, true).expect("mark pre-existing readonly for fixture setup");
+        assert!(
+            fs::metadata(&db_path).unwrap().permissions().readonly(),
+            "precondition: db file must already be readonly before serving"
+        );
+
+        {
+            let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+                .expect("open_engine_readonly should succeed against an already-readonly file");
+            assert!(
+                fs::metadata(&db_path).unwrap().permissions().readonly(),
+                "db file must remain filesystem-readonly while the guard is held"
+            );
+            drop(readonly);
+        }
+
+        assert!(
+            fs::metadata(&db_path).unwrap().permissions().readonly(),
+            "a db file that was ALREADY readonly before serving must remain readonly after the \
+             guard drops"
+        );
+    }
+
+    #[test]
+    fn open_engine_readonly_removes_an_empty_transient_sidecar_on_drop() {
+        // The common single-process case: the read-only WAL-reader
+        // machinery creates an EMPTY placeholder sidecar that did not
+        // exist before the guard was taken; that placeholder must still be
+        // cleaned up on drop so the workspace shows no persistent trace.
+        //
+        // Driven through `EngineReadonlyGuard` DIRECTLY rather than a full
+        // engine open: a real read-only engine open creates its own `-wal`
+        // sidecar whose permissions differ across platforms (on Linux it is
+        // materialized read-only), which would prevent this test from
+        // deterministically staging the exact sidecar state it means to
+        // assert on. Locking the guard alone reproduces precisely the
+        // "sidecar absent at lock time, then transiently created while the
+        // guard is held" condition the Drop cleanup path guards against.
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-empty-sidecar.db");
+        build_populated_fixture(&db_path, dir.path());
+        let wal_path = sidecar_paths_for_test(&db_path)[0].clone();
+        assert!(!wal_path.exists(), "precondition: no -wal sidecar yet");
+
+        {
+            // The `-wal` did not exist at lock time, so the guard records it
+            // as a transient sidecar eligible for empty-only cleanup.
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a db with no sidecars");
+            // Simulate the engine's own transient, still-empty placeholder
+            // artifact appearing while the guard is held.
+            fs::write(&wal_path, b"").expect("simulate empty transient sidecar");
+        }
+
+        assert!(
+            !wal_path.exists(),
+            "an EMPTY transient sidecar must be cleaned up on drop"
+        );
+    }
+
+    #[test]
+    fn open_engine_readonly_never_removes_a_non_empty_transient_sidecar_on_drop() {
+        // If a concurrent process created a REAL, live WAL file in the
+        // narrow window this guard was held (a scenario this guard cannot
+        // rule out), that file is virtually guaranteed to be non-empty.
+        // Cleanup must leave it alone rather than risk deleting another
+        // connection's committed data.
+        //
+        // Driven through `EngineReadonlyGuard` DIRECTLY (see the empty-case
+        // test above for why a full engine open cannot deterministically
+        // stage this state across platforms).
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-live-sidecar.db");
+        build_populated_fixture(&db_path, dir.path());
+        let wal_path = sidecar_paths_for_test(&db_path)[0].clone();
+        assert!(!wal_path.exists(), "precondition: no -wal sidecar yet");
+
+        {
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a db with no sidecars");
+            // Simulate a genuinely concurrent writer's live, non-empty WAL
+            // sidecar appearing while the guard is held.
+            fs::write(&wal_path, b"not-empty-live-wal-frame").expect("simulate live sidecar");
+        }
+
+        assert!(
+            wal_path.exists(),
+            "a NON-EMPTY sidecar must never be removed — it may be another connection's live data"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_engine_readonly_preserves_exact_unix_mode_after_drop() {
+        // Regression for F1: the guard must restore the EXACT original Unix
+        // mode bits, not a coarse writable/readonly boolean. A private
+        // `0o600` database must come back as `0o600` after the guard drops,
+        // never widened to `0o622`/`0o644` (which `Permissions::set_readonly(false)`
+        // would do by enabling every write bit, granting group/other write).
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-mode.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let mut perms = fs::metadata(&db_path)
+            .expect("stat fixture db")
+            .permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&db_path, perms).expect("set 0o600 mode for fixture setup");
+        assert_eq!(
+            fs::metadata(&db_path)
+                .expect("stat fixture db after chmod")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "precondition: fixture db must be mode 0o600 before serving"
+        );
+
+        {
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a mode-0o600 db");
+        }
+
+        assert_eq!(
+            fs::metadata(&db_path)
+                .expect("stat fixture db after drop")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "guard drop must restore the EXACT original mode 0o600, not widen it to 0o622/0o644"
+        );
+    }
+
+    #[test]
+    fn open_engine_readonly_never_removes_a_non_empty_shm_sidecar_on_drop() {
+        // Regression for F7: `-shm` must obey the SAME conservative
+        // empty-only cleanup rule as every other sidecar. A non-empty `-shm`
+        // may belong to a genuinely concurrent writer; unlinking a live
+        // `-shm` defeats WAL coordination (existing connections keep the old
+        // mapping while new connections create a second `-shm`) and risks
+        // corruption, so cleanup must leave it intact.
+        //
+        // Driven through `EngineReadonlyGuard` DIRECTLY (see the empty-case
+        // test above for why a full engine open cannot deterministically
+        // stage this state across platforms).
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-live-shm.db");
+        build_populated_fixture(&db_path, dir.path());
+        let shm_path = sidecar_paths_for_test(&db_path)[1].clone();
+        assert!(!shm_path.exists(), "precondition: no -shm sidecar yet");
+
+        {
+            let _guard = EngineReadonlyGuard::lock(&db_path)
+                .expect("guard lock should succeed against a db with no sidecars");
+            // Simulate a genuinely concurrent writer's live, non-empty `-shm`
+            // shared-memory index appearing while the guard is held.
+            fs::write(&shm_path, b"not-empty-live-shm-index").expect("simulate live shm");
+        }
+
+        assert!(
+            shm_path.exists(),
+            "a NON-EMPTY -shm sidecar must never be removed — it may be another connection's \
+             live coordination data"
+        );
+    }
+
+    #[test]
+    fn open_sqlite_clears_a_stale_readonly_lock_left_by_a_crashed_session() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-stale.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        // Simulate a crashed engine-readonly session: the guard is
+        // constructed and then leaked (never dropped), exactly as would
+        // happen if the process were killed instead of exiting cleanly.
+        let guard = EngineReadonlyGuard::lock(&db_path).expect("lock db read-only");
+        std::mem::forget(guard);
+        assert!(
+            fs::metadata(&db_path).unwrap().permissions().readonly(),
+            "precondition: db file must be readonly after the simulated crash"
+        );
+
+        let rw = DataStore::open_sqlite(&db_path, dir.path()).expect(
+            "open_sqlite must self-heal a stale readonly lock rather than silently \
+                     downgrading to read-only or failing",
+        );
+        rw.ensure_schema().expect("ensure_schema after self-heal");
+        assert!(
+            !fs::metadata(&db_path).unwrap().permissions().readonly(),
+            "open_sqlite must clear the stale readonly attribute"
+        );
+    }
+
+    // ── P1-T4: ATTACH / loadable-extension hardening ───────────────────────
+    //
+    // Cozo's query language (CozoScript) has no raw-SQL escape hatch: its
+    // parser (a Pest grammar) does not define `ATTACH DATABASE` as valid
+    // syntax, and its built-in function library has no `load_extension`
+    // equivalent. The underlying SQLite connection is used purely as an
+    // internal single-table key-value store (`cozo(k BLOB, v BLOB)`) that
+    // only Cozo's own storage layer ever touches directly — a served
+    // read-only store (auto-discovered OR an explicit workspace-contained
+    // entry; the primitive is identical either way) can therefore never be
+    // asked, via any query this crate exposes, to ATTACH another file or
+    // load a native-code extension. These tests PROVE that architectural
+    // invariant empirically rather than merely asserting it.
+
+    #[test]
+    fn engine_readonly_store_rejects_attach_database_as_invalid_cozoscript() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("attach-hardening.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+            .expect("open_engine_readonly should succeed");
+
+        let result = readonly.query("ATTACH DATABASE 'other.db' AS evil", BTreeMap::new());
+
+        assert!(
+            result.is_err(),
+            "ATTACH DATABASE is not valid CozoScript syntax and must be rejected, proving no \
+             raw-SQL escape hatch exists for a served read-only store"
+        );
+    }
+
+    #[test]
+    fn engine_readonly_store_has_no_load_extension_function() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("extension-hardening.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path())
+            .expect("open_engine_readonly should succeed");
+
+        let result = readonly.query(
+            "?[loaded] := loaded = load_extension('evil.so')",
+            BTreeMap::new(),
+        );
+
+        assert!(
+            result.is_err(),
+            "load_extension is not a CozoScript built-in function and must be rejected, \
+             proving no loadable-extension surface exists for a served read-only store"
+        );
+    }
+
+    #[test]
+    fn engine_readonly_store_explicit_entry_scenario_is_identically_hardened() {
+        // The hardening primitive does not distinguish HOW a served path was
+        // discovered (auto-discovery vs. an explicit workspace-contained
+        // `type: database` entry, P1-T6) — both flow through
+        // `open_engine_readonly` identically, so the SAME ATTACH/extension
+        // immunity applies uniformly. This test opens a second, differently
+        // named fixture standing in for an explicit entry to make that
+        // uniformity explicit in the test suite rather than merely implicit
+        // in the shared code path.
+        let dir = temp_dir();
+        let db_path = dir.path().join("explicit-entry-served.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let readonly = DataStore::open_engine_readonly(&db_path, dir.path()).expect(
+            "open_engine_readonly should succeed for an explicit workspace-contained entry",
+        );
+
+        let attach_result = readonly.query("ATTACH DATABASE 'other.db' AS evil", BTreeMap::new());
+        let extension_result = readonly.query(
+            "?[loaded] := loaded = load_extension('evil.so')",
+            BTreeMap::new(),
+        );
+
+        assert!(attach_result.is_err());
+        assert!(extension_result.is_err());
+    }
+
+    // ── W8-1: reparse-point sidecar containment ────────────────────────────
+    //
+    // A symlinked/junction `-wal`/`-shm`/`-journal` sidecar must never let the
+    // read-only guard (or the write-mode self-heal) follow the link to chmod a
+    // file OUTSIDE the workspace. These tests plant a symlinked sidecar pointing
+    // at an external target and prove both entry points fail closed WITHOUT
+    // touching that target's permissions. The guard is cross-platform via
+    // `is_reparse_point` (which also catches Windows junctions); the tests skip
+    // gracefully where the platform refuses unprivileged symlink creation.
+
+    fn try_symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+    }
+
+    #[test]
+    fn open_engine_readonly_refuses_a_symlinked_wal_sidecar() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-symlink.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        // An external target the attacker wants chmod'd, living OUTSIDE the
+        // served workspace, created writable so a widening to read-only is
+        // detectable.
+        let external_dir = temp_dir();
+        let external_target = external_dir.path().join("external-secret.txt");
+        fs::write(&external_target, b"external").expect("seed external target");
+        assert!(
+            !fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "precondition: external target must start writable"
+        );
+
+        // Plant a `-wal` sidecar that is a symlink to the external target.
+        let wal = append_suffix(&db_path, "-wal");
+        let _ = fs::remove_file(&wal);
+        if try_symlink_file(&external_target, &wal).is_err() {
+            return; // platform refused unprivileged symlink creation — skip
+        }
+
+        let result = DataStore::open_engine_readonly(&db_path, dir.path());
+        assert!(
+            result.is_err(),
+            "open_engine_readonly must fail closed on a symlinked sidecar rather than chmod \
+             an external target"
+        );
+        assert!(
+            !fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "the external symlink target must NOT be made read-only through the linked sidecar"
+        );
+    }
+
+    #[test]
+    fn open_sqlite_refuses_a_symlinked_wal_sidecar() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-rw-symlink.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        // An external target the attacker wants the readonly bit CLEARED on,
+        // seeded read-only so a stale-lock clear would widen it back to writable.
+        let external_dir = temp_dir();
+        let external_target = external_dir.path().join("external-locked.txt");
+        fs::write(&external_target, b"external").expect("seed external target");
+        set_readonly(&external_target, true).expect("mark external target read-only");
+        assert!(
+            fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "precondition: external target must start read-only"
+        );
+
+        // Plant a `-wal` sidecar that is a symlink to the external target.
+        let wal = append_suffix(&db_path, "-wal");
+        let _ = fs::remove_file(&wal);
+        if try_symlink_file(&external_target, &wal).is_err() {
+            return; // platform refused unprivileged symlink creation — skip
+        }
+
+        let result = DataStore::open_sqlite(&db_path, dir.path());
+        assert!(
+            result.is_err(),
+            "open_sqlite must fail closed on a symlinked sidecar rather than clear the readonly \
+             bit on an external target"
+        );
+        assert!(
+            fs::metadata(&external_target)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "the external symlink target's read-only bit must NOT be cleared through the linked \
+             sidecar"
+        );
+    }
+
+    #[test]
+    fn open_sqlite_refuses_a_dangling_symlinked_wal_sidecar() {
+        // Regression for the write-path ordering gap: `clear_stale_readonly_lock`
+        // must reject a reparse-point sidecar BEFORE its `exists()` check.
+        // `exists()` follows the link, so a DANGLING `-wal` symlink (its target
+        // absent) reports `false`; if the guard ran after `exists()` the sidecar
+        // would be skipped and the engine would CREATE and write the WAL THROUGH
+        // the link, materializing a file at an external path outside the
+        // workspace — the exact containment breach the guard exists to prevent.
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-rw-dangling.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        // A NON-EXISTENT external target: writing through the link would create
+        // it. Its continued absence after the open proves no write escaped.
+        let external_dir = temp_dir();
+        let external_target = external_dir.path().join("must-not-be-created.wal");
+        assert!(
+            !external_target.exists(),
+            "precondition: external target must not exist yet"
+        );
+
+        // Plant a `-wal` sidecar that is a DANGLING symlink to the absent target.
+        let wal = append_suffix(&db_path, "-wal");
+        let _ = fs::remove_file(&wal);
+        if try_symlink_file(&external_target, &wal).is_err() {
+            return; // platform refused unprivileged symlink creation — skip
+        }
+
+        let result = DataStore::open_sqlite(&db_path, dir.path());
+        assert!(
+            result.is_err(),
+            "open_sqlite must fail closed on a DANGLING symlinked sidecar rather than create the \
+             WAL through the link at an external path"
+        );
+        assert!(
+            !external_target.exists(),
+            "no file may be created at the external dangling-symlink target"
+        );
+    }
 }

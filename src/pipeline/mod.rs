@@ -36,7 +36,6 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::acquire::{execute as acquire_execute, AcquisitionPlan, PlannedSource, SourceOutcome};
-use crate::config::Source;
 use crate::db::chunks::{get_vectors_for, upsert_chunk, upsert_chunks_batch};
 use crate::db::edges::{
     upsert_code_snippet, upsert_code_snippets_batch, upsert_edge, upsert_edges_batch,
@@ -706,10 +705,16 @@ fn compute_embeddings(
 /// Extracts kind, URL, and display name from the original source configuration
 /// rather than using the source identifier as a placeholder.
 fn build_source_record(ps: &PlannedSource) -> SourceRecord {
-    let Source::Local(local) = &ps.source;
-    let id = local.id.clone();
+    let id = ps.source.id().to_string();
+    // A non-local source has no ingestion path to report as a URL; this is
+    // unreachable in practice — the acquisition plan loop (P1-RF2) never
+    // plans a non-local source — but stays a safe empty default rather
+    // than panicking if that invariant is ever violated.
+    let url = ps.source.as_local().map_or_else(String::new, |local| {
+        local.path.to_string_lossy().into_owned()
+    });
     SourceRecord {
-        url: local.path.to_string_lossy().into_owned(),
+        url,
         kind: "local".to_string(),
         name: id.clone(),
         source_id: id,

@@ -220,7 +220,7 @@ sources:
       - markdown
 ";
     let config: SourceConfig = serde_yaml::from_str(YAML).expect("parse YAML");
-    let Source::Local(local) = &config.sources[0];
+    let local = config.sources[0].as_local().expect("local source");
     assert_eq!(
         local.formats,
         vec!["md".to_string(), "markdown".to_string()],
@@ -240,7 +240,7 @@ sources:
     path: /tmp/docs
 ";
     let config: SourceConfig = serde_yaml::from_str(YAML).expect("parse YAML");
-    let Source::Local(local) = &config.sources[0];
+    let local = config.sources[0].as_local().expect("local source");
     assert_eq!(
         local.formats,
         vec!["md".to_string()],

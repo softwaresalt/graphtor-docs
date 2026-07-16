@@ -16,7 +16,7 @@
 pub mod source;
 pub(crate) mod validation;
 
-pub use source::{LocalSource, Source, SourceConfig};
+pub use source::{DatabaseSource, LocalSource, Source, SourceConfig};
 pub use validation::{resolve_source_db_path, DuplicateIntakeReport};
 
 use std::path::{Path, PathBuf};
@@ -118,7 +118,16 @@ pub fn load_multi_file_config(files: &[PathBuf]) -> Result<SourceConfig, Graphto
 
         if multi_file_mode {
             for source in &config.sources {
-                if source.database().is_none() {
+                // The mandatory `database` routing field only applies to
+                // ingestible (`local`) sources — a `type: database` entry
+                // has no routing target to declare (it names a pre-built
+                // file to serve, not content to ingest), so `database()`
+                // always returns `None` for it BY DESIGN. Without this
+                // `is_ingestible()` guard, EVERY `type: database` entry
+                // would be rejected in multi-file mode, making that source
+                // type entirely unusable outside the legacy single-file
+                // `sources.yaml`.
+                if source.is_ingestible() && source.database().is_none() {
                     return Err(GraphtorError::Config {
                         message: format!(
                             "source '{}' in multi-file config '{}' must declare a 'database' field",
@@ -344,6 +353,61 @@ mod tests {
             result.is_ok(),
             "single-file mode must allow missing database: {:?}",
             result.err()
+        );
+    }
+
+    #[test]
+    fn multi_file_mode_allows_database_type_entry_without_database_field() {
+        // A `type: database` entry has no ingestion routing target — it
+        // names a pre-built file to serve, not content to ingest — so it
+        // must NOT be rejected by the multi-file mode's mandatory
+        // `database` field requirement, which only makes sense for
+        // ingestible (`local`) sources.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let d = dir.path();
+
+        write_yaml(
+            d,
+            "graph.sources.yaml",
+            "sources:\n  - type: database\n    id: shared-runbooks\n    path: .graphtor/shared.db\n",
+        );
+
+        let files = discover_source_files(d).expect("discover_source_files");
+        let result = load_multi_file_config(&files);
+        assert!(
+            result.is_ok(),
+            "multi-file mode must accept a type:database entry with no database field: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn multi_file_mode_mixed_local_and_database_sources_enforces_database_only_on_local() {
+        // A mixed multi-file config: the `local` source without a
+        // `database` field must still be rejected, while the co-resident
+        // `type: database` entry (which is legitimately exempt) must not
+        // itself cause or mask that rejection.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let d = dir.path();
+
+        write_yaml(
+            d,
+            "mixed.sources.yaml",
+            "sources:\n  \
+             - type: local\n    id: no-db\n    path: /docs\n  \
+             - type: database\n    id: shared-runbooks\n    path: .graphtor/shared.db\n",
+        );
+
+        let files = discover_source_files(d).expect("discover_source_files");
+        let result = load_multi_file_config(&files);
+        assert!(
+            result.is_err(),
+            "the local source's missing database field must still be rejected"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("no-db"),
+            "the error must name the offending local source, not the database entry: {msg}"
         );
     }
 

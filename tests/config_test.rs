@@ -1,6 +1,6 @@
 //! Integration tests for `graphtor_core::config` module — local-only after docline pivot.
 
-use graphtor_core::config::{Source, SourceConfig};
+use graphtor_core::config::SourceConfig;
 use graphtor_core::GraphtorError;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -28,7 +28,7 @@ sources:
 
     assert_eq!(config.sources.len(), 1);
 
-    let Source::Local(local) = &config.sources[0];
+    let local = config.sources[0].as_local().expect("local source");
     assert_eq!(local.id, "internal-wiki");
 }
 

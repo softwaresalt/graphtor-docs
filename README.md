@@ -77,6 +77,14 @@ cargo build --release
 
 [releases]: https://github.com/softwaresalt/graphtor-docs/releases
 
+> **Just want to consume an already-generated database?** Skip straight to
+> `graphtor-docs install` (no flags) in an empty workspace, drop a `.db`
+> file into the resulting `.graphtor/` directory, and run `graphtor-docs
+> serve` — no `sources.yaml` or `sync` required. The steps below are for
+> ingesting and generating your own documentation index; see
+> [Ingestion setup](docs/cli-reference/graphtor-docs.md#ingestion-setup) for
+> the full CLI-driven workflow.
+
 ### 2. Configure sources
 
 Create `.graphtor/config/sources.yaml` pointing at your local docline output

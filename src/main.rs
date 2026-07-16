@@ -155,12 +155,13 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
 
     match cli.command {
         Command::Sync(args) => cmd_sync(&cwd, &db_path, sources_path.as_deref(), &args, fmt),
-        Command::Serve(_) => {
+        Command::Serve(args) => {
             cmd_serve(
                 &db_path,
                 &cwd,
                 sources_path.as_deref(),
                 has_explicit_db_target,
+                args.read_only,
             )
             .await
         }
@@ -245,6 +246,13 @@ fn discover_db_files(base_db_path: &std::path::Path, source_config: &SourceConfi
     let mut db_paths = BTreeSet::new();
 
     for source in &source_config.sources {
+        // A non-ingestible (e.g. served, read-only) source contributes no
+        // generation target — this is a SHRINKING exclusion filter that
+        // never enlarges the write/sync set. Its served path reaches the
+        // serve candidate union via the P1-T6 merge (P1-T1), not here.
+        if source.as_local().is_none() {
+            continue;
+        }
         db_paths.insert(resolve_source_db_path(base_db_path, source));
     }
 
@@ -282,6 +290,14 @@ fn split_plan_by_database(
             .collect();
 
     for planned in &plan.sources {
+        // Belt-and-suspenders on top of P1-RF2's filtered `AcquisitionPlan`
+        // invariant (which already excludes a non-local source from
+        // `plan.sources`): without this guard, `or_insert_with` below could
+        // re-introduce a db key for a non-local planned source and route it
+        // toward a read-write open.
+        if planned.source.as_local().is_none() {
+            continue;
+        }
         let db_path = resolve_source_db_path(base_db_path, &planned.source);
         let grouped_plan = plans_by_db
             .entry(db_path)
@@ -652,13 +668,16 @@ struct PersistedV4MigrationSnapshot {
 
 #[must_use]
 fn source_id(source: &Source) -> &str {
-    let Source::Local(local) = source;
-    &local.id
+    source.id()
 }
 
 #[must_use]
 fn changed_source_fields(current: &Source, persisted: &Source) -> Vec<&'static str> {
-    let (Source::Local(current), Source::Local(persisted)) = (current, persisted);
+    let (Some(current), Some(persisted)) = (current.as_local(), persisted.as_local()) else {
+        // A non-local source is not part of the v4 generation snapshot;
+        // defensively report no field-level changes rather than panicking.
+        return Vec::new();
+    };
     let mut changed_fields = Vec::new();
     if current.path != persisted.path {
         changed_fields.push("path");
@@ -1276,9 +1295,7 @@ fn guard_no_embed_before_v4_rebuild(
         )
     })?;
     let has_epoch_mismatch = grouped_plan.sources.iter().any(|planned| {
-        let source_id = match &planned.source {
-            Source::Local(local) => local.id.as_str(),
-        };
+        let source_id = planned.source.id();
         sync_state.source(source_id).is_some_and(|s| {
             s.contract_epoch.as_deref() != Some(graphtor_core::ingest_contract::CONTRACT_EPOCH)
         })
@@ -1307,7 +1324,12 @@ fn collect_candidate_md_files(
     let mut collected_sources = Vec::with_capacity(plan.sources.len());
 
     for planned in &plan.sources {
-        let Source::Local(local) = &planned.source;
+        let Some(local) = planned.source.as_local() else {
+            anyhow::bail!(
+                "source '{}' is not a local ingestion source; cannot scan for v4 migration",
+                planned.source.id()
+            );
+        };
         let scan_source = graphtor_core::LocalSource {
             id: local.id.clone(),
             path: planned.target_dir.clone(),
@@ -1406,9 +1428,7 @@ fn collect_snapshot_candidates(
     let mut snapshot_candidates = Vec::new();
 
     for collected_source in collected_sources {
-        let source_id = match &collected_source.planned.source {
-            Source::Local(local) => local.id.clone(),
-        };
+        let source_id = collected_source.planned.source.id().to_string();
         if let Some(expected_sources) = expected_frozen_source_mtimes {
             let expected_paths = expected_sources.get(&source_id).with_context(|| {
                 format!(
@@ -1482,9 +1502,7 @@ fn freeze_v4_migration_input(
     let mut frozen_source_mtimes = HashMap::with_capacity(collected_sources.len());
 
     for (index, collected_source) in collected_sources.into_iter().enumerate() {
-        let source_id = match &collected_source.planned.source {
-            Source::Local(local) => local.id.clone(),
-        };
+        let source_id = collected_source.planned.source.id().to_string();
         let snapshot_dir = PathBuf::from(format!("source-{index}"));
         let snapshot_source_dir = snapshot_root.join(&snapshot_dir);
         std::fs::create_dir_all(&snapshot_source_dir).with_context(|| {
@@ -2066,9 +2084,7 @@ where
 
     for (index, planned) in plan.sources.iter().enumerate() {
         let source_dir = &planned.target_dir;
-        let source_id = match &planned.source {
-            graphtor_core::Source::Local(l) => l.id.as_str(),
-        };
+        let source_id = planned.source.id();
 
         on_source_start(source_id, index + 1, total_sources);
 
@@ -2336,86 +2352,108 @@ struct ServeOpenedDatabases {
 
 /// Open all databases for the `serve` command.
 ///
-/// For each path: acquires the lock, opens read-write and read-only stores,
-/// ensures the schema, and gates on pre-v4 state.
+/// For each path, per its resolved [`ServeMode`]:
+/// - [`ServeMode::Generation`]: acquires the advisory write lock, opens the
+///   read-write store, ensures the schema (a write), gates on pre-v4 state,
+///   then opens the read-only store used by MCP query handlers — unchanged
+///   from the pre-P1-T3 behaviour.
+/// - [`ServeMode::ReadOnly`]: skips the write lock, the read-write store,
+///   and `ensure_schema()` entirely. Opens ONLY
+///   [`DataStore::open_engine_readonly`] — the engine/filesystem-enforced
+///   read-only primitive proven in P1-T0 (050.009-T) — and gates on pre-v4
+///   state using that same read-only store. This is the **gating**
+///   invariant (INV-1); the underlying engine-level no-write proof itself
+///   is P1-T0's responsibility, not re-proven here.
 ///
 /// Returns `Ok(None)` when all databases opened cleanly, or `Ok(Some(code))`
 /// when an exit code should be returned immediately (e.g. pre-v4 gate).
 fn open_serve_databases(
-    db_paths: Vec<PathBuf>,
+    classified: Vec<(PathBuf, workspace::serve_discovery::ServeMode)>,
     cwd: &std::path::Path,
 ) -> anyhow::Result<(Option<i32>, ServeOpenedDatabases)> {
+    use workspace::serve_discovery::ServeMode;
+
     let mut result = ServeOpenedDatabases {
         locks: Vec::new(),
         rw_stores: Vec::new(),
         ro_stores: Vec::new(),
     };
-    for target_db_path in db_paths {
-        info!(db_path = %target_db_path.display(), "opening database");
-        let lock = acquire_database_lock(&target_db_path, cwd)?;
-        let store = DataStore::open_sqlite(&target_db_path, cwd)
-            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
-        store
-            .ensure_schema()
-            .context("failed to ensure database schema")?;
-        // Gate serve on pre-v4 databases.  Serving stale pre-pivot data is
-        // worse than refusing to start; the operator must run `sync` first.
-        if store
-            .needs_v4_migration()
-            .context("failed to check database migration state")?
-        {
-            eprintln!(
-                "error: database at '{}' has pre-v4 schema; \
-                 run `graphtor-docs sync` to rebuild the index before starting serve",
-                target_db_path.display()
-            );
-            return Ok((Some(2), result));
+    for (target_db_path, posture) in classified {
+        match posture {
+            ServeMode::Generation => {
+                info!(
+                    db_path = %target_db_path.display(),
+                    posture = "generation",
+                    "opening database"
+                );
+                let lock = acquire_database_lock(&target_db_path, cwd)?;
+                let store = DataStore::open_sqlite(&target_db_path, cwd).with_context(|| {
+                    format!("failed to open database at {}", target_db_path.display())
+                })?;
+                store
+                    .ensure_schema()
+                    .context("failed to ensure database schema")?;
+                // Gate serve on pre-v4 databases.  Serving stale pre-pivot data is
+                // worse than refusing to start; the operator must run `sync` first.
+                if store
+                    .needs_v4_migration()
+                    .context("failed to check database migration state")?
+                {
+                    eprintln!(
+                        "error: database at '{}' has pre-v4 schema; \
+                         run `graphtor-docs sync` to rebuild the index before starting serve",
+                        target_db_path.display()
+                    );
+                    return Ok((Some(2), result));
+                }
+                let readonly_store = DataStore::open_sqlite_readonly(&target_db_path, cwd)
+                    .with_context(|| {
+                        format!("failed to open database at {}", target_db_path.display())
+                    })?;
+                result.locks.push(lock);
+                result.rw_stores.push((target_db_path.clone(), store));
+                result.ro_stores.push((target_db_path, readonly_store));
+            }
+            ServeMode::ReadOnly => {
+                info!(
+                    db_path = %target_db_path.display(),
+                    posture = "read_only",
+                    "opening database"
+                );
+                let readonly_store = DataStore::open_engine_readonly(&target_db_path, cwd)
+                    .with_context(|| {
+                        format!("failed to open database at {}", target_db_path.display())
+                    })?;
+                if readonly_store
+                    .needs_v4_migration()
+                    .context("failed to check database migration state")?
+                {
+                    eprintln!(
+                        "error: database at '{}' has pre-v4 schema; \
+                         run `graphtor-docs sync` to rebuild the index before starting serve",
+                        target_db_path.display()
+                    );
+                    return Ok((Some(2), result));
+                }
+                result.ro_stores.push((target_db_path, readonly_store));
+            }
         }
-        let readonly_store = DataStore::open_sqlite_readonly(&target_db_path, cwd)
-            .with_context(|| format!("failed to open database at {}", target_db_path.display()))?;
-        result.locks.push(lock);
-        result.rw_stores.push((target_db_path.clone(), store));
-        result.ro_stores.push((target_db_path, readonly_store));
     }
     Ok((None, result))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn cmd_serve(
     db_path: &std::path::Path,
     cwd: &std::path::Path,
     config_override: Option<&std::path::Path>,
     has_explicit_db_target: bool,
+    force_read_only: bool,
 ) -> anyhow::Result<i32> {
     let source_config_result = load_source_config(cwd, db_path, config_override);
 
-    // Duplicate-intake preflight — same fail-closed check as `sync`.
-    // The background-sync task spawned by `serve` is a write path: it
-    // mutates databases just like an interactive sync.  Allowing it to run
-    // with duplicate intakes could silently corrupt those databases.
-    //
-    // We check before opening any databases so that a mis-configured
-    // registry is rejected immediately without creating empty DB files.
-    if let Ok(Some(ref source_config)) = source_config_result {
-        if !source_config.sources.is_empty() {
-            if let Some(exit_code) =
-                run_duplicate_intake_preflight(source_config, db_path, cwd, false)?
-            {
-                return Ok(exit_code);
-            }
-        }
-    }
-
-    let db_paths = match &source_config_result {
-        Ok(Some(source_config)) => discover_db_files(db_path, source_config),
-        Ok(None) => {
-            if config_override.is_none() && has_explicit_db_target {
-                vec![db_path.to_path_buf()]
-            } else {
-                let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
-                eprintln!("error: config file '{}' not found", path.display());
-                return Ok(2);
-            }
-        }
+    let source_config: Option<SourceConfig> = match source_config_result {
+        Ok(config) => config,
         Err(e) => {
             // A registry file exists but is malformed — fail closed.  Opening
             // databases and starting the MCP server with a broken config would
@@ -2427,7 +2465,130 @@ async fn cmd_serve(
         }
     };
 
-    let (early_exit, opened) = open_serve_databases(db_paths, cwd)?;
+    let db_paths = if let Some(config) = &source_config {
+        discover_db_files(db_path, config)
+    } else if let Some(path) = config_override {
+        // The operator explicitly pointed `--config` at a file that does not
+        // exist — a genuine configuration error, not a case for
+        // auto-discovery to paper over.
+        eprintln!("error: config file '{}' not found", path.display());
+        return Ok(2);
+    } else if has_explicit_db_target {
+        vec![db_path.to_path_buf()]
+    } else {
+        // Zero-config consumption workspace: no `sources.yaml` was
+        // auto-discovered and no explicit `--db-path`/`--config` was given.
+        // Auto-discovery of `.graphtor/*.db` below is the SOLE source of
+        // candidates — this is no longer a hard error (R1: `serve`
+        // auto-discovers dropped `.db` files with zero configuration).
+        Vec::new()
+    };
+
+    // Auto-discover dropped `.db` files directly inside `.graphtor/` and
+    // assemble the served set as a UNION that PRESERVES `db_paths` (the
+    // existing configured/explicit candidates) — see
+    // `workspace::serve_discovery` (P1-T1). Existing candidates validate
+    // against the broader `cwd` project root (an explicit `--db-path` may
+    // live outside `.graphtor/`); auto-discovery itself stays scoped to
+    // `.graphtor/`.
+    let graphtor_dir = cwd.join(".graphtor");
+    let served_paths = workspace::serve_discovery::discover_served_databases(
+        &graphtor_dir,
+        cwd,
+        &db_paths,
+        source_config.as_ref(),
+    )
+    .context("failed to discover databases to serve")?;
+    if served_paths.is_empty() {
+        eprintln!(
+            "no databases found to serve; drop a `.db` file into '{}' or configure a source",
+            graphtor_dir.display()
+        );
+        return Ok(2);
+    }
+
+    // Content-derived posture classification (P1-T2): resolvable real
+    // generation sources promote ONLY their resolved target to
+    // `Generation`; everything else — absent/empty/stale sources.yaml, or
+    // an auto-discovered dropped db with no source targeting it — stays
+    // `ReadOnly` (the fail-safe default).
+    //
+    // `--read-only` (P1-T7) is an escape hatch on top of this: passing
+    // `None` here regardless of the resolved `source_config` means NO
+    // source can ever promote a target to `Generation`, so every database
+    // in `served_paths` classifies `ReadOnly` and `generation_sources`
+    // stays empty — which in turn skips the duplicate-intake preflight and
+    // the background sync spawn below, exactly like an absent registry.
+    let mut classified = workspace::serve_discovery::classify_serve_postures(
+        &served_paths,
+        if force_read_only {
+            None
+        } else {
+            source_config.as_ref()
+        },
+        db_path,
+        cwd,
+    );
+
+    // `discover_db_files` falls back to `base_db_path` when a source
+    // registry resolves to zero sources, purely so `sync` always has
+    // somewhere to write a fresh database. For `serve`, a `ReadOnly`
+    // candidate that does not exist on disk is exactly this phantom
+    // default — nothing was ever dropped there and no source targets it —
+    // so it is excluded here rather than attempted (and failed) through
+    // `open_engine_readonly`, which requires the file to already exist. A
+    // `Generation` candidate is kept even when absent: that is the
+    // legitimate "not-yet-created generation target" case a fresh
+    // source-backed workspace relies on.
+    classified.postures.retain(|(path, mode)| {
+        *mode == workspace::serve_discovery::ServeMode::Generation || path.exists()
+    });
+
+    if classified.postures.is_empty() {
+        eprintln!(
+            "no databases found to serve; drop a `.db` file into '{}' or configure a source",
+            graphtor_dir.display()
+        );
+        return Ok(2);
+    }
+
+    let generation_count = classified
+        .postures
+        .iter()
+        .filter(|(_, mode)| *mode == workspace::serve_discovery::ServeMode::Generation)
+        .count();
+    // Positive startup observability (Constitution V): the resolved posture
+    // is affirmatively logged, not inferred from an absent line.
+    info!(
+        discovered_count = classified.postures.len(),
+        generation_count,
+        readonly_count = classified.postures.len() - generation_count,
+        "resolved serve posture"
+    );
+
+    // NEVER the full `SourceConfig` (INV-7) — only the source groups whose
+    // resolved target actually reached `Generation` reach the preflight and
+    // the background sync task below.
+    let generation_config = SourceConfig {
+        sources: classified.generation_sources.clone(),
+    };
+
+    // Duplicate-intake preflight — same fail-closed check as `sync`.
+    // The background-sync task spawned by `serve` is a write path: it
+    // mutates databases just like an interactive sync.  Allowing it to run
+    // with duplicate intakes could silently corrupt those databases.
+    //
+    // We check before opening any databases so that a mis-configured
+    // registry is rejected immediately without creating empty DB files.
+    if !generation_config.sources.is_empty() {
+        if let Some(exit_code) =
+            run_duplicate_intake_preflight(&generation_config, db_path, cwd, false)?
+        {
+            return Ok(exit_code);
+        }
+    }
+
+    let (early_exit, opened) = open_serve_databases(classified.postures, cwd)?;
     if let Some(code) = early_exit {
         return Ok(code);
     }
@@ -2442,52 +2603,37 @@ async fn cmd_serve(
     let model: Option<EmbeddingModel> = resolve_embedding_model(ResolverCaller::Serve, false)
         .context("embedding model resolution failed")?;
 
-    // Resolve source config (same auto-discovery logic as cmd_sync) and spawn
-    // a background incremental sync task if a config is available.
-    let sync_status = match source_config_result {
-        Ok(Some(source_config)) if !source_config.sources.is_empty() => {
-            info!("background sync task spawned");
-            spawn_background_sync(
-                source_config,
-                db_path.to_path_buf(),
-                cwd.to_path_buf(),
-                stores_by_db
-                    .iter()
-                    .map(|(path, store)| (path.clone(), store.clone()))
-                    .collect(),
-                model.clone(),
-            )
-        }
-        Ok(Some(_)) => {
-            info!("source config has no sources; background sync skipped");
-            Arc::default()
-        }
-        Ok(None) => {
-            if config_override.is_none() && has_explicit_db_target {
-                info!("no source registry found; background sync skipped");
-                Arc::default()
-            } else {
-                // Any remaining Ok(None) case is still fail-closed: either an
-                // explicit --config path is missing, or auto-discovery found no
-                // registry and the operator did not explicitly target a DB.
-                let path = config_override.unwrap_or_else(|| std::path::Path::new("<unknown>"));
-                eprintln!("error: config file '{}' not found", path.display());
-                return Ok(2);
-            }
-        }
-        Err(e) => {
-            // load_source_config Err is handled above in the db_paths match;
-            // this arm is unreachable in normal operation, but kept fail-closed
-            // for defence-in-depth.
-            return Err(e.context("source registry is invalid; fix it before running serve"));
-        }
+    // Spawn a background incremental sync task ONLY when at least one
+    // database resolved to `Generation`; hand it ONLY the filtered
+    // `generation_config` — never the full registry — so
+    // `spawn_background_sync`'s internal `split_plan_by_database` re-split
+    // can never re-schedule a stale or read-only-classified source group.
+    let sync_status = if generation_config.sources.is_empty() {
+        info!("no generation sources resolved; background sync skipped");
+        Arc::default()
+    } else {
+        info!("background sync task spawned");
+        spawn_background_sync(
+            generation_config,
+            db_path.to_path_buf(),
+            cwd.to_path_buf(),
+            stores_by_db
+                .iter()
+                .map(|(path, store)| (path.clone(), store.clone()))
+                .collect(),
+            model.clone(),
+        )
     };
 
     let mut stores = readonly_stores_by_db
         .into_iter()
         .map(|(_path, store)| store);
     let Some(primary) = stores.next() else {
-        unreachable!("discover_db_files always yields at least one database path");
+        // Structurally unreachable — the empty-union case is already
+        // handled above — but kept as a HANDLED error rather than
+        // `unreachable!()` for defence-in-depth (review thread 14).
+        eprintln!("no databases found to serve");
+        return Ok(2);
     };
     let additional: Vec<_> = stores.collect();
     let server = match model {
@@ -2521,41 +2667,94 @@ fn discover_status_db_paths(
     config_override: Option<&std::path::Path>,
     has_explicit_db_target: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    match load_source_config(cwd, db_path, config_override) {
-        Ok(Some(source_config)) => Ok(discover_db_files(db_path, &source_config)),
-        Ok(None) => {
-            // `load_source_config` returns `Ok(None)` for two distinct reasons:
-            //
-            // 1. An explicit `--config` path was supplied but the file does not
-            //    exist.  This is a misconfiguration — fail closed so the
-            //    operator sees the bad path instead of a silent empty result.
-            //
-            // 2. No `--config` was supplied and auto-discovery found nothing in
-            //    `.graphtor/config/`.  This is a valid "not yet configured"
-            //    state — return an empty list and exit 0 unless the operator
-            //    explicitly targeted a database, in which case inspect that DB.
-            if let Some(path) = config_override {
-                return Err(anyhow::anyhow!(
-                    "source registry '{}' not found; check the --config path",
-                    path.display()
-                ));
-            }
-            if has_explicit_db_target {
-                debug!(
-                    db_path = %db_path.display(),
-                    "no source registry found; status will inspect the explicit database target"
-                );
-                return Ok(vec![db_path.to_path_buf()]);
-            }
-            debug!("no source registry found; status will report an empty database list");
-            Ok(Vec::new())
-        }
+    let source_config = match load_source_config(cwd, db_path, config_override) {
+        Ok(config) => config,
         Err(e) => {
             // A registry file exists but is malformed — fail closed so the
             // operator sees the configuration error rather than stale data.
-            Err(e.context("source registry is invalid; fix it before running status"))
+            return Err(e.context("source registry is invalid; fix it before running status"));
         }
-    }
+    };
+
+    let existing_candidates: Vec<PathBuf> = if let Some(config) = &source_config {
+        discover_db_files(db_path, config)
+    } else {
+        // `load_source_config` returns `Ok(None)` for two distinct reasons:
+        //
+        // 1. An explicit `--config` path was supplied but the file does not
+        //    exist.  This is a misconfiguration — fail closed so the
+        //    operator sees the bad path instead of a silent empty result.
+        //
+        // 2. No `--config` was supplied and auto-discovery found nothing in
+        //    `.graphtor/config/`.  This is a valid "not yet configured"
+        //    state — return an empty list and exit 0 unless the operator
+        //    explicitly targeted a database, in which case inspect that DB.
+        if let Some(path) = config_override {
+            return Err(anyhow::anyhow!(
+                "source registry '{}' not found; check the --config path",
+                path.display()
+            ));
+        }
+        if has_explicit_db_target {
+            debug!(
+                db_path = %db_path.display(),
+                "no source registry found; status will inspect the explicit database target"
+            );
+            // Return the explicit target DIRECTLY, bypassing the serve-posture
+            // retain below. Serve-posture parity governs REGISTRY-driven
+            // auto-discovery (dropping phantom/stale targets a `serve` would
+            // never open); an explicit `--db-path` with no registry is instead a
+            // direct request to inspect exactly that database. Running it through
+            // `retain(Generation || exists)` would drop a not-yet-created target
+            // and make `status` print "no sources configured" instead of the
+            // accurate "database not found — run sync", diverging from the
+            // pre-parity diagnostic. `status` and `serve` legitimately differ
+            // here: `serve` needs an openable file, `status` reports absence.
+            return Ok(vec![db_path.to_path_buf()]);
+        }
+        debug!("no source registry found; status will report an empty database list");
+        Vec::new()
+    };
+
+    // Full posture parity with `serve` (P1-T5): build the served UNION exactly
+    // as `cmd_serve` does — merge any `.db` file dropped directly into
+    // `.graphtor/` and any explicit workspace-contained `type: database` entry
+    // (P1-T6) via the SAME shared auto-discovery (P1-T1) — then classify every
+    // path with `classify_serve_postures` and retain `Generation || exists`,
+    // the IDENTICAL rule `cmd_serve` applies. This drops every `ReadOnly`
+    // candidate whose file does not exist — not only the empty-registry
+    // `base_db_path` phantom (a registry with zero ingestible sources), but also
+    // a STALE or EMPTY `local` source whose target was never created: `serve`
+    // classifies such a nonexistent target `ReadOnly` and excludes it, so
+    // `status`/`list-sources` (which shares this helper via
+    // `QueryCtx::open_stores`) must not diverge by reporting a phantom database
+    // `serve` would never open. A real not-yet-created GENERATION target (a
+    // resolvable, ingestible local source) classifies `Generation` and is kept
+    // even when absent, exactly as `serve` keeps it.
+    let graphtor_dir = cwd.join(".graphtor");
+    let served = workspace::serve_discovery::discover_served_databases(
+        &graphtor_dir,
+        cwd,
+        &existing_candidates,
+        source_config.as_ref(),
+    )
+    .context("failed to discover databases for status")?;
+
+    let mut classified = workspace::serve_discovery::classify_serve_postures(
+        &served,
+        source_config.as_ref(),
+        db_path,
+        cwd,
+    );
+    classified.postures.retain(|(path, mode)| {
+        *mode == workspace::serve_discovery::ServeMode::Generation || path.exists()
+    });
+
+    Ok(classified
+        .postures
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect())
 }
 
 fn load_status_databases(
@@ -3006,22 +3205,53 @@ fn cmd_install(
 ) -> anyhow::Result<i32> {
     // Always create the workspace directory scaffold first so the lock path exists.
     let ws_dir = cwd.join(".graphtor");
+    // Containment guard (W7-1; parity with serve X1 / uninstall X2): a
+    // pre-existing `.graphtor` that is itself a symlink/junction is its own
+    // trust anchor, so `validate_path` would accept every descendant.
+    // `create_dir_all` follows the link and `WorkspaceLock::acquire` plus the
+    // scaffold/binary copy would then write through it into an external target,
+    // bypassing containment. Reject the linked root before any write and fail
+    // closed (Constitution Principles III/IV).
+    if graphtor_core::path::is_reparse_point(&ws_dir) {
+        anyhow::bail!(
+            ".graphtor is a symlink or junction; refusing to install through a linked workspace root"
+        );
+    }
+    // Capture whether the workspace already existed BEFORE the bootstrap
+    // below: `create_dir_all` always makes `.graphtor/`, so `install_minimal`
+    // / `install` would otherwise always observe an existing directory and
+    // report `created: false` even on a genuine first-time install.
+    let workspace_existed = ws_dir.exists();
     std::fs::create_dir_all(&ws_dir).context("failed to create .graphtor directory")?;
 
     // Always acquire a lock to prevent concurrent installs.
     let _lock = workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
         .context("workspace is locked by another process")?;
 
-    let result = workspace::install::install(cwd).context("install failed")?;
-
-    // Initialise sources.yaml (non-destructive).
-    let init_result = workspace::init::init_sources_yaml(&result.workspace_dir, false)
-        .context("failed to initialise sources.yaml")?;
-
-    // Manage .gitignore (side effect only; print deferred below).
-    if !args.no_gitignore {
-        workspace::gitignore::add_gitignore_entry(cwd).context("failed to update .gitignore")?;
+    if args.with_ingestion {
+        return cmd_install_full(cwd, args, fmt, workspace_existed);
     }
+
+    // Consumption-first default (P2-T1): the minimal footprint creates ONLY
+    // `.graphtor/` plus a minimal serve `.mcp.json` — no `sources.yaml`, no
+    // ingestion subdirectories (bin/data/cache/config/logs), and no
+    // `.gitignore` side effect. `install_minimal` NEVER removes an existing
+    // full scaffold (P2-T6/INV-6), so the reported footprint reflects the
+    // ACTUAL on-disk state afterward, not merely "which install path ran" —
+    // running the default command over an existing full install continues
+    // to report `full`.
+    let result = workspace::install::install_minimal(cwd).context("install failed")?;
+    let footprint = workspace::doctor::detect_footprint(&result.workspace_dir);
+    // The bootstrap above created `.graphtor/` before `install_minimal` ran,
+    // so its own `created` flag is always false here (asserted below to pin
+    // that invariant); report genuine first-time creation from the
+    // pre-bootstrap existence check instead.
+    debug_assert!(
+        !result.created,
+        "the lock bootstrap creates .graphtor before install_minimal, so its created flag \
+         must be false; report created from the pre-bootstrap existence check instead"
+    );
+    let created = !workspace_existed;
 
     // Generate or merge the graphtor-docs entry in the workspace-root .mcp.json.
     let mcp_outcome =
@@ -3037,16 +3267,119 @@ fn cmd_install(
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
-                "created": result.created,
+                "created": created,
                 "workspace_dir": result.workspace_dir.display().to_string(),
-                "binary_path": result.binary_path.display().to_string(),
+                "footprint": footprint.as_str(),
                 "mcp_config": mcp_config,
             }))
         );
         return Ok(0);
     }
 
-    if result.created {
+    if created {
+        println!("created: {}", result.workspace_dir.display());
+    } else if footprint == workspace::doctor::WorkspaceFootprint::Full {
+        println!(
+            "workspace already exists: {} (existing full ingestion-capable install preserved)",
+            result.workspace_dir.display()
+        );
+    } else {
+        println!(
+            "workspace already exists: {}",
+            result.workspace_dir.display()
+        );
+    }
+
+    if let Some(outcome) = &mcp_outcome {
+        match outcome.action {
+            workspace::mcp_config::McpConfigAction::Created => {
+                println!("created: {} (registered graphtor-docs)", outcome.path);
+            }
+            workspace::mcp_config::McpConfigAction::Updated => {
+                println!("updated: {} (registered graphtor-docs)", outcome.path);
+            }
+            workspace::mcp_config::McpConfigAction::Removed => {}
+        }
+    }
+
+    println!("\ninstallation complete.");
+    println!(
+        "drop a `.db` file into {} and run `graphtor-docs serve` to serve it read-only.",
+        ws_dir.display()
+    );
+    println!(
+        "to ingest and generate your own documentation index instead, run \
+         `graphtor-docs install --with-ingestion` — see the ingestion setup guide in \
+         docs/cli-reference/graphtor-docs.md."
+    );
+
+    Ok(0)
+}
+
+/// The full, ingestion-capable install path selected by `install --with-ingestion`
+/// (P2-T2a routing, P2-T2b orchestration).
+///
+/// Invokes the preserved full-scaffold [`workspace::install::install`]
+/// (`bin/`, `data/`, `cache/`, `config/`, `logs/` + copied binary), writes a
+/// template `sources.yaml`, manages `.gitignore` (unless `--no-gitignore`),
+/// and generates the workspace-root `.mcp.json` entry via the shared P2-T3
+/// writer. Because the binary now exists on disk, the writer's resolution
+/// ladder produces the absolute, cwd-independent pinned path rather than the
+/// bare PATH command used by the consumption-first minimal default.
+fn cmd_install_full(
+    cwd: &std::path::Path,
+    args: &cli::InstallArgs,
+    fmt: OutputFormat,
+    workspace_existed: bool,
+) -> anyhow::Result<i32> {
+    let result = workspace::install::install(cwd).context("install failed")?;
+    // The caller's lock-directory bootstrap created `.graphtor/` before
+    // `install` ran, so its own `created` flag is always false here (asserted
+    // below to pin that invariant); report genuine first-time creation from
+    // the pre-bootstrap existence check instead.
+    debug_assert!(
+        !result.created,
+        "the lock bootstrap creates .graphtor before install, so its created flag must be \
+         false; report created from the pre-bootstrap existence check instead"
+    );
+    let created = !workspace_existed;
+
+    // Initialise sources.yaml (non-destructive) — full path only.
+    let init_result = workspace::init::init_sources_yaml(&result.workspace_dir, false)
+        .context("failed to initialise sources.yaml")?;
+
+    // Manage .gitignore (side effect only; print deferred below) — full path
+    // only; the consumption-first minimal default never touches it.
+    if !args.no_gitignore {
+        workspace::gitignore::add_gitignore_entry(cwd).context("failed to update .gitignore")?;
+    }
+
+    // Generate or merge the graphtor-docs entry in the workspace-root
+    // .mcp.json.
+    let mcp_outcome =
+        workspace::mcp_config::generate_mcp_config(cwd).context("failed to generate MCP config")?;
+
+    if fmt == OutputFormat::Json {
+        let mcp_config = mcp_outcome.as_ref().map(|outcome| {
+            serde_json::json!({
+                "path": outcome.path,
+                "action": outcome.action.as_str(),
+            })
+        });
+        println!(
+            "{}",
+            cli::jsonrpc::wrap_success(serde_json::json!({
+                "created": created,
+                "workspace_dir": result.workspace_dir.display().to_string(),
+                "binary_path": result.binary_path.display().to_string(),
+                "footprint": "full",
+                "mcp_config": mcp_config,
+            }))
+        );
+        return Ok(0);
+    }
+
+    if created {
         println!("created: {}", result.workspace_dir.display());
     } else {
         println!(
@@ -3214,7 +3547,18 @@ fn cmd_uninstall(
     }
 
     let ws_dir = cwd.join(".graphtor");
-    let _lock = if ws_dir.exists() {
+    // Containment guard (W7-2): reject a linked `.graphtor` root BEFORE
+    // acquiring the lock. Otherwise `WorkspaceLock::acquire` (and
+    // `--force-unlock` replacing external lock artifacts) creates/removes
+    // `graphtor.lock` inside the external target — an out-of-workspace
+    // mutation — before `plan_uninstall`'s linked-root guard runs. Fail closed
+    // on a reparse-point root (Constitution Principles III/IV).
+    if graphtor_core::path::is_reparse_point(&ws_dir) {
+        anyhow::bail!(
+            ".graphtor is a symlink or junction; refusing to uninstall through a linked workspace root"
+        );
+    }
+    let lock_guard = if ws_dir.exists() {
         Some(
             workspace::lock::WorkspaceLock::acquire(&ws_dir, args.force_unlock)
                 .context("workspace is locked by another process")?,
@@ -3223,13 +3567,81 @@ fn cmd_uninstall(
         None
     };
 
-    let result =
-        workspace::uninstall::uninstall(cwd, args.keep_config).context("uninstall failed")?;
+    // PA-3 / F5: enumerate the EXACT deletion set AND every other destructive
+    // mutation BEFORE performing any of them. `plan_uninstall_full` computes
+    // the managed subdirectories (the PA-3 set — a user-dropped `.db` file in
+    // `.graphtor/` is never included), whether the managed `.gitignore` block
+    // will be cleaned, which MCP client config files may be pruned/deleted,
+    // and whether the now-empty `.graphtor/` root itself will be removed.
+    let plan = workspace::uninstall::plan_uninstall_full(cwd, args.keep_config);
+    let planned = &plan.managed_dirs;
+    if fmt != OutputFormat::Json {
+        if planned.is_empty() {
+            println!(
+                "no graphtor-managed directories to remove (workspace is minimal or already clean)"
+            );
+        } else {
+            println!("the following graphtor-managed directories will be removed:");
+            for dir in planned {
+                println!("  {}", dir.display());
+            }
+        }
+        if plan.gitignore_cleanup {
+            println!("the managed `.graphtor/` block will be removed from .gitignore");
+        }
+        if !plan.mcp_config_files.is_empty() {
+            println!(
+                "the graphtor-docs entry will be pruned from these MCP config files (a file is \
+                 deleted only if graphtor-docs was its sole server):"
+            );
+            for path in &plan.mcp_config_files {
+                println!("  {path}");
+            }
+        }
+        if plan.root_removal {
+            println!("the now-empty `.graphtor/` workspace root will be removed");
+        }
+    }
+
+    // Execute the EXACT approved plan just displayed above (PA-3 / F5) — never
+    // recompute any part of it internally, which would open a TOCTOU window
+    // where the mutations actually performed (managed-dir removals, `.gitignore`
+    // cleanup, MCP config pruning) could differ from what the operator was
+    // shown. This runs while the workspace lock is still held.
+    let mut result = workspace::uninstall::uninstall_planned(cwd, args.keep_config, &plan)
+        .context("uninstall failed")?;
+
+    // F4: release the workspace lock BEFORE removing the root. While the lock
+    // is held, `.graphtor/graphtor.lock` keeps the directory non-empty, so an
+    // otherwise-empty root could never be reclaimed. Dropping the guard deletes
+    // that lock file; only then can the emptied root be removed.
+    drop(lock_guard);
+
+    // F6: remove the root ONLY when the approved plan said so (`root_removal`),
+    // AND it is genuinely empty now (re-checked inside `remove_empty_workspace_root`).
+    // Gating on the approved plan prevents deleting a root that a concurrently
+    // vanished non-managed entry left empty but that was never approved for
+    // removal; using `fs::remove_dir` — never `remove_dir_all` — makes a
+    // concurrent re-install that repopulated it a harmless failure, not data loss.
+    if plan.root_removal {
+        if let Some(removed_root) = workspace::uninstall::remove_empty_workspace_root(&ws_dir)
+            .context("failed to remove the emptied workspace root")?
+        {
+            result.removed.push(removed_root);
+        }
+    }
 
     if fmt == OutputFormat::Json {
         println!(
             "{}",
             cli::jsonrpc::wrap_success(serde_json::json!({
+                "planned_removal": plan.managed_dirs
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>(),
+                "planned_gitignore_cleanup": plan.gitignore_cleanup,
+                "planned_mcp_config_changes": plan.mcp_config_files,
+                "planned_root_removal": plan.root_removal,
                 "removed": result.removed,
                 "updated": result.updated,
             }))
@@ -3378,9 +3790,7 @@ fn cmd_prewarm(
                 ..SyncMetrics::default()
             };
             for planned in &prepared.rebuild_plan.sources {
-                let source_id = match &planned.source {
-                    Source::Local(local) => local.id.as_str(),
-                };
+                let source_id = planned.source.id();
                 match prewarm_sync_source(
                     store,
                     planned,
@@ -3431,10 +3841,7 @@ fn prewarm_sync_source(
     quiet: bool,
 ) -> Option<SyncMetrics> {
     let source_dir = &planned.target_dir;
-    let source_id = match &planned.source {
-        Source::Local(l) => l.id.as_str(),
-    }
-    .to_string();
+    let source_id = planned.source.id().to_string();
 
     if !source_dir.exists() {
         warn!(
@@ -3604,6 +4011,268 @@ mod tests {
         fs::create_dir_all(&config_dir).expect("create config dir");
         fs::write(config_dir.join("sources.yaml"), "sources: []\n")
             .expect("write empty sources.yaml");
+    }
+
+    // ── P1-RF4 / P1-T6: generation discovery/splitting exclusion ──────────
+
+    #[test]
+    fn discover_db_files_excludes_a_database_source_from_the_generation_set() {
+        let base_db_path = Path::new("/workspace/.graphtor/graph.db");
+        let config = SourceConfig {
+            sources: vec![
+                Source::Local(graphtor_core::LocalSource {
+                    id: "docs".to_string(),
+                    path: PathBuf::from("/workspace/docs"),
+                    include: vec![],
+                    exclude: vec![],
+                    formats: vec!["md".to_string()],
+                    database: Some("docs.db".to_string()),
+                }),
+                Source::Database(graphtor_core::DatabaseSource {
+                    id: "legacy".to_string(),
+                    path: PathBuf::from("/workspace/.graphtor/legacy.db"),
+                }),
+            ],
+        };
+
+        let db_paths = discover_db_files(base_db_path, &config);
+
+        assert_eq!(
+            db_paths,
+            vec![PathBuf::from("/workspace/.graphtor/docs.db")],
+            "the Database entry must contribute no generation target — it must not fall \
+             through to base_db_path, and only the local source's target remains"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_drop_the_phantom_fallback_for_a_database_only_registry() {
+        // W6-4: `discover_db_files` injects the `base_db_path` fallback (a
+        // phantom default `graph.db`) when a registry resolves to zero
+        // ingestible sources, purely so `sync` has a write target. `serve` drops
+        // that nonexistent phantom via its posture `retain`; `status` /
+        // `list-sources` must not diverge by reporting a `graph.db` that was
+        // never created and that no source targets. A database-only registry
+        // (one explicit `type: database` entry, no local sources) must therefore
+        // report ONLY the served database, never the phantom.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        let config_dir = graphtor_dir.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+
+        // The empty-registry phantom fallback — deliberately NOT created on disk.
+        let base_db_path = graphtor_dir.join("graph.db");
+
+        // A real, served database the registry explicitly points at.
+        let served_db = graphtor_dir.join("legacy.db");
+        fs::write(&served_db, b"db").expect("seed served db");
+
+        let served_db_yaml = served_db.display().to_string().replace('\\', "/");
+        fs::write(
+            config_dir.join("sources.yaml"),
+            format!("sources:\n  - type: database\n    id: legacy\n    path: {served_db_yaml}\n"),
+        )
+        .expect("write database-only sources.yaml");
+
+        let db_paths = discover_status_db_paths(&base_db_path, root.path(), None, false)
+            .expect("status discovery should succeed");
+
+        // Compare on file names to stay robust against path canonicalization.
+        let names: Vec<String> = db_paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "graph.db"),
+            "the nonexistent empty-registry phantom `graph.db` must not be reported \
+             by status (parity with serve's drop): {db_paths:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "legacy.db"),
+            "the explicitly-configured served database must still be reported: {db_paths:?}"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_drop_a_stale_local_sources_phantom_target() {
+        // W8-2: the W6-4 fix only dropped the phantom when a registry had ZERO
+        // ingestible sources. A registry that DOES contain a `local` source
+        // still slipped a phantom through when that source was stale/empty: its
+        // target database was never created, yet `has_ingestible` was true so
+        // the old special-case skipped the drop. `serve` classifies such a
+        // nonexistent target `ReadOnly` and excludes it, so `status` /
+        // `list-sources` must not report a database `serve` would never open.
+        // Full posture parity (`classify_serve_postures` + `Generation || exists`
+        // retain) drops it here too.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        let config_dir = graphtor_dir.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+
+        // The local source's default target — deliberately NOT created on disk.
+        let base_db_path = graphtor_dir.join("graph.db");
+
+        // A STALE local source: its content path does not exist, so it resolves
+        // no `Generation` target and its nonexistent database is a phantom.
+        let stale_source_dir = root.path().join("nonexistent-source-dir");
+        let stale_source_yaml = stale_source_dir.display().to_string().replace('\\', "/");
+        fs::write(
+            config_dir.join("sources.yaml"),
+            format!(
+                "sources:\n  - type: local\n    id: stale\n    path: {stale_source_yaml}\n    include:\n      - \"**/*.md\"\n"
+            ),
+        )
+        .expect("write stale-local sources.yaml");
+
+        let db_paths = discover_status_db_paths(&base_db_path, root.path(), None, false)
+            .expect("status discovery should succeed");
+
+        let names: Vec<String> = db_paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "graph.db"),
+            "a stale local source's nonexistent target `graph.db` must not be reported by \
+             status (parity with serve's ReadOnly-drop): {db_paths:?}"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_drop_an_empty_but_present_local_sources_phantom_target() {
+        // W8-2 (P3 coverage): the sibling test drives the drop through the
+        // `!local.path.exists()` half of the posture condition. This variant
+        // exercises the OTHER half — `!source_has_ingestible_content` — where
+        // the source directory EXISTS but holds no files matching its include
+        // globs. `serve` still classifies the never-created target `ReadOnly`
+        // and drops it, so `status` must too. This is the precise "stale/empty,
+        // has_ingestible was true" case the old coarse count mishandled.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        let config_dir = graphtor_dir.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+
+        let base_db_path = graphtor_dir.join("graph.db");
+
+        // An EMPTY-but-present local source: the directory exists, but contains
+        // only a non-matching file, so no `**/*.md` content is ingestible.
+        let empty_source_dir = root.path().join("empty-source");
+        fs::create_dir_all(&empty_source_dir).expect("create empty source dir");
+        fs::write(empty_source_dir.join("notes.txt"), b"not markdown")
+            .expect("seed non-matching file");
+        let empty_source_yaml = empty_source_dir.display().to_string().replace('\\', "/");
+        fs::write(
+            config_dir.join("sources.yaml"),
+            format!(
+                "sources:\n  - type: local\n    id: empty\n    path: {empty_source_yaml}\n    include:\n      - \"**/*.md\"\n"
+            ),
+        )
+        .expect("write empty-local sources.yaml");
+
+        let db_paths = discover_status_db_paths(&base_db_path, root.path(), None, false)
+            .expect("status discovery should succeed");
+
+        let names: Vec<String> = db_paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "graph.db"),
+            "an empty-but-present local source's nonexistent target `graph.db` must not be \
+             reported by status (parity with serve's ReadOnly-drop): {db_paths:?}"
+        );
+    }
+
+    #[test]
+    fn status_db_paths_keep_an_explicit_missing_db_target_with_no_registry() {
+        // Regression guard for the serve-posture refactor: an explicit
+        // `--db-path` target with NO registry must be inspected DIRECTLY, even
+        // when it does not exist yet, so `cmd_status` can report the accurate
+        // "database not found — run sync" diagnostic. If the explicit target
+        // were routed through the `retain(Generation || exists)` serve-posture
+        // filter it would classify `ReadOnly`, get dropped, and `status` would
+        // misleadingly print "no sources configured". Serve-posture parity is
+        // for REGISTRY-driven discovery only; an explicit target is a direct
+        // inspection request that legitimately diverges from `serve`.
+        let root = tempfile::tempdir().expect("workspace tempdir");
+        let graphtor_dir = root.path().join(".graphtor");
+        fs::create_dir_all(&graphtor_dir).expect("create graphtor dir");
+
+        // An explicit target that does NOT exist and has no backing registry.
+        let explicit_target = graphtor_dir.join("explicit-missing.db");
+        assert!(
+            !explicit_target.exists(),
+            "precondition: explicit target must not exist"
+        );
+
+        let db_paths = discover_status_db_paths(&explicit_target, root.path(), None, true)
+            .expect("status discovery should succeed");
+
+        assert_eq!(
+            db_paths,
+            vec![explicit_target.clone()],
+            "an explicit missing --db-path target with no registry must be reported directly so \
+             status can emit `database not found`, not dropped as a phantom: {db_paths:?}"
+        );
+    }
+
+    #[test]
+    fn split_plan_by_database_excludes_a_database_source_even_if_present_in_plan_sources() {
+        let base_db_path = Path::new("/workspace/.graphtor/graph.db");
+        let local_source = Source::Local(graphtor_core::LocalSource {
+            id: "docs".to_string(),
+            path: PathBuf::from("/workspace/docs"),
+            include: vec![],
+            exclude: vec![],
+            formats: vec!["md".to_string()],
+            database: None,
+        });
+        let database_source = Source::Database(graphtor_core::DatabaseSource {
+            id: "legacy".to_string(),
+            path: PathBuf::from("/workspace/.graphtor/legacy.db"),
+        });
+        let config = SourceConfig {
+            sources: vec![local_source.clone(), database_source.clone()],
+        };
+
+        // Construct an `AcquisitionPlan` that (unrealistically, for this
+        // defence-in-depth test) STILL contains the Database source in
+        // `plan.sources`, to prove `split_plan_by_database`'s OWN guard
+        // excludes it independently of whatever produced the plan.
+        let plan = AcquisitionPlan {
+            data_root: PathBuf::from("/workspace/.graphtor/data"),
+            allowed_root: PathBuf::from("/workspace"),
+            sources: vec![
+                PlannedSource {
+                    source: local_source,
+                    action: SourceAction::ScanLocal,
+                    target_dir: PathBuf::from("/workspace/docs"),
+                    allow_internal_snapshot_scan: false,
+                },
+                PlannedSource {
+                    source: database_source,
+                    action: SourceAction::ScanLocal,
+                    target_dir: PathBuf::from("/workspace/.graphtor/legacy.db"),
+                    allow_internal_snapshot_scan: false,
+                },
+            ],
+            total_scan: 2,
+        };
+
+        let grouped = split_plan_by_database(base_db_path, &config, &plan);
+
+        assert_eq!(
+            grouped.len(),
+            1,
+            "only the local source's group must survive splitting"
+        );
+        let (target_db_path, grouped_plan) = grouped.into_iter().next().unwrap();
+        assert_eq!(
+            target_db_path,
+            PathBuf::from("/workspace/.graphtor/graph.db")
+        );
+        assert_eq!(grouped_plan.sources.len(), 1);
+        assert_eq!(grouped_plan.sources[0].source.id(), "docs");
     }
 
     fn seed_current_sync_state(
@@ -3785,10 +4454,110 @@ mod tests {
         );
     }
 
+    /// Create a directory symlink cross-platform, returning `Err` when the
+    /// platform refuses (e.g. Windows without the symlink privilege) so the
+    /// caller can self-skip rather than fail.
+    fn try_symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link)
+        }
+    }
+
+    #[test]
+    fn cmd_install_refuses_a_symlinked_graphtor_root() {
+        // W7-1 / containment parity with serve (X1) and uninstall (X2): a
+        // pre-existing `.graphtor` that is itself a symlink/junction is its own
+        // trust anchor, so `validate_path` would accept every descendant.
+        // `create_dir_all` follows the link and `WorkspaceLock::acquire` +
+        // the scaffold/binary copy would then write through it into an external
+        // target. The reparse-point guard must reject the linked root and fail
+        // closed BEFORE any write.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let ws_dir = project.path().join(".graphtor");
+        if try_symlink_dir(external.path(), &ws_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        let result = cmd_install(project.path(), &args, OutputFormat::Human);
+
+        assert!(
+            result.is_err(),
+            "install through a symlinked .graphtor root must fail closed"
+        );
+        // Load-bearing containment check: the full (`--with-ingestion`) scaffold
+        // creates `bin/` and copies the binary into `.graphtor`. Without the
+        // guard those writes follow the link into the external target; the guard
+        // must abort before any of them run.
+        assert!(
+            !external.path().join("bin").exists(),
+            "install must not scaffold into the linked target"
+        );
+        assert!(
+            !external.path().join("sources.yaml").exists(),
+            "install must not write sources.yaml into the linked target"
+        );
+    }
+
+    #[test]
+    fn cmd_uninstall_refuses_a_symlinked_graphtor_root() {
+        // W7-2: the linked-root guard in plan/execute runs only AFTER the lock
+        // acquisition. If `.graphtor` is a symlink/junction, acquiring the lock
+        // (and `--force-unlock` replacing external lock artifacts) mutates the
+        // external target before uninstall decides to skip deletion. Reject a
+        // reparse-point root BEFORE acquiring the lock.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        // Seed a foreign artifact at the EXACT managed lock filename in the link
+        // target. With `--force-unlock`, `WorkspaceLock::acquire` would replace
+        // this file and its guard drop would then remove it — an out-of-workspace
+        // mutation — before `plan_uninstall`'s linked-root guard runs. The new
+        // guard must reject the linked root before the lock is ever touched, so
+        // this foreign artifact survives byte-for-byte.
+        let foreign_lock = external.path().join("graphtor.lock");
+        fs::write(&foreign_lock, b"foreign").expect("seed foreign lock");
+        let ws_dir = project.path().join(".graphtor");
+        if try_symlink_dir(external.path(), &ws_dir).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let args = cli::UninstallArgs {
+            confirm: true,
+            keep_config: false,
+            force_unlock: true,
+        };
+        let result = cmd_uninstall(project.path(), &args, OutputFormat::Human);
+
+        assert!(
+            result.is_err(),
+            "uninstall through a symlinked .graphtor root must fail closed"
+        );
+        assert!(
+            foreign_lock.exists(),
+            "the foreign lock in the link target must not be removed by force-unlock"
+        );
+        assert_eq!(
+            fs::read(&foreign_lock).expect("read foreign lock"),
+            b"foreign",
+            "uninstall must not force-replace the link target lock"
+        );
+    }
+
     #[test]
     fn cmd_install_writes_root_mcp_json() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let args = cli::InstallArgs {
+            with_ingestion: false,
             no_gitignore: true,
             force_unlock: false,
         };
@@ -3801,6 +4570,280 @@ mod tests {
         assert!(!tmp.path().join(".vscode/mcp.json").exists());
         assert!(!tmp.path().join(".cursor/mcp.json").exists());
         assert!(!tmp.path().join(".github/copilot/mcp.json").exists());
+    }
+
+    #[test]
+    fn cmd_install_default_creates_only_minimal_footprint() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let code =
+            cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert_eq!(code, 0);
+        let ws = tmp.path().join(".graphtor");
+        assert!(ws.is_dir(), ".graphtor/ root must exist");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                !ws.join(sub).exists(),
+                "consumption-first default install must not create the {sub} subdirectory"
+            );
+        }
+        assert!(
+            !ws.join("config").join("sources.yaml").exists(),
+            "consumption-first default install must not write sources.yaml"
+        );
+    }
+
+    #[test]
+    fn cmd_install_default_never_touches_gitignore() {
+        // Even when the operator explicitly asks for gitignore management
+        // (no_gitignore: false), the minimal path has no managed .gitignore
+        // side effect in this phase — that behavior belongs to the full
+        // (--with-ingestion) path only.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: false,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert!(
+            !tmp.path().join(".gitignore").exists(),
+            "consumption-first default install must not create or modify .gitignore"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_routes_to_full_scaffold() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let code =
+            cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert_eq!(code, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                ws.join(sub).is_dir(),
+                "--with-ingestion must create the full scaffold's {sub} subdirectory"
+            );
+        }
+        assert!(
+            workspace::install::installed_binary_path(&ws).exists(),
+            "--with-ingestion must copy the running binary into .graphtor/bin/"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_writes_sources_yaml() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert!(
+            tmp.path()
+                .join(".graphtor")
+                .join("config")
+                .join("sources.yaml")
+                .exists(),
+            "--with-ingestion must write a template sources.yaml"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_manages_gitignore_unless_no_gitignore() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: false,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        let gitignore_path = tmp.path().join(".gitignore");
+        assert!(
+            gitignore_path.exists(),
+            "--with-ingestion must manage .gitignore unless --no-gitignore is set"
+        );
+        let content = fs::read_to_string(&gitignore_path).expect("read .gitignore");
+        assert!(content.contains(".graphtor/"), "gitignore: {content}");
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_no_gitignore_skips_gitignore() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        assert!(
+            !tmp.path().join(".gitignore").exists(),
+            "--no-gitignore must suppress .gitignore management even with --with-ingestion"
+        );
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_mcp_json_uses_absolute_path_and_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        cmd_install(tmp.path(), &args, OutputFormat::Human).expect("install should succeed");
+
+        let content = fs::read_to_string(tmp.path().join(".mcp.json")).expect("read .mcp.json");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        let entry = &parsed["mcpServers"]["graphtor-docs"];
+        let command = entry["command"].as_str().expect("command string");
+        assert!(
+            std::path::Path::new(command).is_absolute(),
+            "with a managed binary now installed, the .mcp.json command must be the absolute \
+             pinned path, not the bare PATH command: {command}"
+        );
+        assert_eq!(
+            entry["x-graphtor-managed"], true,
+            "the with-ingestion .mcp.json entry must carry the managed-entry provenance marker"
+        );
+    }
+
+    #[test]
+    fn cmd_install_default_over_existing_full_layout_preserves_it() {
+        // An operator with an existing full (--with-ingestion) install runs
+        // plain `install` (the new default) — this must NOT strip the
+        // existing scaffold down to the minimal footprint.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let full_args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        cmd_install(tmp.path(), &full_args, OutputFormat::Human).expect("full install first");
+
+        let default_args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        let code = cmd_install(tmp.path(), &default_args, OutputFormat::Human)
+            .expect("default install over existing full layout should succeed");
+
+        assert_eq!(code, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                ws.join(sub).is_dir(),
+                "default install must preserve the existing full layout's {sub} subdirectory"
+            );
+        }
+        assert!(
+            ws.join("config").join("sources.yaml").exists(),
+            "default install must preserve the existing sources.yaml"
+        );
+        assert!(
+            workspace::install::installed_binary_path(&ws).exists(),
+            "default install must preserve the existing copied binary"
+        );
+    }
+
+    #[test]
+    fn cmd_install_default_over_existing_full_layout_reports_full_footprint() {
+        // JSON footprint reporting reflects ACTUAL on-disk state (via
+        // detect_footprint), not merely "which install function ran" — see
+        // the tests/install_footprint_test.rs integration test for the
+        // subprocess-level stdout assertion on the JSON "footprint" field.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let full_args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        cmd_install(tmp.path(), &full_args, OutputFormat::Human).expect("full install first");
+
+        let default_args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+        let code = cmd_install(tmp.path(), &default_args, OutputFormat::Json)
+            .expect("default install over existing full layout should succeed");
+        assert_eq!(code, 0);
+
+        let ws = tmp.path().join(".graphtor");
+        assert_eq!(
+            workspace::doctor::detect_footprint(&ws),
+            workspace::doctor::WorkspaceFootprint::Full,
+            "the workspace must still be detected as Full after a default install on top of it"
+        );
+    }
+
+    #[test]
+    fn cmd_install_default_repeated_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: false,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let first = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("first install");
+        let second = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("second install");
+
+        assert_eq!(first, 0);
+        assert_eq!(second, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                !ws.join(sub).exists(),
+                "repeated default install must stay minimal, not accumulate subdirs"
+            );
+        }
+    }
+
+    #[test]
+    fn cmd_install_with_ingestion_repeated_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let args = cli::InstallArgs {
+            with_ingestion: true,
+            no_gitignore: true,
+            force_unlock: false,
+        };
+
+        let first = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("first install");
+        let second = cmd_install(tmp.path(), &args, OutputFormat::Human).expect("second install");
+
+        assert_eq!(first, 0);
+        assert_eq!(second, 0);
+        let ws = tmp.path().join(".graphtor");
+        for sub in workspace::paths::GRAPHTOR_SUBDIRS {
+            assert!(
+                ws.join(sub).is_dir(),
+                "repeated --with-ingestion install must stay full"
+            );
+        }
     }
 
     #[test]
@@ -4320,7 +5363,10 @@ mod tests {
             );
 
             let persisted = load_persisted_v4_migration_snapshot(&snapshot_root);
-            let Source::Local(local) = &persisted.sources[0].source;
+            let local = persisted.sources[0]
+                .source
+                .as_local()
+                .expect("persisted source is local");
             assert_eq!(
                 local.path, docs_old,
                 "failed retry must preserve the original grouped-plan source config"

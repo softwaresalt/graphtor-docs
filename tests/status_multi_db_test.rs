@@ -295,6 +295,117 @@ fn status_json_fails_closed_when_explicit_config_is_missing() {
 }
 
 #[test]
+fn status_reports_auto_discovered_dropped_db_with_no_source_registry() {
+    // Zero-config consumption workspace: no `sources.yaml` anywhere, just a
+    // pre-built v4 database with a populated `doc_sources` row dropped
+    // directly into `.graphtor/`. `status` must resolve the SAME shared
+    // `serve_discovery` auto-discovery set that `serve` uses (P1-T5), so it
+    // reports this database and synthesizes its source metadata from the
+    // database's own stored `doc_sources` rather than an empty list.
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+    let graphtor_dir = ws.join(".graphtor");
+    std::fs::create_dir_all(&graphtor_dir).expect("create .graphtor");
+
+    let dropped_db = graphtor_dir.join("dropped.db");
+    let store =
+        graphtor_core::db::DataStore::open_sqlite(&dropped_db, ws).expect("open_sqlite fixture");
+    store.ensure_schema().expect("ensure_schema fixture");
+    graphtor_core::db::upsert_source(
+        &store,
+        &graphtor_core::db::SourceRecord {
+            source_id: "dropped-source".to_string(),
+            url: "/some/external/path".to_string(),
+            kind: "local".to_string(),
+            name: "dropped-source".to_string(),
+            synced_at: Some("2026-07-15T00:00:00Z".to_string()),
+        },
+    )
+    .expect("upsert_source fixture");
+    drop(store);
+
+    let status_output = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .arg("status")
+        .output()
+        .expect("run graphtor-docs status");
+    assert!(
+        status_output.status.success(),
+        "status failed: status={:?}\nstderr={}\nstdout={}",
+        status_output.status.code(),
+        String::from_utf8_lossy(&status_output.stderr),
+        String::from_utf8_lossy(&status_output.stdout),
+    );
+
+    let stdout = String::from_utf8(status_output.stdout).expect("status stdout utf-8");
+    assert!(
+        stdout.contains("dropped.db"),
+        "status must report the auto-discovered dropped db, matching serve's shared discovery \
+         set: {stdout}"
+    );
+    assert!(
+        stdout.contains("dropped-source"),
+        "status must synthesize source metadata from the dropped db's stored doc_sources: \
+         {stdout}"
+    );
+}
+
+#[test]
+fn list_sources_cli_reports_auto_discovered_dropped_db_with_no_source_registry() {
+    // Same scenario as `status`, but through the `list-sources` CLI
+    // subcommand — it shares `QueryCtx::open_stores`, so both surfaces must
+    // resolve the identical discovered-db set (P1-T5).
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path();
+    let graphtor_dir = ws.join(".graphtor");
+    std::fs::create_dir_all(&graphtor_dir).expect("create .graphtor");
+
+    let dropped_db = graphtor_dir.join("dropped.db");
+    let store =
+        graphtor_core::db::DataStore::open_sqlite(&dropped_db, ws).expect("open_sqlite fixture");
+    store.ensure_schema().expect("ensure_schema fixture");
+    graphtor_core::db::upsert_source(
+        &store,
+        &graphtor_core::db::SourceRecord {
+            source_id: "dropped-source".to_string(),
+            url: "/some/external/path".to_string(),
+            kind: "local".to_string(),
+            name: "dropped-source".to_string(),
+            synced_at: Some("2026-07-15T00:00:00Z".to_string()),
+        },
+    )
+    .expect("upsert_source fixture");
+    drop(store);
+
+    let output = Command::new(graphtor_bin())
+        .current_dir(ws)
+        .arg("list-sources")
+        .arg("--json")
+        .output()
+        .expect("run graphtor-docs list-sources --json");
+    assert!(
+        output.status.success(),
+        "list-sources failed: status={:?}\nstderr={}\nstdout={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("list-sources stdout utf-8");
+    let parsed: Value = serde_json::from_str(stdout.trim()).expect("stdout should be valid JSON");
+    let sources = parsed["result"]["sources"]
+        .as_array()
+        .expect("result.sources should be an array");
+    assert!(
+        sources
+            .iter()
+            .any(|s| s["id"].as_str() == Some("dropped-source")),
+        "list-sources must synthesize source metadata from the auto-discovered dropped db, \
+         matching status's shared discovery set: {stdout}"
+    );
+}
+
+#[test]
 fn status_fails_closed_on_malformed_registry() {
     // A malformed sources.yaml (parse error) must cause status to exit non-zero.
     // This is fail-closed: a broken config should not silently fall back to

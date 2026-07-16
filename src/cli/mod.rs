@@ -114,9 +114,17 @@ pub enum Command {
 
     /// Install graphtor-docs into the current workspace.
     ///
-    /// Creates the `.graphtor/` directory scaffold: `bin/`, `data/`,
-    /// `cache/`, `config/`, `logs/`. Copies the binary and configures
-    /// `.gitignore` and MCP client config files. Idempotent.
+    /// By DEFAULT, creates ONLY the `.graphtor/` root directory plus a
+    /// minimal serve `.mcp.json` entry — a consumption-first footprint for
+    /// serving an already-generated `.db` file dropped into `.graphtor/`.
+    /// No `sources.yaml`, no `bin/`/`data/`/`cache/`/`config/`/`logs/`
+    /// subdirectories, no copied binary, and no `.gitignore` management.
+    ///
+    /// Pass `--with-ingestion` to instead create the full scaffold:
+    /// `bin/`, `data/`, `cache/`, `config/`, `logs/`, a copied binary, a
+    /// template `sources.yaml`, and managed `.gitignore`/`.mcp.json` entries
+    /// — the layout needed to ingest and generate your own documentation
+    /// index. Idempotent either way.
     Install(InstallArgs),
 
     /// Diagnose workspace health.
@@ -250,7 +258,17 @@ pub struct SyncArgs {
 /// Arguments for the `serve` subcommand.
 #[derive(Debug, clap::Args)]
 pub struct ServeArgs {
-    // Currently no extra arguments; kept as a struct for future flags.
+    /// Force every database to `ReadOnly` posture, regardless of resolved
+    /// sources.
+    ///
+    /// An escape hatch on top of the content-derived default (P1-T2): even a
+    /// database with a real, resolvable `local` source pointing at it is
+    /// served read-only and never background-synced when this flag is set.
+    /// There is no corresponding "force read-write" flag in this phase —
+    /// the content-derived default is authoritative unless explicitly
+    /// overridden toward the safer (read-only) posture.
+    #[arg(long)]
+    pub read_only: bool,
 }
 
 /// Arguments for the `status` subcommand.
@@ -272,7 +290,21 @@ pub struct InitArgs {
 /// Arguments for the `install` subcommand.
 #[derive(Debug, clap::Args)]
 pub struct InstallArgs {
+    /// Create the full ingestion-capable scaffold instead of the
+    /// consumption-first minimal default.
+    ///
+    /// Without this flag, `install` creates ONLY the `.graphtor/` root
+    /// directory plus a minimal serve `.mcp.json` entry. With this flag,
+    /// `install` creates `bin/`, `data/`, `cache/`, `config/`, `logs/`,
+    /// copies the binary, writes a template `sources.yaml`, and manages
+    /// `.gitignore` (unless `--no-gitignore`).
+    #[arg(long)]
+    pub with_ingestion: bool,
+
     /// Skip updating `.gitignore`.
+    ///
+    /// Only applies with `--with-ingestion`; the consumption-first minimal
+    /// default never manages `.gitignore`.
     #[arg(long)]
     pub no_gitignore: bool,
 
@@ -408,5 +440,24 @@ mod tests {
 
         assert!(!help.contains("--editor"));
         assert!(!help.contains("copilot"));
+    }
+
+    #[test]
+    fn install_help_describes_consumption_first_default_and_with_ingestion_opt_in() {
+        let mut command = Cli::command();
+        let install = command
+            .find_subcommand_mut("install")
+            .expect("install subcommand");
+        let help = install.render_long_help().to_string();
+
+        assert!(
+            help.contains("--with-ingestion"),
+            "help must document the --with-ingestion opt-in flag: {help}"
+        );
+        assert!(
+            !help.contains("Creates the `.graphtor/` directory scaffold: `bin/`, `data/`,"),
+            "help must no longer claim the default install always creates the full \
+             scaffold: {help}"
+        );
     }
 }

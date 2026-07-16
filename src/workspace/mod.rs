@@ -16,6 +16,7 @@
 //! - [`upgrade`]: Binary upgrade workflow.
 //! - [`uninstall`]: Workspace removal.
 //! - [`lock`]: Advisory workspace lock file.
+//! - [`serve_discovery`]: `.graphtor/` root auto-discovery for `serve`/`status`.
 
 pub mod doctor;
 pub mod gitignore;
@@ -24,5 +25,6 @@ pub mod install;
 pub mod lock;
 pub mod mcp_config;
 pub mod paths;
+pub mod serve_discovery;
 pub mod uninstall;
 pub mod upgrade;
