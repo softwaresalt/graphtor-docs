@@ -61,6 +61,31 @@ the docline ingestion pivot to schema v4 and the initial CLI query surface.
   (`GRAPHTOR_EMBED_MODEL_DIR` set to the local model directory) to rebuild the
   index and generate embeddings.
 
+## [0.3.1] - 2026-07-16
+
+Security patch release. Extends the PR #90 workspace-containment hardening to the
+two remaining reparse-point gaps on the `upgrade` and `install` write paths.
+
+### Security
+
+- `upgrade` now rejects a symlinked or junction `.graphtor` workspace root before
+  acquiring the workspace lock, matching the existing `install` and `uninstall`
+  guards. Previously a linked root let `--force-unlock` create, remove, or replace
+  `graphtor.lock` inside an external target — an out-of-workspace mutation.
+- The `install` write path now refuses a symlinked or junction `.gitignore` or
+  `.mcp.json`. `add_gitignore_entry` and `generate_mcp_config` fail closed rather
+  than read or write through a pre-planted linked file into an external target,
+  closing the last follow-a-symlink gaps on the write side.
+
+### Known issues
+
+- `RUSTSEC-2026-0041` (lz4_flex 0.10.0 — uninitialized memory on invalid
+  decompression input) remains open and is suppressed through the documented
+  `cargo audit` allowlist. It is reached only transitively as
+  cozo → swapvec → lz4_flex (semver-locked) and serves cozo's internal disk-swap
+  buffers, never user-supplied input. The upstream fix is blocked until cozo
+  releases swapvec 0.4+. See `audit.toml` for the full rationale.
+
 ## [0.2.0] - 2026-05-08
 
 - Initial tagged release.

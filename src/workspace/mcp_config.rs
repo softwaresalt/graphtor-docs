@@ -27,7 +27,7 @@ use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use graphtor_core::path::validate_path;
+use graphtor_core::path::{is_reparse_point, validate_path};
 use graphtor_core::GraphtorError;
 
 /// Workspace-root MCP client config path (the current standard).
@@ -137,6 +137,25 @@ pub struct McpConfigOutcome {
 /// resolves outside `project_root`.
 pub fn generate_mcp_config(project_root: &Path) -> Result<Option<McpConfigOutcome>, GraphtorError> {
     let dest = project_root.join(MCP_CONFIG_PATH);
+
+    // Workspace-containment guard (Constitution III/IV): a `.mcp.json` planted
+    // as a symlink/junction before install is its own trust anchor. The
+    // `dest.exists()` merge branch below reads it via `read_to_string`
+    // (FOLLOWING the link and disclosing an external file), and a linked
+    // destination could redirect the managed write OUTSIDE the project. The
+    // uninstall/read paths already validate config candidates via
+    // `validate_path`; the install WRITE path must refuse a linked destination
+    // too. Fail closed rather than read or write through the link.
+    if is_reparse_point(&dest) {
+        return Err(GraphtorError::Config {
+            message: format!(
+                "{MCP_CONFIG_PATH} is a symlink or junction; refusing to write the managed \
+                 graphtor-docs MCP entry through a linked file"
+            ),
+            field: None,
+        });
+    }
+
     let command = resolve_command(project_root)?;
 
     if !dest.exists() {
@@ -1549,6 +1568,38 @@ mod tests {
                 .expect("read dest")
                 .contains("mcpServers"),
             "the destination must hold the intended serialized content"
+        );
+    }
+
+    #[test]
+    fn generate_refuses_to_write_through_a_symlinked_mcp_json() {
+        // A6C7EDB3: a `.mcp.json` planted as a symlink before install points at
+        // a file OUTSIDE the project. `generate_mcp_config`'s merge read
+        // (`fs::read_to_string`) would FOLLOW the link and disclose the external
+        // file, and a linked destination is its own trust anchor. The install
+        // WRITE path must refuse a linked `.mcp.json` and fail closed
+        // (Constitution III/IV), matching the uninstall-side `validate_path`
+        // guard.
+        let project = tempfile::tempdir().expect("project tempdir");
+        let external = tempfile::tempdir().expect("external tempdir");
+        let external_file = external.path().join("real-mcp.json");
+        let original = "{\"mcpServers\":{\"other\":{}}}\n".to_string();
+        fs::write(&external_file, &original).expect("write external mcp.json");
+
+        let link = project.path().join(".mcp.json");
+        if try_symlink_file(&external_file, &link).is_err() {
+            return; // platform refused symlink creation — skip
+        }
+
+        let result = generate_mcp_config(project.path());
+        assert!(
+            result.is_err(),
+            "generate_mcp_config through a symlinked .mcp.json must fail closed"
+        );
+        assert_eq!(
+            fs::read_to_string(&external_file).expect("read external"),
+            original,
+            "the external file behind a symlinked .mcp.json must be left unchanged"
         );
     }
 }
