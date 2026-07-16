@@ -51,17 +51,6 @@ const MCP_SERVER_KEY: &str = "graphtor-docs";
 /// stable signal across that variation.
 const MANAGED_MARKER_KEY: &str = "x-graphtor-managed";
 
-/// Command substring identifying a graphtor-docs-managed MCP server entry.
-///
-/// Keyed on the managed binary path rather than the bare project name so an
-/// incidental `graphtor-docs` occurrence (e.g. a workspace path) in an
-/// unrelated server does not cause its config to be treated as managed. This
-/// prefix matches both the Unix (`graphtor-docs`) and Windows
-/// (`graphtor-docs.exe`) generated commands. Used ONLY as a fallback for
-/// removal, alongside the provenance marker, so entries written before the
-/// marker existed are still recognized.
-const MANAGED_COMMAND_MARKER: &str = ".graphtor/bin/graphtor-docs";
-
 /// Historical RELATIVE command shapes written by the pre-marker writer
 /// (before this module introduced the resolution ladder + provenance
 /// marker). Used ONLY for EXACT-equality backward-compat recognition when
@@ -376,10 +365,11 @@ enum PruneOutcome {
 ///
 /// A server is "managed" when it carries the managed-entry provenance marker
 /// ([`MANAGED_MARKER_KEY`]) — the primary, forward-looking recognition path —
-/// OR, as a fallback for entries written before the marker existed, when its
-/// `command` references the [`MANAGED_COMMAND_MARKER`] binary path. Non-JSON
-/// input and configs without a managed entry yield [`PruneOutcome::Unchanged`],
-/// so shared configs holding unrelated servers are never destroyed.
+/// OR, as a narrow backward-compat path for entries written before the
+/// marker existed, when it EXACTLY matches the historical pre-marker shape
+/// ([`is_exact_legacy_shape`]). Non-JSON input and configs without a managed
+/// entry yield [`PruneOutcome::Unchanged`], so shared configs holding
+/// unrelated servers are never destroyed.
 fn prune_managed_server(content: &str) -> PruneOutcome {
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
         return PruneOutcome::Unchanged;
@@ -426,16 +416,15 @@ fn prune_managed_server(content: &str) -> PruneOutcome {
 }
 
 /// Returns `true` when `cfg` should be treated as a graphtor-docs-managed
-/// entry for REMOVAL purposes: it carries the provenance marker (primary
-/// path), or, as a fallback for entries written before the marker existed,
-/// its `command` references the [`MANAGED_COMMAND_MARKER`] binary path.
+/// entry for REMOVAL purposes (P2-T5b): it carries the provenance marker
+/// (primary, forward-looking path), OR, as a NARROW backward-compat path
+/// for entries written before the marker existed, it EXACTLY matches the
+/// historical pre-marker shape ([`is_exact_legacy_shape`]) — never a
+/// substring/contains test, so a user-authored command that merely embeds
+/// the legacy path as a prefix or suffix (or reuses the pinned command with
+/// different args) is preserved, not removed.
 fn is_managed_for_removal(cfg: &serde_json::Value) -> bool {
-    if is_marked(cfg) {
-        return true;
-    }
-    cfg.get("command")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|command| command.contains(MANAGED_COMMAND_MARKER))
+    is_marked(cfg) || is_exact_legacy_shape(cfg)
 }
 
 /// Build the graphtor-docs MCP server registration value, including the
@@ -910,5 +899,108 @@ mod tests {
             !after.contains(".graphtor/bin/graphtor-docs"),
             "managed entry pruned"
         );
+    }
+
+    // ── P2-T5b: exact-match legacy removal (never CONTAINS) ─────────────────
+
+    #[test]
+    fn remove_preserves_unmarked_entry_with_prefixed_legacy_command() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": "/opt/tools/.graphtor/bin/graphtor-docs",
+      "args": ["serve"],
+      "transport": "stdio"
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcomes = remove_mcp_config(tmp.path()).expect("remove");
+
+        assert!(
+            outcomes.is_empty(),
+            "a user command with a PREFIX around the legacy path must survive (exact-match \
+             only, never contains)"
+        );
+        let after = fs::read_to_string(&path).expect("read");
+        assert!(after.contains("/opt/tools/.graphtor/bin/graphtor-docs"));
+    }
+
+    #[test]
+    fn remove_preserves_unmarked_entry_with_suffixed_legacy_command() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs-wrapper",
+      "args": ["serve"],
+      "transport": "stdio"
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcomes = remove_mcp_config(tmp.path()).expect("remove");
+
+        assert!(
+            outcomes.is_empty(),
+            "a user command with a SUFFIX around the legacy path must survive"
+        );
+    }
+
+    #[test]
+    fn remove_preserves_unmarked_entry_with_pinned_command_but_different_args() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs",
+      "args": ["serve", "--verbose"],
+      "transport": "stdio"
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcomes = remove_mcp_config(tmp.path()).expect("remove");
+
+        assert!(
+            outcomes.is_empty(),
+            "an unmarked entry with the pinned legacy command but DIFFERENT args must survive"
+        );
+    }
+
+    #[test]
+    fn remove_removes_unmarked_exact_legacy_entry_windows_exe_shape() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join(".mcp.json");
+        let shared = r#"{
+  "mcpServers": {
+    "graphtor-docs": {
+      "command": ".graphtor/bin/graphtor-docs.exe",
+      "args": ["serve"],
+      "transport": "stdio"
+    }
+  }
+}
+"#;
+        fs::write(&path, shared).expect("write");
+
+        let outcomes = remove_mcp_config(tmp.path()).expect("remove");
+
+        assert_eq!(
+            outcomes.len(),
+            1,
+            "the exact Windows .exe legacy shape must still be recognized and removed"
+        );
+        assert_eq!(outcomes[0].action, McpConfigAction::Removed);
     }
 }
