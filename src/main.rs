@@ -3250,6 +3250,11 @@ fn cmd_install(
         "drop a `.db` file into {} and run `graphtor-docs serve` to serve it read-only.",
         ws_dir.display()
     );
+    println!(
+        "to ingest and generate your own documentation index instead, run \
+         `graphtor-docs install --with-ingestion` — see the ingestion setup guide in \
+         docs/cli-reference/graphtor-docs.md."
+    );
 
     Ok(0)
 }
