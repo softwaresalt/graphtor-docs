@@ -1,53 +1,66 @@
 ---
 title: Incremental Sync Design
-description: "How graphtor-docs detects changed files and re-ingests only what has changed, including sync state format and change-detection strategies"
+description: "Docline-Markdown mtime sync, re-ingestion, deletion handling, and per-database sync state"
 ---
 
-graphtor-docs avoids re-indexing unchanged documentation on every sync. This
-document describes how the incremental sync engine detects changed files and
-re-ingests only what has changed.
+graphtor-docs avoids re-indexing unchanged documentation on every sync. The
+incremental engine is local and docline-Markdown only: it scans configured
+`type: local` directories, tracks Markdown files by modification time, and
+re-ingests only files whose tracked state changed. It does not contact remote
+sources, update repositories, or ingest non-Markdown document formats.
+
+## Scope
+
+Incremental sync applies only to ingestible local sources:
+
+* `type: local` sources are scanned in-place and filtered by `include`,
+  `exclude`, and `formats`
+* `type: database` sources are served read-only and never passed to sync
+* Tracked files must be Markdown and must pass the docline v1 frontmatter
+  contract before they are loaded
+
+The parser accepts Markdown through the normalized `md` format path. Other
+extensions are ignored by the incremental tracker or rejected by configuration
+validation before sync starts.
 
 ## Sync State File
 
-Per-database tracking data is persisted in a JSON file:
+Sync state is stored next to the database it describes. With the default
+database, the state file is:
 
 ```text
 .graphtor/graph.sync_state.json
 ```
 
-This path is resolved relative to the **current working directory** when
-`graphtor-docs sync` is run (specifically, in the same directory as
-`--db-path`, which defaults to `.graphtor/graph.db`).
-
-When a source sets `database`, graphtor-docs uses the matching database-scoped
-state file instead:
+When a source routes to a different database, the database name determines the
+state file:
 
 ```text
 .graphtor/notes.db          → .graphtor/notes.sync_state.json
 .graphtor/reference.db      → .graphtor/reference.sync_state.json
 ```
 
-The file is created on the first successful sync and updated after each
-subsequent sync. If the file is missing, the engine treats every file as new
-(full ingest).
+For backward compatibility, an existing legacy `.graphtor/sync_state.json` file
+is reused. Otherwise graphtor-docs uses the per-database `*.sync_state.json`
+path. If the state file is missing, every tracked Markdown file is treated as
+new.
 
 ### File Structure
 
 ```json
 {
   "sources": {
-    "azure-docs": {
-      "last_commit": "a3f7b2c9d4e1f0a8b5c2d6e3f7a0b1c4d5e6f7a8",
-      "file_mtimes": {},
-      "last_sync": "1714857600"
-    },
     "team-runbooks": {
-      "last_commit": null,
       "file_mtimes": {
         "guides/deploy.md": 1714857600,
         "guides/rollback.md": 1714857601
       },
-      "last_sync": "1714857602"
+      "file_contract_paths": {
+        "guides/deploy.md": "runbooks/deploy.md",
+        "guides/rollback.md": "runbooks/rollback.md"
+      },
+      "last_sync": "1714857602",
+      "contract_epoch": "docline-v1"
     }
   }
 }
@@ -55,165 +68,119 @@ subsequent sync. If the file is missing, the engine treats every file as new
 
 ### `SourceSyncState` Fields
 
-| Field | Type | Used by | Description |
-|---|---|---|---|
-| `last_commit` | `string \| null` | Git sources | SHA-1 of the last fully processed commit |
-| `file_mtimes` | `object` | Local sources | Map of `relative/path` → Unix mtime (seconds since epoch) |
-| `last_sync` | `string \| null` | All sources | Unix epoch seconds of the last sync (informational) |
+| Field | Type | Description |
+|---|---|---|
+| `file_mtimes` | `object` | Map of source-root-relative filesystem path to Unix mtime seconds |
+| `file_contract_paths` | `object` | Map of filesystem path to the validated docline `source_path` from the last successful ingest |
+| `last_sync` | `string \| null` | Unix epoch seconds when the source state was last written |
+| `contract_epoch` | `string \| null` | Ingestion contract epoch; current value is `docline-v1` |
 
-> **Path key format:** Keys in `file_mtimes` always use **forward-slash
-> separators** regardless of the host OS. On Windows, backslash paths are
-> normalized to forward slashes before storage. This ensures chunk IDs
-> (derived from the same path strings) are consistent across platforms.
+Path keys use forward slashes on every platform, including Windows. The same
+normalization is used for chunk identity and deletion tracking.
 
----
+## Change Detection
 
-## Change Detection Strategies
+For each local source, sync builds the current tracked file set:
 
-### Git Sources
+1. Recursively scan the source directory without following symlinks
+2. Apply the source's `include` and `exclude` glob filters
+3. Keep only Markdown paths allowed by the source `formats` list
+4. Record each remaining file's mtime in Unix epoch seconds
 
-**Strategy:** compare the current HEAD commit SHA-1 against `last_commit`.
+The current map is compared with `file_mtimes` from sync state:
 
-On each incremental sync:
+| Classification | Rule |
+|---|---|
+| Added | Path exists now but is absent from stored state |
+| Modified | Path exists in both maps and the current mtime is newer |
+| Deleted | Path exists in stored state but no longer exists in the current tracked set |
+| Unchanged | Path exists in both maps and the mtime did not advance |
 
-1. Open the cloned repository at `.graphtor/data/{source_id}/`
-2. Read the current HEAD commit SHA-1
-3. If `last_commit` is `null` (first sync), treat all files as new (full ingest)
-4. If `last_commit` equals HEAD, no changes — skip this source
-5. Otherwise, run `git diff {last_commit}..HEAD --name-status` to enumerate
-   changed files
-6. Re-ingest `A` (added) and `M` (modified) files through the full
-   parse → embed → load pipeline
-7. Delete `doc_chunks`, `doc_edges`, and `doc_code` entries for
-   `D` (deleted) files (`doc_vectors` is **not** removed; run `sync --full`
-   to purge stale vectors for deleted files)
-8. Update `last_commit` to the current HEAD SHA-1
-
-This strategy is exact: only `.md` files that changed in git history are
-processed. Non-Markdown files (`.pdf`, `.docx`, etc.) are not tracked by the
-incremental engine; run `sync --full` to pick up non-Markdown content.
-
-> **Note:** Acquisition skips repositories that are already cloned (FR-003
-> idempotency). The `sync` command does **not** fetch or pull the remote.
-> To pick up new upstream commits, pull the repository manually before running
-> `sync`:
-> ```sh
-> git -C .graphtor/data/{source_id} pull
-> graphtor-docs sync
-> ```
-
-### Local Sources
-
-**Strategy:** compare current file `mtime` values against the stored mtime map.
-
-On each incremental sync:
-
-1. Walk the source directory and collect current `mtime` for each `.md` file
-2. Compare against the `file_mtimes` map in the sync state
-3. A file is considered **changed** if:
-   - Its path is not in `file_mtimes` (new file), or
-   - Its current mtime differs from the stored mtime (modified file)
-4. A file is considered **deleted** if its path is in `file_mtimes` but no
-   longer exists on disk
-5. Re-ingest changed files; delete chunks for deleted files
-6. Update the `file_mtimes` map with current values
-
-> **Note:** Only `.md` files are tracked by the mtime scanner. Non-Markdown
-> files (`.pdf`, `.docx`, etc.) are ignored during incremental sync; use
-> `sync --full` to process them.
-
-### URL Sources
-
-**Strategy:** re-crawl on every sync; only re-ingest pages whose cached `.md`
-file changed.
-
-HTTP ETags and `Last-Modified` headers are not universally supported, so the
-BFS crawl runs on each sync within the `max_pages` limit. Each page is saved
-as a `{hash}.md` file in the local source directory. The write is skipped when
-the HTML-to-Markdown content is unchanged (preserving the mtime), so mtime
-comparison then identifies only the pages that truly changed. Previously
-indexed chunks for pages that no longer appear in the crawl are **not**
-automatically deleted — to remove stale chunks, delete the database and run a
-fresh sync.
-
----
+When `contract_epoch` is missing or differs from the current epoch, the source
+forces a full re-ingest through the incremental path. Existing stored keys are
+kept for deletion detection, but their mtimes are treated as stale so every live
+tracked Markdown file is reprocessed. A pending v4 database migration uses the
+same forced-reingest behavior.
 
 ## Re-Ingestion
 
-When files are identified as changed, the `reingest` stage:
+Added and modified files are processed one file at a time:
 
-1. **Deletes** all existing `doc_chunks`, `doc_edges`, and `doc_code` rows for
-   the changed file path within the source (`doc_vectors` is **not** deleted or
-   updated during incremental sync; use `sync --full` to rebuild vectors)
-2. **Re-runs** the parse → load pipeline on the new file content (embeddings
-   are computed when a model is loaded but are not persisted to `doc_vectors`
-   during incremental reingest)
-3. Because chunk IDs are deterministic (SHA-256 of content + path), unchanged
-   chunks within a changed file are re-inserted with the same ID — CozoDB
-   upserts are idempotent
+1. Validate the file path against the workspace boundary
+2. Parse the file with the docline v1 contract-enforced Markdown parser
+3. Use the validated frontmatter `source_path` as the document's canonical
+   identity
+4. Delete stale records for the old contract path, scoped to the source
+5. Load the new chunks, link edges, code snippets, and derived lookup entries
+6. Compute and store embeddings when the embedding model is available
+7. Persist the new mtime and contract-path mapping after successful processing
 
----
+If a file's frontmatter `source_path` changed, the old
+`file_contract_paths` entry lets sync delete rows under the previous identity
+before inserting the new document. This prevents orphaned rows when a file moves
+or when docline changes the canonical `source_path`.
 
-## Forced Full Sync
+When embeddings are disabled for an ordinary incremental run, unchanged chunk
+IDs keep any previously stored embedding. New or content-changed chunks remain
+without embeddings until a later sync runs with the model available.
 
-To bypass incremental detection and re-ingest everything from scratch:
+Per-file failures are non-fatal. Failed modified files keep their previous mtime
+in state, and failed new files are omitted from state, so the next sync retries
+them.
 
-```sh
-graphtor-docs sync --full
-```
+## Deletion Handling
 
-Full sync:
-1. Runs the complete acquire → parse → embed → load pipeline unconditionally
-   for every file in every source
-2. Does **not** clear the database first — existing entries are overwritten via
-   upsert
-3. Does **not** update the sync state file — incremental sync state is
-   preserved for the next run
+Deleted files are cleaned up by source-scoped document identity:
 
-When to use `--full`:
-- After a schema change (run `sync --full` to rebuild all entries)
-- When the sync state file is corrupted or lost
-- When you suspect stale or missing entries from a previous failed sync
+1. Read the old contract path from `file_contract_paths`
+2. Fall back to the filesystem-relative path for legacy state without contract
+   mappings
+3. Delete matching `doc_chunks` rows for that source and path
+4. Remove dependent edge, code, and derived lookup records for the deleted chunks
+5. Remove the mtime and contract-path state entries after successful cleanup
 
----
+Embeddings are stored inline on `doc_chunks`, so deleting chunk rows removes the
+corresponding vectors as part of the same cleanup. If deletion cleanup fails,
+the old state entry is preserved so the next sync retries the delete.
+
+## Full Sync
+
+`graphtor-docs sync --full` bypasses mtime change detection and runs the full
+Acquire → Validate → Parse → Embed → Load pipeline for every configured local
+source. It still uses the same docline-Markdown parser and does not process
+read-only database sources or unsupported formats.
+
+After a successful full sync, graphtor-docs seeds the per-database sync state
+from a pre-pipeline snapshot of the live source tree. That snapshot prevents a
+file changed during the full-sync window from being recorded as already synced.
+Prior-state entries for files that disappeared, or for documents whose
+`source_path` changed, are carried forward so the next incremental sync can
+clean up stale rows left behind by upsert-only full loading.
 
 ## Edge Cases
 
 ### First-Time Sync
 
-When the active database-specific `*.sync_state.json` file does not exist
-(first run or manually deleted), the engine treats every source routed into
-that database as having never been synced:
+When no sync state exists for a source, every tracked Markdown file is treated
+as added. Files are validated, parsed, embedded when possible, and loaded into
+the target database.
 
-- Git sources: `last_commit` is `null` → full ingest of all files in the branch
-- Local sources: `file_mtimes` is empty → full ingest of all files
-- URL sources: full crawl (always)
+### Contract Validation Failure
 
-### Deleted Files
+A Markdown file with missing or malformed docline v1 frontmatter fails during
+parse. The file is reported as an error, excluded from the database update, and
+left pending for the next sync.
 
-Files that existed in a previous sync but no longer exist are detected by:
-- Git: `git diff` output with `D` status
-- Local: path present in `file_mtimes` but absent from the current directory scan
+### Duplicate `source_path`
 
-Deleted files trigger removal of their `doc_chunks`, `doc_edges`, `doc_code`,
-and `doc_vectors` rows.
+Before re-ingesting a batch of changed files, sync checks for duplicate
+validated `source_path` values within the source and against unchanged stored
+documents. Conflicting files fail closed and are retried only after the
+frontmatter conflict is corrected.
 
 ### Source ID Rename
 
-If a source's `id` field is changed in `sources.yaml`, the engine treats the
-new ID as a brand-new source (full ingest). The old source's data remains in
-the database under the old ID — it is not automatically pruned. To clean up,
-run `sync --full` after removing the old source from `sources.yaml`.
-
-### Concurrent Sync Runs
-
-The `sync` command does not currently acquire a workspace lock. Running two
-`sync` processes simultaneously against the same workspace is not recommended:
-concurrent writes to CozoDB may produce partial or inconsistent state.
-
-If you need to guard against concurrent runs in CI or scheduled scripts, use an
-external lock (e.g., `flock` on Linux, a named mutex, or a CI job concurrency
-group) rather than relying on `graphtor-docs` itself.
-
-> **Note:** The workspace lock (`.graphtor/graphtor.lock`) is only acquired by
-> `install`, `upgrade`, and `uninstall`. It is **not** acquired by `sync`.
+Changing a source's `id` creates a new source namespace. Existing rows under the
+old source ID are not automatically removed because they no longer belong to a
+tracked source state entry. Remove or rebuild the old database when retiring a
+source ID.

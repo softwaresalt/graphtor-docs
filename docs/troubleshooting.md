@@ -115,12 +115,60 @@ permissions are wrong.
 
 ---
 
-### Git clone failures
+### `serve` reports "no databases found to serve"
 
-> **Note:** Git source ingestion was removed in the docline pivot. If you are
-> seeing git-related errors, you may be using an outdated configuration with
-> `type: git` sources. Replace them with `type: local` pointing at docline
-> output directories. See the [Configuration Guide](configuration.md).
+**Symptom:**
+```text
+no databases found to serve; drop a `.db` file into '.graphtor' or configure a source
+```
+
+**Cause:** The default install is consumption-first. It creates `.graphtor/`
+and the MCP config entry, but it does not create `sources.yaml`, create a
+database, or scaffold ingestion directories. `serve` auto-discovers only
+top-level `*.db` files directly inside `.graphtor/`. It does not recurse into
+subdirectories, and it ignores sidecar files such as `*.db-wal` and
+`*.db-shm`.
+
+**Resolution:**
+1. If you already have a generated database, copy the `.db` file directly into
+   `.graphtor/`, then run:
+   ```sh
+   graphtor-docs serve
+   ```
+2. If you want this workspace to generate its own database, run:
+   ```sh
+   graphtor-docs install --with-ingestion
+   ```
+   Then configure local docline Markdown sources in
+   `.graphtor/config/sources.yaml` and run `graphtor-docs sync`.
+3. If you prefer an explicit read-only entry, add a `type: database` source
+   whose `path` resolves inside `.graphtor/`. A database source is served
+   read-only and is never ingested.
+
+---
+
+### `[path_violation]` when serving or syncing
+
+**Symptom:**
+```text
+[path_violation] attempted '...': must be within '...'
+```
+
+**Cause:** graphtor-docs validates paths before file access. For serve
+auto-discovery and explicit `type: database` entries, database paths must stay
+inside `.graphtor/`. For local ingestion sources, configured source paths must
+stay inside the workspace root. Paths that escape with `..`, a symlink, or a
+Windows junction/reparse point fail closed with `GraphtorError::PathViolation`.
+
+**Resolution:**
+1. Move the `.db` file or source directory under the allowed root instead of
+   linking to it from there.
+2. Replace escaping paths such as `../external.db` with a workspace-contained
+   path.
+3. On Windows, replace junctioned directories with real directories before
+   running `serve`, `sync`, `install`, or `upgrade`.
+4. Run `graphtor-docs doctor` after the path change to confirm the workspace is
+   healthy.
 
 ---
 
@@ -129,14 +177,15 @@ permissions are wrong.
 **Symptom:** `graphtor-docs status` shows sources but 0 chunks, or search
 returns no results for content you know is in the source.
 
-**Cause 1 — Glob or format filter:** The `include`/`exclude` glob patterns or
-`formats` are filtering out all files.
+**Cause 1 — Glob or Markdown filter:** The `include`/`exclude` glob patterns
+or `formats` are filtering out all files. The ingestion pipeline accepts only
+Markdown files (`.md`, with `markdown` accepted as a configuration alias).
 
 **Cause 2 — Invalid frontmatter:** Files have missing or malformed docline v1
 frontmatter and were rejected during validation.
 
 **Resolution:**
-1. Check `sources.yaml` — verify `include` globs match your file extensions:
+1. Check `sources.yaml` — verify `include` globs match Markdown files:
    ```yaml
    include:
      - "**/*.md"   # not "*.md" (would only match root-level files)
@@ -145,7 +194,8 @@ frontmatter and were rejected during validation.
    ```sh
    graphtor-docs --verbose sync
    ```
-3. Check that the source directory actually contains `.md` files:
+3. Check that the source directory actually contains docline-emitted `.md`
+   files:
    ```sh
    ls ./out/your-source-id/
    ```
@@ -215,14 +265,20 @@ backslashes while the MCP tools generate forward-slash paths — causing mismatc
 **Symptom:** `graphtor-docs serve` starts and exits within seconds with no
 output.
 
-**Cause:** The database cannot be opened (missing `.graphtor/` workspace, bad
-`--db-path`, or permission error), or `sources.yaml` is invalid.
+**Cause:** The database set cannot be opened. Common causes include a missing
+`.graphtor/` workspace, no top-level `.db` files for a consumption-first serve,
+an invalid `--db-path`, a permission error, a pre-v4 database, or an invalid
+`sources.yaml`.
 
 **Resolution:**
 1. Run `graphtor-docs doctor` to identify the specific failure
-2. Ensure `graphtor-docs sync` has been run at least once before `serve`
-3. Check that `--db-path` (if specified) points to a valid writable location
-4. Check `sources.yaml` syntax: `graphtor-docs doctor` validates it
+2. For consumption-only use, place a generated `.db` file directly under
+   `.graphtor/` and re-run `graphtor-docs serve`
+3. For ingestion use, ensure `graphtor-docs sync` has been run at least once
+   before `serve`
+4. Check that `--db-path` (if specified) points to a valid workspace-contained
+   database path
+5. Check `sources.yaml` syntax: `graphtor-docs doctor` validates it
 
 ---
 

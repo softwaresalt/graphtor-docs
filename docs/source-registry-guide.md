@@ -7,11 +7,18 @@ created: 2026-05-24
 ## Overview
 
 The source registry tells graphtor-docs which local docline output directories
-to index, how to filter them, and which database to route each source into. You
-declare sources in YAML files under `.graphtor/config/`.
+to ingest, how to filter them, which database to route each local source into,
+and which existing databases to expose read-only. You declare sources in YAML
+files under `.graphtor/config/`.
 
-Only `type: local` sources are supported. Each source directory must contain
-docline-emitted standardized Markdown files with valid v1 frontmatter.
+Two source types are supported:
+
+* `type: local` — ingests a local directory of docline-emitted Markdown
+* `type: database` — serves an existing `.db` file read-only and performs no
+  ingestion
+
+Each local source directory must contain docline-emitted standardized Markdown
+files with valid v1 frontmatter. Local ingestion is Markdown-only.
 
 Two layouts are supported:
 
@@ -35,10 +42,14 @@ sources:
     id: internal-api
     path: ./out/api-docs
     include: ["**/*.md"]
+  - type: database
+    id: shared-runbooks
+    path: .graphtor/shared-runbooks.db
 ```
 
-All sources route to the default database (`graph.db`) when the `database`
-field is absent.
+Local sources route to the default database (`graph.db`) when the `database`
+field is absent. Database entries do not use `database`; their `path` points to
+the read-only database to serve.
 
 ---
 
@@ -57,11 +68,12 @@ Split sources across files named `<prefix>.sources.yaml` under
 graphtor-docs discovers all matching files, sorts them alphabetically for
 deterministic load order, and merges them into a single registry.
 
-### Required: `database` field
+### Required: `database` field for local sources
 
-In multi-file mode, **every source must declare an explicit `database`
-field**. This prevents ambiguous routing when multiple files contribute to
-the merged registry.
+In multi-file mode, **every `type: local` source must declare an explicit
+`database` field**. This prevents ambiguous routing when multiple files
+contribute to the merged registry. `type: database` entries are exempt because
+they name an existing file to serve and have no ingestion target.
 
 ```yaml
 # graph.sources.yaml
@@ -84,11 +96,54 @@ sources:
 ```
 
 Omitting `database` in multi-file mode produces a validation error at
-startup.
+startup for a local source.
 
 > [!NOTE]
 > The `database` field value must be a plain filename (e.g. `graph.db`).
 > It must not contain path separators or `..` components.
+
+### Read-only database entries
+
+Use `type: database` to expose a pre-built database explicitly:
+
+```yaml
+# shared.sources.yaml
+sources:
+  - type: database
+    id: shared-runbooks
+    path: .graphtor/shared-runbooks.db
+```
+
+The entry has exactly `type`, `id`, and `path`. Do not add `database`,
+`include`, `exclude`, `formats`, or `read_only`; unknown fields are rejected.
+The `path` must resolve inside `.graphtor/`. A `..` escape, symlink escape, or
+Windows junction/reparse-point escape is rejected fail-closed.
+
+Database entries are never passed to `sync`, `prewarm`, or background ingestion.
+They are merged into the served database set for read-only consumption.
+
+---
+
+## Multi-database command behaviour
+
+`database` on a local source routes that source to a specific CozoDB `.db` file
+(SQLite backend). The value is resolved relative to the parent directory of
+`--db-path`, so with the default `--db-path`, `database: product.db` targets
+`.graphtor/product.db`.
+
+Command behaviour follows the same routing model:
+
+* `sync` splits local ingestion work by target database
+* `prewarm` uses the same per-database local-source routing and ignores
+  `type: database` entries
+* `serve` assembles the union of configured local target databases, explicit
+  `type: database` entries, and existing `.db` files directly under
+  `.graphtor/`
+* `status` uses the same served database discovery as `serve`
+
+Auto-discovered databases and explicit `type: database` entries remain
+read-only unless a real `type: local` source with ingestible docline Markdown
+targets the same database and promotes it to generation mode.
 
 ---
 
@@ -146,8 +201,7 @@ root. No conflict is reported.
 
 Overlap detection requires an accessible workspace root. When the workspace
 root is not provided (for example, in non-interactive validation), the system
-falls back to the conservative path-key comparison used for Git and URL
-sources.
+falls back to conservative path-key comparison.
 
 > [!IMPORTANT]
 > **Conservative fallback for unreadable roots:** when any local source root
@@ -167,9 +221,9 @@ sources.
 1. Rename `.graphtor/config/sources.yaml` to a domain-scoped name, for
    example `.graphtor/config/core.sources.yaml`.
 
-2. Add a `database` field to every source entry.
+2. Add a `database` field to every local source entry.
 
-3. Verify config with a dry-run:
+3. Verify config and duplicate-intake behaviour with a text-only sync:
 
    ```bash
    graphtor-docs sync --no-embed
@@ -183,9 +237,9 @@ sources.
 
 > [!CAUTION]
 > If you rename the file without adding `database` fields, validation fails
-> immediately with a descriptive error. Existing single-file users are not
-> affected — `sources.yaml` (without a prefix) is still accepted as a
-> legacy fallback.
+> immediately with a descriptive error for local sources. Existing single-file
+> users are not affected — `sources.yaml` (without a prefix) is still accepted
+> as a legacy fallback.
 
 ---
 
@@ -201,12 +255,13 @@ sources.
 
 ## Reference
 
-| Config field | Required in multi-file mode | Description |
-|---|---|---|
-| `id` | yes | Unique source identifier |
-| `type` | yes | Must be `local` |
-| `path` | yes | Path to the local docline output directory |
-| `database` | **yes** | Target database filename (e.g. `graph.db`) |
-| `include` | no | Glob patterns to include |
-| `exclude` | no | Glob patterns to exclude |
-| `formats` | no | File extension allow-list (only `md` and `markdown` accepted; default: `["md"]`) |
+| Config field | Applies to | Requirement | Description |
+|---|---|---|---|
+| `type` | all entries | required | Must be `local` or `database` |
+| `id` | all entries | required | Unique source identifier; no path separators or `..` |
+| `path` | `local` | required | Path to the local docline output directory |
+| `path` | `database` | required | Existing database path that resolves inside `.graphtor/` |
+| `database` | `local` | required in multi-file mode, optional in `sources.yaml` | Target database filename (e.g. `graph.db`) |
+| `include` | `local` | optional | Glob patterns to include |
+| `exclude` | `local` | optional | Glob patterns to exclude |
+| `formats` | `local` | optional | File extension allow-list (only `md` and `markdown` accepted; default: `["md"]`) |

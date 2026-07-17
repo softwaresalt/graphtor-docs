@@ -1,43 +1,56 @@
 ---
 title: graphtor-docs
-description: "Local-first documentation RAG — indexes your docs into an embedded graph+vector store and serves them to AI agents via MCP"
+description: "Local-first documentation RAG — indexes docline Markdown into an embedded CozoDB graph+vector store and serves AI agents via MCP"
 ---
 
-**graphtor-docs** is a local-first documentation RAG system that indexes
-your documentation sources into an embedded graph+vector store and serves
-them to AI agents via the [Model Context Protocol (MCP)][mcp].
+**graphtor-docs** gives developers and AI-agent users a private documentation
+RAG for local docs. It indexes docline-emitted Markdown into an embedded CozoDB
+(SQLite backend) graph+vector store, then serves semantic search and graph
+cross-references to local agents over STDIO
+[Model Context Protocol (MCP)][mcp].
 
-No cloud services. No external databases. One binary.
+Your docs stay on your machine. There is no hosted RAG service, no external
+database, and no separate model server: install one binary, point it at local
+docline Markdown, sync, and query.
 
 [mcp]: https://modelcontextprotocol.io
 
 ## Features
 
-- **Standardized-Markdown only** — indexes local directories of
-  [docline](https://github.com/softwaresalt/docline)-emitted Markdown files;
-  no git clone, web crawl, PDF, or DOCX ingestion
-- **Docline v1 frontmatter contract** — every file is validated against the
-  v1 contract (required fields: `title`, `source`, `ingested_at`, `doc_type`,
+* **Docline Markdown ingestion** — scans local directories with glob filters and
+  indexes only [docline](https://github.com/softwaresalt/docline)-emitted
+  `.md` / `.markdown` files; Git, URL/web, PDF, DOCX, and HTML ingestion are
+  not supported
+* **Docline v1 frontmatter contract** — every file is validated against the v1
+  contract (required fields: `title`, `source`, `ingested_at`, `doc_type`,
   `source_path`); malformed or missing frontmatter fails deterministically
-- **Unified graph + vector store** — CozoDB (SQLite backend) with
-  deterministic SHA-256 chunk IDs and inline HNSW-indexed embeddings
-- **Semantic search** — `all-MiniLM-L6-v2` embeddings via Candle (384-dim,
-  in-process Rust ML inference; no external model server)
-- **Graph traversal** — follow document link graphs with BFS traversal
-- **Incremental sync** — re-ingest only changed files (mtime-based)
-- **Per-source database routing** — send selected sources to separate `.db`
-  files with automatic multi-database `serve`, `status`, and `prewarm` support
-- **8 MCP tools** — search, traverse, research, retrieve, status — for AI agents
-- **JSON-RPC 2.0 output** — `--json` global flag wraps all CLI output in
-  JSON-RPC 2.0 envelopes for agent and script consumption
-- **`manifest` subcommand** — prints tool name/description table or a
-  `tools/list`-compatible JSON-RPC 2.0 envelope with the same tool definitions
-  as the live MCP server (note: ordering may differ from the live server)
-- **Single binary** — zero runtime dependencies
+* **Embedded graph + vector store** — CozoDB with the SQLite backend, schema v4,
+  deterministic SHA-256 chunk IDs, Markdown links/code metadata, and 384-dim
+  embeddings stored inline on `doc_chunks`
+* **Exact semantic search** — `all-MiniLM-L6-v2` embeddings via Candle
+  (in-process Rust ML inference) plus exact brute-force cosine k-NN over stored
+  chunk embeddings; no HNSW index is built or maintained
+* **Graph cross-referencing** — follows extracted document links with bounded
+  BFS traversal for related context
+* **Incremental sync** — re-ingests changed docline Markdown files using
+  mtime-based state
+* **Multi-database routing** — routes sources to per-source `.db` files and
+  supports multi-database `serve`, `status`, and `prewarm`
+* **Read-only database sources** — `type: database` entries expose existing
+  workspace-contained `.db` files without ingestion
+* **Consumption-first serve** — `serve` auto-discovers dropped `.db` files under
+  `.graphtor/` and keeps read-only databases out of the write/sync path
+* **STDIO MCP server** — exposes `search_local_docs`, `search_semantic`,
+  `research_topic`, `traverse_doc_links`, `list_sources`, `get_chunk_by_id`,
+  `get_document`, and `get_status`
+* **Agent-friendly CLI output** — `--json` wraps CLI output in JSON-RPC 2.0
+  envelopes, and `manifest` prints the same tool definitions as the MCP server
+* **Workspace containment** — filesystem operations fail closed when paths
+  escape the authorized root through `..`, symlinks, or Windows reparse points
 
 ## Quick Start
 
-### 1. Install
+### 1. Install the binary
 
 **macOS / Linux — one-liner:**
 
@@ -77,37 +90,45 @@ cargo build --release
 
 [releases]: https://github.com/softwaresalt/graphtor-docs/releases
 
-> **Just want to consume an already-generated database?** Skip straight to
-> `graphtor-docs install` (no flags) in an empty workspace, drop a `.db`
-> file into the resulting `.graphtor/` directory, and run `graphtor-docs
-> serve` — no `sources.yaml` or `sync` required. The steps below are for
-> ingesting and generating your own documentation index; see
-> [Ingestion setup](docs/cli-reference/graphtor-docs.md#ingestion-setup) for
-> the full CLI-driven workflow.
+### 2. Initialize an ingestion workspace
 
-### 2. Configure sources
+From the workspace where your AI agent will run:
 
-Create `.graphtor/config/sources.yaml` pointing at your local docline output
-directories:
+```sh
+graphtor-docs install --with-ingestion
+```
+
+This creates the ingestion-capable `.graphtor/` scaffold, a template
+`.graphtor/config/sources.yaml`, and an MCP config entry.
+
+> [!TIP]
+> If you only want to consume an already-generated database, run
+> `graphtor-docs install` without flags, drop a `.db` file directly into
+> `.graphtor/`, and run `graphtor-docs serve`. No `sources.yaml` or `sync` is
+> required for that read-only path.
+
+### 3. Configure a local docline Markdown source
+
+Edit `.graphtor/config/sources.yaml` so it points at a local directory of
+docline-emitted Markdown files:
 
 ```yaml
 sources:
   - type: local
     id: product-docs
-    path: ./out/product-docs     # directory of docline-emitted .md files
-    include: ["**/*.md"]
+    path: ./out/product-docs
+    include:
+      - "**/*.md"
+    formats:
+      - md
     database: product.db
-
-  - type: local
-    id: team-runbooks
-    path: ./out/runbooks
-    include: ["**/*.md"]
 ```
 
-Every `.md` file in these directories must contain a valid docline v1
-frontmatter block. Files that are missing required frontmatter fields or whose
-`content_sha256` digest mismatches are rejected and reported — they do not
-silently propagate partial data.
+Every Markdown file in the source directory must contain a valid docline v1
+frontmatter block with `title`, `source`, `ingested_at`, `doc_type`, and
+`source_path`. Files with missing or malformed frontmatter, unsupported
+`schema_version` major versions, or mismatched `content_sha256` values are
+rejected deterministically.
 
 See the [Configuration Guide](docs/configuration.md) for all options.
 
@@ -116,16 +137,34 @@ When you omit `database`, the source uses the primary `--db-path` target
 creates or reuses `.graphtor/<database>` and keeps that source's incremental
 state in the matching `*.sync_state.json` file.
 
-### 3. Sync documentation
+### 4. Sync documentation
 
 ```sh
 graphtor-docs sync
 ```
 
-First sync downloads the embedding model (~80 MB) from HuggingFace Hub and
-ingests all configured sources. Subsequent syncs are incremental (mtime-based).
+`sync` scans the configured local directories, validates docline frontmatter,
+chunks Markdown by heading, embeds chunks when the model is available, and
+writes the graph+vector database. Subsequent runs are incremental
+(mtime-based).
 
-### 4. Serve to your AI agent
+By default, graphtor-docs loads `all-MiniLM-L6-v2` from the Hugging Face cache
+on first use. Set `GRAPHTOR_EMBED_MODEL_DIR` to a local model directory for
+offline or air-gapped environments.
+
+### 5. Run your first semantic search
+
+Use a natural-language query that matches the kind of content in your docs:
+
+```sh
+graphtor-docs search-semantic "deployment checklist" --top-k 5
+```
+
+A successful query returns the nearest indexed chunks across the configured
+database set. If the embedding model is unavailable, fix the model location and
+re-run `graphtor-docs sync --full` so chunks receive embeddings.
+
+### 6. Serve to your AI agent
 
 ```sh
 graphtor-docs serve

@@ -1,24 +1,36 @@
 ---
 title: Configuration Guide
-description: "Complete sources.yaml reference for Git, local, and URL source types — all fields, defaults, and annotated examples"
+description: "Complete source registry reference for local docline sources, read-only database entries, routing, and serve posture"
 ---
 
-graphtor-docs is configured via a single YAML file, `sources.yaml`, which
-defines the local documentation sources to validate, index, and serve, plus
-optional read-only database entries to serve without ingestion. Every
-ingestible source must be a local directory of docline-emitted standardized
-Markdown files. Git, URL, and web-crawl source types are not supported.
+graphtor-docs is configured via one or more YAML source registry files, with
+`.graphtor/config/sources.yaml` as the legacy single-file layout. The registry
+defines local documentation sources to validate, index, and serve, plus optional
+read-only database entries to serve without ingestion. Every ingestible source
+must be a local directory of docline-emitted standardized Markdown files. Git,
+URL, and web-crawl source types are not supported.
 
 ## Config File Location
 
-graphtor-docs resolves the config path in this order:
+When you provide an explicit config path, graphtor-docs resolves it in this
+order:
 
 1. `--config <FILE>` CLI flag (or `-c <FILE>`)
 2. `GRAPHTOR_SOURCES` environment variable
-3. `.graphtor/config/sources.yaml` relative to the **current working directory**
 
-If no config file is found at the resolved path, graphtor-docs exits with a
-fatal error. No stub file is created automatically.
+Without an explicit path, graphtor-docs discovers source registry files under
+`.graphtor/config/` relative to the **current working directory**:
+
+1. All `*.sources.yaml` files, sorted alphabetically
+2. `.graphtor/config/sources.yaml` only when no `*.sources.yaml` files exist
+
+Missing registry handling is command-specific:
+
+* `sync` and `prewarm` fail closed because they need a registry before ingestion
+* `serve` can start from dropped `.db` files discovered under `.graphtor/`
+* `status` reports an empty database list unless you explicitly pass `--db-path`
+
+No stub file is created automatically.
 
 ## Multi-file layout
 
@@ -38,8 +50,10 @@ sorts them alphabetically, and merges them into a single source registry
 before running any pipeline stage.
 
 When any `*.sources.yaml` file is present, the legacy `sources.yaml`
-fallback is ignored. In multi-file mode every source entry must include
-an explicit `database` field so routing is unambiguous.
+fallback is ignored. In multi-file mode every `type: local` entry must include
+an explicit `database` field so routing is unambiguous. A `type: database`
+entry has no `database` field because it names a pre-built file to serve, not a
+source to ingest.
 
 > [!TIP]
 > Use multi-file layout when separate teams or products own different
@@ -55,7 +69,7 @@ sources:
 
   - type: database      # serves an existing database read-only; no ingestion
     id: my-db-alias
-    path: ./some/existing.db
+    path: .graphtor/some-existing.db
 ```
 
 The top-level key is `sources`, containing an ordered list of source entries.
@@ -83,11 +97,16 @@ sources:
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `id` | string | **yes** | — | Unique source identifier |
-| `path` | string | **yes** | — | Path to the local directory (relative to cwd or absolute) |
+| `path` | string | **yes** | — | Path to the local docline output directory |
 | `database` | string | no | primary `--db-path` | Route this source into a specific database file |
 | `include` | list\<string\> | no | (all files) | Glob patterns — only matching files are indexed |
 | `exclude` | list\<string\> | no | (none) | Glob patterns — matching files are skipped |
 | `formats` | list\<string\> | no | `["md"]` | Extension allow-list; only `md` and `markdown` are accepted |
+
+Every `.md` file in a local source directory must contain a valid docline v1
+frontmatter block. Files that fail contract validation (missing required
+fields, bad `content_sha256`, unsupported `schema_version` major) are rejected
+with a deterministic error. See [Pipeline Reference](pipeline.md) for details.
 
 ## Source Type: Database (`type: database`)
 
@@ -109,14 +128,14 @@ sources:
 | `id` | string | **yes** | — | Unique alias/name for this served database |
 | `path` | string | **yes** | — | Path to the database file; must resolve within `.graphtor/` |
 
-There is no `database`, `include`, `exclude`, or `formats` field for this
-type — it names a database to serve, it does not describe content to
-ingest. The `path` is canonicalized and validated to stay within the same
-authorized root as auto-discovery — `.graphtor/` itself, not the broader
-project root: an out-of-root path (`..`, a symlink, or a Windows
-junction/reparse point escape, or any path outside `.graphtor/`) is rejected
-rather than served. External (outside `.graphtor/`) database paths are not
-supported.
+There is no `database`, `include`, `exclude`, `formats`, or `read_only` field
+for this type — it names a database to serve, it does not describe content to
+ingest. Unknown fields are rejected at parse time. The `path` is canonicalized
+and validated to stay within the same authorized root as auto-discovery —
+`.graphtor/` itself, not the broader project root: an out-of-root path (`..`, a
+symlink, or a Windows junction/reparse point escape, or any path outside
+`.graphtor/`) is rejected rather than served. External (outside `.graphtor/`)
+database paths are not supported.
 
 If the same underlying file is also reachable through auto-discovery
 (the entry's `path` necessarily resolves into `.graphtor/`, the same
@@ -127,15 +146,11 @@ See
 [Consumption-first serve: auto-discovery, posture, and the operator trust boundary](design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md)
 for how this entry participates in serve's discovery and posture rules.
 
-Every `.md` file in the directory must contain a valid docline v1 frontmatter
-block. Files that fail contract validation (missing required fields, bad
-`content_sha256`, unsupported `schema_version` major) are rejected with a
-deterministic error. See [Pipeline Reference](pipeline.md) for details.
-
 ## Database Routing
 
-Set `database` on a source when you want that source to sync into a dedicated
-SQLite file instead of the primary `--db-path` target.
+Set `database` on a local source when you want that source to sync into a
+dedicated CozoDB `.db` file (SQLite backend) instead of the primary `--db-path`
+target.
 
 ```yaml
 sources:
@@ -161,6 +176,27 @@ graphtor-docs also creates one incremental state file per database:
 Use simple file names for `database`. Values must not be empty, must not
 contain `/` or `\`, and must not contain parent-directory components such as
 `..`.
+
+## Install Footprints and Read-only Serve
+
+The default install is consumption-first:
+
+* `graphtor-docs install` creates `.graphtor/` and a minimal `.mcp.json` entry
+* it does **not** create `sources.yaml`, `bin/`, `data/`, `cache/`, `config/`,
+  or `logs/`
+* it does **not** copy the binary or manage `.gitignore`
+
+This minimal footprint is enough to drop an existing `.db` file directly under
+`.graphtor/` and run `graphtor-docs serve`. Serve auto-discovers `.db` files in
+that flat directory and opens them read-only unless a real `type: local` source
+with ingestible docline Markdown promotes its target database to generation
+mode.
+
+Use `graphtor-docs install --with-ingestion` when you need the full
+ingestion-capable scaffold. That mode creates `bin/`, `data/`, `cache/`,
+`config/`, and `logs/`, copies the binary, writes a template
+`.graphtor/config/sources.yaml`, and manages `.gitignore` unless
+`--no-gitignore` is set.
 
 ## Formats
 
@@ -198,7 +234,8 @@ When both `include` and `exclude` match a file, `exclude` wins.
 
 ## Validation
 
-graphtor-docs validates `sources.yaml` on every `sync` or `serve` invocation.
+graphtor-docs validates the source registry on every `sync`, `serve`, and
+`status` invocation.
 Common validation errors:
 
 | Error | Cause |
@@ -207,9 +244,13 @@ Common validation errors:
 | `missing required field` | `id` or `path` is absent |
 | `invalid glob pattern` | A pattern in `include` or `exclude` is malformed |
 | `invalid database name` | `database` is empty or contains path traversal characters |
+| `invalid database path` | A `type: database` path escapes `.graphtor/` |
 | `invalid format` | A `formats` value is not `md` or `markdown` |
 
-Run `graphtor-docs doctor` to validate the config file without running a sync.
+Run `graphtor-docs sync --no-embed` when you need full registry validation and
+text-only ingestion without embedding work. `graphtor-docs doctor` performs
+workspace health checks and YAML parse checks; it is not a full source-registry
+schema validator.
 
 ## Embedding Model (Semantic Search)
 
@@ -225,7 +266,9 @@ Set the `GRAPHTOR_EMBED_MODEL_DIR` environment variable to a local directory
 containing `config.json`, `tokenizer.json`, and `model.safetensors`.
 graphtor-docs then loads the model from that directory with **no network
 access** — useful for air-gapped environments or to sidestep Hub-download
-failures.
+failures. The workspace convention is
+`.graphtor/models/all-MiniLM-L6-v2`; if the variable is unset, the resolver
+falls back to the Hugging Face Hub cache.
 
 Download the three files once (for example with Python `huggingface_hub`):
 
@@ -270,7 +313,7 @@ identically in CLI and MCP mode.
 ## Annotated Full Example
 
 ```yaml
-# ── Local: index a docline output directory ──────────────────────────────────
+# Local: index a docline output directory
 sources:
   - type: local
     id: product-docs
@@ -281,11 +324,16 @@ sources:
     exclude:
       - "**/drafts/**"
 
-  # ── Local: separate source routed to its own database ───────────────────────
+  # Local: separate source routed to its own database
   - type: local
     id: team-runbooks
     path: /home/user/runbooks/out
     database: runbooks.db
     include:
       - "**/*.md"
+
+  # Database: serve an existing database read-only; no ingestion
+  - type: database
+    id: shared-runbooks
+    path: .graphtor/shared-runbooks.db
 ```
