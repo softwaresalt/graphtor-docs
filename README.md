@@ -29,7 +29,8 @@ docline Markdown, sync, and query.
   embeddings stored inline on `doc_chunks`
 * **Exact semantic search** — `all-MiniLM-L6-v2` embeddings via Candle
   (in-process Rust ML inference) plus exact brute-force cosine k-NN over stored
-  chunk embeddings; no HNSW index is built or maintained
+  chunk embeddings; no HNSW index is built or maintained. Ranking is exact
+  within each database; results from multiple databases are merged round-robin
 * **Graph cross-referencing** — follows extracted document links with bounded
   BFS traversal for related context
 * **Incremental sync** — re-ingests changed docline Markdown files using
@@ -160,9 +161,11 @@ Use a natural-language query that matches the kind of content in your docs:
 graphtor-docs search-semantic "deployment checklist" --top-k 5
 ```
 
-A successful query returns the nearest indexed chunks across the configured
-database set. If the embedding model is unavailable, fix the model location and
-re-run `graphtor-docs sync --full` so chunks receive embeddings.
+A successful query returns the nearest indexed chunks. Within a single database
+the ranking is exact; when multiple databases are configured, graphtor-docs
+merges each database's exact top matches round-robin rather than computing one
+global ranking. If the embedding model is unavailable, fix the model location
+and re-run `graphtor-docs sync --full` so chunks receive embeddings.
 
 ### 6. Serve to your AI agent
 

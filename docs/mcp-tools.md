@@ -9,7 +9,8 @@ local MCP clients that launch the process (localhost-only). The MCP tools are
 query-only: they search, traverse, list, retrieve, and report status without
 mutating indexed content. Consumption-first databases discovered under
 `.graphtor/` or declared with `type: database` are opened read-only and are
-never ingested by `serve`.
+never ingested by `serve` — unless the same database file is also the target of
+a `type: local` source, which promotes it to read-write generation mode.
 Each successful tool call returns a single Markdown text content item.
 
 [mcp]: https://modelcontextprotocol.io

@@ -122,7 +122,10 @@ or when docline changes the canonical `source_path`.
 
 When embeddings are disabled for an ordinary incremental run, unchanged chunk
 IDs keep any previously stored embedding. New or content-changed chunks remain
-without embeddings until a later sync runs with the model available.
+without embeddings until a later sync runs with the model available. Because
+incremental sync skips files whose mtime has not advanced, run `sync --full`
+(or modify the affected files) to backfill embeddings for chunks that were
+indexed while the model was unavailable.
 
 Per-file failures are non-fatal. Failed modified files keep their previous mtime
 in state, and failed new files are omitted from state, so the next sync retries

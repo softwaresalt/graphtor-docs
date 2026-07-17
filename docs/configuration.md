@@ -27,8 +27,10 @@ Without an explicit path, graphtor-docs discovers source registry files under
 Missing registry handling is command-specific:
 
 * `sync` and `prewarm` fail closed because they need a registry before ingestion
-* `serve` can start from dropped `.db` files discovered under `.graphtor/`
-* `status` reports an empty database list unless you explicitly pass `--db-path`
+* `serve` and `status` share database auto-discovery: both find `.db` files
+  dropped under `.graphtor/` even without a registry
+* `status` reports an empty list only when no databases are discovered and no
+  `--db-path` is given
 
 No stub file is created automatically.
 
