@@ -1,6 +1,6 @@
 ---
 title: Pipeline, Schema, and Embeddings Reference
-description: "Four-stage ingestion pipeline (Acquire → Parse → Embed → Load), CozoDB schema, embedding model details, and Datalog query examples"
+description: "Docline-Markdown ingestion pipeline, CozoDB schema, embedding model details, and Datalog query examples"
 ---
 
 graphtor-docs processes documentation through five sequential pipeline stages:
@@ -57,9 +57,13 @@ sources.yaml
 
 ## Stage 1: Acquire
 
-The acquire stage scans each configured local directory for Markdown files.
-Files are read in-place — no copy is made to a cache directory. The directory
-path configured in `sources.yaml` is the acquisition root.
+The acquire stage scans each configured local directory and applies the
+source's include/exclude glob filters and Markdown format allow-list. Files are
+read in-place — no copy is made to a cache directory. The directory path
+configured in `sources.yaml` is the acquisition root.
+
+Ingestion is docline-Markdown only. `type: database` entries are served
+read-only and never scanned, and non-Markdown formats are excluded before parse.
 
 ---
 
@@ -213,7 +217,11 @@ The database uses CozoDB with a SQLite backend. By default, sync writes to
 `.graphtor/graph.db`. Sources can override that target with the `database`
 field in `sources.yaml`, which routes those sources into additional `.db`
 files under `.graphtor/`.
-Four stored relations and one HNSW vector index form the schema:
+The schema is a set of CozoDB relations. Embeddings are stored inline on
+`doc_chunks.embedding`; semantic search performs exact brute-force cosine k-NN
+over non-null embeddings at query time. No vector index is maintained, and
+`ensure_schema` drops a legacy `doc_chunks:embedding_idx` relation if one is
+present.
 
 ### `doc_schema_ver`
 
@@ -277,8 +285,9 @@ Stores every indexed text chunk, including its embedding vector.
 | `content` | String | Full text content of the chunk |
 | `embedding` | \<F32; 384\>? | 384-dim float32 embedding vector; `null` when `--no-embed` was used |
 
-A CozoDB HNSW vector index (`doc_chunks:embedding_idx`) is maintained over
-the `embedding` column for efficient approximate nearest-neighbour search.
+Semantic search scans the `embedding` column directly. It computes cosine
+distance between the query vector and each non-null stored embedding, orders by
+distance, and returns the nearest chunks with exact recall.
 
 ---
 
@@ -321,6 +330,25 @@ Extracted code snippets from fenced code blocks.
 | `chunk_id` | String | Parent chunk containing this code block |
 | `language` | String? | Language tag from the code fence (e.g., `"rust"`, `"sh"`); `null` if unspecified |
 | `content` | String | Raw code content |
+
+---
+
+### `doc_url_index`
+
+Cross-source lookup table for docline-provided canonical document URLs.
+
+```datalog
+:create doc_url_index {
+    canonical_url: String
+    =>
+    chunk_id: String
+}
+```
+
+| Column | Type | Description |
+|---|---|---|
+| `canonical_url` | String (PK) | Absolute canonical document URL from docline frontmatter |
+| `chunk_id` | String | Entry chunk for the document |
 
 ---
 

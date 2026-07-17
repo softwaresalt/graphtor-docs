@@ -3,9 +3,11 @@ title: Architecture Overview
 description: "Component map, data flow, technology stack, storage layout, and chunk identity for graphtor-docs"
 ---
 
-graphtor-docs is a local-first documentation RAG system. All computation
-runs in-process. No cloud services, no networked databases, no external
-model servers. The entire system compiles to a single Rust binary.
+graphtor-docs is a local-first documentation RAG system for docline-emitted
+Markdown. It indexes local directories into an embedded CozoDB graph+vector
+store and serves them to local AI agents over STDIO MCP. All computation runs
+in-process. No cloud services, no networked databases, no external model
+servers. The entire system compiles to a single Rust binary.
 
 ## Design Principles
 
@@ -48,7 +50,7 @@ sources.yaml
     ▼
 ┌──────────────────────────────────────────────────────┐
 │ Acquire                                              │
-│  Local → directory scan   → (in-place; no copy)     │
+│  Local → directory scan + glob filter (no copy)     │
 └──────────────────────┬───────────────────────────────┘
                        │ .md files on disk
                        ▼
@@ -90,7 +92,7 @@ sources.yaml
                        ▼
                MCP Server (serve)
           search_local_docs  ─── text search via doc_chunks
-          search_semantic    ─── HNSW vector cosine similarity
+          search_semantic    ─── exact brute-force cosine k-NN
           traverse_doc_links ─── BFS over doc_edges
           research_topic     ─── combined search + graph traversal
           list_sources       ─── doc_sources registry
@@ -105,7 +107,7 @@ sources.yaml
 |---|---|---|
 | Language | Rust (stable, 1.75+, edition 2021) | `#![forbid(unsafe_code)]` enforced |
 | Unified store | CozoDB (`cozo` crate, SQLite backend) | Embedded; Datalog queries; property-graph traversal |
-| Embeddings | `all-MiniLM-L6-v2` via Candle | ~80 MB model; 384-dim; pure Rust inference; HNSW index |
+| Embeddings | `all-MiniLM-L6-v2` via Candle | ~80 MB model; 384-dim; pure Rust inference; exact brute-force search |
 | Graph extraction | `pulldown-cmark` | AST-based; deterministic; 100% precision |
 | MCP interface | `rmcp` crate | Async STDIO JSON-RPC via tokio |
 | Configuration | `serde_yaml` + `serde_json` | Type-safe YAML/JSON deserialization |
@@ -156,6 +158,12 @@ The sync engine tracks change at the source level for local sources:
 When a source sets `database`, sync, serve, status, and prewarm route that
 source through the matching `.db` file and aggregate results across all loaded
 databases.
+
+`serve` is consumption-first. With no source registry, it scans the flat
+`.graphtor/` root for existing `*.db` files and serves them read-only. Explicit
+`type: database` entries are also read-only and never enter ingestion. Only a
+live `type: local` source with ingestible Markdown content promotes its target
+database to generation mode for background sync.
 
 Write paths acquire a per-database advisory lock before opening the target
 store, while `status` and MCP query surfaces use read-only handles against the

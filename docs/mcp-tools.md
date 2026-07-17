@@ -1,11 +1,17 @@
 ---
 title: MCP Tool Reference
-description: "Complete reference for all 8 MCP tools exposed by graphtor-docs — parameters, examples, and usage patterns"
+description: "Reference for the 8 local STDIO MCP tools exposed by graphtor-docs — parameters, behavior, and response shapes"
 ---
 
 graphtor-docs exposes 8 tools via the [Model Context Protocol (MCP)][mcp].
-The server runs as a local STDIO process and is available only to MCP clients
-on the same machine (localhost only).
+The server runs over STDIO, opens no network listener, and is reachable only by
+local MCP clients that launch the process (localhost-only). The MCP tools are
+query-only: they search, traverse, list, retrieve, and report status without
+mutating indexed content. Consumption-first databases discovered under
+`.graphtor/` or declared with `type: database` are opened read-only and are
+never ingested by `serve` — unless the same database file is also the target of
+a `type: local` source, which promotes it to read-write generation mode.
+Each successful tool call returns a single Markdown text content item.
 
 [mcp]: https://modelcontextprotocol.io
 
@@ -17,10 +23,12 @@ on the same machine (localhost only).
 graphtor-docs install
 ```
 
-This generates a workspace-root `.mcp.json` config file that registers
-`graphtor-docs` as an MCP server. This single file is the editor-agnostic
-standard understood by MCP clients — no editor-specific config files are
-written.
+The default install is consumption-first. It creates the workspace-root
+`.graphtor/` directory and a managed `.mcp.json` entry that registers
+`graphtor-docs` as an MCP server. It does not create `sources.yaml`, copy a
+binary into `.graphtor/bin/`, or scaffold ingestion directories. Use
+`graphtor-docs install --with-ingestion` when this workspace will generate its
+own database from local docline Markdown.
 
 ### 2. Configure your MCP client
 
@@ -38,17 +46,24 @@ Add graphtor-docs to your MCP client configuration file (e.g., `.mcp.json`):
 }
 ```
 
-The `graphtor-docs` binary must be on your `PATH`, or use the full path to the
-binary. After `graphtor-docs install`, the binary is at
-`.graphtor/bin/graphtor-docs`.
+The `graphtor-docs` binary must be on your `PATH`, or the `command` value must
+point at the binary. A full ingestion install may manage a binary under
+`.graphtor/bin/`; the minimal consumption-first install resolves the command
+through `PATH`.
 
-### 3. Ensure the database is synced
+### 3. Ensure a database is available
 
-Run `graphtor-docs sync` at least once before starting the server. The server
-opens the primary database at `.graphtor/graph.db` relative to the current
-working directory by default. If any sources set `database`, `graphtor-docs
-serve` also opens those routed database files and serves one MCP surface
-across all loaded stores.
+For consumption-only use, drop an existing v0.3.1 `.db` file directly into
+`.graphtor/` and run `graphtor-docs serve`. The server auto-discovers top-level
+`.db` files under `.graphtor/` and serves one MCP surface across all loaded
+stores.
+
+For ingestion, configure local docline Markdown sources and run
+`graphtor-docs sync` at least once. If a source sets `database`, that source is
+routed to `.graphtor/<database>`; `serve`, `status`, and `prewarm` all support
+multiple database files. A `type: database` entry names an existing
+workspace-contained `.db` file to serve read-only; it does not trigger
+ingestion.
 
 ---
 
@@ -92,14 +107,14 @@ literal text that should appear in the documentation.
 | `source_id` | string | no | (all sources) | Restrict results to a specific source ID |
 | `top_k` | integer | no | `10` | Maximum number of results (max: 50) |
 
-**Response:** Markdown-formatted list of matching chunks with source path,
-heading hierarchy, and content excerpt.
+**Response:** Markdown-formatted list of matching chunks with chunk ID, source
+path, heading hierarchy, and chunk content.
 
 **Example:**
 ```text
 search_local_docs(
-  query = "incremental sync git diff",
-  source_id = "azure-docs",
+  query = "incremental sync mtime",
+  source_id = "product-docs",
   top_k = 5
 )
 ```
@@ -115,7 +130,7 @@ matching may miss relevant results (e.g., searching for "how to handle
 failures" would also match "error recovery strategies").
 
 Requires the embedding model (`all-MiniLM-L6-v2`) to be loaded at server
-startup. If the model was not loaded (e.g., `serve` could not download it),
+startup. If the server continued in degraded mode after model resolution failed,
 this tool returns a descriptive error. Use `search_local_docs` as a fallback.
 
 **Parameters:**
@@ -160,13 +175,16 @@ single call.
 | `max_depth` | integer | no | `1` | Graph traversal depth from each seed result (max: 3) |
 
 **Behavior:**
-1. Runs keyword (or semantic, if model is loaded) search for `query`, taking the top `top_k` results as seeds.
-2. Performs BFS traversal from each of the top `min(top_k, 3)` seeds at `max_depth` (so if `top_k` is 1 or 2, fewer than 3 seeds are used).
-3. Returns initial search hits (with full chunk content) plus BFS-discovered related chunks (depth, path, and chunk ID only — use `get_chunk_by_id` or `get_document` to retrieve their full content), all deduplicated globally.
+1. Runs keyword search, or semantic search when the model is loaded, for
+   `query`
+2. Uses the top `min(top_k, 3)` results as BFS traversal seeds at `max_depth`
+3. Returns initial search hits with full chunk content plus globally
+   deduplicated related chunks. Related chunks include depth, path, and chunk
+   ID only; use `get_chunk_by_id` or `get_document` to retrieve full content.
 
 **Response:** Markdown with two sections:
 - `### Search Results` — initial search hits with full chunk content
-- `### Related Context` — BFS-discovered related chunks as a bullet list in the format:
+- `### Related Context` — BFS-discovered related chunks as a bullet list:
   `- **Depth N** — \`path\` (chunk ID: \`...\`)` (no content inline)
 
 **Example:**
@@ -221,8 +239,10 @@ that sync has run; check last-sync timestamps.
 
 **Parameters:** none
 
-**Response:** Markdown table with source ID, kind (`git`/`local`/`url`),
-display name, and last-sync timestamp (`never` until a future release).
+**Response:** Markdown list with source ID, stored source kind, display name,
+and last-sync timestamp (`never` until a future release). Current ingestion
+writes `local` source records; pre-built databases may contain the source
+records that were written when they were generated.
 
 **Example:**
 ```text
@@ -276,8 +296,8 @@ formatted as Markdown.
 **Example:**
 ```text
 get_document(
-  source_id = "azure-docs",
-  path = "articles/app-service/overview.md"
+  source_id = "product-docs",
+  path = "guides/overview.md"
 )
 ```
 
@@ -285,15 +305,15 @@ get_document(
 
 ### `get_status`
 
-Return current database status.
+Return current database and background sync status.
 
 **When to use:** verify the ingestion pipeline has run; check how many sources
 and chunks are indexed; perform a quick health check.
 
 **Parameters:** none
 
-**Response:** Markdown table with registered source count, total chunk count,
-and active schema version.
+**Response:** Markdown status block with aggregate registered source count,
+aggregate chunk count, active schema version, and `Auto-sync` state.
 
 **Example:**
 ```text

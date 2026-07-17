@@ -1,46 +1,28 @@
 ---
 title: Developer Guide
-description: "Build instructions, quality gates, module map, coding conventions, and contribution workflow for graphtor-docs"
+description: "Build instructions, quality commands, module map, coding conventions, and extension workflow for graphtor-docs"
 ---
 
-This guide covers everything needed to build graphtor-docs from source, run
-the quality gates, understand the codebase layout, and extend the system.
+This guide covers how to build graphtor-docs from source, run the local quality
+commands, understand the codebase layout, and extend the Rust MCP server.
 
 ## Prerequisites
 
-### Required
-
 | Requirement | Version | Notes |
 |---|---|---|
-| Rust toolchain | 1.75+ (stable) | Install via [rustup](https://rustup.rs/) |
-| Git | any recent | For cloning and the `git2` system library |
+| Rust toolchain | 1.75+ stable | Install via [rustup](https://rustup.rs/) |
+| Git | any recent | Needed only to clone the repository |
 
-On Linux/macOS, the `git2` crate links against `libgit2`. Install system
-dependencies:
+graphtor-docs is a single Rust binary. The ingestion path is docline-emitted
+Markdown only, backed by embedded CozoDB and in-process Candle embeddings.
 
-```sh
-# Ubuntu / Debian
-sudo apt-get install libgit2-dev pkg-config
+### Embedding model
 
-# macOS (Homebrew)
-brew install libgit2
-```
-
-On Windows, `git2` uses bundled static libgit2 — no extra steps.
-
-### Optional: PDFium DLL
-
-For large PDF files (≥ 20 MiB), graphtor-docs routes through PDFium instead
-of the pure-Rust `pdf-extract` backend. Without PDFium, large PDFs still
-parse via the fallback backend (slower, lower quality).
-
-To enable PDFium:
-1. Download the pre-built PDFium shared library from
-   [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries)
-2. Place it in the same directory as the graphtor-docs binary, **or** set
-   `GRAPHTOR_PDFIUM_PATH` to its full path
-
-PDFium is never required; omitting it only affects large-PDF throughput.
+`sync`, `serve`, and `prewarm` resolve the
+`sentence-transformers/all-MiniLM-L6-v2` model through the shared embedding
+resolver. On first use, the model is downloaded to the Hugging Face cache. Set
+`GRAPHTOR_EMBED_MODEL_DIR` to a local directory containing `config.json`,
+`tokenizer.json`, and `model.safetensors` for offline operation.
 
 ## Building from Source
 
@@ -48,184 +30,183 @@ PDFium is never required; omitting it only affects large-PDF throughput.
 git clone https://github.com/softwaresalt/graphtor-docs.git
 cd graphtor-docs
 
-# Debug build (faster compile, slower runtime)
+# Debug build
 cargo build
 
-# Release build (recommended for production use)
+# Release build
 cargo build --release
 ```
 
-The binary is at `target/release/graphtor-docs` (or `target/debug/graphtor-docs`).
+The binary is at `target/debug/graphtor-docs` for debug builds and
+`target/release/graphtor-docs` for release builds.
 
-## Quality Gates
+## Build and Quality Commands
 
-Run all gates in this order before committing or opening a PR:
-
-### Gate 1 — Compilation
-
-```sh
-cargo check
-```
-
-All code must compile cleanly. Run after every meaningful edit.
-
-### Gate 2 — Lint compliance
+Run the smallest command that covers your change while iterating:
 
 ```sh
+cargo build
+cargo test
 cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+cargo fmt --all
 ```
 
-Zero warnings or errors allowed. Fix all violations before proceeding.
-
-### Gate 3 — Formatting
+Before handing work off, run the quality gate sequence:
 
 ```sh
 cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+cargo test --all-targets
 ```
 
-If violations exist, auto-fix with `cargo fmt --all`, then re-check.
-
-### Gate 4 — Tests
-
-```sh
-cargo test
-```
-
-All unit and integration tests must pass. To capture full output:
-
-```sh
-cargo test 2>&1 | tee logs/test-results.txt
-```
+Use `cargo fmt --all` to apply formatting, then re-run the format check.
 
 ## Workspace Layout
 
 ```text
 src/
-  main.rs                 ← binary entry point; 8 CLI subcommands
-  lib.rs                  ← library crate root (graphtor-core)
-  cli/
-    mod.rs                ← clap Cli + Command enums; SyncArgs, ServeArgs, etc.
-  pipeline/
-    mod.rs                ← acquire → parse → embed → load orchestration
-  acquire/                ← source acquisition (git clone, local scan, URL crawl)
-  parse/                  ← pulldown-cmark, pdf-extract, docx parsers
-  embed/
-    model.rs              ← EmbeddingModel wrapping Candle all-MiniLM-L6-v2
-  db/
-    store.rs              ← DataStore: open, schema lifecycle
-    schema.rs             ← CozoDB DDL; ensure_schema (idempotent)
-    chunks.rs             ← chunk upsert operations
-    nodes.rs              ← source node CRUD
-    edges.rs              ← graph edge insertion
-    traverse.rs           ← multi-hop BFS traversal
-    search.rs             ← text search + semantic search
-    vectors.rs            ← cosine similarity over doc_vectors
-  sync/
-    state.rs              ← SyncState / SourceSyncState structs
-    git_diff.rs           ← git-based change detection
-    mtime_diff.rs         ← mtime-based change detection
-    reingest.rs           ← delete old chunks; re-run pipeline on changed files
-  config/
-    source.rs             ← SourceConfig, GitSource, LocalSource, UrlSource
-    validation.rs         ← duplicate-ID, required-field, glob-syntax checks
-  mcp/
-    server.rs             ← DocServer; #[tool_router] impl with 8 tools
-    format.rs             ← Markdown formatting for tool responses
-  workspace/
-    paths.rs              ← workspace directory layout (.graphtor/ subdirs)
-    doctor.rs             ← health checks
-    install.rs            ← install routine
-    upgrade.rs            ← upgrade routine
-    init.rs               ← sources.yaml template generation
-  error/                  ← thiserror domain error types
-  path.rs                 ← validate_path — path traversal guard
-tests/
-  integration/            ← end-to-end pipeline and database tests
-docs/                     ← user-facing and developer-facing documentation
-logs/                     ← transient output files (gitignored)
+  main.rs                 <- binary entry point and CLI command dispatch
+  lib.rs                  <- library crate root; forbids unsafe code
+  cli/                    <- clap CLI definitions, JSON-RPC output, errors
+  workspace/              <- install, init, doctor, upgrade, serve discovery
+  acquire/                <- local directory scan and glob filtering only
+  parse/                  <- Markdown parsing via pulldown-cmark
+    frontmatter.rs        <- YAML frontmatter stripping
+    ast.rs                <- pulldown-cmark event stream to AST nodes
+    chunker.rs            <- H2/H3 heading-based chunking
+    links.rs              <- Markdown link extraction
+    code.rs               <- fenced code block extraction
+  chunk/                  <- deterministic SHA-256 chunk IDs
+  embed/                  <- Candle all-MiniLM-L6-v2 embeddings, 384 dimensions
+  db/                     <- embedded CozoDB store, schema v4, graph and vectors
+    schema.rs             <- schema creation and v4 docline migration gates
+    chunks.rs             <- chunk CRUD
+    nodes.rs              <- source records
+    edges.rs              <- document link and code edges
+    search.rs             <- text and semantic search entry points
+    traverse.rs           <- BFS traversal over document links
+    vectors.rs            <- exact brute-force cosine k-NN; no vector index
+    urls.rs               <- canonical document link resolution
+  config/                 <- local and read-only database source config
+  error/                  <- thiserror GraphtorError hierarchy
+  ingest_contract/        <- docline v1 frontmatter contract validation
+  lock.rs                 <- advisory database and workspace locks
+  logging/                <- tracing subscriber setup
+  mcp/                    <- rmcp STDIO server and Markdown tool formatters
+  path/                   <- containment checks and reparse-point detection
+  pipeline/               <- acquire -> parse -> embed -> load orchestration
+  query/                  <- shared query layer for MCP and CLI
+  sync/                   <- mtime-based incremental re-ingest
+tests/                    <- integration and regression tests
+docs/                     <- user-facing and developer-facing documentation
 ```
 
 ## Code Conventions
 
+### Rust baseline
+
+Production code uses Rust 2021 with `rust-version = "1.75"`.
+`#![forbid(unsafe_code)]` is set at crate roots. Clippy warnings, including
+`clippy::pedantic`, are treated as errors.
+
 ### Error handling
 
-Domain errors use `thiserror` in `src/error/`. Never use `unwrap()` or
-`expect()` in library code. Map external errors via `From` impls or
-`.map_err()`. Use `anyhow` only in `src/main.rs` for binary-level error
-propagation.
+Domain errors use `thiserror` in `src/error/`. Public library functions return
+`Result<_, GraphtorError>`. Avoid `unwrap()` and `expect()` in library code
+unless the invariant is proven next to the call. Use `anyhow` for binary-level
+error context in `src/main.rs`.
 
 ### Logging
 
-Use the `tracing` crate — no `println!` in production code. Configure
-`tracing-subscriber` in `src/main.rs` only. Log levels:
+Use `tracing` for production logging. Configure subscribers through
+`src/logging/` and binary startup code.
 
 | Level | When to use |
 |---|---|
 | `DEBUG` | Per-document or per-chunk processing details |
-| `INFO` | Pipeline milestones (stage start/complete, counts) |
-| `WARN` | Recoverable issues (skipped files, retry attempts) |
-| `ERROR` | Failures requiring attention |
+| `INFO` | Pipeline milestones and count summaries |
+| `WARN` | Recoverable degraded behavior |
+| `ERROR` | Failures requiring operator attention |
 
 ### Imports
 
-Group in this order: `std` → external crates → `crate::...`. Prefer explicit
-imports; avoid glob imports. Default visibility is `pub(crate)`.
+Group imports in this order: `std`, external crates, then `crate::...`. Prefer
+explicit imports over glob imports. Keep visibility as narrow as possible.
 
 ### Database access
 
-All CozoDB operations go through `src/db/` — no raw Datalog queries outside
-this module. Test databases use `tempfile::TempDir` — never write to
-production paths in tests.
+All CozoDB operations go through `src/db/`. Query behavior shared by MCP tools
+and CLI query commands belongs in `src/query/`, not in individual command
+handlers.
+
+Semantic search uses exact brute-force cosine k-NN over embeddings stored in
+`doc_chunks`. Do not document or add code paths that assume a maintained vector
+index.
 
 ### Path security
 
-All file paths must be validated against the workspace root before use:
+Validate filesystem paths through `src/path/` before access:
 
 ```rust
-let resolved = std::fs::canonicalize(&path)?;
-if !resolved.starts_with(&allowed_root) {
-    return Err(GraphtorError::PathViolation { path: resolved });
-}
+let resolved = graphtor_core::path::validate_path(&candidate, &allowed_root)?;
 ```
 
-`src/path.rs` provides `validate_path()` for this purpose.
+Use `is_reparse_point()` for trust anchors such as `.graphtor/`, managed config
+files, and upgrade destinations before reading or writing through them. Escapes
+through `..`, symlinks, or Windows junctions fail closed as
+`GraphtorError::PathViolation`.
+
+### Ingestion contract
+
+Runtime ingestion accepts docline-emitted Markdown files only. `parse_file`
+validates the docline v1 frontmatter contract before chunking:
+
+* `title`
+* `source`
+* `ingested_at`
+* `doc_type`
+* `source_path`
+
+Files without valid contract frontmatter fail deterministically and do not
+silently enter the index.
 
 ## Contribution Workflow
 
 1. Fork and clone the repository
-2. Create a feature branch: `git checkout -b feat/my-feature`
-3. Write a failing test first (TDD is enforced)
-4. Implement the production code
-5. Run all four quality gates
+2. Create a feature branch
+3. Write a failing test first
+4. Implement the production change
+5. Run the relevant local quality commands
 6. Open a pull request targeting `main`
 
 Direct pushes to `main` are blocked by branch protection.
 
-## Extending the Pipeline
+## Extending the System
 
-### Adding a new parser
+### Updating Markdown parsing
 
-1. Add a module under `src/parse/` implementing
-   `parse(path: &Path) -> Result<ParsedDocument, GraphtorError>`
-2. Register the new extension in `src/pipeline/mod.rs`
-   (in the `dispatch_parse` function or equivalent)
-3. Write integration tests under `tests/integration/`
+1. Change the focused parser module under `src/parse/`
+2. Add or update tests for frontmatter, AST events, chunks, links, or code
+   snippets
+3. Keep `parse_file` docline-contract validation fail-closed
+4. Confirm the pipeline still accepts only supported Markdown extensions
 
 ### Adding a new MCP tool
 
 1. Add a parameter struct in `src/mcp/server.rs` deriving
-   `Deserialize` + `rmcp::schemars::JsonSchema`
-2. Add the `#[tool(description = "...")]` method to the `#[tool_router]`
+   `Deserialize` and `rmcp::schemars::JsonSchema`
+2. Add a `#[tool(description = "...")]` method to the `#[tool_router]`
    `impl DocServer` block
-3. Add a formatter function in `src/mcp/format.rs` returning Markdown
-4. Write a contract test verifying the parameter schema
+3. Put shared query behavior in `src/query/` when the CLI should use the same
+   semantics
+4. Add or update Markdown formatting in `src/mcp/format.rs`
+5. Add tests for parameter validation and response content
 
-### Adding a new source type
+### Changing source configuration
 
-1. Add a variant to `Source` enum in `src/config/source.rs`
-2. Implement the acquire step in `src/acquire/`
-3. Wire the new variant into the pipeline dispatch in
-   `src/pipeline/mod.rs` and `src/sync/reingest.rs`
-4. Update the sync-state logic in `src/sync/` if the new source
-   has a diff signal
-5. Update `docs/configuration.md` with the new source type schema
+1. Update `src/config/source.rs` and `src/config/validation.rs`
+2. Preserve the distinction between ingestible `type: local` sources and
+   read-only `type: database` entries
+3. Ensure read-only database entries never reach the sync or write path
+4. Update user documentation that describes `sources.yaml`
+5. Add tests for invalid fields, path containment, and multi-database routing
