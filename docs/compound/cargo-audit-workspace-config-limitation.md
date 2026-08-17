@@ -32,6 +32,7 @@ re-triage.
       --ignore RUSTSEC-2025-0057 \
       --ignore RUSTSEC-2025-0119 \
       --ignore RUSTSEC-2024-0436 \
+      --ignore RUSTSEC-2026-0249 \
       --deny warnings
 ```
 
@@ -82,3 +83,25 @@ When `cargo-deny` replaces `cargo audit` in CI:
 > RUSTSEC-2025-0141 (bincode), RUSTSEC-2025-0057 (fxhash), RUSTSEC-2025-0119
 > (number_prefix), and RUSTSEC-2024-0436 (paste). See `audit.toml` for the
 > authoritative current set and 2026-09-18 review dates.
+
+## Newest Addition (shipment 047-S, 2026-08-17)
+
+CI on PR #97 failed on a **newly published** advisory that appeared in the
+`RustSec` advisory database sometime between shipment 043-S and 047-S:
+`RUSTSEC-2026-0249` (`smartstring` 1.0.1, unmaintained, a **direct**
+dependency of `cozo 0.7.6` per `cargo tree -i smartstring`). This is the
+weekly-scheduled-run trip-wire (see the `ci.yml` `schedule:` comment)
+working exactly as designed: the allowlist mechanism intentionally fails CI
+on any advisory not yet triaged, forcing a conscious decision rather than
+silently accepting new supply-chain risk. Added to both `audit.toml` and
+`ci.yml`'s `--ignore` list following the identical pattern above, with the
+same `Review: 2026-09-18` date as the other unmaintained-crate suppressions
+(batch re-triage is simpler than staggered per-advisory dates). Confirmed
+this specific advisory reproduces identically on `main` with zero code
+changes — a pure function of advisory-database freshness, not anything
+introduced by the PR that happened to surface it. **Lesson for future
+shipments**: if `cargo audit` fails in CI on a PR that did not touch
+`Cargo.toml`/`Cargo.lock`, check whether the SAME failure reproduces on
+`main` directly before assuming the PR introduced a regression — it is very
+likely this same "new advisory published since the allowlist was last
+curated" situation, not a dependency the PR added.
