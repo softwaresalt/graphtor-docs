@@ -138,9 +138,20 @@ A database classified `ReadOnly` is opened through an **engine-enforced**
 read-only primitive, not merely an application-level guard:
 
 * The database file (and any existing WAL/SHM sidecars) is marked
-  filesystem-readonly before the underlying storage engine opens it, so every
-  connection — including later pool refills — is genuinely denied write access
-  at the OS/filesystem level, not just gated by application code.
+  filesystem-readonly before the underlying storage engine opens it. The
+  application-level `AccessMode::ReadOnly` check is the **authoritative**
+  read-only guarantee: it refuses every mutable operation regardless of the
+  filesystem attribute's state. The filesystem attribute is defense-in-depth
+  on top of that guarantee — it is **robust** while a single owning
+  `DataStore` holds the guard on a given file, and **best-effort** (not a
+  cross-process guarantee) whenever the same file is independently guarded
+  more than once, same-process (two separate `open_engine_readonly` calls on
+  one path) or cross-process. In that case, whichever guard drops first
+  restores its own captured original permissions, which can make the file
+  writable again while a peer guard is still alive. This is a known,
+  documented limitation (PR90 deferral **F6**) — see the
+  [cross-process coordination spike](../decisions/2026-08-16-readonly-serve-cross-process-coordination-spike.md)
+  for the full diagnosis.
 * This was proven empirically: a direct, engine-level mutation attempt that
   bypasses the application's own read/write guard still fails, and a full
   read-only query cycle leaves the database file byte-identical afterward.
@@ -154,7 +165,21 @@ read-only primitive, not merely an application-level guard:
 
 Together these guarantees mean a consumption workspace can never have its
 served database mutated by `serve` itself, regardless of what an agent asks
-for.
+for — the F6 limitation above concerns a peer guard's filesystem-attribute
+restore-ordering, not a bypass of the application-level `AccessMode` check.
+
+Cross-process refcounting to close the F6 window is **intentionally not
+implemented**: it would add durable cross-process state (a counter file) with
+its own crash-recovery and TOCTOU failure modes, and that cost is
+disproportionate now that the
+[external-path deliberation](../decisions/2026-08-16-shared-external-readonly-databases-deliberation.md)
+rejected the feature that would have made concurrent multi-process read of
+one shared file common rather than incidental. The true fix — a coordination
+primitive, or the single-owner serve topology recorded as the deliberation's
+recommended future direction — is deferred (stash `F1CE20EC`). An adjacent,
+pre-existing symlink-swap TOCTOU in the guard's permission handling is a
+separate, deferred security-mechanism change (stash `5905CDEE`); it does not
+change the guarantee described above and is tracked independently.
 
 ## `--read-only` escape hatch
 
@@ -210,3 +235,9 @@ ingestion runs into a served workspace.
 * [Multi-database runtime hardening](2026-05-24-multi-database-runtime-hardening.md) —
   per-database advisory locks and read-only runtime handles this design builds
   on.
+* [Read-only-serve cross-process coordination spike](../decisions/2026-08-16-readonly-serve-cross-process-coordination-spike.md) —
+  the F6 diagnosis and recommendation this section's honesty correction
+  implements.
+* [Shared external read-only databases deliberation](../decisions/2026-08-16-shared-external-readonly-databases-deliberation.md) —
+  why cross-process refcounting and external-path support were rejected in
+  favor of this honesty-only hardening.
