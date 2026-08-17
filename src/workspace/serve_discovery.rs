@@ -334,10 +334,15 @@ pub fn classify_serve_postures(
 ///
 /// Streams the boolean over the walk via [`stream_ingestible`] instead of
 /// accumulating a `Vec` of every matching relative path — memory no longer
-/// scales with document count. The entire `WalkDir` is still traversed and
-/// any walk error still fails closed to `false` (fail-closed, unchanged):
-/// this function is only a memory optimization, never a traversal
-/// short-circuit. Reuses the SAME compiled include/exclude matcher
+/// scales with document count. The walk is deliberately NOT short-circuited
+/// by an eligible candidate: finding a match never stops the traversal
+/// early, since a later walk error must still be observed. An actual walk
+/// error, in contrast, DOES stop the walk immediately and forces `false`
+/// (fail-closed, unchanged) regardless of any earlier match — this
+/// asymmetry (errors stop the walk; matches do not) is the safety-critical
+/// property this function preserves; it is only a memory optimization over
+/// the pre-refactor implementation, not a change to that asymmetry. Reuses
+/// the SAME compiled include/exclude matcher
 /// `graphtor_core::acquire::filter_files` uses (via
 /// [`FileFilter`]) so classification stays
 /// identical to the pre-refactor batch behavior. An invalid include/exclude
@@ -419,10 +424,11 @@ fn canonicalize_format_alias(fmt: &str) -> &str {
 /// the read-write `Generation` posture.
 ///
 /// Emits the same aggregate "all files excluded" warning `filter_files`
-/// emits for a fully materialized batch — under the same `input_files`
-/// field name, carrying the scalar format-candidate count — exactly once,
-/// and only when at least one format-matching candidate was observed but
-/// none of them passed `matcher`.
+/// emits for a fully materialized batch — under the same explicit tracing
+/// target, the same `input_files` field name, carrying the scalar
+/// format-candidate count — exactly once, and only when at least one
+/// format-matching candidate was observed but none of them passed
+/// `matcher`.
 fn stream_ingestible<I, E>(steps: I, matcher: &FileFilter) -> bool
 where
     I: IntoIterator<Item = Result<Option<PathBuf>, E>>,
@@ -443,12 +449,20 @@ where
         }
     }
 
-    // Parity with filter_files's own S032 warning: emit the SAME message
-    // and the SAME `input_files` field name, carrying the scalar
-    // format-candidate count (not a per-file Vec) — exactly once, and only
-    // when candidates existed but every one was excluded.
+    // Parity with filter_files's own S032 warning: emit under the SAME
+    // explicit tracing target, the SAME message, and the SAME
+    // `input_files` field name, carrying the scalar format-candidate count
+    // (not a per-file Vec) — exactly once, and only when candidates
+    // existed but every one was excluded. The explicit `target:` override
+    // preserves observability parity for operators filtering logs by
+    // crate-scoped target (e.g. `RUST_LOG=graphtor_core=warn`): without
+    // it, this event would carry the binary crate's own module-path
+    // target (`graphtor_docs::workspace::serve_discovery`) instead of the
+    // library's, silently breaking that filter even though the message
+    // and field name matched.
     if format_candidate_count > 0 && !found {
         tracing::warn!(
+            target: "graphtor_core::acquire::filter",
             input_files = format_candidate_count,
             "filter produced empty file set — all files were excluded"
         );
@@ -1414,11 +1428,14 @@ mod tests {
         F: FnOnce() -> T,
     {
         let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        // NOTE: target crate is `graphtor_docs` (this module is compiled
-        // into the BINARY crate, not the `graphtor_core` library crate —
-        // see the module doc comment at the top of this file) so the
-        // EnvFilter directive must match that target, not the library's.
-        let filter = tracing_subscriber::EnvFilter::new("graphtor_docs=warn");
+        // NOTE: `stream_ingestible`'s aggregate warning uses an explicit
+        // `target: "graphtor_core::acquire::filter"` override (parity with
+        // `filter_files`'s own S032 warning, so `RUST_LOG=graphtor_core=warn`
+        // still surfaces it even though the code now lives in the BINARY
+        // crate — see the module doc comment at the top of this file). The
+        // EnvFilter directive below matches that explicit target, not this
+        // module's own compiled-in target.
+        let filter = tracing_subscriber::EnvFilter::new("graphtor_core=warn");
         let subscriber = tracing_subscriber::fmt()
             .with_ansi(false)
             .without_time()

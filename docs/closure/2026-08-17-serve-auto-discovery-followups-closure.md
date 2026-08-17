@@ -17,8 +17,9 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`, executed as shipment `
     (`new`/`is_match`) and refactored `filter_files` to consume it as the single source of truth.
   * **`055.001.002-ST`** — refactored `source_has_ingestible_content` into an O(1)-memory
     streaming boolean (`stream_ingestible`) that reuses the shared `FileFilter` instead of
-    accumulating a `Vec` of candidate paths and calling `filter_files` once per file. The full
-    error-observing `WalkDir` walk is retained; any walk error still fails closed to `false`.
+    accumulating a `Vec` of every candidate path and calling `filter_files` once as a single
+    batch over that `Vec` (the pre-refactor approach). The full error-observing `WalkDir` walk
+    is retained; any walk error still fails closed to `false`.
 * **`055.002-T`** — investigate-first evaluation of served-database alias handling; concluded the
   existing canonical-path dedup is sufficient (documented no-op, no code change).
 

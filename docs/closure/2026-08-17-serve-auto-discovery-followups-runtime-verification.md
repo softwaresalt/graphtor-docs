@@ -18,9 +18,10 @@ existing behavior is unchanged (already covered by the full `serve_discovery` re
 ## Environment Prechecks
 
 * Build artifact under test: `target\debug\graphtor-docs.exe`, built from
-  `feat/serve-auto-discovery-followups`, initially verified at commit `73454f4`
-  (post-refactor) and re-verified at the final HEAD `71a2580` (post adversarial-review fixes)
-  with identical results for both re-run scenarios.
+  `feat/serve-auto-discovery-followups`. Initially verified at commit `73454f4`
+  (post-refactor); Scenario 2 was re-verified again after the Copilot-review tracing-target fix
+  (see Scenario 2's "Observed" block and Observability Note below, which reflect that final
+  re-verification, not the initial commit).
 * `cargo build --bin graphtor-docs` completed successfully immediately before verification.
 * No external services, network, credentials, or fixtures required — `serve` is a local STDIO
   MCP process; verification uses closed-stdin subprocess invocation (the same technique
@@ -58,14 +59,15 @@ in the build checkpoint memory).
 * Observed:
 
   ```text
-  WARN graphtor_docs::workspace::serve_discovery: filter produced empty file set — all files
-  were excluded input_files=1
+  WARN graphtor_core::acquire::filter: filter produced empty file set — all files were
+  excluded input_files=1
   ```
 
-* Exactly one warning line, `input_files=1` (the scalar candidate count, not a per-file list).
-  **Matches expectation exactly** — this is the same message text and field name
-  `src/acquire/filter.rs`'s own S032 warning uses, confirming warning parity end-to-end through
-  the real binary, not just in the unit-level capture tests.
+* Exactly one warning line, `input_files=1` (the scalar candidate count, not a per-file list),
+  under the exact same explicit tracing target (`graphtor_core::acquire::filter`) as the
+  pre-existing `filter_files` S032 warning. **Matches expectation exactly** — same message text,
+  same field name, AND same target, confirming true warning parity end-to-end through the real
+  binary, not just in the unit-level capture tests.
 
 ### Scenario 3 — Zero format-candidate source → `ReadOnly`, no warning
 
@@ -127,11 +129,10 @@ rather than a separate file for this shipment.)
 
 ## Observability Note
 
-The aggregate exclusion warning now fires from `stream_ingestible` in the BINARY crate
-(`graphtor_docs::workspace::serve_discovery`) rather than from the LIBRARY crate's
-`graphtor_core::acquire::filter` (which still emits its own, separate S032 warning for direct
-`filter_files` batch callers). The message text and the `input_files` field name are identical —
-confirmed in Scenario 2 above — but an operator filtering logs by crate-scoped target (for
-example, `RUST_LOG=graphtor_core=warn`) will no longer see this specific warning after this
-shipment, since it now originates under the `graphtor_docs` target. `RUST_LOG=warn` (unscoped) or
-`RUST_LOG=graphtor_docs=warn` continues to show it.
+The aggregate exclusion warning fires from `stream_ingestible` in the BINARY crate
+(`src/workspace/serve_discovery.rs`), but uses an explicit `target:
+"graphtor_core::acquire::filter"` override in its `tracing::warn!` call so it appears under the
+exact same tracing target as the LIBRARY crate's pre-existing `filter_files` S032 warning. This
+preserves true observability parity: an operator's existing `RUST_LOG=graphtor_core=warn`
+configuration continues to surface this warning after this shipment, confirmed directly above in
+Scenario 2's re-verified output.

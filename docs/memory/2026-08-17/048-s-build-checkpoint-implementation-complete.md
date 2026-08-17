@@ -48,8 +48,10 @@ All implementation work for shipment 048-S is complete and committed. All backlo
   `format_candidate_count: usize`, no per-file `Vec`.
 * `source_has_ingestible_content` now maps `walkdir::WalkDir` entries to
   `Result<Option<PathBuf>, walkdir::Error>` steps (`None` = non-candidate entry, `Some(path)` =
-  format-matching candidate) and streams them through `stream_ingestible`, reusing the shared
-  `graphtor_core::acquire::FileFilter` matcher instead of calling `filter_files` per file.
+  format-matching candidate) and streams them through `stream_ingestible`, calling
+  `graphtor_core::acquire::FileFilter::is_match` per candidate instead of accumulating a `Vec`
+  and calling `filter_files` once as a batch (the pre-refactor approach) — and never calling
+  `filter_files` itself per file, which would recompile the glob sets on every call.
 * Full error-observing walk retained — `Err` at any position (including AFTER an eligible
   candidate) forces `false`. No traversal short-circuit.
 * Warning parity: emits the same `"filter produced empty file set — all files were excluded"`
