@@ -105,6 +105,7 @@ jobs:
           #   RUSTSEC-2025-0057: fxhash        (cozo → jieba-rs → fxhash)
           #   RUSTSEC-2025-0119: number_prefix (indicatif 0.17 direct + hf-hub 0.3.2; upgrade infeasible per 035.001-T)
           #   RUSTSEC-2024-0436: paste         (tokenizers + candle/gemm → paste 1.x)
+          #   RUSTSEC-2026-0249: smartstring   (cozo 0.7.6 direct dependency)
           cargo audit \
             --ignore RUSTSEC-2026-0041 \
             --ignore RUSTSEC-2025-0056 \
@@ -112,4 +113,5 @@ jobs:
             --ignore RUSTSEC-2025-0057 \
             --ignore RUSTSEC-2025-0119 \
             --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2026-0249 \
             --deny warnings

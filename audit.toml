@@ -65,4 +65,11 @@ ignore = [
     # Upstream blocker: candle/tokenizers/gemm pin paste 1.x.
     # Review: 2026-09-18
     "RUSTSEC-2024-0436",
+
+    # RUSTSEC-2026-0249: smartstring 1.0.1 — crate unmaintained
+    # Direct dependency of cozo 0.7.6 (`cargo tree -i smartstring` confirms cozo
+    # is the sole reverse dependency). No newer cozo release is available that
+    # drops or replaces smartstring.
+    # Review: 2026-09-18
+    "RUSTSEC-2026-0249",
 ]
