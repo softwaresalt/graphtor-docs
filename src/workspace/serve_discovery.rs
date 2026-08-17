@@ -25,6 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use graphtor_core::acquire::FileFilter;
 use graphtor_core::config::{resolve_source_db_path, LocalSource, Source, SourceConfig};
 use graphtor_core::path::{is_reparse_point, validate_path};
 use graphtor_core::GraphtorError;
@@ -338,7 +339,7 @@ pub fn classify_serve_postures(
 /// this function is only a memory optimization, never a traversal
 /// short-circuit. Reuses the SAME compiled include/exclude matcher
 /// `graphtor_core::acquire::filter_files` uses (via
-/// [`graphtor_core::acquire::FileFilter`]) so classification stays
+/// [`FileFilter`]) so classification stays
 /// identical to the pre-refactor batch behavior. An invalid include/exclude
 /// glob pattern fails closed to `false`, matching the pre-refactor
 /// `filter_files(...).is_ok_and(...)` behavior.
@@ -347,8 +348,7 @@ fn source_has_ingestible_content(local: &LocalSource) -> bool {
         return false;
     }
 
-    let Ok(matcher) = graphtor_core::acquire::FileFilter::new(&local.include, &local.exclude)
-    else {
+    let Ok(matcher) = FileFilter::new(&local.include, &local.exclude) else {
         return false;
     };
 
@@ -423,7 +423,7 @@ fn canonicalize_format_alias(fmt: &str) -> &str {
 /// field name, carrying the scalar format-candidate count — exactly once,
 /// and only when at least one format-matching candidate was observed but
 /// none of them passed `matcher`.
-fn stream_ingestible<I, E>(steps: I, matcher: &graphtor_core::acquire::FileFilter) -> bool
+fn stream_ingestible<I, E>(steps: I, matcher: &FileFilter) -> bool
 where
     I: IntoIterator<Item = Result<Option<PathBuf>, E>>,
 {
@@ -434,15 +434,6 @@ where
         let Ok(candidate) = step else {
             return false;
         };
-        // Once a match is already found, the aggregate warning below can
-        // never fire regardless of the final count — skip the redundant
-        // format/glob checks for the rest of the walk. The loop still
-        // consumes every remaining step so a later walk error is never
-        // missed (fail-closed is about observing errors, not about
-        // counting candidates).
-        if found {
-            continue;
-        }
         let Some(relative_path) = candidate else {
             continue;
         };
@@ -1482,10 +1473,10 @@ mod tests {
         last.expect("MAX_ATTEMPTS is greater than zero")
     }
 
-    fn matcher(include: &[&str], exclude: &[&str]) -> graphtor_core::acquire::FileFilter {
+    fn matcher(include: &[&str], exclude: &[&str]) -> FileFilter {
         let include: Vec<String> = include.iter().map(|s| (*s).to_string()).collect();
         let exclude: Vec<String> = exclude.iter().map(|s| (*s).to_string()).collect();
-        graphtor_core::acquire::FileFilter::new(&include, &exclude).expect("valid glob patterns")
+        FileFilter::new(&include, &exclude).expect("valid glob patterns")
     }
 
     #[test]
