@@ -187,9 +187,10 @@ suppressions.
 
 **Releasability status**: `READY_WITH_CONDITIONS` — merge-blocking work (implementation,
 review, CI, quality gates) is complete and verified; the one open condition
-is the post-deploy observation window above, which by construction cannot
-close on the merge date itself and will be closed out per its own defined
-criteria.
+is the post-deploy observation window above, which remained open as of
+this record's date (only 1 of the 10-start threshold observed, and 14
+days had not yet elapsed) and will be closed out per its own defined
+criteria, with the owner recording a healthy/degraded/rolled-back outcome.
 
 ## Cross-References
 

@@ -72,7 +72,19 @@ was explicitly NOT started or claimed per operator instruction.
   consistency gap — `docs/closure/2026-08-17-047-s-release-observability-evidence.md`
   still declared unconditional `READY` while the post-merge closure doc
   had just been corrected to `READY_WITH_CONDITIONS` for the same open
-  observation window; aligned both documents.
+  observation window; aligned both documents. Pass 3 (at `a91cf8c`) raised
+  4 more findings, all genuine: a self-contradiction my own pass-2 fix
+  introduced (saying the window "cannot close on the merge date itself"
+  when its own criteria say 10 starts *or* 14 days, so it theoretically
+  could — reworded in both closure docs to state the actual reason it was
+  open: only 1 start observed, 14 days not elapsed); and a follow-up-item
+  classification mismatch between this checkpoint (2 hygiene / 1 stowaway
+  / 2 F6) and the already-merged PR #98 compaction report (which had said
+  2 hygiene / 2 stowaway / 1 F6) — corrected the compaction report to
+  match the verified 2/1/2 split; and a restatement in this checkpoint's
+  own "Key Technical Learnings" bullet of the oversimplified `#2874`
+  trigger model that the compound doc itself had already corrected —
+  reworded to preserve the same registration-ordering qualification.
 * Both branches carried the six authorized stowaway files
   (`.autoharness/config.yaml`, `.github/agents/.ship.agent.md`,
   `.github/agents/.stage.agent.md`, `.github/agents/_orchestrator.agent.md`,
@@ -105,9 +117,11 @@ was explicitly NOT started or claimed per operator instruction.
 * `docs/compound/tracing-callsite-interest-cache-parallel-test-race.md` —
   new compound entry: `tracing-core` callsite `Interest` caching can starve
   a log-capture test of ANY output (not just wrong content) under parallel
-  `cargo test` when sibling tests share a callsite with no subscriber
-  active on first fire; ties to real upstream issue
-  `tokio-rs/tracing#2874`. Fix: `EnvFilter` (empirical partial improvement,
+  `cargo test` when sibling tests share a callsite — the precise trigger
+  requires the subtler `tokio-rs/tracing#2874` registration-ordering
+  preconditions (a `Dispatch` existing but not yet active when another
+  thread touches the callsite), not simply "any no-subscriber touch
+  poisons the process." Fix: `EnvFilter` (empirical partial improvement,
   not a forcing mechanism) + `rebuild_interest_cache()` + bounded retry
   (mitigation, not a guarantee).
 * `docs/compound/cargo-audit-workspace-config-limitation.md` — appended:

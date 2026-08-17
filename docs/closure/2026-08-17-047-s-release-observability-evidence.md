@@ -130,11 +130,12 @@ structured checklist ... and flag it as a manual observation requirement").
 **Releasability status**: `READY_WITH_CONDITIONS`. This is a low-risk,
 text-only, behavior-preserving change to a startup log line and
 accompanying rustdoc, and all merge-blocking evidence above is complete;
-the one open condition is the post-deploy observation window, which by
-construction cannot close on the merge date itself — it closes per its
-own defined criteria (10 starts or 14 days) with an owner-recorded
-healthy/degraded/rolled-back outcome. The bounded manual observation
-window and single-commit rollback are proportionate to the change's risk.
+the one open condition is the post-deploy observation window, which
+remained open at the time this evidence was written (well short of the
+10-start/14-day threshold) — it closes per its own defined criteria with
+an owner-recorded healthy/degraded/rolled-back outcome. The bounded manual
+observation window and single-commit rollback are proportionate to the
+change's risk.
 
 ## Cross-References
 

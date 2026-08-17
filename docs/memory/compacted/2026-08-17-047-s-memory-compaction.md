@@ -49,9 +49,9 @@ two `docs/compound/` entries this shipment produced/updated):
   maintenance, disclosed explicitly in the PR — appended to the existing
   compound learning on cargo-audit allowlist maintenance.
 * 5 follow-up items stashed for Stage triage (2 pre-existing/unrelated
-  security-adjacent hygiene items, 2 stowaway config-drift instances, 1
-  optional further F6 wording refinement) — see stash IDs `9CEC208C`,
-  `C365AB98`, `3FFE51B4`, `B883681D`, `B8C0851E`.
+  workspace-hygiene items, 1 stowaway config-drift instance, 2 optional
+  further F6 wording refinements) — see stash IDs `9CEC208C`, `C365AB98`,
+  `3FFE51B4`, `B883681D`, `B8C0851E`.
 
 ## Action
 
