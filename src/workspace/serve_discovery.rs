@@ -434,6 +434,15 @@ where
         let Ok(candidate) = step else {
             return false;
         };
+        // Once a match is already found, the aggregate warning below can
+        // never fire regardless of the final count — skip the redundant
+        // format/glob checks for the rest of the walk. The loop still
+        // consumes every remaining step so a later walk error is never
+        // missed (fail-closed is about observing errors, not about
+        // counting candidates).
+        if found {
+            continue;
+        }
         let Some(relative_path) = candidate else {
             continue;
         };
