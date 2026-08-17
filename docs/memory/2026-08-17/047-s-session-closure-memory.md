@@ -55,6 +55,24 @@ was explicitly NOT started or claimed per operator instruction.
   for PR #97 — this conflated the 4 distinct per-round counts (5, 1, 2,
   and 10-deferred) into a single number; the breakdown above is the
   accurate one, matching PR #97's own final readiness record.
+* **This PR (`#99`, `chore/session-closure-047-s`) itself went through 2
+  Copilot review passes.** Pass 1 (at `de749a8`) raised 4 findings: 2 real
+  accuracy gaps in this checkpoint (both corrected above), 1 timing
+  artifact (a scope-disclosure line that was already correct by the time
+  the review ran), and 1 substantive discovery — a second, previously
+  unprocessed Copilot review pass on PR #98 at commit `9708ba6`, whose 3
+  new findings were fixed directly in the affected already-merged files
+  (`docs/compound/tracing-callsite-interest-cache-parallel-test-race.md`,
+  `docs/memory/compacted/2026-08-17-047-s-memory-compaction.md`,
+  `docs/closure/2026-08-17-047-s-post-merge-closure.md`). Pass 2 (at
+  `8a7ac50`) raised 3 more findings: a stale file-count claim in this PR's
+  own description ("Four-file" corrected to the actual count once this
+  file's own edit was included), a timing-artifact restatement of the
+  already-corrected readiness HEAD, and a genuine cross-document
+  consistency gap — `docs/closure/2026-08-17-047-s-release-observability-evidence.md`
+  still declared unconditional `READY` while the post-merge closure doc
+  had just been corrected to `READY_WITH_CONDITIONS` for the same open
+  observation window; aligned both documents.
 * Both branches carried the six authorized stowaway files
   (`.autoharness/config.yaml`, `.github/agents/.ship.agent.md`,
   `.github/agents/.stage.agent.md`, `.github/agents/_orchestrator.agent.md`,

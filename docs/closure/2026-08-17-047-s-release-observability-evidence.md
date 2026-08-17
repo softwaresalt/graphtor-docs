@@ -3,7 +3,7 @@ date: 2026-08-17
 slug: 047-s-release-observability-evidence
 shipment: 047-S
 mode: release-observability
-status: READY
+status: READY_WITH_CONDITIONS
 owner: copilot
 ---
 
@@ -127,10 +127,14 @@ structured checklist ... and flag it as a manual observation requirement").
 | Rollback trigger | Any Failure Threshold condition above |
 | Rollback procedure | Single-commit text revert; zero guard/runtime impact |
 
-**Releasability status**: `READY`. This is a low-risk, text-only,
-behavior-preserving change to a startup log line and accompanying rustdoc;
-the bounded manual observation window and single-commit rollback are
-proportionate to that risk.
+**Releasability status**: `READY_WITH_CONDITIONS`. This is a low-risk,
+text-only, behavior-preserving change to a startup log line and
+accompanying rustdoc, and all merge-blocking evidence above is complete;
+the one open condition is the post-deploy observation window, which by
+construction cannot close on the merge date itself — it closes per its
+own defined criteria (10 starts or 14 days) with an owner-recorded
+healthy/degraded/rolled-back outcome. The bounded manual observation
+window and single-commit rollback are proportionate to the change's risk.
 
 ## Cross-References
 
