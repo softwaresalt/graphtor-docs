@@ -151,7 +151,9 @@ impl DataStore {
     /// reaching the underlying engine. Callers that need an
     /// engine/filesystem-enforced guarantee (for example, serving
     /// auto-discovered databases from an untrusted or unattended workspace)
-    /// MUST use [`DataStore::open_engine_readonly`] instead.
+    /// MUST use [`DataStore::open_engine_readonly`] instead — noting that
+    /// its own guarantee is best-effort, not robust, whenever the same file
+    /// is independently guarded more than once (F6; see its rustdoc).
     ///
     /// # Errors
     ///

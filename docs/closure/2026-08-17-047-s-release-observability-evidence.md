@@ -94,13 +94,18 @@ structured checklist ... and flag it as a manual observation requirement").
 
 * **Rollback trigger**: any Failure Threshold condition above is observed
   during the bounded observation window.
-* **Rollback procedure**: revert the single wording-change commit
-  (`fix(cli): qualify read-only guard contract wording across all surfaces`)
-  on the `post-merge/054-f-readonly-serve-guarantee-honesty` history, or apply
-  an equivalent follow-up commit restoring the prior
+* **Rollback procedure**: this is a **text-only revert**, and the fallback
+  text must stay honest — restoring the original unconditional
   `"opened engine-enforced read-only SQLite DataStore (filesystem lock
-  active)"` literal in `ENGINE_READONLY_OPEN_LOG_MESSAGE` (or the `info!`
-  call site directly). This is a **text-only revert**:
+  active)"` wording is explicitly OUT of scope for rollback, because that
+  is precisely the overstated claim this shipment exists to correct;
+  reintroducing it would knowingly regress the contract defect rather than
+  fix an operational problem. If the qualified wording itself is judged too
+  long or confusing during the observation window, the rollback is a
+  follow-up commit to a SHORTER but still-qualified message (for example,
+  a version that keeps the "best-effort ... F6" qualifier while trimming
+  the explanatory clause), not a reversion to the unconditional claim.
+  Either way:
   * `EngineReadonlyGuard::lock`/`Drop` are untouched by the original change,
     so rollback has zero effect on guard acquisition, permission
     capture/restore, or sidecar cleanup behavior.
