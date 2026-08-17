@@ -139,7 +139,7 @@ change's risk.
 
 ## Cross-References
 
-* `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-plan.md` —
+* `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md` —
   Unit A1 implementation plan (this evidence satisfies its "Runtime
   Verification and Closure" section's observability requirement).
 * `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`

@@ -8,7 +8,7 @@ promoted_to: "plan"
 stash_id: "5D98DBCC"
 linked_artifacts:
   - "docs/decisions/2026-08-16-readonly-serve-cross-process-coordination-spike.md"
-  - "docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-plan.md"
+  - "docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md"
 tags:
   - workspace-containment
   - constitution
@@ -161,7 +161,7 @@ startup log, design doc), and record F6 as a documented best-effort limitation
 under concurrent multi-process read. Adversarial review established that no
 in-process change closes the cross-process writable window, so this unit does not
 attempt to; it does not overload `is_engine_enforced_readonly()`. This is planned
-in `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-plan.md`.
+in `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`.
 Genuinely closing the window (a coordination primitive or the single-owner serve
 topology) is deferred to stash `F1CE20EC`; an adjacent pre-existing symlink-swap
 TOCTOU in the guard is deferred to stash `5905CDEE`. Zero-duplication
