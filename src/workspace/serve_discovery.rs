@@ -25,6 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use graphtor_core::acquire::FileFilter;
 use graphtor_core::config::{resolve_source_db_path, LocalSource, Source, SourceConfig};
 use graphtor_core::path::{is_reparse_point, validate_path};
 use graphtor_core::GraphtorError;
@@ -330,48 +331,60 @@ pub fn classify_serve_postures(
 /// glob filters. Read-only — never creates or modifies anything, unlike
 /// the full acquisition `plan`/`execute` pipeline (which would create
 /// `data_root` as a side effect).
+///
+/// Streams the boolean over the walk via [`stream_ingestible`] instead of
+/// accumulating a `Vec` of every matching relative path — memory no longer
+/// scales with document count. The walk is deliberately NOT short-circuited
+/// by an eligible candidate: finding a match never stops the traversal
+/// early, since a later walk error must still be observed. An actual walk
+/// error, in contrast, DOES stop the walk immediately and forces `false`
+/// (fail-closed, unchanged) regardless of any earlier match — this
+/// asymmetry (errors stop the walk; matches do not) is the safety-critical
+/// property this function preserves; it is only a memory optimization over
+/// the pre-refactor implementation, not a change to that asymmetry. Reuses
+/// the SAME compiled include/exclude matcher
+/// `graphtor_core::acquire::filter_files` uses (via
+/// [`FileFilter`]) so classification stays
+/// identical to the pre-refactor batch behavior. An invalid include/exclude
+/// glob pattern fails closed to `false`, matching the pre-refactor
+/// `filter_files(...).is_ok_and(...)` behavior.
 fn source_has_ingestible_content(local: &LocalSource) -> bool {
     if !local.path.is_dir() {
         return false;
     }
 
-    let mut relative_candidates: Vec<PathBuf> = Vec::new();
-    for entry in walkdir::WalkDir::new(&local.path) {
-        // Fail closed on any walk error. An unreadable subtree (or an entry
-        // that vanished mid-walk) means the REAL acquisition walk — which
-        // propagates `WalkDir` errors (see `graphtor_core::acquire::local`) —
-        // would also fail. Refuse to classify the source as cleanly ingestible
-        // (and therefore promote its target to a read-WRITE `Generation`
-        // posture) merely because some OTHER readable file happened to match:
-        // treat the source as not-ingestible so its target stays read-only,
-        // matching the acquisition pipeline's own behaviour.
-        let Ok(entry) = entry else {
-            return false;
-        };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let Some(extension) = entry.path().extension().and_then(|ext| ext.to_str()) else {
-            continue;
-        };
-        let matches_format = local
-            .formats
-            .iter()
-            .any(|fmt| canonicalize_format_alias(fmt).eq_ignore_ascii_case(extension));
-        if !matches_format {
-            continue;
-        }
-        if let Ok(relative) = entry.path().strip_prefix(&local.path) {
-            relative_candidates.push(relative.to_path_buf());
-        }
-    }
-
-    if relative_candidates.is_empty() {
+    let Ok(matcher) = FileFilter::new(&local.include, &local.exclude) else {
         return false;
-    }
+    };
 
-    graphtor_core::acquire::filter_files(&relative_candidates, &local.include, &local.exclude)
-        .is_ok_and(|filtered| !filtered.is_empty())
+    let steps = walkdir::WalkDir::new(&local.path).into_iter().map(|entry| {
+        entry.map(|e| {
+            // Fail closed on any walk error (mapped as `Err` and propagated
+            // unchanged below). An unreadable subtree — or an entry that
+            // vanished mid-walk — means the REAL acquisition walk (which
+            // propagates `WalkDir` errors, see `graphtor_core::acquire::local`)
+            // would also fail: `stream_ingestible` returns `false` for the
+            // whole call on the first `Err`, regardless of any earlier
+            // eligible candidate.
+            if !e.file_type().is_file() {
+                return None;
+            }
+            let extension = e.path().extension().and_then(|ext| ext.to_str())?;
+            let matches_format = local
+                .formats
+                .iter()
+                .any(|fmt| canonicalize_format_alias(fmt).eq_ignore_ascii_case(extension));
+            if !matches_format {
+                return None;
+            }
+            e.path()
+                .strip_prefix(&local.path)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+    });
+
+    stream_ingestible(steps, &matcher)
 }
 
 /// Canonicalize a configured format alias to its canonical file extension.
@@ -386,6 +399,76 @@ fn canonicalize_format_alias(fmt: &str) -> &str {
     } else {
         fmt
     }
+}
+
+/// Stream an "has ingestible content" boolean over a sequence of walk
+/// steps without accumulating a `Vec` of matching paths — O(1) additional
+/// memory beyond a `found` flag and a format-candidate counter, regardless
+/// of how many files the walk visits.
+///
+/// Each step is `Ok(Some(relative_path))` for a format-matching candidate
+/// file, `Ok(None)` for any other walk entry (a directory, a non-matching
+/// extension, or a file whose relative path could not be computed), or
+/// `Err` for a walk error. This abstraction decouples the aggregation
+/// logic from `walkdir::DirEntry` (which cannot be constructed outside the
+/// `walkdir` crate) so tests can drive an explicit, deterministic sequence
+/// — including a walk error at a specific position — without depending on
+/// real, Unix-only, racy-under-CI filesystem permission tricks.
+///
+/// Returns `false` immediately on the first `Err` step (fail-closed — an
+/// unreadable subtree anywhere in the walk means the real acquisition walk,
+/// which also propagates `WalkDir` errors, would fail too). A traversal
+/// short-circuit that returns `true` on the first eligible candidate is
+/// deliberately REJECTED: it would skip a later walk error and could
+/// incorrectly promote a partially-unreadable source's target database to
+/// the read-write `Generation` posture.
+///
+/// Emits the same aggregate "all files excluded" warning `filter_files`
+/// emits for a fully materialized batch — under the same explicit tracing
+/// target, the same `input_files` field name, carrying the scalar
+/// format-candidate count — exactly once, and only when at least one
+/// format-matching candidate was observed but none of them passed
+/// `matcher`.
+fn stream_ingestible<I, E>(steps: I, matcher: &FileFilter) -> bool
+where
+    I: IntoIterator<Item = Result<Option<PathBuf>, E>>,
+{
+    let mut found = false;
+    let mut format_candidate_count: usize = 0;
+
+    for step in steps {
+        let Ok(candidate) = step else {
+            return false;
+        };
+        let Some(relative_path) = candidate else {
+            continue;
+        };
+        format_candidate_count += 1;
+        if matcher.is_match(&relative_path) {
+            found = true;
+        }
+    }
+
+    // Parity with filter_files's own S032 warning: emit under the SAME
+    // explicit tracing target, the SAME message, and the SAME
+    // `input_files` field name, carrying the scalar format-candidate count
+    // (not a per-file Vec) — exactly once, and only when candidates
+    // existed but every one was excluded. The explicit `target:` override
+    // preserves observability parity for operators filtering logs by
+    // crate-scoped target (e.g. `RUST_LOG=graphtor_core=warn`): without
+    // it, this event would carry the binary crate's own module-path
+    // target (`graphtor_docs::workspace::serve_discovery`) instead of the
+    // library's, silently breaking that filter even though the message
+    // and field name matched.
+    if format_candidate_count > 0 && !found {
+        tracing::warn!(
+            target: "graphtor_core::acquire::filter",
+            input_files = format_candidate_count,
+            "filter produced empty file set — all files were excluded"
+        );
+    }
+
+    found
 }
 
 #[cfg(test)]
@@ -1184,5 +1267,339 @@ mod tests {
             .expect("a real in-project .graphtor root must be accepted");
         assert_eq!(served.len(), 1);
         assert_eq!(served[0], validate_path(&dropped, project.path()).unwrap());
+    }
+
+    // ── source_has_ingestible_content streaming refactor (055.001.002-ST) ──
+    //
+    // Characterization-first (Constitution Principle II): these tests pin
+    // the CURRENT batch-Vec-then-filter_files behavior of
+    // `source_has_ingestible_content` before it is refactored into a
+    // streaming boolean. They must pass UNCHANGED both before and after the
+    // refactor — that equality is the proof the refactor is
+    // behavior-preserving.
+
+    fn make_local_source(
+        path: &Path,
+        include: &[&str],
+        exclude: &[&str],
+        formats: &[&str],
+    ) -> LocalSource {
+        LocalSource {
+            id: "characterization".to_string(),
+            path: path.to_path_buf(),
+            include: include.iter().map(|s| (*s).to_string()).collect(),
+            exclude: exclude.iter().map(|s| (*s).to_string()).collect(),
+            formats: formats.iter().map(|s| (*s).to_string()).collect(),
+            database: None,
+        }
+    }
+
+    #[test]
+    fn characterization_non_directory_path_is_not_ingestible() {
+        let root = temp_root();
+        let not_a_dir = root.path().join("missing");
+        let local = make_local_source(&not_a_dir, &[], &[], &["md"]);
+        assert!(!source_has_ingestible_content(&local));
+    }
+
+    #[test]
+    fn characterization_ingestible_tree_returns_true() {
+        let root = temp_root();
+        touch(root.path(), "guide.md");
+        let local = make_local_source(root.path(), &[], &[], &["md"]);
+        assert!(source_has_ingestible_content(&local));
+    }
+
+    #[test]
+    fn characterization_zero_format_candidate_tree_returns_false() {
+        let root = temp_root();
+        touch(root.path(), "notes.txt");
+        let local = make_local_source(root.path(), &[], &[], &["md"]);
+        assert!(!source_has_ingestible_content(&local));
+    }
+
+    #[test]
+    fn characterization_excluded_only_tree_returns_false() {
+        let root = temp_root();
+        touch(root.path(), "guide.md");
+        let local = make_local_source(root.path(), &["**/*.md"], &["**/*.md"], &["md"]);
+        assert!(!source_has_ingestible_content(&local));
+    }
+
+    #[test]
+    fn characterization_include_filtered_to_zero_stays_false() {
+        let root = temp_root();
+        touch(root.path(), "guide.md");
+        let local = make_local_source(root.path(), &["no-match-*.md"], &[], &["md"]);
+        assert!(!source_has_ingestible_content(&local));
+    }
+
+    #[test]
+    fn characterization_differential_matches_batch_filter_files_across_representative_trees() {
+        // Reproduce the PRE-refactor algorithm inline (walk + collect
+        // relative candidates + one batch filter_files call) and assert the
+        // classifier's boolean equals `!filtered.is_empty()` for each case —
+        // the exact invariant the streaming refactor must preserve.
+        fn batch_reference(local: &LocalSource) -> bool {
+            let mut candidates = Vec::new();
+            for entry in walkdir::WalkDir::new(&local.path) {
+                let entry = entry.expect("fixture walk must not error");
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) else {
+                    continue;
+                };
+                let matches_format = local
+                    .formats
+                    .iter()
+                    .any(|fmt| canonicalize_format_alias(fmt).eq_ignore_ascii_case(ext));
+                if !matches_format {
+                    continue;
+                }
+                if let Ok(rel) = entry.path().strip_prefix(&local.path) {
+                    candidates.push(rel.to_path_buf());
+                }
+            }
+            graphtor_core::acquire::filter_files(&candidates, &local.include, &local.exclude)
+                .is_ok_and(|filtered| !filtered.is_empty())
+        }
+
+        let root = temp_root();
+        touch(root.path(), "top.md");
+        touch(root.path(), "nested/deep/guide.md");
+        touch(root.path(), "drafts/wip.md");
+        touch(root.path(), "notes.txt");
+
+        let cases: &[(&[&str], &[&str])] = &[
+            (&[], &[]),
+            (&["**/*.md"], &[]),
+            (&["**/*.md", "**/*.txt"], &[]),
+            (&["**/*.md"], &["**/drafts/**"]),
+            (&["nested/**/*.md"], &[]),
+            (&["no-match-*.md"], &[]),
+        ];
+
+        for (include, exclude) in cases {
+            let local = make_local_source(root.path(), include, exclude, &["md"]);
+            assert_eq!(
+                source_has_ingestible_content(&local),
+                batch_reference(&local),
+                "classifier must match the pre-refactor batch filter_files result for \
+                 include={include:?} exclude={exclude:?}"
+            );
+        }
+    }
+
+    // ── stream_ingestible: RED-FIRST new streaming abstraction ──────────
+    //
+    // `stream_ingestible` has no prior behavior to characterize — it is a
+    // brand-new O(1)-memory streaming helper introduced BY this refactor.
+    // Per Constitution Principle II, its tests are written and observed to
+    // fail (via the `unimplemented!` stub) before the function exists.
+
+    /// Minimal in-memory sink for a scoped `tracing` capture, matching the
+    /// established pattern in `src/main.rs`'s `sync_progress_tests::
+    /// capture_warn_logs` and `src/db/store.rs`'s `capture_info_logs_once`
+    /// helpers (each module keeps its own small private copy rather than
+    /// sharing one across `#[cfg(test)]` module boundaries).
+    struct CapturedLogWriter {
+        output: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    impl std::io::Write for CapturedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.output
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Run `operation` once under a scoped `tracing` subscriber capturing
+    /// WARN-and-above events from this crate to an in-memory buffer.
+    fn capture_warn_logs_once<F, T>(operation: F) -> (T, String)
+    where
+        F: FnOnce() -> T,
+    {
+        let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // NOTE: `stream_ingestible`'s aggregate warning uses an explicit
+        // `target: "graphtor_core::acquire::filter"` override (parity with
+        // `filter_files`'s own S032 warning, so `RUST_LOG=graphtor_core=warn`
+        // still surfaces it even though the code now lives in the BINARY
+        // crate — see the module doc comment at the top of this file). The
+        // EnvFilter directive below matches that explicit target, not this
+        // module's own compiled-in target.
+        let filter = tracing_subscriber::EnvFilter::new("graphtor_core=warn");
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_env_filter(filter)
+            .with_writer({
+                let output = std::sync::Arc::clone(&output);
+                move || CapturedLogWriter {
+                    output: std::sync::Arc::clone(&output),
+                }
+            })
+            .finish();
+
+        let result = tracing::subscriber::with_default(subscriber, || {
+            tracing::callsite::rebuild_interest_cache();
+            operation()
+        });
+
+        let bytes = output
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let logs = String::from_utf8(bytes).expect("tracing output should be valid utf-8");
+        (result, logs)
+    }
+
+    /// Retry [`capture_warn_logs_once`] until it observes ANY captured
+    /// output, or a bounded attempt count is exhausted.
+    ///
+    /// See `docs/compound/tracing-callsite-interest-cache-parallel-test-race.md`:
+    /// a `tracing` call-site's subscriber `Interest` is decided and cached
+    /// process-wide the first time it fires. Several sibling tests below
+    /// exercise `stream_ingestible`'s `warn!` call-site with NO subscriber
+    /// active (they only assert on the returned boolean); under default
+    /// parallel `cargo test`, one of those could win the race and cache
+    /// `Interest::never()`, silently dropping this test's own event even
+    /// though its scoped subscriber is genuinely active. Retrying only on
+    /// "captured nothing at all" (never on "captured the wrong thing")
+    /// preserves genuine regression detection while absorbing the race.
+    fn capture_warn_logs_retrying<F, T>(mut make_operation: impl FnMut() -> F) -> (T, String)
+    where
+        F: FnOnce() -> T,
+    {
+        const MAX_ATTEMPTS: u32 = 25;
+        let mut last = None;
+        for _ in 0..MAX_ATTEMPTS {
+            let (result, logs) = capture_warn_logs_once(make_operation());
+            if !logs.is_empty() {
+                return (result, logs);
+            }
+            last = Some((result, logs));
+        }
+        last.expect("MAX_ATTEMPTS is greater than zero")
+    }
+
+    fn matcher(include: &[&str], exclude: &[&str]) -> FileFilter {
+        let include: Vec<String> = include.iter().map(|s| (*s).to_string()).collect();
+        let exclude: Vec<String> = exclude.iter().map(|s| (*s).to_string()).collect();
+        FileFilter::new(&include, &exclude).expect("valid glob patterns")
+    }
+
+    #[test]
+    fn stream_ingestible_true_when_a_candidate_matches() {
+        let m = matcher(&["**/*.md"], &[]);
+        let steps: Vec<Result<Option<PathBuf>, ()>> = vec![Ok(Some(PathBuf::from("a.md")))];
+        assert!(stream_ingestible(steps, &m));
+    }
+
+    #[test]
+    fn stream_ingestible_false_on_immediate_error() {
+        let m = matcher(&[], &[]);
+        let steps: Vec<Result<Option<PathBuf>, ()>> = vec![Err(())];
+        assert!(!stream_ingestible(steps, &m));
+    }
+
+    #[test]
+    fn stream_ingestible_false_when_error_follows_an_eligible_candidate() {
+        // THE regression guard: a candidate that would make the classifier
+        // eligible is observed BEFORE a later walk error. The full,
+        // error-observing walk contract means the later error must still
+        // force `false` — a traversal short-circuit that returned `true` at
+        // the first eligible candidate would incorrectly escalate a
+        // partially-unreadable source to the Generation posture.
+        let m = matcher(&["**/*.md"], &[]);
+        let steps: Vec<Result<Option<PathBuf>, ()>> =
+            vec![Ok(Some(PathBuf::from("eligible.md"))), Err(())];
+        assert!(
+            !stream_ingestible(steps, &m),
+            "a later walk error must override an earlier eligible candidate"
+        );
+    }
+
+    #[test]
+    fn stream_ingestible_false_with_no_candidates_and_no_warning() {
+        let (result, logs) = capture_warn_logs_once(|| {
+            let m = matcher(&[], &[]);
+            let steps: Vec<Result<Option<PathBuf>, ()>> = vec![Ok(None), Ok(None)];
+            stream_ingestible(steps, &m)
+        });
+        assert!(!result, "a walk with no candidates at all must be false");
+        assert!(
+            logs.is_empty(),
+            "a zero-candidate walk must not emit the aggregate warning: {logs:?}"
+        );
+    }
+
+    #[test]
+    fn stream_ingestible_true_with_no_warning_when_ingestible() {
+        let (result, logs) = capture_warn_logs_once(|| {
+            let m = matcher(&["**/*.md"], &[]);
+            let steps: Vec<Result<Option<PathBuf>, ()>> = vec![Ok(Some(PathBuf::from("a.md")))];
+            stream_ingestible(steps, &m)
+        });
+        assert!(result);
+        assert!(
+            logs.is_empty(),
+            "an ingestible tree must not emit the aggregate warning: {logs:?}"
+        );
+    }
+
+    #[test]
+    fn stream_ingestible_false_with_no_warning_on_walk_error() {
+        let (result, logs) = capture_warn_logs_once(|| {
+            let m = matcher(&["**/*.md"], &[]);
+            let steps: Vec<Result<Option<PathBuf>, ()>> =
+                vec![Ok(Some(PathBuf::from("eligible.md"))), Err(())];
+            stream_ingestible(steps, &m)
+        });
+        assert!(!result);
+        assert!(
+            logs.is_empty(),
+            "a walk error must never emit the misleading aggregate 'all excluded' warning: \
+             {logs:?}"
+        );
+    }
+
+    #[test]
+    fn stream_ingestible_warns_exactly_once_with_scalar_candidate_count_when_all_excluded() {
+        let (result, logs) = capture_warn_logs_retrying(|| {
+            let m = matcher(&["**/*.md"], &["**/*.md"]);
+            let steps: Vec<Result<Option<PathBuf>, ()>> = vec![
+                Ok(Some(PathBuf::from("a.md"))),
+                Ok(Some(PathBuf::from("b.md"))),
+            ];
+            move || stream_ingestible(steps, &m)
+        });
+        assert!(!result, "all-excluded candidates must classify as false");
+        assert!(
+            !logs.is_empty(),
+            "capture never observed ANY event for the aggregate warning across the retry \
+             budget — this indicates a capture-seam regression, not a wording mismatch"
+        );
+        assert_eq!(
+            logs.matches("all files were excluded").count(),
+            1,
+            "exactly one aggregate warning must be emitted, not one per candidate: {logs:?}"
+        );
+        assert!(
+            logs.contains("input_files=2"),
+            "warning must carry the scalar format-candidate count (2), not a per-file list: \
+             {logs}"
+        );
+        assert!(
+            logs.contains("filter produced empty file set — all files were excluded"),
+            "warning wording must match filter_files's own S032 message for parity: {logs}"
+        );
     }
 }

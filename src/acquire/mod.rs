@@ -24,7 +24,7 @@ pub mod local;
 pub mod plan;
 pub mod result;
 
-pub use filter::filter_files;
+pub use filter::{filter_files, FileFilter};
 pub use local::{scan_local_source, scan_local_source_with_ignored_root};
 pub use plan::{plan, validate_sources};
 pub use result::{
