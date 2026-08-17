@@ -142,14 +142,18 @@ read-only primitive, not merely an application-level guard:
   application-level `AccessMode::ReadOnly` check is the **authoritative**
   read-only guarantee: it refuses every mutable operation regardless of the
   filesystem attribute's state. The filesystem attribute is defense-in-depth
-  on top of that guarantee — it is **robust** while a single owning
-  `DataStore` holds the guard on a given file, and **best-effort** (not a
-  cross-process guarantee) whenever the same file is independently guarded
-  more than once, same-process (two separate `open_engine_readonly` calls on
-  one path) or cross-process. In that case, whichever guard drops first
-  restores its own captured original permissions, which can make the file
-  writable again while a peer guard is still alive. This is a known,
-  documented limitation (PR90 deferral **F6**) — see the
+  on top of that guarantee — it is **robust** only if no independent guard
+  *ever* overlaps a given guard's lifetime on the file (a guard being the
+  only one currently alive is not itself sufficient: an earlier overlap can
+  already have left the file writable even after the overlapping peer
+  drops), and **best-effort** (not a cross-process guarantee) whenever the
+  same file is independently guarded more than once, same-process (two
+  separate `open_engine_readonly` calls on one path) or cross-process. In
+  that case, whichever guard drops first restores its own captured original
+  permissions, which can make the file writable again while a peer guard is
+  still alive — and that peer's protection stays best-effort for the rest of
+  its life even once the overlap ends. This is a known, documented
+  limitation (PR90 deferral **F6**) — see the
   [cross-process coordination spike](../decisions/2026-08-16-readonly-serve-cross-process-coordination-spike.md)
   for the full diagnosis.
 * This was proven empirically: a direct, engine-level mutation attempt that

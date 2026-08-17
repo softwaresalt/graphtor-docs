@@ -63,15 +63,19 @@ impl std::fmt::Debug for DataStore {
 /// successful open.
 ///
 /// States the filesystem read-only guarantee precisely rather than
-/// unconditionally: it is robust while THIS `DataStore` is the sole guard on
-/// the file, and best-effort — NOT a cross-process guarantee — whenever the
-/// same file is independently guarded more than once, same- or
-/// cross-process (F6; see
+/// unconditionally: protection is robust only if NO independent guard EVER
+/// overlaps this guard's lifetime on the file — a guard that is currently
+/// the only one alive is not itself sufficient, because an EARLIER overlap
+/// can already have left the file writable even after the overlapping peer
+/// drops. Once such an overlap occurs — same- or cross-process — protection
+/// is best-effort (not a cross-process guarantee) for the rest of this
+/// guard's life (F6; see
 /// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`).
 const ENGINE_READONLY_OPEN_LOG_MESSAGE: &str = "opened engine-enforced read-only \
-    SQLite DataStore (filesystem lock active: robust while this DataStore is the sole guard \
-    on the file; best-effort, not a cross-process guarantee, whenever the same file is \
-    independently guarded more than once - same- or cross-process - see F6)";
+    SQLite DataStore (filesystem lock active: protection is robust only if no independent \
+    guard ever overlaps this guard's lifetime on the file; any such overlap - same- or \
+    cross-process - leaves protection best-effort for the rest of this guard's life, even \
+    once the overlapping guard drops - see F6)";
 
 impl DataStore {
     /// Open an in-memory `DataStore`.
@@ -194,14 +198,18 @@ impl DataStore {
     /// actual write attempt is rejected by `SQLite` itself
     /// (`SQLITE_READONLY`), not merely by this crate's `AccessMode` check.
     ///
-    /// This holds ROBUSTLY for as long as the returned `DataStore` (or any
-    /// clone of it) is the SOLE guard on the file. It is BEST-EFFORT — not a
-    /// cross-process guarantee — whenever the SAME file is independently
-    /// guarded more than once: same-process (a second, independent
-    /// `open_engine_readonly` call on the same path) or cross-process. In
-    /// that case, whichever guard drops first restores ITS OWN captured
-    /// original permissions, which can make the file writable again while a
-    /// peer guard is still alive (see F6 in
+    /// This holds ROBUSTLY only if NO independent guard EVER overlaps this
+    /// returned `DataStore`'s (or any clone's) guard lifetime on the file —
+    /// being the only guard currently alive is not itself sufficient, because
+    /// an EARLIER overlap can already have left the file writable even after
+    /// the overlapping peer drops. It is BEST-EFFORT — not a cross-process
+    /// guarantee — whenever the SAME file is independently guarded more than
+    /// once: same-process (a second, independent `open_engine_readonly` call
+    /// on the same path) or cross-process. In that case, whichever guard
+    /// drops first restores ITS OWN captured original permissions, which can
+    /// make the file writable again while a peer guard is still alive, and
+    /// that peer's protection stays best-effort for the rest of its life even
+    /// once the overlap ends (see F6 in
     /// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`).
     /// This primitive does not implement cross-guard reference counting;
     /// genuinely closing that window is deferred, not attempted here.
@@ -256,14 +264,19 @@ impl DataStore {
     ///
     /// This reports guard OWNERSHIP, not a live guarantee about the current
     /// on-disk permission state. The underlying filesystem protection is
-    /// robust only while a single owning `DataStore` holds the guard on a
-    /// given file. When the SAME file is independently guarded more than
-    /// once — same-process (two separate
+    /// robust only if NO independent guard EVER overlaps this handle's guard
+    /// lifetime on the file — this handle currently being the only guard
+    /// alive is not itself sufficient, because an EARLIER overlap can already
+    /// have left the file writable even after the overlapping peer drops.
+    /// When the SAME file is independently guarded more than once —
+    /// same-process (two separate
     /// [`DataStore::open_engine_readonly`] calls on one path) or
     /// cross-process — the guards do not coordinate: whichever guard drops
     /// first restores ITS OWN captured original permissions, which can make
     /// the file writable again while THIS handle is still alive and this
-    /// method still returns `true` (see F6 in
+    /// method still returns `true`; THIS handle's protection then stays
+    /// best-effort for the rest of its life even once the overlap ends (see
+    /// F6 in
     /// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`).
     /// The application-level `AccessMode::ReadOnly` check enforced by
     /// `DataStore::mutate` remains the authoritative read-only guarantee
@@ -496,15 +509,19 @@ impl DataStore {
 ///
 /// This is a PER-GUARD lock, not a per-file reference count: it has no
 /// awareness of other independent guards — same-process or cross-process —
-/// that may also hold the SAME file read-only. Its protection is robust
-/// only while it is the SOLE guard on the file. If the same file is
-/// independently guarded more than once (for example, two separate
+/// that may also hold the SAME file read-only. Its protection is robust only
+/// if NO independent guard EVER overlaps this guard's lifetime — being the
+/// only guard currently alive is not itself sufficient, because an EARLIER
+/// overlap can already have left the file writable even after the
+/// overlapping peer drops. If the same file is independently guarded more
+/// than once (for example, two separate
 /// [`DataStore::open_engine_readonly`] calls on one path, or two separate
 /// processes), whichever guard drops first restores ITS OWN captured
 /// original permissions — which can make the file writable again while a
 /// peer guard is still alive and its owning [`DataStore`] still reports
-/// [`DataStore::is_engine_enforced_readonly`] as `true`. This is a known,
-/// documented best-effort limitation (F6); see
+/// [`DataStore::is_engine_enforced_readonly`] as `true`; that peer's
+/// protection then stays best-effort for the rest of its life even once the
+/// overlap ends. This is a known, documented best-effort limitation (F6); see
 /// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`.
 /// Closing this window would require cross-guard ownership/liveness
 /// coordination, which this primitive intentionally does not implement.
@@ -879,21 +896,25 @@ mod tests {
     // lock active)", which a reader could take as an unconditional
     // guarantee. This test pins the CORRECTED, qualified wording that
     // `ENGINE_READONLY_OPEN_LOG_MESSAGE` (production, near the top of this
-    // file) now emits: robust while a single `DataStore` is the sole guard
-    // on the file; best-effort (not a cross-process guarantee) whenever the
-    // same file is independently guarded more than once — same- or
-    // cross-process (F6). It was landed RED-first per Constitution
-    // Principle II — observed failing against the prior unqualified
-    // wording before the production fix existed — and is now green.
+    // file) now emits: protection is robust only if no independent guard
+    // ever overlaps this guard's lifetime on the file (being the only guard
+    // currently alive is not itself sufficient — an earlier overlap can
+    // already have left the file writable even after the peer drops); any
+    // such overlap — same- or cross-process — leaves protection best-effort
+    // for the rest of this guard's life (F6). It was landed RED-first per
+    // Constitution Principle II — observed failing against the prior
+    // unqualified wording before the production fix existed — and is now
+    // green.
     //
     // This constant is intentionally test-local (not shared with the
     // production `ENGINE_READONLY_OPEN_LOG_MESSAGE` const) so a future edit
     // to either one in isolation makes this test fail rather than silently
     // agreeing with itself.
     const EXPECTED_ENGINE_READONLY_OPEN_LOG_MESSAGE: &str = "opened engine-enforced read-only \
-        SQLite DataStore (filesystem lock active: robust while this DataStore is the sole guard \
-        on the file; best-effort, not a cross-process guarantee, whenever the same file is \
-        independently guarded more than once - same- or cross-process - see F6)";
+        SQLite DataStore (filesystem lock active: protection is robust only if no independent \
+        guard ever overlaps this guard's lifetime on the file; any such overlap - same- or \
+        cross-process - leaves protection best-effort for the rest of this guard's life, even \
+        once the overlapping guard drops - see F6)";
 
     /// Minimal in-memory sink for a scoped `tracing` capture, matching the
     /// established pattern in `src/main.rs`'s `sync_progress_tests::

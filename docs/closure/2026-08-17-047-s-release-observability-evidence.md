@@ -35,11 +35,11 @@ for shipment `047-S`, carried forward verbatim into the
 * **Current (pre-change) log line**: `opened engine-enforced read-only SQLite
   DataStore (filesystem lock active)`.
 * **New (post-change) log line**: `opened engine-enforced read-only SQLite
-  DataStore (filesystem lock active: robust while this DataStore is the sole
-  guard on the file; best-effort, not a cross-process guarantee, whenever the
-  same file is independently guarded more than once - same- or
-  cross-process - see F6)` — see `ENGINE_READONLY_OPEN_LOG_MESSAGE` in
-  `src/db/store.rs`.
+  DataStore (filesystem lock active: protection is robust only if no
+  independent guard ever overlaps this guard's lifetime on the file; any
+  such overlap - same- or cross-process - leaves protection best-effort for
+  the rest of this guard's life, even once the overlapping guard drops -
+  see F6)` — see `ENGINE_READONLY_OPEN_LOG_MESSAGE` in `src/db/store.rs`.
 * **Emission site/frequency**: emitted exactly once per
   `DataStore::open_engine_readonly` call, i.e. once per served database that
   resolves to `ServeMode::ReadOnly` at `serve` startup (see
