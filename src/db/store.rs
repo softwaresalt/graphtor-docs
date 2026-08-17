@@ -48,8 +48,13 @@ pub struct DataStore {
     /// Filesystem read-only lock for [`DataStore::open_engine_readonly`].
     ///
     /// `None` for every other constructor. Shared across clones via [`Arc`]
-    /// so the underlying file is restored to writable only when the last
-    /// clone is dropped, not when any single clone goes out of scope.
+    /// so the restore-on-drop only runs when the last clone is dropped, not
+    /// when any single clone goes out of scope. That restore only reliably
+    /// leaves the file writable when this was the only guard that ever
+    /// locked it; if the same file was independently guarded more than once,
+    /// the permissions each guard restores on drop depend on drop order and
+    /// the file is not guaranteed to end up writable (see F6 on
+    /// [`DataStore::open_engine_readonly`]).
     engine_readonly_guard: Option<Arc<EngineReadonlyGuard>>,
 }
 
@@ -215,10 +220,15 @@ impl DataStore {
     /// genuinely closing that window is deferred, not attempted here.
     ///
     /// The filesystem lock is held for as long as ANY clone of the returned
-    /// `DataStore` is alive and is released automatically (best-effort) once
-    /// the last clone is dropped, so the file can be opened read-write again
-    /// later (for example, if the workspace is later reconfigured as a
-    /// generation source).
+    /// `DataStore` is alive and the restore-on-drop runs automatically
+    /// (best-effort) once the last clone is dropped. When this was the ONLY
+    /// guard that ever locked the file, that restore reliably leaves it
+    /// writable again (for example, if the workspace is later reconfigured
+    /// as a generation source). If the file was independently guarded more
+    /// than once, the permissions each guard restores on drop depend on
+    /// drop order (see the overlap caveat above, F6): the file is not
+    /// guaranteed to end up writable, or even to end up in a single
+    /// predictable state, once every guard on it has dropped.
     ///
     /// # Errors
     ///
