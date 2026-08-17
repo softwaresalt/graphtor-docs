@@ -3,7 +3,7 @@ date: 2026-08-17
 slug: 047-s-post-merge-closure
 shipment: 047-S
 mode: post-merge
-status: READY
+status: READY_WITH_CONDITIONS
 owner: copilot
 ---
 
@@ -180,12 +180,17 @@ suppressions.
 |---|---|
 | Monitoring plan | Manual observation (documented, proportionate to risk) |
 | Pre-deploy audit | N/A — no migration/flag/cross-service dependency; verified build |
-| Runtime verification | `PASS` — live CLI smoke test confirms exact log wording |
-| Post-deploy observation window | Defined: 10 starts / 14 days, owner `@softwaresalt` |
+| Runtime verification | `PASS` — live CLI smoke test confirms exact log wording (1 of the 10 windowed starts) |
+| Post-deploy observation window | **Open** — defined as 10 `ReadOnly` `serve` starts or 14 days post-merge, whichever comes first; 1 start observed as of this record's date, window not yet closed; owner `@softwaresalt` will record the outcome (healthy/degraded/rolled back) at window close |
 | Rollback trigger + procedure | Defined: text-only revert, honest fallback only |
 | Risky actions | All recorded above, `ActionResult: applied` |
 
-**Releasability status**: `READY`.
+**Releasability status**: `READY_WITH_CONDITIONS` — merge-blocking work (implementation,
+review, CI, quality gates) is complete and verified; the one open condition
+is the post-deploy observation window above, which remained open as of
+this record's date (only 1 of the 10-start threshold observed, and 14
+days had not yet elapsed) and will be closed out per its own defined
+criteria, with the owner recording a healthy/degraded/rolled-back outcome.
 
 ## Cross-References
 
