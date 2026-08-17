@@ -100,7 +100,7 @@ and the two new `docs/compound/` entries this shipment produced):
 ## Result
 
 * One superseded 194-line build checkpoint archived out of `docs/memory/`
-  to `docs/archive/memory/`, and this 116-line compaction report added to
+  to `docs/archive/memory/`, and this shorter compaction report added to
   `docs/memory/compacted/` — a net reduction of active `docs/memory/`
   content, with the full original preserved byte-identical under
   `docs/archive/memory/` for traceability.
