@@ -131,3 +131,58 @@ Note for Ship: 055.001-T now requires an additive `graphtor_core::acquire` publi
 API (`FileFilter`) reused by both the classifier and a refactored `filter_files`;
 red-first for the new API, characterization-first for the classifier; consider the
 documented library/binary subtask split if the combined change exceeds 2 hours.
+
+## Third Copilot review cycle (2026-08-16, cycle 3 of <=3, FINAL) — 047-S harvest traceability + 054-F priority
+
+PR #96 (staging PR, HEAD 69b9ed0e) received a THIRD Copilot pass: no live threads,
+two suppressed actionable findings, both on the 047-S / Group A release unit and its
+harvest traceability. Remediated in Stage-owned artifacts only (no source/config/
+cargo/branch/PR/push):
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | `.backlogit/archive/stash.jsonl` consumed entries lacked machine-readable harvest metadata; 054/055 targets lacked `source_stash_id` | Set the four archived source entries to `reason: harvested` + `harvested_artifact_id` (canonical form, matches E8F043DD->053-F / 2D49BDDF->052.001-T), and added the reverse `source_stash_id(s)` to each target frontmatter |
+| 2 | `.backlogit/queue/054-F.md` lacked `priority` | Added `priority: medium`, consistent with tasks 054.001-T / 054.002-T (medium) and shipment 047-S (medium) |
+
+Exact harvest-link representation (bidirectional; committed files are the source of
+truth):
+
+* stash.jsonl (stash -> target): `"reason":"harvested","harvested_artifact_id":"<id>"`
+  for 5D98DBCC->054-F, 970AE45A->054-F, B88E37BF->055.001-T, 5868A7C5->055.002-T.
+* frontmatter (target -> stash): 054-F `custom_fields.source_stash_ids: [5D98DBCC,
+  970AE45A]` (plural, matches 037-F); 055.001-T `source_stash_id: B88E37BF`;
+  055.002-T `source_stash_id: 5868A7C5` (singular, matches 052.001-T). Bumped
+  `updated_at` on the three edited items to reflect the edit (canonical:
+  016-F / 037-F / 053-F all carry updated_at > created_at). No execution dependencies
+  invented; existing parent links unchanged.
+
+Validation: index synced (449 items). `backlogit_query_sql` proves 054-F
+priority=medium + source_stash_ids=["5D98DBCC","970AE45A"]; 055.001-T
+source_stash_id=B88E37BF; 055.002-T source_stash_id=5868A7C5; all three updated_at >
+created_at. Targeted `backlogit_doctor` PASS on 054-F / 055.001-T / 055.002-T;
+workspace doctor shows only the pre-existing, unrelated orphan 013.008-T.
+stash.jsonl re-validated: 50/50 lines valid JSON, LF + trailing newline preserved,
+exactly 4 lines changed. Note: the durable db tables `stash_links` / `stash_entries`
+(inside gitignored `.backlogit/backlogit.db`) reflect only the two originally
+harvest_stash'd task links (B88E37BF, 5868A7C5); the committed truth is the
+frontmatter + archive JSONL — the same shape 037-F's plural sources (3FE2DDFB /
+0D214027) rely on. No supported, committable operation records a stash_link for an
+archived entry into an existing item, and the db cache must not be hand-edited.
+
+Adversarial review: 3 independent cross-model reviewers — Correctness (anthropic
+claude-sonnet-4.6), Backlog/Schema-integrity (google gemini-3.1-pro), Scope/
+Constitution (anthropic claude-opus-4.8). Consensus: NO HIGH/MEDIUM P0/P1; all PASS.
+Correctness + schema returned NO FINDINGS. Scope PASSed with a P1-HIGH
+commit-discipline caution (the six stowaways are NOT gitignore-protected -> stage
+explicit paths only) — honored via explicit-path staging + post-stage `git status`
+verification — and a P3-MEDIUM audit-trail note (updated_at not bumped) which was
+remediated in one internal pass. Stage Role Boundary honored; P-009 / P-010 / P-016
+all clear.
+
+Commit (this cycle, Stage-owned only): `.backlogit/archive/stash.jsonl`,
+`.backlogit/queue/{054-F,055.001-T,055.002-T}.md`, and this memory file. Not pushed.
+Stowaways (`.autoharness/config.yaml`, `.github/agents/{.ship,.stage,_orchestrator}.agent.md`,
+`.gitignore`, `.vscode/settings.json`) and `.backlogit/runtime/` left untouched and
+uncommitted per contract; pre-existing gitignored `.*.lock` files left in place (not
+Stage-created). Shipment manifests 047-S / 048-S unchanged. Cycle 3 of 3 is the final
+permitted Copilot review-fix cycle.
