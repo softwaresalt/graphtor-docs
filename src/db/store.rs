@@ -59,6 +59,20 @@ impl std::fmt::Debug for DataStore {
     }
 }
 
+/// Startup-log wording emitted by [`DataStore::open_engine_readonly`] on a
+/// successful open.
+///
+/// States the filesystem read-only guarantee precisely rather than
+/// unconditionally: it is robust while THIS `DataStore` is the sole guard on
+/// the file, and best-effort — NOT a cross-process guarantee — whenever the
+/// same file is independently guarded more than once, same- or
+/// cross-process (F6; see
+/// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`).
+const ENGINE_READONLY_OPEN_LOG_MESSAGE: &str = "opened engine-enforced read-only \
+    SQLite DataStore (filesystem lock active: robust while this DataStore is the sole guard \
+    on the file; best-effort, not a cross-process guarantee, whenever the same file is \
+    independently guarded more than once - same- or cross-process - see F6)";
+
 impl DataStore {
     /// Open an in-memory `DataStore`.
     ///
@@ -175,11 +189,22 @@ impl DataStore {
     /// documented open-path behaviour is to retry a `SQLITE_OPEN_READWRITE`
     /// request as read-only when the file cannot be opened for writing
     /// (rather than failing outright), so every connection Cozo opens
-    /// against this file for the remainder of this `DataStore`'s lifetime —
-    /// including ones opened later from its connection pool — becomes a
-    /// genuine engine-enforced read-only connection: an actual write
-    /// attempt is rejected by `SQLite` itself (`SQLITE_READONLY`), not merely
-    /// by this crate's `AccessMode` check.
+    /// against this file — including ones opened later from its connection
+    /// pool — becomes a genuine engine-enforced read-only connection: an
+    /// actual write attempt is rejected by `SQLite` itself
+    /// (`SQLITE_READONLY`), not merely by this crate's `AccessMode` check.
+    ///
+    /// This holds ROBUSTLY for as long as the returned `DataStore` (or any
+    /// clone of it) is the SOLE guard on the file. It is BEST-EFFORT — not a
+    /// cross-process guarantee — whenever the SAME file is independently
+    /// guarded more than once: same-process (a second, independent
+    /// `open_engine_readonly` call on the same path) or cross-process. In
+    /// that case, whichever guard drops first restores ITS OWN captured
+    /// original permissions, which can make the file writable again while a
+    /// peer guard is still alive (see F6 in
+    /// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`).
+    /// This primitive does not implement cross-guard reference counting;
+    /// genuinely closing that window is deferred, not attempted here.
     ///
     /// The filesystem lock is held for as long as ANY clone of the returned
     /// `DataStore` is alive and is released automatically (best-effort) once
@@ -206,10 +231,7 @@ impl DataStore {
         let guard = EngineReadonlyGuard::lock(&safe_path)?;
         let db = open_sqlite_instance(&safe_path, "open_engine_readonly")?;
         let path_str = path_to_utf8(&safe_path, "open_engine_readonly")?;
-        info!(
-            path = path_str,
-            "opened engine-enforced read-only SQLite DataStore (filesystem lock active)"
-        );
+        info!(path = path_str, "{ENGINE_READONLY_OPEN_LOG_MESSAGE}");
         Ok(Self {
             db: Arc::new(db),
             access_mode: AccessMode::ReadOnly,
@@ -226,11 +248,26 @@ impl DataStore {
         self.backing_path.as_deref()
     }
 
-    /// Returns `true` when this store was opened via
-    /// [`DataStore::open_engine_readonly`] and therefore holds an active
-    /// filesystem-level read-only lock on its backing file (and any
-    /// existing WAL/SHM/journal sidecars) for as long as this handle, or any
-    /// clone of it, remains alive.
+    /// Returns `true` when *this handle* was opened via
+    /// [`DataStore::open_engine_readonly`] and therefore currently holds an
+    /// active filesystem-level read-only lock reference on its backing file
+    /// (and any existing WAL/SHM/journal sidecars), for as long as this
+    /// handle, or any clone of it, remains alive.
+    ///
+    /// This reports guard OWNERSHIP, not a live guarantee about the current
+    /// on-disk permission state. The underlying filesystem protection is
+    /// robust only while a single owning `DataStore` holds the guard on a
+    /// given file. When the SAME file is independently guarded more than
+    /// once — same-process (two separate
+    /// [`DataStore::open_engine_readonly`] calls on one path) or
+    /// cross-process — the guards do not coordinate: whichever guard drops
+    /// first restores ITS OWN captured original permissions, which can make
+    /// the file writable again while THIS handle is still alive and this
+    /// method still returns `true` (see F6 in
+    /// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`).
+    /// The application-level [`AccessMode::ReadOnly`] check enforced by
+    /// [`DataStore::mutate`] remains the authoritative read-only guarantee
+    /// regardless of this method's result.
     #[must_use]
     pub fn is_engine_enforced_readonly(&self) -> bool {
         self.engine_readonly_guard.is_some()
@@ -456,6 +493,21 @@ impl DataStore {
 /// restores their EXACT original permissions on [`Drop`]. Held inside an
 /// [`Arc`] on [`DataStore`] so cloning the store shares one lock, released
 /// only when the last clone is dropped.
+///
+/// This is a PER-GUARD lock, not a per-file reference count: it has no
+/// awareness of other independent guards — same-process or cross-process —
+/// that may also hold the SAME file read-only. Its protection is robust
+/// only while it is the SOLE guard on the file. If the same file is
+/// independently guarded more than once (for example, two separate
+/// [`DataStore::open_engine_readonly`] calls on one path, or two separate
+/// processes), whichever guard drops first restores ITS OWN captured
+/// original permissions — which can make the file writable again while a
+/// peer guard is still alive and its owning [`DataStore`] still reports
+/// [`DataStore::is_engine_enforced_readonly`] as `true`. This is a known,
+/// documented best-effort limitation (F6); see
+/// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`.
+/// Closing this window would require cross-guard ownership/liveness
+/// coordination, which this primitive intentionally does not implement.
 ///
 /// A WAL-mode database's journal mode is recorded in the main file's own
 /// header, so ANY connection that opens it — including a read-only
@@ -844,17 +896,18 @@ mod tests {
         on the file; best-effort, not a cross-process guarantee, whenever the same file is \
         independently guarded more than once - same- or cross-process - see F6)";
 
-    /// Minimal `tracing` `MakeWriter` that appends every write to a shared
-    /// in-memory buffer, so a test can assert on the exact rendered log text
-    /// without parsing process stdout or adding a `tracing-test` dependency.
-    /// Scoped to a single test via `tracing::subscriber::with_default` — it
-    /// never touches the process-wide default subscriber.
-    #[derive(Clone)]
-    struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
+    /// Minimal in-memory sink for a scoped `tracing` capture, matching the
+    /// established pattern in `src/main.rs`'s `sync_progress_tests::
+    /// capture_warn_logs` helper — a shared buffer behind a `MakeWriter`
+    /// closure and `tracing::subscriber::with_default` — rather than adding
+    /// a `tracing-test` dependency.
+    struct CapturedLogWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
 
     impl std::io::Write for CapturedLogWriter {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0
+            self.output
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .extend_from_slice(buf);
@@ -866,53 +919,103 @@ mod tests {
         }
     }
 
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
-        type Writer = Self;
+    /// Run `operation` once under a scoped `tracing` subscriber that
+    /// captures `INFO`-and-above events to an in-memory buffer, returning
+    /// the rendered log text alongside `operation`'s return value.
+    ///
+    /// Uses an [`tracing_subscriber::EnvFilter`] (which decides interest
+    /// per-event rather than caching a single process-wide answer) and
+    /// forces a fresh interest-cache rebuild while this subscriber is
+    /// active, to maximize the odds `operation`'s tracing events reach this
+    /// capture. See [`capture_info_logs_retrying`] for why a single call is
+    /// not sufficient on its own in this test binary.
+    fn capture_info_logs_once<F, T>(operation: F) -> (T, String)
+    where
+        F: FnOnce() -> T,
+    {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let filter = tracing_subscriber::EnvFilter::new("info");
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_env_filter(filter)
+            .with_writer({
+                let output = Arc::clone(&output);
+                move || CapturedLogWriter {
+                    output: Arc::clone(&output),
+                }
+            })
+            .finish();
 
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
+        let result = tracing::subscriber::with_default(subscriber, || {
+            tracing::callsite::rebuild_interest_cache();
+            operation()
+        });
+
+        let bytes = output
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let logs = String::from_utf8(bytes).expect("tracing output should be valid utf-8");
+        (result, logs)
+    }
+
+    /// Retry [`capture_info_logs_once`] until the rendered log contains
+    /// `expected`, or a bounded attempt count is exhausted.
+    ///
+    /// `tracing` decides a macro call-site's subscriber `Interest` and
+    /// caches it process-wide the first time the call-site fires, then
+    /// reuses that cached decision for the rest of the process. The
+    /// `open_engine_readonly` call-site this test exercises is ALSO
+    /// exercised by over a dozen sibling characterization tests with NO
+    /// subscriber installed; under default (parallel) `cargo test`
+    /// execution, whichever thread reaches that one-time decision first
+    /// can win the race, and a losing race can still occasionally drop this
+    /// scoped subscriber's own event even after a forced cache rebuild.
+    /// Retrying with a fresh rebuild converges quickly in practice (single
+    /// digit attempts) and keeps this test deterministic rather than flaky:
+    /// every attempt either finds the qualified wording (pass) or the
+    /// UNQUALIFIED current wording (a genuine red-phase / regression
+    /// failure, not a dropped event) once the race settles.
+    fn capture_info_logs_retrying<F, T>(mut make_operation: impl FnMut() -> F) -> (T, String)
+    where
+        F: FnOnce() -> T,
+    {
+        const MAX_ATTEMPTS: u32 = 25;
+        let mut last = None;
+        for _ in 0..MAX_ATTEMPTS {
+            let (result, logs) = capture_info_logs_once(make_operation());
+            if !logs.is_empty() {
+                return (result, logs);
+            }
+            last = Some((result, logs));
         }
+        last.expect("MAX_ATTEMPTS is greater than zero")
     }
 
     #[test]
     fn open_engine_readonly_logs_the_qualified_single_owner_vs_multi_guard_wording() {
         let dir = temp_dir();
-        let db_path = dir.path().join("engine-ro-log-wording.db");
-        build_populated_fixture(&db_path, dir.path());
+        let root = dir.path().to_path_buf();
+        let mut attempt = 0_u32;
 
-        let captured = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(CapturedLogWriter(captured.clone()))
-            .with_ansi(false)
-            .with_level(false)
-            .with_target(false)
-            .without_time()
-            .finish();
-
-        // `tracing` caches each macro call-site's subscriber `Interest`
-        // process-wide the first time it fires. Other `open_engine_readonly`
-        // tests in this same test binary run concurrently with no subscriber
-        // installed, which can cache this call-site as `Interest::never()`
-        // before this test's scoped subscriber ever becomes active — silently
-        // dropping the event regardless of the `with_default` scope. Forcing
-        // a rebuild while OUR subscriber is the active default re-registers
-        // the call-site against it so the event is actually recorded here;
-        // this is the standard fix for scoped-subscriber log capture under
-        // parallel tests (the same approach the `tracing-test` crate uses).
-        let readonly = tracing::subscriber::with_default(subscriber, || {
-            tracing::callsite::rebuild_interest_cache();
-            DataStore::open_engine_readonly(&db_path, dir.path())
-                .expect("open_engine_readonly should succeed")
+        let (readonly, logs) = capture_info_logs_retrying(|| {
+            attempt += 1;
+            let root = root.clone();
+            let db_path = root.join(format!("engine-ro-log-wording-{attempt}.db"));
+            build_populated_fixture(&db_path, &root);
+            move || {
+                DataStore::open_engine_readonly(&db_path, &root)
+                    .expect("open_engine_readonly should succeed")
+            }
         });
 
-        let logs = String::from_utf8(
-            captured
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone(),
-        )
-        .expect("captured log output must be valid UTF-8");
-
+        assert!(
+            !logs.is_empty(),
+            "tracing capture never observed ANY event for open_engine_readonly's startup log \
+             across the retry budget — this indicates a capture-seam regression, not a wording \
+             mismatch"
+        );
         assert!(
             logs.contains(EXPECTED_ENGINE_READONLY_OPEN_LOG_MESSAGE),
             "open_engine_readonly's startup log must state the qualified, honest guarantee \
