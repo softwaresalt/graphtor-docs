@@ -161,13 +161,15 @@ where
   that only retries on "no signal at all" (never on "wrong signal")
   preserves genuine regression detection while absorbing the inherent
   scheduling race; it does not make the race impossible, only
-  astronomically unlikely to survive every attempt, and scheduling outcomes
-  across attempts are not proven independent. 25 attempts was empirically
-  generous (observed per-attempt failure rates during tuning ranged from
-  ~20% to ~80% depending on which partial fix was in place; even at a
-  pessimistic 80% per-attempt failure and treating attempts as independent,
-  `0.8^25 ≈ 4×10⁻³`, and the actual combined fix measured 0% failures across
-  15+ full runs) — generous, not airtight.
+  substantially less likely to survive every attempt, and scheduling
+  outcomes across attempts are not proven independent. 25 attempts was
+  empirically generous (observed per-attempt failure rates during tuning
+  ranged from ~20% to ~80% depending on which partial fix was in place;
+  even at a pessimistic 80% per-attempt failure and treating attempts as
+  independent, `0.8^25 ≈ 4×10⁻³` — roughly 1 failure in 250 full runs under
+  that unproven independence assumption — and the actual combined fix
+  measured 0% failures across 15+ full runs) — meaningfully reduced risk,
+  not airtight.
 * **A quick standalone reproduction** (a throwaway `examples/*.rs` binary
   calling only the capture helper + a bare `tracing::info!`, deleted after
   use) is a fast way to confirm the *mechanism itself* works before

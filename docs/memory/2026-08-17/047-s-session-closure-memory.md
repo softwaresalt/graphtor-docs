@@ -20,19 +20,41 @@ was explicitly NOT started or claimed per operator instruction.
   Merged as `704b95a6c1e2930079d6f3a602ab66e9682d4916` (2-parent merge
   commit, P-009 compliant). 6-reviewer standard+adversarial review (0
   P0/P1). 4 rounds of Copilot shadow review (operator-elevated to
-  blocking); 3 substantive fix cycles applied across 5 code/doc precision
-  corrections each round; round 4's non-convergent findings dispositioned
-  as follow-ups per the 3-cycle cap and circuit-breaker discipline.
+  blocking; 20/21 files reviewed each round, 0 primary comments
+  throughout): round 1 raised 9 suppressed comments (5 fixed for a genuine
+  precision gap, 2 matched already-stashed config-drift follow-ups, 2
+  addressed via a CI-disclosure subsection); round 2 raised 4 comments (1
+  fixed, 2 recurring config-drift disclosed, 1 addressed elsewhere); round
+  3 raised 2 comments, both fixed; round 4 raised 10 comments with a
+  non-convergent count (9→4→2→10) and was dispositioned as follow-ups
+  (`3FFE51B4`, `B8C0851E`) rather than a 4th fix cycle, per the 3-cycle cap
+  and because F6 is an explicitly documented best-effort residual, not a
+  target for exhaustive formal precision.
 * **PR #98** (`post-merge/054-f-readonly-serve-guarantee-honesty`) —
   post-merge closure. Merged as `bf241ab0351fd7546de0d7ec3833088e47e47a33`
   (2-parent merge commit, P-009 compliant). 3-reviewer proportionate
-  review (0 P0/P1). 3 rounds of Copilot review: round 1 created 5 real
-  threaded comments (all fixed in `9708ba6`, replied to, resolved via
-  GraphQL); round 2 embedded 4 concrete findings + 1 speculative refinement
-  in the review body (4 fixed + 1 hedged in `387135f`, no new threads to
-  resolve); round 3 generated zero new comments (one suppressed comment was
-  a stale-body-read timing artifact, already correct by the time it
-  posted).
+  review (0 P0/P1). 4 Copilot review passes across 3 pushed commits:
+  pass 1 (at `77d82ff`) created 5 real threaded comments (all fixed in
+  `9708ba6`, replied to, resolved via GraphQL); pass 2 (at `9708ba6`,
+  18:41) surfaced 5 suppressed findings (stale readiness HEAD, an
+  EnvFilter self-consistency gap, a "5 vs 6 surfaces" undercount in two
+  files, and an over-specific `#2874` trigger-condition claim — all fixed
+  or hedged in `387135f`); pass 3 (at the same `9708ba6`, 18:47, a
+  separate review pass this checkpoint's earlier draft omitted) surfaced
+  4 more suppressed findings — 1 was the same EnvFilter gap already fixed
+  by pass 2's remediation, and 3 were genuinely new (an "astronomically
+  unlikely" retry-reliability overstatement, an incorrect `docs/memory/`
+  file-count delta, and a premature `READY` releasability status while the
+  post-deploy observation window was still open) — all 3 new findings were
+  fixed as part of this same session-closure checkpoint's own PR; pass 4
+  (at `387135f`) generated zero new comments (one suppressed comment was a
+  stale-body-read timing artifact, already correct by the time it posted).
+
+  *Correction*: an earlier draft of this checkpoint stated "3 substantive
+  fix cycles applied across 5 code/doc precision corrections each round"
+  for PR #97 — this conflated the 4 distinct per-round counts (5, 1, 2,
+  and 10-deferred) into a single number; the breakdown above is the
+  accurate one, matching PR #97's own final readiness record.
 * Both branches carried the six authorized stowaway files
   (`.autoharness/config.yaml`, `.github/agents/.ship.agent.md`,
   `.github/agents/.stage.agent.md`, `.github/agents/_orchestrator.agent.md`,
@@ -48,10 +70,17 @@ was explicitly NOT started or claimed per operator instruction.
 * Shipment `047-S` archived via safe-close (protected set empty — full
   single-shipment archive, no cascade). `048-S` verified untouched
   (`status: queued`) both before and after this session.
-* 5 follow-up items stashed for Stage triage: `9CEC208C`, `C365AB98`,
-  `3FFE51B4` (updated twice), `B883681D`, `B8C0851E` — covering residual
-  F6 cross-process/multi-guard restore-ordering precision refinements that
-  did not converge within the review-fix cycle cap.
+* 5 follow-up items stashed for Stage triage, spanning 3 distinct kinds
+  (not all F6-related — an earlier draft of this checkpoint incorrectly
+  grouped all 5 as F6 residuals): `9CEC208C` (pre-existing
+  `.vscode/settings.json` blanket `pip` auto-approve — workspace hygiene,
+  unrelated to this shipment), `C365AB98` (pre-existing `.gitignore`
+  duplicate `.engram/` entry — workspace hygiene, unrelated to this
+  shipment), `3FFE51B4` (model-routing config drift inherited from the
+  authorized stowaway content — stowaway-related, not F6), `B883681D`
+  (optional cosmetic `main.rs` F6 cross-reference — F6-related), and
+  `B8C0851E` (optional further F6 wording refinement distinguishing
+  overlapping vs. purely-sequential guard lifetimes — F6-related).
 
 ## Key Technical Learnings (already captured durably)
 

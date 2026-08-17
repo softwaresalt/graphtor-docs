@@ -65,7 +65,10 @@ two `docs/compound/` entries this shipment produced/updated):
 
 ## Result
 
-* `docs/memory/` file count: 26 → 25 (one build checkpoint archived)
+* One superseded build checkpoint archived to `docs/archive/memory/`, and
+  this compaction report added to `docs/memory/compacted/` — a like-for-like
+  move plus one durable summary, not a net reduction in `docs/memory/`
+  content.
 * Durable record for `047-S` now lives in `docs/closure/` (post-merge
   closure + release-observability evidence) and `docs/compound/` (2
   learnings), per the Durable Knowledge Layout convention.
