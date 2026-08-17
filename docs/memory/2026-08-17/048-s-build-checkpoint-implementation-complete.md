@@ -1,4 +1,11 @@
-# Shipment 048-S Build Checkpoint — Implementation Complete
+---
+title: "Shipment 048-S Build Checkpoint — Implementation Complete"
+description: "Session memory checkpoint recording implementation state for shipment 048-S after all backlog items were completed and quality gates passed"
+date: 2026-08-17
+shipment: "048-S"
+branch: "feat/serve-auto-discovery-followups"
+mode: "P-017 dark-factory"
+---
 
 **Date**: 2026-08-17
 **Branch**: `feat/serve-auto-discovery-followups`
@@ -88,18 +95,76 @@ failure mode, only the interest-cache race).
   7 pre-existing, already-tracked advisories documented in `audit.toml` (owned by task
   013.008-T and the 035-C deliberation) — unrelated to this shipment, not introduced by it.
 
-## Next Steps (not yet done at this checkpoint)
+### RED-phase evidence (traceability)
 
-1. Runtime verification: exercise classifier posture across representative source trees
-   including a later walk-error seam (via the new unit tests; consider an additional
-   integration-level smoke pass).
-2. Release-observability evidence: bounded post-deploy observation window per the exec plan
-   (`docs/exec-plans/2026-08-16-serve-auto-discovery-followups-plan.md` § Runtime Verification
-   and Closure).
-3. Standard review (report-only) + mandatory adversarial review (3+ personas).
-4. PR creation with `## Local Review Readiness` block, Copilot shadow-review cycle (blocking
-   per operator directive), CI wait, merge-commit-only merge.
-5. Post-merge closure: `post-merge/serve-auto-discovery-followups` branch, shipment-reconcile
+Per Constitution Principle II, RED-then-GREEN was directly observed in-session, not merely
+asserted:
+
+* `FileFilter` (055.001.001-ST): `cargo test --lib acquire::filter` was run against the
+  `unimplemented!()` stub BEFORE implementation and showed `12 passed; 9 failed` — all 9
+  failures were the new `FileFilter` tests panicking with the exact `unimplemented!()` message;
+  all 12 pre-existing `filter_files` tests stayed green throughout. After implementation, the
+  same command showed `21 passed; 0 failed`.
+* `stream_ingestible` (055.001.002-ST): `cargo test --bin graphtor-docs
+  workspace::serve_discovery::tests::stream_ingestible` was run against the `unimplemented!()`
+  stub BEFORE implementation and showed `0 passed; 7 failed` — all 7 new tests panicking with
+  the exact stub message. After implementation, the full `serve_discovery` module (44 tests,
+  including the 6 characterization tests confirmed passing against the PRE-refactor
+  implementation first) showed `44 passed; 0 failed`.
+
+## Adversarial Review (mandatory, 7 personas, cross-model)
+
+Dispatched in parallel: Security Reviewer (`claude-opus-4.6`), Constitution Reviewer
+(`gpt-5.5`), Correctness Reviewer (`claude-sonnet-4.6`), Architecture Strategist (`gpt-5.4`),
+Rust Reviewer (`claude-sonnet-5`), Concurrency Reviewer (`gemini-3.1-pro-preview`),
+Schema-CLI-Docs Coupling Reviewer (`grok-4.5`).
+
+* **Security/Constitution lens**: PASS, no findings — fail-closed contract verified sound.
+* **Correctness lens**: PASS_WITH_FINDINGS. One genuine **P1**: a proactively-added performance
+  optimization (skip `is_match`/count once `found` was already `true`) caused
+  `format_candidate_count` to under-count once a match was found — benign for current behavior
+  (the warning only fires when `!found`) but a latent semantic-drift risk. **Resolved**: reverted
+  the optimization; `format_candidate_count` is now always an accurate total (the
+  concurrency/performance reviewer separately confirmed the optimization's benefit was
+  negligible at this codebase's realistic scale, so reverting has no real cost).
+* **Rust idiom lens**: PASS_WITH_FINDINGS. One **P1 (MEDIUM confidence, self-disclosed as
+  unverified — no execute access)**: flagged `FileFilter::is_match`'s `match &Option` shape as a
+  plausible `clippy::pedantic::option_if_let_else` violation. **Verified and refuted**:
+  explicitly ran `cargo clippy --all-targets -- -D warnings -D clippy::pedantic -D
+  clippy::option_if_let_else` — this lint DOES fire on the flagged lines, but ALSO fires on 12
+  pre-existing, unrelated call sites across the codebase, proving `option_if_let_else` is not
+  actually enabled by this repository's `-D clippy::pedantic` gate (confirmed clean, exit 0,
+  without the extra explicit flag). False positive, no fix needed. Also applied two small P3
+  cleanups from this review: imported `FileFilter` once via `use` instead of repeating the
+  fully-qualified path at each use site.
+* **Architecture lens**: PASS_WITH_FINDINGS. One P2 (duplicated format-alias normalization
+  across the binary/library boundary) — verified via `git show bab9577:...` to be byte-for-byte
+  pre-existing, unmodified by this shipment; correctly out of scope per task boundaries.
+* **Performance/concurrency lens**: PASS. Confirmed O(1) memory achieved, no concurrency surface
+  introduced, test-only `Arc<Mutex<...>>` log-capture helper is sound (poison-recovery via
+  `PoisonError::into_inner`).
+* **Schema-CLI-docs coupling lens**: PASS_WITH_FINDINGS. One genuine **P2**: the runtime
+  verification report's "Follow-Up Recommendations" section linked to a
+  `...-release-observability.md` file that was never created (release-observability content was
+  folded into the closure doc instead, leaving a dangling cross-reference). **Resolved**:
+  retargeted the link to the actual closure doc's Monitoring Plan/Rollback sections. Also
+  flagged (and now documented) that the aggregate warning's `tracing` target changed from
+  `graphtor_core::acquire::filter` to `graphtor_docs::workspace::serve_discovery` — expected
+  given the crate-boundary refactor, now called out explicitly in the runtime-verification
+  report's new "Observability Note" section for `RUST_LOG` users.
+
+All P0/P1 findings across all 7 reviewers are resolved (one genuine fix; one empirically-refuted
+false positive). Remaining P2/P3 findings are either fixed (broken link, tracing-target note,
+import consistency, memory-checkpoint frontmatter) or explicitly acknowledged as pre-existing/
+out-of-scope/advisory-only with rationale recorded here.
+
+## Next Steps (remaining before merge)
+
+1. PR creation with `## Local Review Readiness` block referencing the final HEAD SHA (after the
+   adversarial-review fix commit).
+2. Copilot shadow-review cycle (blocking per operator directive for this session).
+3. CI wait, merge-commit-only merge.
+4. Post-merge closure: `post-merge/serve-auto-discovery-followups` branch, shipment-reconcile
    safe-close for `048-S` (archive-only, never cascade `backlogit_ship_shipment`), compound
    refresh, compact-context.
 

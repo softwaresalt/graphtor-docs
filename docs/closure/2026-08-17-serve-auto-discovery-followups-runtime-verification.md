@@ -116,7 +116,20 @@ designed to preserve.
 
 ## Follow-Up Recommendations
 
-None required for merge. See release-observability evidence
-(`docs/closure/2026-08-17-serve-auto-discovery-followups-release-observability.md`) for the
-bounded post-deploy manual observation window the exec plan requires given the classifier's
-read-only-vs-generation safety sensitivity.
+None required for merge. See the Monitoring Plan and Rollback Trigger/Procedure sections of the
+pre-merge operational closure
+(`docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md`) for the bounded post-deploy
+manual observation window the exec plan requires given the classifier's read-only-vs-generation
+safety sensitivity. (Release-observability content is consolidated into that closure artifact
+rather than a separate file for this shipment.)
+
+## Observability Note
+
+The aggregate exclusion warning now fires from `stream_ingestible` in the BINARY crate
+(`graphtor_docs::workspace::serve_discovery`) rather than from the LIBRARY crate's
+`graphtor_core::acquire::filter` (which still emits its own, separate S032 warning for direct
+`filter_files` batch callers). The message text and the `input_files` field name are identical —
+confirmed in Scenario 2 above — but an operator filtering logs by crate-scoped target (for
+example, `RUST_LOG=graphtor_core=warn`) will no longer see this specific warning after this
+shipment, since it now originates under the `graphtor_docs` target. `RUST_LOG=warn` (unscoped) or
+`RUST_LOG=graphtor_docs=warn` continues to show it.
