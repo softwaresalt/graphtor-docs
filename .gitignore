@@ -51,6 +51,7 @@ ENV/
 env.bak/
 venv.bak/
 .copilot/
+.copilot-tracking/
 .cargo-home/
 .tmp-build/
 .scripts/__pycache__/
@@ -114,6 +115,7 @@ tmp/
 .graphtor/bin/
 .graphtor/cache/
 .graphtor/logs/
+.graphtor/config/sources.yaml
 
 # backlogit runtime artifacts
 .backlogit/backlogit.db
