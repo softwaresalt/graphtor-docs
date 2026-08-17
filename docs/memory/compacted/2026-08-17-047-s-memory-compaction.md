@@ -19,8 +19,10 @@ release unit is a required workflow step regardless of threshold state.
 Shipment `047-S` ("Read-only serve guarantee honesty F2/F6") completed in
 full: implementation (`054.001.001-ST` RED→`054.001.002-ST` GREEN),
 release-observability evidence (`054.001.003-ST`), design-doc correction
-(`054.002-T`), 6-reviewer adversarial review (0 P0/P1, 4 review-fix cycles
-addressing Copilot shadow-review findings), CI green, merged as PR #97
+(`054.002-T`), 6-reviewer adversarial review (0 P0/P1) plus 4 rounds of
+Copilot shadow review (3 substantive review-fix cycles applied; the 4th
+round's findings were dispositioned as follow-ups rather than a 4th fix
+cycle, per the 3-cycle cap), CI green, merged as PR #97
 (`704b95a6c1e2930079d6f3a602ab66e9682d4916`), and safely archived (single
 -artifact safe-close, protected set empty — full-feature shipment).
 

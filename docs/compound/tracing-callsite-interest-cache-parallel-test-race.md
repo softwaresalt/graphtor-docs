@@ -4,7 +4,7 @@ description: "A tracing::info! call-site shared with many sibling tests that nev
 problem_type: "flaky_test"
 category: "test-failures"
 component: "src/db/store.rs test module (tracing log-capture tests)"
-root_cause: "tracing-core caches a macro call-site's subscriber Interest process-wide on first fire; under parallel cargo test, a sibling test with no subscriber can win that one-time decision before a later test's tracing::subscriber::with_default scope becomes active, silently dropping that later test's own events even though its subscriber is genuinely installed"
+root_cause: "known open tracing-core bug (tokio-rs/tracing#2874, still present in tracing-core 0.1.36): a macro call-site's Interest::never() gets cached the first time it fires with no dispatcher active, and that negative cache is never invalidated once a real dispatcher later becomes active elsewhere in the process"
 resolution_type: "workaround"
 severity: "medium"
 message: "captured log buffer is empty even though tracing::subscriber::with_default was used and the code under test definitely ran"
@@ -12,6 +12,7 @@ file_path: "src/db/store.rs"
 citations:
   - "docs/archive/memory/2026-08-17/047-s-build-checkpoint-pre-pr.md"
   - "PR #97 (shipment 047-S) — commit adcd1ee introduced the affected test"
+  - "https://github.com/tokio-rs/tracing/issues/2874"
 tags:
   - "tracing"
   - "test-flakiness"
@@ -45,27 +46,33 @@ siblings reproduced the empty-capture failure, and it reproduced
 
 ## Root Cause
 
-`tracing-core` decides a macro call-site's subscriber `Interest`
-(`never()`/`sometimes()`/`always()`) the first time that call-site fires in
-the process, then **caches that decision globally** for the remainder of the
-process — this is a documented performance optimization, not a bug. The
-`open_engine_readonly` call-site is shared with 9 other characterization
-tests in the same file (verified: `Select-String -Pattern
+This matches a known, currently-open `tracing-core` bug:
+[tokio-rs/tracing#2874](https://github.com/tokio-rs/tracing/issues/2874),
+confirmed still present in `tracing-core 0.1.36` (the version resolved in
+this repo's `Cargo.lock`) — not merely "a documented performance
+optimization" working as intended. `tracing-core` decides a macro
+call-site's subscriber `Interest` (`never()`/`sometimes()`/`always()`) the
+first time that call-site fires in the process, then caches that decision
+globally. The bug: if that first fire happens on a thread where **no
+dispatcher is active yet** (the built-in no-op default), the callsite gets
+`Interest::never()` cached — and, per #2874, this negative cache is **never
+invalidated**, even once a real dispatcher later becomes active elsewhere
+in the process. The `open_engine_readonly` call-site is shared with 9 other
+characterization tests in the same file (verified: `Select-String -Pattern
 "DataStore::open_engine_readonly\("` across `src/db/store.rs`'s test module
-returns 10 call sites total — the 9 pre-existing siblings plus this one) that
-call it **without ever installing any tracing subscriber**. Under `cargo
-test`'s default multi-threaded execution, several of those sibling test
-threads race to be the first to touch that call-site. Whichever one wins —
-very plausibly one of those 9 "no subscriber" threads, given only 1 of the
-~10 threads touching this call-site carries a real subscriber — causes the
-built-in "no subscriber has been set" dispatcher to answer the interest
-query, which returns `Interest::never()`. Once cached, `never()` means the
-`info!` macro short-circuits **before ever consulting the currently active
-dispatcher**,
-for every future call to that call-site, on every thread, for the rest of the
-process — including the one thread that later installs a real scoped
-subscriber via `tracing::subscriber::with_default`. The scoped subscriber is
-genuinely active; the event is just never constructed or dispatched at all.
+returns 10 call sites total — the 9 pre-existing siblings plus this one)
+that call it **without ever installing any tracing subscriber**. Under
+`cargo test`'s default multi-threaded execution, several of those sibling
+test threads race to be the first to touch that call-site, and whichever
+one wins — very plausibly one of those 9 "no subscriber" threads, given
+only 1 of the ~10 threads touching this call-site carries a real subscriber
+— triggers exactly the #2874 failure mode: `Interest::never()` gets cached
+and stays cached, so the `info!` macro short-circuits **before ever
+consulting the currently active dispatcher**, for every future call to that
+call-site, on every thread, for the rest of the process — including the one
+thread that later installs a real scoped subscriber via
+`tracing::subscriber::with_default`. The scoped subscriber is genuinely
+active; the event is just never constructed or dispatched at all.
 
 With `--test-threads=1`, the test happened to be positioned early enough in
 source-declaration order (inserted immediately before the first
@@ -82,12 +89,17 @@ Neither of the two "obvious" individual fixes was sufficient on its own:
    scoped subscriber is active) — reduced but did not eliminate the failure
    rate (still failed most of the time under parallel execution).
 2. **`tracing_subscriber::EnvFilter`** instead of a plain `.with_max_level()`
-   scalar (an `EnvFilter` cannot resolve interest statically, so it should in
-   principle force `Interest::sometimes()`, which re-asks the active
-   dispatcher on every event rather than trusting a cached answer) — also
-   reduced but did not eliminate the failure rate on its own, and combining
-   it with `rebuild_interest_cache()` was not reliably better (still ~1-in-5
-   failures in one measured run).
+   scalar — reduced but did not eliminate the failure rate on its own, and
+   combining it with `rebuild_interest_cache()` was not reliably better
+   (still ~1-in-5 failures in one measured run). **Correction**: the
+   original draft of this learning claimed `EnvFilter` "cannot resolve
+   interest statically" and therefore "forces `Interest::sometimes()`" —
+   that is not a reliable guarantee. A simple crate-scoped directive like
+   `graphtor_core=info` can still be resolved from callsite metadata alone
+   and cached as `always`/`never` like any other filter; only genuinely
+   dynamic, per-event-dependent directives force `sometimes()`. Treat the
+   `EnvFilter` swap as an empirically-observed partial improvement, not a
+   mechanism guaranteed to defeat this caching behavior.
 
 The combination that achieved **zero failures across 15+ consecutive stress
 runs** under default parallel `cargo test`:
@@ -141,14 +153,18 @@ where
   the `with_default` scope regardless — both reduce the failure rate, but
   neither is sufficient alone if enough "no subscriber" sibling tests are
   racing for the same call-site.
-* **Add a bounded retry as the final guarantee**, not a first resort. A
-  retry loop that only retries on "no signal at all" (never on "wrong
-  signal") preserves genuine regression detection while absorbing the
-  inherent scheduling race. 25 attempts was empirically generous (observed
-  per-attempt failure rates during tuning ranged from ~20% to ~80% depending
-  on which partial fix was in place; even at 80% per-attempt failure,
+* **Add a bounded retry as the final, pragmatic safety net** — a
+  mitigation, not a guarantee — rather than a first resort. A retry loop
+  that only retries on "no signal at all" (never on "wrong signal")
+  preserves genuine regression detection while absorbing the inherent
+  scheduling race; it does not make the race impossible, only
+  astronomically unlikely to survive every attempt, and scheduling outcomes
+  across attempts are not proven independent. 25 attempts was empirically
+  generous (observed per-attempt failure rates during tuning ranged from
+  ~20% to ~80% depending on which partial fix was in place; even at a
+  pessimistic 80% per-attempt failure and treating attempts as independent,
   `0.8^25 ≈ 4×10⁻³`, and the actual combined fix measured 0% failures across
-  15+ full runs).
+  15+ full runs) — generous, not airtight.
 * **A quick standalone reproduction** (a throwaway `examples/*.rs` binary
   calling only the capture helper + a bare `tracing::info!`, deleted after
   use) is a fast way to confirm the *mechanism itself* works before

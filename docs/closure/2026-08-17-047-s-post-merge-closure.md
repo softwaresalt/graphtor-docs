@@ -171,7 +171,7 @@ suppressions.
 | `cargo fmt --all -- --check` | ✅ clean (verified throughout the PR lifecycle) |
 | `cargo clippy --all-targets -- -D warnings -D clippy::pedantic` | ✅ clean |
 | `cargo test --all-targets` | ✅ 555+ tests, 0 failures |
-| `cargo audit` (with updated allowlist) | ✅ clean |
+| `cargo audit` (with updated allowlist) | ✅ pass — 1 vulnerability + 6 unmaintained-crate advisories, all explicitly allowlisted (see `audit.toml`); not "clean" in the sense of zero findings, but a successful gate over accepted, documented supply-chain risk |
 | CI (`build` job on PR #97, final HEAD `b1d3f05`) | ✅ pass |
 
 ## Releasability Evidence
