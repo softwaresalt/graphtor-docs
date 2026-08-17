@@ -49,12 +49,15 @@ pub struct DataStore {
     ///
     /// `None` for every other constructor. Shared across clones via [`Arc`]
     /// so the restore-on-drop only runs when the last clone is dropped, not
-    /// when any single clone goes out of scope. That restore only reliably
-    /// leaves the file writable when this was the only guard that ever
-    /// locked it; if the same file was independently guarded more than once,
-    /// the permissions each guard restores on drop depend on drop order and
-    /// the file is not guaranteed to end up writable (see F6 on
-    /// [`DataStore::open_engine_readonly`]).
+    /// when any single clone goes out of scope. That restore reapplies the
+    /// EXACT permissions captured when this guard was created — writable
+    /// only if the file was writable at that moment; a file that was
+    /// already read-only stays read-only. This exact-state restoration is
+    /// reliable only when this was the only guard that ever locked the
+    /// file; if the same file was independently guarded more than once, the
+    /// permissions each guard restores on drop depend on drop order and the
+    /// final state is not guaranteed to match any single guard's own
+    /// capture (see F6 on [`DataStore::open_engine_readonly`]).
     engine_readonly_guard: Option<Arc<EngineReadonlyGuard>>,
 }
 
@@ -223,14 +226,15 @@ impl DataStore {
     ///
     /// The filesystem lock is held for as long as ANY clone of the returned
     /// `DataStore` is alive and the restore-on-drop runs automatically
-    /// (best-effort) once the last clone is dropped. When this was the ONLY
-    /// guard that ever locked the file, that restore reliably leaves it
-    /// writable again (for example, if the workspace is later reconfigured
-    /// as a generation source). If the file was independently guarded more
-    /// than once, the permissions each guard restores on drop depend on
-    /// drop order (see the overlap caveat above, F6): the file is not
-    /// guaranteed to end up writable, or even to end up in a single
-    /// predictable state, once every guard on it has dropped.
+    /// (best-effort) once the last clone is dropped, reapplying the EXACT
+    /// permissions captured when this guard was created — writable only if
+    /// the file was writable at that moment; a file that was already
+    /// read-only stays read-only. This exact-state restoration is reliable
+    /// only when this was the ONLY guard that ever locked the file. If the
+    /// file was independently guarded more than once, the permissions each
+    /// guard restores on drop depend on drop order (see the overlap caveat
+    /// above, F6): the final state is not guaranteed to match any single
+    /// guard's own capture once every guard on it has dropped.
     ///
     /// # Errors
     ///
