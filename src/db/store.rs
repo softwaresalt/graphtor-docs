@@ -265,8 +265,8 @@ impl DataStore {
     /// the file writable again while THIS handle is still alive and this
     /// method still returns `true` (see F6 in
     /// `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`).
-    /// The application-level [`AccessMode::ReadOnly`] check enforced by
-    /// [`DataStore::mutate`] remains the authoritative read-only guarantee
+    /// The application-level `AccessMode::ReadOnly` check enforced by
+    /// `DataStore::mutate` remains the authoritative read-only guarantee
     /// regardless of this method's result.
     #[must_use]
     pub fn is_engine_enforced_readonly(&self) -> bool {
@@ -872,25 +872,24 @@ mod tests {
         sidecar_candidates(db_path)[1..].to_vec()
     }
 
-    // ── Post-cap residual C (054.001.001-ST): qualified read-only ──────────
-    // startup-log wording, RED-first.
+    // ── Post-cap residual C (054.001.001-ST / 054.001.002-ST): qualified ───
+    // read-only startup-log wording.
     //
-    // `open_engine_readonly`'s startup log currently reads only "(filesystem
-    // lock active)", which a reader can take as an unconditional guarantee.
-    // This test pins the CORRECTED, qualified wording that 054.001.002-ST
-    // will implement: robust while a single `DataStore` is the sole guard on
-    // the file; best-effort (not a cross-process guarantee) whenever the same
-    // file is independently guarded more than once — same- or cross-process
-    // (F6). It is a NEW assertion, distinct from the characterization tests
-    // above (which stay green, pinning the guard's unchanged honest
-    // invariants), and MUST be observed FAILING against the current wording
-    // before the implementation subtask lands (Constitution Principle II).
+    // `open_engine_readonly`'s startup log used to read only "(filesystem
+    // lock active)", which a reader could take as an unconditional
+    // guarantee. This test pins the CORRECTED, qualified wording that
+    // `ENGINE_READONLY_OPEN_LOG_MESSAGE` (production, near the top of this
+    // file) now emits: robust while a single `DataStore` is the sole guard
+    // on the file; best-effort (not a cross-process guarantee) whenever the
+    // same file is independently guarded more than once — same- or
+    // cross-process (F6). It was landed RED-first per Constitution
+    // Principle II — observed failing against the prior unqualified
+    // wording before the production fix existed — and is now green.
     //
-    // This constant is intentionally test-local (not shared with production
-    // code) to keep this subtask strictly test-only per its width-isolation
-    // boundary; 054.001.002-ST introduces the matching production wording
-    // independently. If the two ever drift, this test starts failing again,
-    // which is the desired fail-safe.
+    // This constant is intentionally test-local (not shared with the
+    // production `ENGINE_READONLY_OPEN_LOG_MESSAGE` const) so a future edit
+    // to either one in isolation makes this test fail rather than silently
+    // agreeing with itself.
     const EXPECTED_ENGINE_READONLY_OPEN_LOG_MESSAGE: &str = "opened engine-enforced read-only \
         SQLite DataStore (filesystem lock active: robust while this DataStore is the sole guard \
         on the file; best-effort, not a cross-process guarantee, whenever the same file is \
@@ -920,21 +919,24 @@ mod tests {
     }
 
     /// Run `operation` once under a scoped `tracing` subscriber that
-    /// captures `INFO`-and-above events to an in-memory buffer, returning
-    /// the rendered log text alongside `operation`'s return value.
+    /// captures `INFO`-and-above events from this crate to an in-memory
+    /// buffer, returning the rendered log text alongside `operation`'s
+    /// return value.
     ///
-    /// Uses an [`tracing_subscriber::EnvFilter`] (which decides interest
-    /// per-event rather than caching a single process-wide answer) and
-    /// forces a fresh interest-cache rebuild while this subscriber is
-    /// active, to maximize the odds `operation`'s tracing events reach this
-    /// capture. See [`capture_info_logs_retrying`] for why a single call is
-    /// not sufficient on its own in this test binary.
+    /// Uses an [`tracing_subscriber::EnvFilter`] scoped to
+    /// `graphtor_core=info` (which decides interest per-event rather than
+    /// caching a single process-wide answer, and avoids capturing an
+    /// unrelated third-party `INFO` event as a false "capture worked"
+    /// signal) and forces a fresh interest-cache rebuild while this
+    /// subscriber is active, to maximize the odds `operation`'s tracing
+    /// events reach this capture. See [`capture_info_logs_retrying`] for why
+    /// a single call is not sufficient on its own in this test binary.
     fn capture_info_logs_once<F, T>(operation: F) -> (T, String)
     where
         F: FnOnce() -> T,
     {
         let output = Arc::new(Mutex::new(Vec::new()));
-        let filter = tracing_subscriber::EnvFilter::new("info");
+        let filter = tracing_subscriber::EnvFilter::new("graphtor_core=info");
         let subscriber = tracing_subscriber::fmt()
             .with_ansi(false)
             .without_time()
@@ -960,8 +962,9 @@ mod tests {
         (result, logs)
     }
 
-    /// Retry [`capture_info_logs_once`] until the rendered log contains
-    /// `expected`, or a bounded attempt count is exhausted.
+    /// Retry [`capture_info_logs_once`] until it observes ANY captured log
+    /// output (i.e. `logs` is non-empty), or a bounded attempt count is
+    /// exhausted.
     ///
     /// `tracing` decides a macro call-site's subscriber `Interest` and
     /// caches it process-wide the first time the call-site fires, then
@@ -972,11 +975,16 @@ mod tests {
     /// execution, whichever thread reaches that one-time decision first
     /// can win the race, and a losing race can still occasionally drop this
     /// scoped subscriber's own event even after a forced cache rebuild.
-    /// Retrying with a fresh rebuild converges quickly in practice (single
-    /// digit attempts) and keeps this test deterministic rather than flaky:
-    /// every attempt either finds the qualified wording (pass) or the
-    /// UNQUALIFIED current wording (a genuine red-phase / regression
-    /// failure, not a dropped event) once the race settles.
+    /// Retrying with a fresh rebuild converges quickly in practice (a
+    /// single-digit number of attempts, empirically, across 15+ consecutive
+    /// full-suite stress runs).
+    ///
+    /// Deliberately NOT a retry-until-`contains`-the-expected-wording loop:
+    /// the retry condition is only "did this attempt capture anything at
+    /// all", so the caller's own assertions can still distinguish a genuine
+    /// wording mismatch (non-empty logs, wrong content — a real regression)
+    /// from a dropped-event capture-seam failure (empty logs after every
+    /// attempt — a test-infrastructure problem, not a production defect).
     fn capture_info_logs_retrying<F, T>(mut make_operation: impl FnMut() -> F) -> (T, String)
     where
         F: FnOnce() -> T,
