@@ -186,3 +186,63 @@ Stowaways (`.autoharness/config.yaml`, `.github/agents/{.ship,.stage,_orchestrat
 uncommitted per contract; pre-existing gitignored `.*.lock` files left in place (not
 Stage-created). Shipment manifests 047-S / 048-S unchanged. Cycle 3 of 3 is the final
 permitted Copilot review-fix cycle.
+
+## POST-CAP residual conversion (2026-08-17) — backlog conversion of cycle-3 residuals (NOT a 4th review-fix cycle)
+
+The 3-cycle Copilot review-fix hard cap is REACHED. Per the circuit-breaker
+policy, the remaining review findings at current HEAD were converted into
+execution-ready backlog work + traceable follow-ups — **not** a fourth
+review-fix iteration and **not** any edit to the reviewed decision/plan prose
+(`docs/decisions/` and `docs/exec-plans/` were NOT touched — git-verified).
+Stage-owned backlog/memory only; no source/config/cargo/branch/PR/push.
+Performed at local main HEAD `78e0776` (== PR #96 head).
+
+### Residual findings → backlog conversions
+
+| Finding | Disposition |
+|---|---|
+| A — write-mode `clear_stale_readonly_lock` path has the SAME check/use TOCTOU as the guard path, but 5905CDEE scopes its remedy only to `EngineReadonlyGuard::lock/Drop` | NEW deferred security bug **stash `E86A6E56`** (high, bug): identity-bound/no-follow handle remedy (O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT + fchmod/SetFileInformationByHandle), explicit "do NOT prescribe a path re-check" (itself TOCTOU), fail-closed. RELATES TO 5905CDEE (same mechanism, different uncovered path). NOT added to any shipment (no scope expansion). 5905CDEE left unmodified (still medium/active). |
+| B — streaming classifier must retain O(1) format-candidate COUNT (not just boolean) + structured `input_files` aggregate-warning parity | Encoded in **055.001.002-ST** acceptance (AC2 O(1) integer COUNT; AC3 scalar `input_files` = `files.len()` per `src/acquire/filter.rs:61-65`, NOT a per-file Vec; AC6 the four exact warning cases). |
+| C — new qualified startup-log wording needs a true RED-first contract test (existing characterization tests are green, not red) | **054.001.001-ST** (test-only, RED-first, observed failing first); impl **054.001.002-ST** depends on it. |
+| D — A1 runtime log change needs release-observability evidence | **054.001.003-ST** (owner, baseline, bounded observation window, failure threshold, rollback trigger + procedure). |
+| E — 055.001-T exceeds 2-hour/width; decompose NOW | **055.001.001-ST** (library FileFilter additive API + `filter_files` refactor) → **055.001.002-ST** (binary streaming; depends on library). Parent 055.001-T preserved as container. |
+
+### New backlog structure (canonical hierarchy; subtasks = level 3 `-ST`)
+
+* **047-S** (medium): 054-F, 054.001-T (container), 054.002-T, **054.001.001-ST**, **054.001.002-ST**, **054.001.003-ST**.
+  Deps: 054.001.002-ST → 054.001.001-ST (impl → red test); 054.002-T → 054.001.002-ST (docs → impl) plus its pre-existing → 054.001-T (container).
+* **048-S** (low): 055-F, 055.001-T (container), 055.002-T, **055.001.001-ST**, **055.001.002-ST**.
+  Dep: 055.001.002-ST → 055.001.001-ST (binary → library).
+* Parents 054.001-T and 055.001-T are EXECUTION CONTAINERS — implementation-notes updated **append-only** (git-verified: original text incl. 055.001-T's conditional-split sentence retained; description + acceptance-criteria preserved); each states "Ship executes the subtasks, NOT this parent independently."
+
+### Validation
+
+* `backlogit_sync_index` → 455 items. `backlogit_doctor` (workspace) → only the pre-existing, unrelated orphan 013.008-T; NO new orphans, NO duplicate IDs.
+* Hierarchy query: all 5 subtasks level 3, correctly parented, status queued.
+* `item_deps` query: all three edges present, correct direction (dependent → prerequisite), acyclic.
+* Shipment read-back: 047-S = 6 items, 048-S = 5 items; covering features intact.
+* Stash: `E86A6E56` active/high/bug; grep confirms it appears in NO queue item (no scope expansion); 5905CDEE untouched.
+* Git: no edits under `docs/decisions` or `docs/exec-plans`; no `*.rs`/`Cargo` edits; six stowaways + `.backlogit/runtime/` untouched by this conversion.
+
+### Review consensus — 3 independent cross-model reviewers of the NEW backlog structure
+
+Adversarial review of the newly-created backlog structure (NOT another Copilot review-fix iteration):
+
+* **Correctness / backlog integrity** (anthropic claude-opus-4.8): **PASS**, no P0/P1. Verified finding B against the real `filter_files` (`input_files = files.len()` scalar), confirming the O(1)-COUNT and exact `input_files` parity are mutually satisfiable. 5 P3 advisories; **2 applied** — AC3 scalar-count clarification on 055.001.002-ST, and the precise 054.002-T → 054.001.002-ST docs-after-impl edge. Remaining 3 P3s are Ship-side execution notes (container non-execution; red-test/impl shipment atomicity).
+* **Security** (google gemini-3.1-pro): **PASS**. `E86A6E56` TOCTOU description verified accurate against `src/db/store.rs:643-715` (no-follow `is_reparse_point` at ~666 vs path-based `exists`/`metadata`/`set_readonly` follow at ~677-685); remedy sound (handle-based, no unsafe path re-check, fail-closed); relationship to 5905CDEE correct; 5905CDEE unmodified; severity high defensible.
+* **Scope / circuit-breaker / Stage boundary** (openai gpt-5.6-sol, with git access): initially **P1 HIGH** — 055.001-T implementation-notes was not append-only (the original conditional-split sentence had been dropped). **RESOLVED**: restored the sentence verbatim; `git diff` of 055.001-T.md now shows a purely additive change. All other checks clean — no reviewed-prose/source/cargo edits, stowaways untouched, no scope creep, deps acyclic + width-isolated, HEAD unchanged on main.
+
+Post-remediation: all HIGH/MEDIUM P0/P1 resolved. Remaining items are P3 advisories folded as Ship-side execution notes. (The Security reviewer's P1 is the *underlying* vulnerability now correctly captured by `E86A6E56`, not a defect in the conversion.)
+
+### Commit / dirty state
+
+Commit (this conversion, Stage-owned only): `.backlogit/stash.jsonl`, `.backlogit/hooks_queue.jsonl`, `.backlogit/queue/{047-S,048-S,054.001-T,054.002-T,055.001-T}.md`, `.backlogit/queue/{054.001.001-ST,054.001.002-ST,054.001.003-ST,055.001.001-ST,055.001.002-ST}.md`, and this memory file. Not pushed. Six stowaways (`.autoharness/config.yaml`, `.github/agents/{.ship,.stage,_orchestrator}.agent.md`, `.gitignore`, `.vscode/settings.json`) and `.backlogit/runtime/` left untouched and uncommitted per contract; pre-existing gitignored `.*.lock` files left in place.
+
+### Note for Ship
+
+These are backlog conversions mandated by the 3-cycle review-fix hard stop — NOT plan edits.
+
+* **047-S**: 054.001.001-ST (RED test, observe failing) → 054.001.002-ST (impl, turns it green) → 054.001.003-ST (release-observability evidence) → 054.002-T (docs). Keep red-test + impl within the shipment so no intermediate red state merges independently.
+* **048-S**: 055.001.001-ST (library FileFilter additive API) → 055.001.002-ST (binary streaming; O(1) COUNT + scalar `input_files` parity + 4 warning cases) → 055.002-T (alias evaluation, independent).
+* Do NOT execute the container parents (054.001-T / 055.001-T) independently — their acceptance is satisfied collectively by the subtasks.
+* Deferred security bugs `E86A6E56` (write-mode `clear_stale_readonly_lock` TOCTOU) and 5905CDEE (guard-path TOCTOU) each need their own spike/deliberation; do NOT fold either into 047-S/048-S.
