@@ -10,7 +10,7 @@ severity: "medium"
 message: "captured log buffer is empty even though tracing::subscriber::with_default was used and the code under test definitely ran"
 file_path: "src/db/store.rs"
 citations:
-  - "docs/memory/2026-08-17/047-s-build-checkpoint-pre-pr.md"
+  - "docs/archive/memory/2026-08-17/047-s-build-checkpoint-pre-pr.md"
   - "PR #97 (shipment 047-S) — commit adcd1ee introduced the affected test"
 tags:
   - "tracing"
@@ -38,7 +38,7 @@ containing the wrong text, but containing *nothing at all* — even though
 `write()` method, which never fired). Running the exact same test **alone**
 (`cargo test --lib <full_test_path>`, matching only that one test) worked
 perfectly every time. Running with `--test-threads=1` (serialized, but still
-alongside all ~13 sibling tests that also call `open_engine_readonly`) also
+alongside all 9 sibling tests that also call `open_engine_readonly`) also
 worked every time. Only **default parallel** execution alongside those
 siblings reproduced the empty-capture failure, and it reproduced
 **deterministically** (100% of runs), not merely as an occasional flake.
@@ -49,15 +49,19 @@ siblings reproduced the empty-capture failure, and it reproduced
 (`never()`/`sometimes()`/`always()`) the first time that call-site fires in
 the process, then **caches that decision globally** for the remainder of the
 process — this is a documented performance optimization, not a bug. The
-`open_engine_readonly` call-site is shared with roughly a dozen
-characterization tests that call it **without ever installing any tracing
-subscriber**. Under `cargo test`'s default multi-threaded execution, several
-of those sibling test threads race to be the first to touch that call-site.
-Whichever one wins — almost certainly one of the ~13 "no subscriber" threads,
-given only 1 of ~14 threads carries a real subscriber — causes the built-in
-"no subscriber has been set" dispatcher to answer the interest query, which
-returns `Interest::never()`. Once cached, `never()` means the `info!` macro
-short-circuits **before ever consulting the currently active dispatcher**,
+`open_engine_readonly` call-site is shared with 9 other characterization
+tests in the same file (verified: `Select-String -Pattern
+"DataStore::open_engine_readonly\("` across `src/db/store.rs`'s test module
+returns 10 call sites total — the 9 pre-existing siblings plus this one) that
+call it **without ever installing any tracing subscriber**. Under `cargo
+test`'s default multi-threaded execution, several of those sibling test
+threads race to be the first to touch that call-site. Whichever one wins —
+very plausibly one of those 9 "no subscriber" threads, given only 1 of the
+~10 threads touching this call-site carries a real subscriber — causes the
+built-in "no subscriber has been set" dispatcher to answer the interest
+query, which returns `Interest::never()`. Once cached, `never()` means the
+`info!` macro short-circuits **before ever consulting the currently active
+dispatcher**,
 for every future call to that call-site, on every thread, for the rest of the
 process — including the one thread that later installs a real scoped
 subscriber via `tracing::subscriber::with_default`. The scoped subscriber is
