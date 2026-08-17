@@ -18,7 +18,9 @@ existing behavior is unchanged (already covered by the full `serve_discovery` re
 ## Environment Prechecks
 
 * Build artifact under test: `target\debug\graphtor-docs.exe`, built from
-  `feat/serve-auto-discovery-followups` at commit `73454f4` (post-refactor).
+  `feat/serve-auto-discovery-followups`, initially verified at commit `73454f4`
+  (post-refactor) and re-verified at the final HEAD `71a2580` (post adversarial-review fixes)
+  with identical results for both re-run scenarios.
 * `cargo build --bin graphtor-docs` completed successfully immediately before verification.
 * No external services, network, credentials, or fixtures required — `serve` is a local STDIO
   MCP process; verification uses closed-stdin subprocess invocation (the same technique
