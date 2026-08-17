@@ -769,6 +769,7 @@ fn configure_sqlite_wal(path: &Path) -> Result<(), GraphtorError> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Mutex;
 
     use cozo::{DataValue, Num, ScriptMutability};
 
@@ -817,6 +818,110 @@ mod tests {
 
     fn sidecar_paths_for_test(db_path: &Path) -> Vec<PathBuf> {
         sidecar_candidates(db_path)[1..].to_vec()
+    }
+
+    // ── Post-cap residual C (054.001.001-ST): qualified read-only ──────────
+    // startup-log wording, RED-first.
+    //
+    // `open_engine_readonly`'s startup log currently reads only "(filesystem
+    // lock active)", which a reader can take as an unconditional guarantee.
+    // This test pins the CORRECTED, qualified wording that 054.001.002-ST
+    // will implement: robust while a single `DataStore` is the sole guard on
+    // the file; best-effort (not a cross-process guarantee) whenever the same
+    // file is independently guarded more than once — same- or cross-process
+    // (F6). It is a NEW assertion, distinct from the characterization tests
+    // above (which stay green, pinning the guard's unchanged honest
+    // invariants), and MUST be observed FAILING against the current wording
+    // before the implementation subtask lands (Constitution Principle II).
+    //
+    // This constant is intentionally test-local (not shared with production
+    // code) to keep this subtask strictly test-only per its width-isolation
+    // boundary; 054.001.002-ST introduces the matching production wording
+    // independently. If the two ever drift, this test starts failing again,
+    // which is the desired fail-safe.
+    const EXPECTED_ENGINE_READONLY_OPEN_LOG_MESSAGE: &str = "opened engine-enforced read-only \
+        SQLite DataStore (filesystem lock active: robust while this DataStore is the sole guard \
+        on the file; best-effort, not a cross-process guarantee, whenever the same file is \
+        independently guarded more than once - same- or cross-process - see F6)";
+
+    /// Minimal `tracing` `MakeWriter` that appends every write to a shared
+    /// in-memory buffer, so a test can assert on the exact rendered log text
+    /// without parsing process stdout or adding a `tracing-test` dependency.
+    /// Scoped to a single test via `tracing::subscriber::with_default` — it
+    /// never touches the process-wide default subscriber.
+    #[derive(Clone)]
+    struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn open_engine_readonly_logs_the_qualified_single_owner_vs_multi_guard_wording() {
+        let dir = temp_dir();
+        let db_path = dir.path().join("engine-ro-log-wording.db");
+        build_populated_fixture(&db_path, dir.path());
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(CapturedLogWriter(captured.clone()))
+            .with_ansi(false)
+            .with_level(false)
+            .with_target(false)
+            .without_time()
+            .finish();
+
+        // `tracing` caches each macro call-site's subscriber `Interest`
+        // process-wide the first time it fires. Other `open_engine_readonly`
+        // tests in this same test binary run concurrently with no subscriber
+        // installed, which can cache this call-site as `Interest::never()`
+        // before this test's scoped subscriber ever becomes active — silently
+        // dropping the event regardless of the `with_default` scope. Forcing
+        // a rebuild while OUR subscriber is the active default re-registers
+        // the call-site against it so the event is actually recorded here;
+        // this is the standard fix for scoped-subscriber log capture under
+        // parallel tests (the same approach the `tracing-test` crate uses).
+        let readonly = tracing::subscriber::with_default(subscriber, || {
+            tracing::callsite::rebuild_interest_cache();
+            DataStore::open_engine_readonly(&db_path, dir.path())
+                .expect("open_engine_readonly should succeed")
+        });
+
+        let logs = String::from_utf8(
+            captured
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+        )
+        .expect("captured log output must be valid UTF-8");
+
+        assert!(
+            logs.contains(EXPECTED_ENGINE_READONLY_OPEN_LOG_MESSAGE),
+            "open_engine_readonly's startup log must state the qualified, honest guarantee \
+             (robust under a single owning guard; best-effort - not a cross-process guarantee \
+             - whenever the same file is independently guarded more than once; F6), not an \
+             unconditional 'filesystem lock active' claim. Captured log output:\n{logs}"
+        );
+
+        drop(readonly);
     }
 
     #[test]
