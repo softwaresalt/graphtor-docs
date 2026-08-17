@@ -53,11 +53,13 @@ this repo's `Cargo.lock`) — not merely "a documented performance
 optimization" working as intended. `tracing-core` decides a macro
 call-site's subscriber `Interest` (`never()`/`sometimes()`/`always()`) the
 first time that call-site fires in the process, then caches that decision
-globally. The bug: if that first fire happens on a thread where **no
-dispatcher is active yet** (the built-in no-op default), the callsite gets
-`Interest::never()` cached — and, per #2874, this negative cache is **never
-invalidated**, even once a real dispatcher later becomes active elsewhere
-in the process. The `open_engine_readonly` call-site is shared with 9 other
+globally. The bug (see #2874 for the precise registration-ordering
+preconditions, which are subtler than "any no-subscriber touch poisons the
+process forever"): under specific timing between when a `Dispatch` exists
+and when it becomes the active default, a callsite can get
+`Interest::never()` cached and that negative cache is not correctly
+rebuilt even after a real dispatcher later becomes active elsewhere in the
+process. The `open_engine_readonly` call-site is shared with 9 other
 characterization tests in the same file (verified: `Select-String -Pattern
 "DataStore::open_engine_readonly\("` across `src/db/store.rs`'s test module
 returns 10 call sites total — the 9 pre-existing siblings plus this one)
@@ -105,9 +107,10 @@ The combination that achieved **zero failures across 15+ consecutive stress
 runs** under default parallel `cargo test`:
 
 * `tracing_subscriber::EnvFilter::new("graphtor_core=info")` (scoped to the
-  crate's own target, both to help force per-event evaluation and to avoid
-  capturing an unrelated third-party crate's `INFO` event as a false
-  "capture worked" signal)
+  crate's own target — not because this reliably forces per-event
+  evaluation, per the correction above, but as an empirically-observed
+  partial improvement, and to avoid capturing an unrelated third-party
+  crate's `INFO` event as a false "capture worked" signal)
 * `tracing::callsite::rebuild_interest_cache()` inside the `with_default`
   closure
 * **A bounded retry loop** (`capture_info_logs_retrying`, 25 attempts, a

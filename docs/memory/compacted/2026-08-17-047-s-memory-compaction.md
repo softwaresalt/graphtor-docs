@@ -36,10 +36,10 @@ two `docs/compound/` entries this shipment produced/updated):
   round-1 review as *more* deceptive).
 * `EngineReadonlyGuard::lock`/`Drop` bodies never modified.
 * F6 (cross-process/multi-guard restore-ordering) documented as an honest,
-  best-effort residual across 5 surfaces (log constant, 3 rustdocs, struct
-  doc, design doc) — not closed, not formally perfected to every edge case
-  (an explicit, reasoned stopping point after 4 Copilot review rounds showed
-  non-convergent finding counts: 9→4→2→10).
+  best-effort residual across the log constant, 3 rustdocs, the guard
+  struct doc, and the design doc — not closed, not formally perfected to
+  every edge case (an explicit, reasoned stopping point after 4 Copilot
+  review rounds showed non-convergent finding counts: 9→4→2→10).
 * A `tracing` callsite-interest-cache race under parallel `cargo test`
   required a bounded-retry + `EnvFilter` + `rebuild_interest_cache()`
   combination to reliably capture log output in tests — captured as a new

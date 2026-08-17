@@ -128,7 +128,7 @@ full owner/baseline/window/threshold/rollback record. Summary:
 
 | ProposedAction | ActionRisk | ActionResult |
 |---|---|---|
-| Correct overstated read-only contract wording across 5 code/doc surfaces | moderate (security-adjacent wording on a read-only guarantee; no runtime/behavior change) | applied |
+| Correct overstated read-only contract wording across code/doc surfaces (log constant, `is_engine_enforced_readonly`/`open_engine_readonly`/`open_sqlite_readonly` rustdocs, `EngineReadonlyGuard` struct/field docs, the design doc) | moderate (security-adjacent wording on a read-only guarantee; no runtime/behavior change) | applied |
 | Add `RUSTSEC-2026-0249` to the CI audit allowlist (pre-existing, unrelated advisory blocking merge) | low (documentation of an already-accepted transitive-dependency risk class; matches 6 existing precedents) | applied |
 | Carry 2 pre-authorized stowaway commits onto this branch/PR | low (config/workspace-hygiene only, explicitly operator-authorized) | applied |
 | Archive shipment `047-S` via safe-close (not the cascade op) | low (single-artifact archival; protected set was empty — full-feature shipment) | applied, verified no cascade |
