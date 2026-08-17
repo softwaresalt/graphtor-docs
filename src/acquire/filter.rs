@@ -32,28 +32,11 @@ pub fn filter_files(
     include: &[String],
     exclude: &[String],
 ) -> Result<Vec<PathBuf>, GraphtorError> {
-    let include_set = build_glob_set(include, "include")?;
-    let exclude_set = build_glob_set(exclude, "exclude")?;
+    let matcher = FileFilter::new(include, exclude)?;
 
     let filtered: Vec<PathBuf> = files
         .iter()
-        .filter(|path| {
-            // Normalize to forward slashes for cross-platform glob matching.
-            let s = path_to_forward_slash(path);
-            // FR-009: no include patterns → include all files.
-            let included = match &include_set {
-                None => true,
-                Some(set) => set.is_match(&s),
-            };
-            if !included {
-                return false;
-            }
-            // FR-010: no exclude patterns → exclude nothing.
-            match &exclude_set {
-                None => true,
-                Some(set) => !set.is_match(&s),
-            }
-        })
+        .filter(|path| matcher.is_match(path))
         .cloned()
         .collect();
 
@@ -66,6 +49,70 @@ pub fn filter_files(
     }
 
     Ok(filtered)
+}
+
+/// A compiled, reusable include/exclude glob matcher.
+///
+/// [`filter_files`] builds the equivalent of one internally for a single
+/// batch call. Callers that need to test many individual paths one at a
+/// time — for example, a streaming boolean classifier walking a directory
+/// tree — should build a single [`FileFilter`] up front with [`FileFilter::new`]
+/// and reuse it via [`FileFilter::is_match`], rather than calling
+/// [`filter_files`] once per path (which would recompile the glob sets on
+/// every call and defeat the point of streaming).
+///
+/// `filter_files` itself is implemented in terms of `FileFilter` so there is
+/// a single source of truth for include/exclude semantics.
+#[derive(Debug)]
+pub struct FileFilter {
+    include: Option<GlobSet>,
+    exclude: Option<GlobSet>,
+}
+
+impl FileFilter {
+    /// Compile `include`/`exclude` glob pattern lists into a reusable matcher.
+    ///
+    /// Defaults mirror [`filter_files`]:
+    /// - No include patterns → every path passes the include check (FR-009).
+    /// - No exclude patterns → no path is excluded (FR-010).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphtorError::Config`] if any pattern string is
+    /// syntactically invalid (FR-013).
+    pub fn new(include: &[String], exclude: &[String]) -> Result<Self, GraphtorError> {
+        Ok(Self {
+            include: build_glob_set(include, "include")?,
+            exclude: build_glob_set(exclude, "exclude")?,
+        })
+    }
+
+    /// Returns `true` when `path` matches at least one include pattern (or
+    /// there are no include patterns) **and** does not match any exclude
+    /// pattern (or there are no exclude patterns).
+    ///
+    /// Mirrors the per-file semantics [`filter_files`] applies to each
+    /// element of its input slice: include is checked before exclude, and
+    /// paths are matched on their forward-slash-normalized form for
+    /// cross-platform consistency.
+    #[must_use]
+    pub fn is_match(&self, path: &Path) -> bool {
+        // Normalize to forward slashes for cross-platform glob matching.
+        let s = path_to_forward_slash(path);
+        // FR-009: no include patterns → include all files.
+        let included = match &self.include {
+            None => true,
+            Some(set) => set.is_match(&s),
+        };
+        if !included {
+            return false;
+        }
+        // FR-010: no exclude patterns → exclude nothing.
+        match &self.exclude {
+            None => true,
+            Some(set) => !set.is_match(&s),
+        }
+    }
 }
 
 /// Build a [`GlobSet`] from a slice of pattern strings.
@@ -273,5 +320,105 @@ mod tests {
     fn empty_file_list_returns_empty_result() {
         let result = filter_files(&[], &include(&["**/*.md"]), &[]).unwrap();
         assert!(result.is_empty());
+    }
+
+    // ── FileFilter: reusable compiled matcher (055.001.001-ST) ────────────
+    //
+    // RED-FIRST: FileFilter is a brand-new public API with no prior
+    // behavior to characterize (Constitution Principle II) — these tests
+    // are written before the implementation and must fail (via the
+    // unimplemented! stub) before FileFilter is implemented.
+
+    #[test]
+    fn file_filter_include_only_matches_pattern() {
+        let filter = FileFilter::new(&include(&["**/*.md"]), &[]).unwrap();
+        assert!(filter.is_match(Path::new("a.md")));
+        assert!(!filter.is_match(Path::new("b.txt")));
+    }
+
+    #[test]
+    fn file_filter_multiple_include_patterns_union() {
+        let filter = FileFilter::new(&include(&["**/*.md", "**/*.txt"]), &[]).unwrap();
+        assert!(filter.is_match(Path::new("a.md")));
+        assert!(filter.is_match(Path::new("b.txt")));
+        assert!(!filter.is_match(Path::new("c.rs")));
+    }
+
+    #[test]
+    fn file_filter_exclude_wins_when_both_match() {
+        let filter = FileFilter::new(&include(&["**/*.md"]), &exclude(&["docs/**"])).unwrap();
+        assert!(!filter.is_match(Path::new("docs/api.md")));
+    }
+
+    #[test]
+    fn file_filter_no_include_patterns_matches_all() {
+        let filter = FileFilter::new(&[], &[]).unwrap();
+        assert!(filter.is_match(Path::new("a.md")));
+        assert!(filter.is_match(Path::new("b.txt")));
+    }
+
+    #[test]
+    fn file_filter_no_exclude_patterns_excludes_nothing() {
+        let filter = FileFilter::new(&include(&["**/*.md"]), &[]).unwrap();
+        assert!(filter.is_match(Path::new("a.md")));
+        assert!(filter.is_match(Path::new("b.md")));
+    }
+
+    #[test]
+    fn file_filter_invalid_include_pattern_returns_config_error() {
+        let result = FileFilter::new(&include(&["[invalid"]), &[]);
+        assert!(
+            matches!(result, Err(GraphtorError::Config { .. })),
+            "invalid include pattern must return Config error: {result:?}"
+        );
+    }
+
+    #[test]
+    fn file_filter_invalid_exclude_pattern_returns_config_error() {
+        let result = FileFilter::new(&[], &exclude(&["[bad"]));
+        assert!(
+            matches!(result, Err(GraphtorError::Config { .. })),
+            "invalid exclude pattern must return Config error: {result:?}"
+        );
+    }
+
+    #[test]
+    fn file_filter_is_reusable_across_many_is_match_calls() {
+        // Build once, query many times — proves the matcher is a stable,
+        // reusable value rather than something that must be reconstructed
+        // per call, which is the entire point of exposing it separately
+        // from `filter_files` (a streaming caller compiles once and tests
+        // many candidate paths one at a time).
+        let filter = FileFilter::new(&include(&["**/*.md"]), &exclude(&["**/drafts/**"])).unwrap();
+        let candidates = ["a.md", "drafts/b.md", "c.md", "d.txt"];
+        let results: Vec<bool> = candidates
+            .iter()
+            .map(|p| filter.is_match(Path::new(p)))
+            .collect();
+        assert_eq!(results, vec![true, false, true, false]);
+    }
+
+    #[test]
+    fn file_filter_matches_filter_files_semantics_on_representative_paths() {
+        // Differential check: applying FileFilter::is_match per-file must
+        // agree with filter_files applied to the whole batch, for
+        // representative include/exclude combinations (nested paths,
+        // exclude-wins, non-matching files).
+        let files = paths(&["a.md", "drafts/b.md", "c.md", "docs/api.md", "e.txt"]);
+        let include_patterns = include(&["**/*.md"]);
+        let exclude_patterns = exclude(&["**/drafts/**"]);
+        let batch = filter_files(&files, &include_patterns, &exclude_patterns).unwrap();
+
+        let filter = FileFilter::new(&include_patterns, &exclude_patterns).unwrap();
+        let streamed: Vec<PathBuf> = files
+            .iter()
+            .filter(|p| filter.is_match(p))
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            batch, streamed,
+            "FileFilter::is_match applied per-file must equal filter_files applied as a batch"
+        );
     }
 }
