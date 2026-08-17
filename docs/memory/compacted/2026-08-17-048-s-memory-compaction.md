@@ -99,10 +99,11 @@ and the two new `docs/compound/` entries this shipment produced):
 
 ## Result
 
-* One superseded build checkpoint archived to `docs/archive/memory/`, and
-  this compaction report added to `docs/memory/compacted/` — a like-for-like
-  move plus one durable summary, not a net reduction in `docs/memory/`
-  content.
+* One superseded 194-line build checkpoint archived out of `docs/memory/`
+  to `docs/archive/memory/`, and this 116-line compaction report added to
+  `docs/memory/compacted/` — a net reduction of active `docs/memory/`
+  content, with the full original preserved byte-identical under
+  `docs/archive/memory/` for traceability.
 * Durable record for `048-S` now lives in `docs/closure/` (closure, runtime
   verification, post-merge closure, and compound-refresh artifacts) and
   `docs/compound/` (2 new learnings), per the Durable Knowledge Layout

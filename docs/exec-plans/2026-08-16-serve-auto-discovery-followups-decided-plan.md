@@ -106,10 +106,12 @@ concluded sufficient as-is (no code change).
 * **Revert procedure**: `git revert` the streaming-classifier commit(s) (both
   the library-API and binary-streaming commits, in reverse dependency order),
   rebuild, re-run the per-source comparison to confirm baseline classification
-  is restored.
-* Window-close outcome (healthy / degraded / rolled-back) is recorded in the
-  shipment closure artifact as releasability evidence. Stashed follow-up
-  `8C2E313D` tracks the asynchronous window close-out.
+  is restored, and reopen follow-up `B88E37BF` with the diverging fixture
+  attached.
+* Window-close outcome (healthy / degraded / rolled-back) is to be recorded in
+  the shipment closure artifact as releasability evidence once the window
+  closes. As of this writing the window remains open — stashed follow-up
+  `8C2E313D` tracks the pending asynchronous window close-out.
 
 ## Plan Review Outcome
 
