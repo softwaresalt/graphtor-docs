@@ -55,7 +55,7 @@ was explicitly NOT started or claimed per operator instruction.
   for PR #97 — this conflated the 4 distinct per-round counts (5, 1, 2,
   and 10-deferred) into a single number; the breakdown above is the
   accurate one, matching PR #97's own final readiness record.
-* **This PR (`#99`, `chore/session-closure-047-s`) itself went through 2
+* **This PR (`#99`, `chore/session-closure-047-s`) itself went through 3
   Copilot review passes.** Pass 1 (at `de749a8`) raised 4 findings: 2 real
   accuracy gaps in this checkpoint (both corrected above), 1 timing
   artifact (a scope-disclosure line that was already correct by the time
