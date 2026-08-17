@@ -185,7 +185,7 @@ response is the honest-guarantee hardening above — not a refcount subsystem.
 ## Next Steps
 
 * Promote to `impl-plan` for a bounded reliability-hardening unit
-  (`docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-plan.md`).
+  (`docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`).
 * Capture the "app-level AccessMode is authoritative; FS attribute is
   defense-in-depth" boundary as a compound learning.
 

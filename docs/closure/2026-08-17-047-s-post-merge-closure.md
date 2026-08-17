@@ -194,7 +194,7 @@ criteria, with the owner recording a healthy/degraded/rolled-back outcome.
 
 ## Cross-References
 
-* `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-plan.md`
+* `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`
 * `docs/decisions/2026-08-16-readonly-serve-cross-process-coordination-spike.md`
 * `docs/decisions/2026-08-16-shared-external-readonly-databases-deliberation.md`
 * `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`

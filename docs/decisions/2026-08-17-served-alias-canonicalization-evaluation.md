@@ -8,7 +8,7 @@ promoted_to: "none"
 stash_ids:
   - "5868A7C5"
 linked_artifacts:
-  - "docs/exec-plans/2026-08-16-serve-auto-discovery-followups-plan.md"
+  - "docs/exec-plans/2026-08-16-serve-auto-discovery-followups-decided-plan.md"
   - "docs/decisions/2026-08-16-serve-auto-discovery-followups-deliberation.md"
 tags:
   - serve-discovery

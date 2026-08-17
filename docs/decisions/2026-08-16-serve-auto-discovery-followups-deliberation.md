@@ -9,7 +9,7 @@ stash_ids:
   - "B88E37BF"
   - "5868A7C5"
 linked_artifacts:
-  - "docs/exec-plans/2026-08-16-serve-auto-discovery-followups-plan.md"
+  - "docs/exec-plans/2026-08-16-serve-auto-discovery-followups-decided-plan.md"
 tags:
   - serve-discovery
   - performance
