@@ -87,3 +87,47 @@ consumer checkpoint).
   `docs/memory/compacted/2026-08-16-dark-stage-047-048-compacted.md`; verbose
   originals archived under `docs/archive/memory/2026-08-16/`. This session-complete
   memory is preserved in place as the active 047-S/048-S handoff.
+
+## Second Copilot review cycle (2026-08-16, cycle 2 of <=3) — 048-S plan/backlog
+
+PR #96 (staging PR, HEAD ad1b836) received a SECOND Copilot review with 5
+suppressed actionable comments (no live threads), all on the 048-S release unit.
+Remediated in Stage-owned artifacts only (no source/config/cargo/branch/PR):
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | plan wrongly marked public-API impact "absent" — shared matcher crosses the binary/library crate boundary | plan now marks it present (additive): the `graphtor-docs` binary classifier reuses a NEW additive `FileFilter` (new/is_match) public API in the `graphtor_core` library `acquire` module; `filter_files` refactored to consume it (single source of truth); SemVer-minor; rustdoc + library unit test + differential test added |
+| 2 | no post-deploy observation despite read-only vs read-write posture gating | added a bounded manual Post-Deploy Observation Window (owner, per-source baseline, bidirectional rollback trigger, revert procedure, window-close outcome) |
+| 3 | task 055.001-T acceptance criteria lacked exact warning cases | AC5 now carries all four: excluded-only = 1 aggregate warning; ingestible = 0; walk-error = 0 (fail-closed); zero-candidate = 0 |
+| 4 | feature 055-F risk mislabeled | priority stays low; body carries ActionRisk moderate (security-sensitive) — misclassification promotes to read-write Generation |
+| 5 | deliberation classified B/B1 as uniformly low-risk | Decision + Risks + Trade-off table now classify B/B1 moderate/security-sensitive (B2 low); blast-radius statement corrected for the `filter_files` library refactor |
+
+Coherence: task 055.001-T (and sibling 055.002-T) priority aligned to low; the task
+carries a decomposition note (split into 055.001.001-ST library-first +
+055.001.002-ST binary if it exceeds the 2-hour rule); all revert/rollback language
+reconciled with a possible two-commit B1 decomposition.
+
+Adversarial post-remediation review: 3 independent reviewers, cross-model (openai
+gpt-5.6-sol Correctness, anthropic claude-opus-4.8 Constitution, google
+gemini-3.1-pro Scope) plus a focused re-review pass. Consensus: NO HIGH/MEDIUM
+P0/P1; all 5 findings ADDRESSED; Stage boundary honored. Two internal remediation
+passes used (pass 2 fixed a re-review-surfaced revert/blast-radius contradiction).
+One LOW-confidence P3 advisory remains (optional upfront task pre-split) —
+recorded and accepted; both final reviewers deemed the decomposition note
+sufficient.
+
+Validation: backlogit doctor pass on 055-F / 055.001-T / 055.002-T; index synced;
+docs-lint shows only pre-existing repo-wide frontmatter gaps (doc_type/source),
+none introduced by these edits.
+
+Commit (this cycle, Stage-owned only): docs/exec-plans/2026-08-16-serve-auto-discovery-followups-plan.md,
+docs/decisions/2026-08-16-serve-auto-discovery-followups-deliberation.md,
+.backlogit/queue/{055-F,055.001-T,055.002-T}.md. Not pushed. Stowaways
+(.autoharness/config.yaml, .github/agents/{.ship,.stage,_orchestrator}.agent.md,
+.gitignore, .vscode/settings.json) plus .backlogit/runtime/ left uncommitted per
+contract. Shipment 048-S manifest unchanged (still 055-F, 055.001-T, 055.002-T).
+
+Note for Ship: 055.001-T now requires an additive `graphtor_core::acquire` public
+API (`FileFilter`) reused by both the classifier and a refactored `filter_files`;
+red-first for the new API, characterization-first for the classifier; consider the
+documented library/binary subtask split if the combined change exceeds 2 hours.

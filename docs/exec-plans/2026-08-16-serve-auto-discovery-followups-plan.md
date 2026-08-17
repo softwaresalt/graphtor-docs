@@ -30,7 +30,7 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
 | Requirement | Implementation action |
 |---|---|
 | Eliminate O(document-count) memory in the boolean classifier | Unit B1: stream a boolean over the walk; drop the `Vec` of matching paths |
-| Preserve exactly which files count as ingestible | Unit B1: test each format-matching path against the same compiled matcher `filter_files` uses (a shared reusable predicate), so glob sets compile once and the aggregate "all files excluded" warning semantics are preserved — never call `filter_files` per file; no duplicated glob logic |
+| Preserve exactly which files count as ingestible | Unit B1: test each format-matching path against the same compiled matcher `filter_files` uses (a shared reusable predicate exposed as an **additive public API** in the `graphtor_core` library crate, because the classifier lives in the `graphtor-docs` binary crate — see Plan Hardening Signals), so glob sets compile once and the aggregate "all files excluded" warning semantics are preserved — never call `filter_files` per file; no duplicated glob logic |
 | Preserve fail-closed-on-walk-error semantics EXACTLY | Unit B1: keep the full walk; still return `false` on any `WalkDir` error |
 | Decide whether aliases need more than dedup | Unit B2: evaluate, then implement diagnostic reporting or document no-op |
 
@@ -66,11 +66,16 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
   `found` only when the walk completed without error. This removes memory
   proportional to document count; the full traversal is retained deliberately to
   preserve fail-closed semantics.
-* Files: `src/workspace/serve_discovery.rs`, plus a small reusable predicate in
-  `graphtor_core::acquire` if one must be exposed to avoid forking glob logic
-  (≤2 files, code domain).
-* Functions: `source_has_ingestible_content`, plus at most one small shared
-  matcher/predicate reused with `filter_files` (no duplicated glob logic).
+* Files: `src/workspace/serve_discovery.rs` (binary crate `graphtor-docs`), plus
+  a small reusable matcher/predicate exposed as an **additive public API** in
+  `graphtor_core::acquire` (library crate) — required because the binary cannot
+  reach the currently private `build_glob_set`/`GlobSet` predicate — and a
+  refactor of `filter_files` to consume that same predicate (single source of
+  truth). ≤2 source files, code domain.
+* Functions: `source_has_ingestible_content` (binary), plus a new public matcher
+  type/constructor in `graphtor_core::acquire` (for example `FileFilter::new` /
+  `FileFilter::is_match`) reused by a refactored `filter_files` (no duplicated
+  glob logic).
 * Tests (colocated `#[cfg(test)]`, characterization — prove identical
   classification; use a deterministic ordering seam):
   * excluded-only tree returns `false`.
@@ -89,6 +94,13 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
     an excluded-only tree (candidates existed, none passed), and zero warnings for
     the zero-candidate, ingestible, and walk-error cases — no spurious per-file
     warning.
+  * library-crate unit tests (colocated in `graphtor_core::acquire`) for the new
+    public matcher API in isolation — include/exclude precedence, empty include =
+    all, union globs — so the exposed predicate is covered independently of the
+    classifier and `filter_files` is proven to still consume it. The
+    all-candidates-excluded case is exercised by iterating `is_match`; aggregation
+    (the "all excluded" condition) stays caller-owned and is covered by the
+    classifier's warning-parity tests, not by a public aggregate method.
 * Execution posture: characterization-first — pin current behavior with tests,
   then refactor to the streaming boolean.
 * Atomic milestone: `cargo test` passes; classification results are unchanged.
@@ -145,23 +157,91 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
   unchanged. The full error-observing traversal is retained by design.
 * Closure artifact: note in the shipment that this addresses the PR90 wave-7 perf
   finding (B88E37BF, memory reduction; traversal retained for fail-closed safety)
-  and the alias evaluation (5868A7C5); no monitoring/rollback needed.
+  and the alias evaluation (5868A7C5). Because the classifier chooses read-only
+  vs read-**write** `Generation` posture, a bounded manual post-deploy
+  observation window (below) is required even though there is no runtime rollout
+  or data migration.
+
+### Post-Deploy Observation Window (manual checklist)
+
+* Owner: the developer merging the shipment (single-developer repo; no on-call
+  rotation).
+* Signals to watch: the resolved `ServeMode` per source (read-only vs
+  `Generation`) and the aggregate "all files excluded" warning. Because startup
+  logging may report aggregate counts rather than each source's classifier
+  result, observe per-source by running `graphtor-docs serve`/`status` against
+  each previously-served source in isolation (or add a temporary per-source
+  classification log line) so the posture of every source is individually
+  visible. Record baselines using source labels or relative identifiers, never
+  absolute internal/external paths (Principle III).
+* Expected baseline: for every previously-served source, the post-change
+  `ServeMode` classification and warning output MUST equal the pre-change
+  baseline captured on the same fixtures — read-only sources stay read-only,
+  `Generation` sources stay `Generation`, excluded-only sources emit exactly one
+  aggregate warning, and ingestible / zero-candidate / walk-error cases emit
+  none.
+* Window: observe the next 3 local `serve` startups (or 24 hours of local use,
+  whichever comes first) after merge, comparing per-source classification and
+  warning output against the baseline.
+* Rollback trigger: ANY per-source posture change in EITHER direction versus
+  baseline — read-only → `Generation` (the security-sensitive escalation) or
+  `Generation` → read-only — any change to the set of `Generation` sources, or
+  any spurious, missing, or differently-failing aggregate warning.
+* Revert procedure: `git revert` the Unit B1 commit(s) — if B1 was decomposed
+  into the library-API and binary-streaming subtasks, revert both in reverse
+  dependency order (binary streaming first, then the library API / `filter_files`
+  refactor) so the shared refactor is not left active — (behavior-preserving; no
+  data, config, or schema state to unwind), rebuild, re-run the per-source
+  comparison to confirm the baseline classification is restored, and reopen
+  B88E37BF with the diverging fixture attached.
+* Window-close outcome: at window close, record the outcome — healthy, degraded,
+  or rolled-back — in the shipment closure artifact as releasability evidence.
 
 ## Plan Hardening Signals (REQUIRED)
 
-* Public API, schema, or contract change: absent — internal classifier and
-  optional diagnostic output only.
+* Public API, schema, or contract change: **present (additive)** — reusing the
+  same compiled include/exclude matcher that `filter_files` uses crosses the
+  binary→library crate boundary. `source_has_ingestible_content` lives in the
+  binary crate `graphtor-docs` (`src/main.rs` → `mod workspace`), while the
+  matcher and `filter_files` live in the library crate `graphtor_core`
+  (`src/lib.rs` → `pub mod acquire`), where `build_glob_set` and the `GlobSet`
+  predicate are currently private. The binary cannot reach them, so Unit B1 MUST
+  add a small **additive public API** to `graphtor_core::acquire` — the minimal
+  surface being a `pub struct FileFilter` with `pub fn new(include, exclude) ->
+  Result<Self, GraphtorError>` and `pub fn is_match(&self, path: &Path) -> bool`
+  — and refactor `filter_files` to consume it so there is a single source of
+  truth. The caller computes the aggregate `saw_format_candidate && !found`
+  condition itself from `is_match` results; do not add an aggregate-empty method
+  to the public surface unless a concrete need appears (Principle VI — keep the
+  surface minimal). This is additive-only — SemVer-minor, no breaking change to
+  the existing `filter_files` signature. In-scope
+  compatibility/documentation/testing work: `///` rustdoc on the new public type
+  and methods (a usage example is optional for this small predicate),
+  library-crate unit tests for the matcher in isolation (written first and
+  observed to fail — red — before implementing `FileFilter`, per Principle II),
+  and the binary-crate differential test proving the classifier's per-path result
+  equals the old `filter_files(&all_candidates, ...)`-then-non-empty result. A
+  per-file `filter_files` call or a forked/duplicated glob predicate is rejected
+  (glob recompilation per entry and divergent warning semantics).
 * Security, auth, permission, or compliance-sensitive behavior: **present** — the
-  classifier gates read-only vs read-**write** `Generation` serve posture, so this
-  is a HIGH P1 promotion risk: any refactor that drops the fail-closed full-walk
-  error observation could silently escalate a partially-unreadable source from
-  read-only to read-write. The fail-closed contract and identical classification
-  are covered by characterization tests plus the eligible-file-before-later-error
-  regression case.
+  classifier gates read-only vs read-**write** `Generation` serve posture. The
+  *consequence severity* if the invariant breaks is HIGH (P1): any refactor that
+  drops the fail-closed full-walk error observation could silently escalate a
+  partially-unreadable source from read-only to read-write. The *ActionRisk*
+  (mitigated blast radius) is moderate — the change is additive-only,
+  behavior-preserving, and revertible via `git revert` (one B1 commit, or both
+  subtask commits in reverse order if decomposed), and the fail-closed contract
+  and identical classification are covered by characterization tests plus the
+  eligible-file-before-later-error regression case. High consequence with
+  moderate residual risk after mitigation is consistent, not contradictory.
 * Migration, backfill, destructive data/config action, or irreversible step: absent.
 * External integration, operator checkpoint, or external dependency: absent.
-* High runtime, rollout, or rollback risk: absent — behavior-preserving refactor
-  plus an optional diagnostic line.
+* High runtime, rollout, or rollback risk: low — behavior-preserving refactor
+  plus an optional diagnostic line, with no rollout or migration and a
+  `git revert` rollback path (one B1 commit, or both subtask commits if
+  decomposed). A bounded **manual post-deploy observation window**
+  is nonetheless required (see "Runtime Verification and Closure") because the
+  classifier gates read-only vs read-**write** `Generation` posture.
 
 Requires plan hardening: yes
 
@@ -204,12 +284,15 @@ hardened against silently dropping that contract.
 * ProposedAction: replace the `Vec` accumulation + single batch `filter_files`
   call with a streaming boolean over the full walk, testing each format-matching
   relative path against the shared compiled matcher.
-  * targets: `src/workspace/serve_discovery.rs`; a small reusable predicate in
-    `graphtor_core::acquire` only if one must be exposed to avoid forking glob
-    logic; colocated characterization tests.
-  * change_kind: local edit (behavior-preserving refactor of a security-relevant
-    classifier).
-  * rollback: revert the single-branch change; no data or config touched.
+  * targets: `src/workspace/serve_discovery.rs` (binary crate); an **additive
+    public matcher API** in `graphtor_core::acquire` (library crate) plus a
+    `filter_files` refactor to consume it; colocated characterization tests and a
+    library-crate unit test for the new public API.
+  * change_kind: local edit plus an additive public API (behavior-preserving
+    refactor of a security-relevant classifier; SemVer-minor library surface,
+    no breaking change).
+  * rollback: `git revert` the B1 change on its one branch (both subtask commits
+    in reverse dependency order if decomposed); no data or config touched.
   * approval_required: no (non-destructive).
   * ActionRisk: moderate — behavior must be provably identical; a regression
     would escalate serve posture.
@@ -222,8 +305,13 @@ hardened against silently dropping that contract.
   ordered walk-result seam) and the excluded-only-returns-`false` case; confirm the
   streaming result equals the old batch result and no spurious per-file warning is
   emitted. Confirm memory no longer scales with document count (no per-file `Vec`).
-* Rollback: single-commit revert per unit; no runtime rollout, migration, or
-  monitoring required.
+* Rollback: `git revert` the B1 commit(s) — one commit, or both the library-API
+  and binary-streaming subtask commits reverted in reverse dependency order if B1
+  was decomposed; B2 reverts independently. No runtime rollout or migration.
+  A bounded manual post-deploy observation window (see "Post-Deploy Observation
+  Window" under Runtime Verification and Closure) with owner, baseline, rollback
+  trigger, and revert procedure is required because the classifier gates
+  read-only vs read-write posture.
 * Residual risk: none beyond the covered invariants; B2 stays bounded to an
   evaluate-then-decide outcome and never prints absolute internal/external paths
   (Principle III).
@@ -255,5 +343,26 @@ by the same cross-model reviewer set plus a post-remediation re-review.
   would recompile globs and change aggregate warning behavior. **Resolved:** the
   plan now requires a shared reusable matcher (no per-file recompilation / no
   spurious warnings) and an injected ordered walk-result seam for the test.
+
+### Round 3 (PR #96 second Copilot review — bounded remediation cycle 2)
+
+Copilot's second review of the staging PR raised two plan-facing findings
+(suppressed comments, no live threads):
+
+* **Public API impact (was mislabelled "absent")** — reusing the shared compiled
+  matcher crosses the binary→library crate boundary, so it requires an additive
+  public API in `graphtor_core::acquire`, not an internal-only change.
+  **Resolved:** Plan Hardening Signals now marks the change **present (additive)**,
+  names the `graphtor-docs` binary vs `graphtor_core` library split, and adds the
+  compatibility (SemVer-minor, `filter_files` refactor to a single source of
+  truth), documentation (`///` rustdoc), and testing (library-crate unit test +
+  binary-crate differential test) work. Requirements Trace, Unit B1
+  Files/Functions/Tests, and the ProposedAction targets/change_kind agree.
+* **Missing post-deploy observation** — the classifier chooses read-only vs
+  read-**write** `Generation`, so a bounded observation window is warranted.
+  **Resolved:** a manual "Post-Deploy Observation Window" (owner, signals,
+  expected baseline, window, rollback trigger, revert procedure) is added under
+  Runtime Verification and Closure; the "no monitoring/rollback needed" and
+  rollout/rollback signals are corrected to reference it.
 
 No unresolved HIGH/MEDIUM P0/P1 findings remain. Cleared for harvest and shipment.

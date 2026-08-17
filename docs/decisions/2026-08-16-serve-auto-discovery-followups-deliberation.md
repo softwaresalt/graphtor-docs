@@ -45,8 +45,12 @@ unit, or should they be split?
   walk error" semantics (`serve_discovery.rs:333`), retain the full traversal (no
   short-circuit), and apply the same include/exclude glob semantics through the
   shared compiled matcher that `filter_files` uses (empty include = include all;
-  exclude wins) rather than recompiling globs per file. Blast radius is limited to
-  the boolean classifier.
+  exclude wins) rather than recompiling globs per file. Because the shared matcher
+  must be exposed as an additive public API and `filter_files` is refactored to
+  consume it, the blast radius extends beyond the boolean classifier to library
+  filtering (all `filter_files` acquisition callers); this is contained by keeping
+  the change additive and requiring `filter_files` result and warning behavior to
+  stay unchanged (a differential test against the pre-refactor implementation).
 * `5868A7C5` is investigative: `discover_served_databases` already canonicalizes
   every entry through `validate_path` and dedups via a `BTreeSet` union
   (`serve_discovery.rs:123`, tests `served_set_is_canonical_deduped_union...` and
@@ -63,8 +67,9 @@ unit, or should they be split?
 
 Group both under "Serve auto-discovery follow-ups (PR90 deferrals)."
 
-* Pros: one coherent low-risk release unit; shared file context; single review
-  and PR; reduces open-item count.
+* Pros: one coherent release unit; shared file context; single review and PR;
+  reduces open-item count. (Low scheduling priority, but a moderate,
+  security-sensitive ActionRisk — see Decision and Risks.)
 * Cons: mixes a code-change task with an evaluation task — acceptable because the
   evaluation task is width-isolated and produces its own verifiable outcome.
 * Effort: low. Fit: strong.
@@ -81,8 +86,12 @@ Group both under "Serve auto-discovery follow-ups (PR90 deferrals)."
 |---|---|---|
 | Coherence | High (same file/subsystem) | Low (artificial split) |
 | Overhead | One PR | Two PRs |
-| Risk | Low | Low |
+| Grouping/overhead risk | Low | Low |
 | Open-item reduction | Better | Worse |
+
+The "Grouping/overhead risk" row compares only the grouping decision; the
+intrinsic ActionRisk of Unit B1 is **moderate and security-sensitive** (see
+Decision and Risks), not low.
 
 ## Decision
 
@@ -95,9 +104,19 @@ streaming boolean; a traversal short-circuit that returns `true` on the first
 eligible file is rejected because an unreadable subtree encountered later in walk
 order would be skipped, flipping a partially-unreadable source from `false`
 (read-only) to `true` (the read-**write** `Generation` posture) — a safety-degrading
-escalation. Review confirms one coherent low-risk release unit, satisfying the
-grouping guidance for Group B. No cross-task dependency: the two tasks are
-independent and may execute in either order.
+escalation. Review confirms one coherent release unit, satisfying the grouping
+guidance for Group B. No cross-task dependency: the two tasks are independent and
+may execute in either order.
+
+**Risk classification:** Group B (and specifically Unit B1) is **moderate and
+security-sensitive**, not low-risk. Scheduling priority remains low — these are
+small, deferred, same-file follow-ups — but `source_has_ingestible_content` gates
+read-only vs read-**write** `Generation` posture, so a misclassification can
+promote a partially-unreadable source from read-only to read-write. That, plus
+the fact that reusing the shared matcher crosses the binary→library crate
+boundary (requiring an additive `graphtor_core::acquire` public API), keeps the
+ActionRisk moderate/security-sensitive even though the change is
+behavior-preserving. B2 (alias evaluation) remains low-risk.
 
 ## Rejected Alternatives
 
@@ -112,6 +131,9 @@ independent and may execute in either order.
 
 ## Risks and Mitigations
 
+* Risk classification: Group B is **moderate, security-sensitive** (not low-risk)
+  — Unit B1 gates read-only vs read-**write** `Generation` posture; B2 is
+  low-risk.
 * Risk: the streaming refactor subtly changes which sources classify as ingestible
   (and thus read-only vs generation posture). Mitigation: preserve the reviewed
   full-walk invariant — the entire `WalkDir` is always traversed and any walk error
