@@ -1,7 +1,7 @@
 ---
 title: "tracing EnvFilter target must match the crate the warn!/info! call is actually compiled into"
 description: "A scoped-subscriber test capture silently drops all events when the EnvFilter directive names the wrong crate (e.g. the library crate name instead of the binary crate it's actually compiled into)"
-problem_type: "flaky_test"
+problem_type: "test_misconfiguration"
 category: "test-failures"
 component: "src/workspace/serve_discovery.rs test module (tracing log-capture tests)"
 root_cause: "graphtor-docs is a single package with BOTH a library crate (graphtor_core, src/lib.rs) and a binary crate (graphtor-docs / module path graphtor_docs, src/main.rs); tracing events default their `target` to the module path of the crate the call-site is compiled into, not the package name — an EnvFilter directive scoped to the wrong crate name matches nothing and silently drops every event"
@@ -14,7 +14,7 @@ citations:
   - "docs/compound/tracing-callsite-interest-cache-parallel-test-race.md (a distinct root cause with the same symptom)"
 tags:
   - "tracing"
-  - "test-flakiness"
+  - "test-misconfiguration"
   - "cargo-test"
   - "rust"
   - "envfilter"

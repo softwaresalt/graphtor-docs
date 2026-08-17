@@ -4,7 +4,7 @@ description: "A commit message body containing embedded double-quoted phrases (e
 problem_type: "shell_escaping"
 category: "workflow-issues"
 component: "git commit workflow (PowerShell)"
-root_cause: "PowerShell's double-quoted string parsing does not treat an embedded, unescaped double-quote inside the message text as literal content; git commit -m \"...text with \"quoted phrase\"...\" is parsed by PowerShell as multiple separate tokens, and git then reports the trailing token as an unrecognized pathspec"
+root_cause: "PowerShell's double-quoted string parsing ends the current string segment at an embedded, unescaped `\"` even when immediately adjacent to prior text with no whitespace; the following text becomes a SEPARATE argument rather than merging back into the original one (verified via isolated reproduction, not merely inferred) — git commit -m \"...text with \"quoted phrase\"...\" is split into multiple tokens, and git then reports the trailing token as an unrecognized pathspec"
 resolution_type: "workaround"
 severity: "low"
 message: "error: pathspec '...' did not match any file(s) known to git"
@@ -35,14 +35,45 @@ error: pathspec 'graphtor_core::acquire::filter\ override to
   stream_ingestible''s aggregate warning ...' did not match any file(s) known to git
 ```
 
+## Verified Reproduction
+
+Isolated, minimal repro (no `git` involved, just PowerShell's own argument tokenization) —
+run this to see the exact split independently of any git behavior:
+
+```powershell
+function Show-Args { $args | ForEach-Object { "ARG: [$_]" } }
+Show-Args "line1
+line2 target: "bareword" more text
+line3"
+```
+
+Output:
+
+```text
+ARG: [line1
+line2 target: ]
+ARG: [bareword more text
+line3]
+```
+
+One intended argument becomes **two** separate arguments, split exactly at the embedded,
+unescaped `"` before `bareword`. When `git commit -m` receives this shape, argument 1 becomes the
+`-m` value and argument 2 is passed as an extra positional argument, which `git` interprets as a
+pathspec.
+
 ## Root Cause
 
-PowerShell's double-quoted string literals do not automatically escape an embedded, unescaped
-`"` character as literal text — when a `-m "..."` argument's body contains its own `"..."`
-sequence, PowerShell can end the outer string early at that inner quote, and the remaining text
-is re-split into new, separate command-line tokens. `git commit` then receives extra positional
-arguments after `-m`'s (now truncated) value and interprets them as pathspecs, which fail to
-match any tracked file. This is the same underlying class of problem as
+Confirmed by the reproduction above: when a PowerShell double-quoted string argument contains an
+embedded, unescaped `"`, the parser ends that string segment at the embedded quote. The text after
+it — up through the next quote/token boundary — becomes a **separate** argument rather than being
+merged back into the first one, even though the two segments are directly adjacent with no
+intervening whitespace. (This differs from PowerShell's better-known "adjacent quoted/bareword
+segments concatenate into one token" behavior for short inline expressions like `"a"b"c"` on a
+single line — the exact conditions under which the two segments split vs. concatenate were not
+fully characterized here; the practical takeaway is that a multi-line commit message shaped like
+the reproduction above **reliably splits**, and that is what matters for prevention.) `git commit`
+then receives extra positional arguments after `-m`'s (now truncated) value and interprets them as
+pathspecs, which fail to match any tracked file. This is the same underlying class of problem as
 `docs/compound/workflow-issues/gh-pr-body-powershell-backtick-conflict-2026-04-29.md` (PowerShell
 special-character handling conflicting with a CLI tool's own multi-line/quoted string argument),
 but triggered by a literal double-quote rather than a backtick, and affecting `git commit -m`
