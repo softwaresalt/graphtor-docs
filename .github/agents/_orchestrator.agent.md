@@ -6,9 +6,9 @@ maturity: stable
 tools: vscode, execute, read, agent, edit, search, todo, memory, backlogit
 model_tier: 2
 max_subagent_tier: 3
-reasoning_effort: ""
-model_provider: ""
-model_family: "gpt-5.4"
+reasoning_effort: "xhigh"
+model_provider: "openai"
+model_family: "gpt-5.6-sol"
 subagent_depth: 3
 ---
 

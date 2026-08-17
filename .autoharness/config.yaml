@@ -80,25 +80,25 @@ model_routing:
   tier1:
     model: claude-haiku-4.5              # Fast/cheap: memory, docs, compaction (e.g., gpt-5.4-mini)
     reasoning_effort: ""  # Leave empty to use model default
-    model_provider: ""       # e.g., openai, anthropic — leave empty for default
+    model_provider: "anthropic"       # e.g., openai, anthropic — leave empty for default
     model_family: "claude-haiku-4.5"           # Resolved into Tier 1 agent frontmatter
   tier2:
-    model: claude-sonnet-4.6              # Standard: orchestration, code, review (e.g., claude-sonnet-4.6)
-    reasoning_effort: ""
-    model_provider: ""
-    model_family: "claude-sonnet-4.6"
+    model: claude-sonnet-5              # Standard: orchestration, code, review (e.g., claude-sonnet-4.6)
+    reasoning_effort: "high"
+    model_provider: "anthropic"
+    model_family: "claude-sonnet-5"
   tier3:
-    model: claude-opus-4.6              # Frontier: planning, architecture, analysis (e.g., claude-opus-4.6)
-    reasoning_effort: ""
-    model_provider: ""
-    model_family: "claude-opus-4.6"
+    model: claude-opus-4.8              # Frontier: planning, architecture, analysis (e.g., claude-opus-4.6)
+    reasoning_effort: "high"
+    model_provider: "anthropic"
+    model_family: "claude-opus-4.8"
   orchestrator:
-    model_family: "gpt-5.4"     # Orchestrator model override (default: gpt-5.4)
-    reasoning_effort: ""
-    model_provider: ""
+    model_family: "gpt-5.6-sol"     # Orchestrator model override (default: claude-opus-4.8)
+    reasoning_effort: "xhigh"
+    model_provider: "openai"
   adversarial_review:
-    alt_provider: ""    # e.g., google — leave empty to disable alternate-provider reviewer slot
-    alt_family: ""      # e.g., gemini-2.5-pro — leave empty to disable
+    alt_provider: "google"    # e.g., google — leave empty to disable alternate-provider reviewer slot
+    alt_family: "gemini-2.5-pro"      # e.g., gemini-2.5-pro — leave empty to disable
 
 # AI CLI tool startup configuration
 # Resolves copilot in the generated start.ps1 and start.sh scripts.
