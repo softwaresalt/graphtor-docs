@@ -30,6 +30,11 @@ merge_commit_post_merge: "0cf49a81d5471026d17c81ea09db0d92f569a94b"
 * `docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md` — pre-merge closure
 * `docs/closure/2026-08-17-serve-auto-discovery-followups-runtime-verification.md` — runtime verification
 * `docs/memory/2026-08-17/048-s-build-checkpoint-implementation-complete.md` — build checkpoint
+* `.backlogit/queue/055-F.md`, `.backlogit/queue/055.001-T.md`,
+  `.backlogit/queue/055.001.001-ST.md`, `.backlogit/queue/055.001.002-ST.md`,
+  `.backlogit/queue/055.002-T.md` (moved to `.backlogit/archive/`), `.backlogit/hooks_queue.jsonl`,
+  `.backlogit/queue/048-S.md` — task/subtask/feature completion bookkeeping as each item was
+  marked done during implementation (merge commit `ac8847b8` carries all seven of these paths)
 
 ## Files Modified (post-merge closure PR #102)
 
