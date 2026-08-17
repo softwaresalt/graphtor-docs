@@ -133,10 +133,13 @@ after adversarial review).
 Do not adopt a cross-process filesystem-attribute refcount as the primary model,
 and do not overstate what an in-process change can achieve. Multi-model review
 confirmed the F6 diagnosis and established that **no in-process change closes the
-cross-process writable window**: the harmful restore is performed by the *peer*
-process whose guard captured `original = writable`; a process cannot distinguish
-a stale lock from a live peer's lock without shared ownership/liveness state.
-Therefore:
+cross-process writable window**: the harmful restore is performed by an
+independent peer guard that captured `original = writable`. F6 arises whenever
+more than one independent guard covers one file — same-process (two
+`open_engine_readonly` calls on one path) or cross-process — and a process cannot
+distinguish a stale lock from a live peer's lock without shared ownership/liveness
+state; a process-local ownership check could address only the same-process
+duplication, not the cross-process window. Therefore:
 
 1. **Keep the app-level `AccessMode` as the single authoritative read-only
    guarantee, and keep `is_engine_enforced_readonly()` meaning intact.** It must
@@ -153,8 +156,10 @@ Therefore:
    `open_engine_readonly` rustdoc ("including ones opened later from its
    connection pool"), the `is_engine_enforced_readonly` rustdoc, the
    "filesystem lock active" startup log, and the trust-boundary design doc: the
-   filesystem attribute is fully robust for single-process serving and
-   best-effort defense-in-depth under concurrent multi-process read. Do not claim
+   filesystem attribute is robust only while a single owning `DataStore` holds the
+   guard and is best-effort defense-in-depth whenever the same file is
+   independently guarded more than once — same-process (two independent
+   `open_engine_readonly` calls on one path) or cross-process (F6). Do not claim
    the window is closed.
 3. **Defer, do not attempt, the true cross-process fix here.** Genuinely closing
    the window requires an ownership/liveness coordination primitive or the
@@ -163,9 +168,11 @@ Therefore:
 
 Adversarial review also surfaced an adjacent, pre-existing **symlink-swap TOCTOU**
 in `EngineReadonlyGuard::lock`/`Drop` (`fs::set_permissions` follows links; the
-main db at index 0 is not re-checked with `is_reparse_point`). It is a distinct
-security-mechanism change requiring its own spike and is deferred to stash
-`5905CDEE` rather than folded into the honesty unit.
+main db at index 0 is not re-checked with `is_reparse_point`). The fix is NOT to
+add an `is_reparse_point` path re-check (itself TOCTOU); it is an identity-bound
+no-follow retained-handle restoration — a distinct security-mechanism change
+requiring its own spike, deferred to stash `5905CDEE` rather than folded into the
+honesty unit.
 
 This spike **gates `5D98DBCC`**: because the external-path feature would turn
 concurrent multi-process read of one shared file from incidental into common, it

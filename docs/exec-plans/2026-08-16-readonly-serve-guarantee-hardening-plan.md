@@ -19,8 +19,8 @@ tags:
 The spike (`970AE45A`) confirmed a correctness gap between the documented read-
 only serve guarantee and the implemented behavior. The trust-boundary design doc
 claims that for a `ReadOnly` database "every connection — including later pool
-refills — is genuinely denied write access at the OS/filesystem level." That is
-true for single-process serving, but `EngineReadonlyGuard`
+refills — is genuinely denied write access at the OS/filesystem level." That holds
+only while a single owning `DataStore` holds the guard, but `EngineReadonlyGuard`
 (`src/db/store.rs:472`) uses the filesystem read-only attribute as a per-process
 lock with no cross-process reference counting. Under concurrent multi-process
 read of the same file, one process's `Drop` (`src/db/store.rs:582`) can restore
@@ -116,8 +116,10 @@ F6.
   Replace the unconditional "every connection — including later pool refills — is
   genuinely denied write access at the OS/filesystem level" claim with the honest
   statement: app-level `AccessMode` is authoritative; the filesystem read-only
-  attribute is fully robust for single-process serving and best-effort
-  defense-in-depth under concurrent multi-process read (F6). Record that
+  attribute is robust only while a single owning `DataStore` holds the guard and is
+  best-effort defense-in-depth whenever the same file is independently guarded more
+  than once — same-process (two independent `open_engine_readonly` calls on one
+  path) or cross-process (F6). Record that
   cross-process refcounting is intentionally not implemented (disproportionate
   once the external-path feature was rejected) and link the spike, the
   deliberation, and the deferred stash items `F1CE20EC` (true fix / Option C) and
@@ -140,16 +142,22 @@ F6.
   predicate would falsely advertise engine enforcement — the opposite of the
   honesty goal (adversarial-review consensus, HIGH confidence).
 * **No in-process F6 fix; document it instead.** Review established that the
-  harmful restore is performed by a peer process; no single-process change can
-  close the window without ownership/liveness coordination. Documenting F6 as a
-  known best-effort limitation is the proportionate, honest response. The true
-  fix is deferred (stash `F1CE20EC`).
+  harmful restore is performed by an independent peer guard on the same file.
+  Because F6 arises whenever more than one independent guard covers one file —
+  same-process (two `open_engine_readonly` calls on one path) or cross-process — a
+  process-local ownership check could address only the same-process duplication,
+  while closing the cross-process window still requires shared ownership/liveness
+  coordination. Documenting F6 as a known best-effort limitation is the
+  proportionate, honest response. The true fix is deferred (stash `F1CE20EC`).
 * **No cross-process refcount.** Rejected as disproportionate once the
   external-path feature is rejected; it adds durable state with crash-recovery
   and TOCTOU failure modes for a scenario that stays incidental.
-* **Keep the guard unchanged.** It is correct and valuable for single-process
-  serving (existing byte-identical read-cycle tests). This unit targets the
-  *advertised contract*, not the mechanism.
+* **Keep the guard unchanged.** It is correct and valuable while a single owning
+  `DataStore` holds the guard (existing byte-identical single-open read-cycle
+  tests); it does not make single-*process* serving safe, because two independent
+  same-process `open_engine_readonly` calls on one path reproduce the F6
+  restore-ordering window. This unit targets the *advertised contract*, not the
+  mechanism.
 
 ## Risks and Caveats
 
@@ -173,8 +181,10 @@ F6.
   the db byte-identical.
 * Closure artifact: note in the shipment that this makes the read-only guarantee
   honest (corrects overstated rustdocs, startup log, and the design doc) and
-  documents PR90 F2/F6 as a known best-effort limitation under concurrent
-  multi-process read; it does NOT close the F6 window (deferred: `F1CE20EC`) and
+  documents the read-only guarantee as best-effort whenever the same file is
+  independently guarded more than once — same-process (two `open_engine_readonly`
+  calls on one path) or cross-process (PR90 F2/F6); it does NOT close the F6 window
+  (deferred: `F1CE20EC`) and
   does not address the symlink TOCTOU (deferred: `5905CDEE`). No monitoring or
   rollback needed (no runtime rollout, no data migration).
 

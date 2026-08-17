@@ -30,7 +30,7 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
 | Requirement | Implementation action |
 |---|---|
 | Eliminate O(document-count) memory in the boolean classifier | Unit B1: stream a boolean over the walk; drop the `Vec` of matching paths |
-| Preserve exactly which files count as ingestible | Unit B1: reuse `filter_files` per file (single-path slice) — no duplicated glob logic |
+| Preserve exactly which files count as ingestible | Unit B1: test each format-matching path against the same compiled matcher `filter_files` uses (a shared reusable predicate), so glob sets compile once and the aggregate "all files excluded" warning semantics are preserved — never call `filter_files` per file; no duplicated glob logic |
 | Preserve fail-closed-on-walk-error semantics EXACTLY | Unit B1: keep the full walk; still return `false` on any `WalkDir` error |
 | Decide whether aliases need more than dedup | Unit B2: evaluate, then implement diagnostic reporting or document no-op |
 
@@ -52,10 +52,15 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
   preserves the batch semantics AND the aggregate warning behavior. To avoid
   divergence, prefer building the include/exclude matcher once (the same compiled
   matcher `filter_files` uses) and testing each format-matching relative path
-  against it, ORing into a `found` flag — rather than calling `filter_files`
-  per file, which would recompile the glob sets for every entry and emit a
-  per-file "all files excluded" warning even when another file makes the source
-  ingestible. If a shared reusable predicate is not exposed by
+  against it, ORing into a `found` flag while also tracking a
+  `saw_format_candidate` flag — rather than calling `filter_files` per file, which
+  would recompile the glob sets for every entry and emit a per-file "all files
+  excluded" warning even when another file makes the source ingestible. To
+  reproduce the batch warning semantics EXACTLY, emit the single aggregate "all
+  files excluded" warning only when `saw_format_candidate && !found` (candidates
+  existed but every one was excluded) and emit nothing when no format-matching
+  candidate was seen — matching what `filter_files(&all_candidates, ...)` does
+  today. If a shared reusable predicate is not exposed by
   `graphtor_core::acquire`, extract or expose one so the classifier and
   `filter_files` share a single matcher; do not fork the glob logic. Return
   `found` only when the walk completed without error. This removes memory
@@ -80,8 +85,10 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
   * differential check: for representative trees (nested relative paths,
     multi-segment include globs, union patterns, empty include), the streaming
     result equals the old `filter_files(&all_candidates, ...)`-then-non-empty
-    result, and no spurious per-file "all files excluded" warning is emitted when
-    the source is ingestible.
+    result. Warning parity: exactly one aggregate "all files excluded" warning for
+    an excluded-only tree (candidates existed, none passed), and zero warnings for
+    the zero-candidate, ingestible, and walk-error cases — no spurious per-file
+    warning.
 * Execution posture: characterization-first — pin current behavior with tests,
   then refactor to the streaming boolean.
 * Atomic milestone: `cargo test` passes; classification results are unchanged.
@@ -144,15 +151,82 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`:
 
 * Public API, schema, or contract change: absent — internal classifier and
   optional diagnostic output only.
-* Security, auth, permission, or compliance-sensitive behavior: absent — no
-  containment or read-only-enforcement change; classification correctness is
-  covered by characterization tests.
+* Security, auth, permission, or compliance-sensitive behavior: **present** — the
+  classifier gates read-only vs read-**write** `Generation` serve posture, so this
+  is a HIGH P1 promotion risk: any refactor that drops the fail-closed full-walk
+  error observation could silently escalate a partially-unreadable source from
+  read-only to read-write. The fail-closed contract and identical classification
+  are covered by characterization tests plus the eligible-file-before-later-error
+  regression case.
 * Migration, backfill, destructive data/config action, or irreversible step: absent.
 * External integration, operator checkpoint, or external dependency: absent.
 * High runtime, rollout, or rollback risk: absent — behavior-preserving refactor
   plus an optional diagnostic line.
 
-Requires plan hardening: no
+Requires plan hardening: yes
+
+## Plan Hardening
+
+Hardening was required because `source_has_ingestible_content` gates the read-only
+vs read-**write** `Generation` serve posture. A refactor that weakened the
+fail-closed full-walk error observation would be a security-relevant posture
+escalation (Principle III adjacent), so the memory-only optimization must be
+hardened against silently dropping that contract.
+
+### Risk triggers and protected invariants
+
+* Trigger: refactoring the classifier that drives read-only vs read-write posture.
+* Invariant to preserve: the entire `WalkDir` is always traversed; any walk error
+  returns `false` (fail closed). No traversal short-circuit or first-eligible
+  early return.
+* Invariant to preserve: identical classification — the streaming boolean equals
+  the previous `filter_files(&all_candidates, ...)`-then-non-empty result for every
+  representative tree (include/exclude precedence, empty include = all, union
+  globs, nested relative paths).
+* Invariant to preserve: aggregate warning semantics — the shared compiled matcher
+  is built once; no per-file `filter_files` recompilation. Emit the single
+  aggregate "all files excluded" warning only when format-matching candidates
+  existed but none passed (`saw_format_candidate && !found`), matching the old
+  batch call — no spurious per-file warning and no warning when no candidate was
+  seen.
+
+### Learnings and instructions consulted
+
+* `docs/compound/best-practices/reparse-point-fail-closed-containment-2026-07-16.md`
+  — fail-closed-on-`WalkDir`-error is a deliberate short-circuit, not error
+  propagation; preserve it exactly.
+* `.github/instructions/constitution.instructions.md` — Principles II, III, VI.
+* `.github/instructions/rust.instructions.md` / `technology-rust` — no `unwrap` in
+  library code for the touched tests; propagate via `Result`.
+
+### Risky actions (ProposedAction / ActionRisk / ActionResult)
+
+* ProposedAction: replace the `Vec` accumulation + single batch `filter_files`
+  call with a streaming boolean over the full walk, testing each format-matching
+  relative path against the shared compiled matcher.
+  * targets: `src/workspace/serve_discovery.rs`; a small reusable predicate in
+    `graphtor_core::acquire` only if one must be exposed to avoid forking glob
+    logic; colocated characterization tests.
+  * change_kind: local edit (behavior-preserving refactor of a security-relevant
+    classifier).
+  * rollback: revert the single-branch change; no data or config touched.
+  * approval_required: no (non-destructive).
+  * ActionRisk: moderate — behavior must be provably identical; a regression
+    would escalate serve posture.
+  * ActionResult: planned.
+
+### Added verification, closure, and rollback detail
+
+* Verification: run the colocated characterization + differential tests, including
+  the eligible-file-before-later-unreadable-subtree case (driven by the injected
+  ordered walk-result seam) and the excluded-only-returns-`false` case; confirm the
+  streaming result equals the old batch result and no spurious per-file warning is
+  emitted. Confirm memory no longer scales with document count (no per-file `Vec`).
+* Rollback: single-commit revert per unit; no runtime rollout, migration, or
+  monitoring required.
+* Residual risk: none beyond the covered invariants; B2 stays bounded to an
+  evaluate-then-decide outcome and never prints absolute internal/external paths
+  (Principle III).
 
 ## Plan Review
 

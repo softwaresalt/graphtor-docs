@@ -80,4 +80,10 @@ consumer checkpoint).
 * 048-S task 055.001-T is safety-critical behavior-preservation (classifier gates
   read-only vs read-write posture) — the full fail-closed walk MUST be retained.
 * Deferred security bug 5905CDEE (symlink TOCTOU) is real; triage when convenient.
-* compact-context skipped: docs/memory ~11 files, under the 40-file/500KB trigger.
+* compact-context: INVOKED (mandatory at session/phase completion — not
+  threshold-gated; the earlier "skipped: under 40-file/500KB trigger" rationale
+  was wrong and was corrected during PR #96 review). Consolidated the two
+  2026-08-16 intermediate checkpoints into
+  `docs/memory/compacted/2026-08-16-dark-stage-047-048-compacted.md`; verbose
+  originals archived under `docs/archive/memory/2026-08-16/`. This session-complete
+  memory is preserved in place as the active 047-S/048-S handoff.

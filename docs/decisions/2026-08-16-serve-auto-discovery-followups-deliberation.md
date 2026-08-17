@@ -1,6 +1,6 @@
 ---
 title: "Serve auto-discovery follow-ups (PR90 deferrals)"
-description: "Whether the ingestible-content short-circuit and served-alias evaluation form one coherent covering feature"
+description: "Whether the ingestible-content streaming memory-reduction refactor and served-alias evaluation form one coherent covering feature"
 topic: "Serve auto-discovery follow-ups from PR90 review"
 depth: "standard"
 decision_status: "decided"
@@ -26,8 +26,9 @@ in `src/workspace/serve_discovery.rs`:
   calls `graphtor_core::acquire::filter_files` once and checks non-empty. The
   caller (serve auto-discovery `ServeMode` classification) only needs a boolean,
   so serve startup pays a full traversal and retains memory proportional to
-  document count. Optimization: short-circuit and return `true` as soon as the
-  first file passes both the format check and the include/exclude filter.
+  document count. Optimization: keep the full error-observing walk but stream a
+  boolean instead of accumulating the `Vec` of matching paths, removing the
+  `O(document-count)` memory without weakening the fail-closed contract.
 * `5868A7C5` — evaluate whether served database aliases need explicit
   canonicalization or reporting beyond the current dedup union in
   `discover_served_databases`.
@@ -40,11 +41,12 @@ unit, or should they be split?
 * Both tasks touch the same file and the same subsystem (serve auto-discovery),
   and both are PR90 deferrals — natural peers that would live in one pull request.
 * `B88E37BF` is a concrete, testable performance change with a clear correctness
-  invariant: the short-circuit must preserve the existing "fail closed on any
-  walk error" semantics (`serve_discovery.rs:333`) and apply the same
-  include/exclude glob semantics per file that `filter_files` applies in batch
-  (empty include = include all; exclude wins). Blast radius is limited to the
-  boolean classifier.
+  invariant: the streaming refactor must preserve the existing "fail closed on any
+  walk error" semantics (`serve_discovery.rs:333`), retain the full traversal (no
+  short-circuit), and apply the same include/exclude glob semantics through the
+  shared compiled matcher that `filter_files` uses (empty include = include all;
+  exclude wins) rather than recompiling globs per file. Blast radius is limited to
+  the boolean classifier.
 * `5868A7C5` is investigative: `discover_served_databases` already canonicalizes
   every entry through `validate_path` and dedups via a `BTreeSet` union
   (`serve_discovery.rs:123`, tests `served_set_is_canonical_deduped_union...` and
@@ -86,10 +88,16 @@ Group both under "Serve auto-discovery follow-ups (PR90 deferrals)."
 
 Adopt **Option A**: one covering feature "Serve auto-discovery follow-ups (PR90
 deferrals)" with two width-isolated tasks — the `source_has_ingestible_content`
-short-circuit (code + regression test) and the served-alias canonicalization
-evaluation (investigate-then-decide). Review confirms one coherent low-risk
-release unit, satisfying the grouping guidance for Group B. No cross-task
-dependency: the two tasks are independent and may execute in either order.
+streaming memory-reduction refactor (code + regression test) and the served-alias
+canonicalization evaluation (investigate-then-decide). The refactor keeps the full
+error-observing `WalkDir` walk and only removes the `O(document-count)` `Vec` via a
+streaming boolean; a traversal short-circuit that returns `true` on the first
+eligible file is rejected because an unreadable subtree encountered later in walk
+order would be skipped, flipping a partially-unreadable source from `false`
+(read-only) to `true` (the read-**write** `Generation` posture) — a safety-degrading
+escalation. Review confirms one coherent low-risk release unit, satisfying the
+grouping guidance for Group B. No cross-task dependency: the two tasks are
+independent and may execute in either order.
 
 ## Rejected Alternatives
 
@@ -104,8 +112,12 @@ dependency: the two tasks are independent and may execute in either order.
 
 ## Risks and Mitigations
 
-* Risk: the short-circuit subtly changes which sources classify as ingestible
-  (and thus read-only vs generation posture). Mitigation: regression tests
-  asserting an excluded-only tree returns `false` and a large tree returns `true`
-  after inspecting only the first eligible file; preserve the fail-closed walk-
-  error semantics exactly.
+* Risk: the streaming refactor subtly changes which sources classify as ingestible
+  (and thus read-only vs generation posture). Mitigation: preserve the reviewed
+  full-walk invariant — the entire `WalkDir` is always traversed and any walk error
+  returns `false` (fail closed) — and never early-return on the first eligible file.
+  Add the key regression case: an eligible file encountered BEFORE a later
+  unreadable subtree still returns `false`. Regression tests also assert an
+  excluded-only tree returns `false` and a fully readable eligible tree returns
+  `true`, driven through a deterministic ordering seam because `WalkDir` iteration
+  order is unspecified.
