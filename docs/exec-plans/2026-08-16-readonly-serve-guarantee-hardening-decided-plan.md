@@ -84,9 +84,24 @@ subsystem was built.
   `open_engine_readonly_*` suite) and a live runtime check: built the release
   binary, ran `serve --read-only` against a throwaway fixture workspace, and
   confirmed the exact qualified log wording in real process output.
-* No monitoring or rollback plan required — no runtime rollout, no data
-  migration, and the change is a single-commit-revertible contract-wording
-  correction with unchanged guard behavior.
+* **Bounded post-deploy observation window** (manual; no dashboard or
+  alerting exists for this single-developer, local-only tool): the first 10
+  `graphtor-docs serve` invocations against a `ReadOnly`-posture database, or
+  14 days post-merge, whichever comes first; owner `@softwaresalt`. As of
+  this writing the window remains **open** (well short of the threshold) —
+  it closes per its own criteria with an owner-recorded
+  healthy/degraded/rolled-back outcome.
+* **Rollback trigger**: the qualified log wording fails to render, is
+  misread as reintroducing an unconditional guarantee, or a future
+  log-scraping/alerting integration silently stops matching because of the
+  appended qualification — observed during the bounded window.
+* **Rollback procedure**: a single-commit **text-only revert** with zero
+  guard/runtime impact (`EngineReadonlyGuard::lock`/`Drop` untouched).
+  Restoring the original unconditional "filesystem lock active" wording is
+  explicitly OUT of scope for rollback — that is precisely the overstated
+  claim this shipment corrects; a too-long/confusing qualified message is
+  instead rolled back to a SHORTER but still-qualified message, never to the
+  unconditional claim.
 * F6 is recorded as an intentional, honest, best-effort residual — not closed.
   Genuine closure (a coordination primitive or single-owner serve topology) is
   tracked as follow-up stash `F1CE20EC`; the adjacent symlink-swap TOCTOU is
@@ -106,6 +121,9 @@ only non-blocking P3 advisories remaining.
 ## Shipped
 
 Merged as shipment `047-S`, PR #97, commit `704b95a6c1e2930079d6f3a602ab66e9682d4916`.
+Releasability status at closure: `READY_WITH_CONDITIONS` — the one open
+condition is the post-deploy observation window above (see "Verification,
+Rollback, and Monitoring"), not yet closed as of the closure record's date.
 Full execution record: `docs/closure/2026-08-17-047-s-post-merge-closure.md` and
 `docs/closure/2026-08-17-047-s-release-observability-evidence.md`. Original
 plan (with full round-by-round review transcript and hardening detail)
