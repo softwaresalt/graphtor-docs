@@ -136,7 +136,19 @@ single capture run and the remaining fixes are individually small and bounded:
    (Principle III/IV), and convert the silent exit-2 discovery failure into a
    loud, actionable error. Any resolved candidate that lands outside or above
    the containment boundary MUST be refused, covered by an explicit refusal
-   test. Isolate the unrelated H0b stale-lock liveness variant (record process
+   test. **Curative-connectivity note:** a loud early-exit alone does not clear
+   OS error 232, and registry discovery, posture/Generation-target validation,
+   DB auto-discovery, and background sync are **all** anchored to the launch
+   `cwd` (`load_source_config` → `cwd/.graphtor/config`; `validate_path(..,
+   root=cwd)`; `cwd/.graphtor`; `acquire_plan::plan(.., &cwd)`). The
+   curative H0a lever therefore lives in a separate launch-contract task
+   (`056.008-T`) that pins the child's trusted launch identity — primarily the
+   child **working directory** to the project root (which restores
+   registry-backed Generation/background-sync together without relaxing the
+   runtime cwd boundary), with explicit `--db-path` / `--config` only as a
+   complement and only within project-root `.graphtor`; explicit targets alone
+   do not restore Generation, and the genuinely-absent-registry case is
+   preserved. Isolate the unrelated H0b stale-lock liveness variant (record process
    start-time alongside pid to survive pid reuse) and the optional startup
    diagnosability sink as **separate conditional tasks**, taken only if
    evidenced, rather than bundling them into the single-cause fix.
