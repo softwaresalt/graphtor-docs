@@ -9,16 +9,16 @@ backlog_refs:
   - 7BF1961D
 ---
 
-# Shipment 049-S staging review-cap block
-
 ## Outcome
 
 Stash bug `7BF1961D` was harvested into feature `056-F` and queued
 shipment `049-S`. Staging PR
 [#106](https://github.com/softwaresalt/graphtor-docs/pull/106) remains
 open and blocked. Three review-fix cycles completed, reaching the
-repository hard cap. The final report-only review found four unresolved
-P1 planning-contract defects, so Ship was not invoked.
+repository hard cap. The final report-only review found **six** unresolved
+P1 planning-contract defects (an earlier note of four omitted the
+red-test-polarity and lock-age/start-time contracts), so Ship was not
+invoked.
 
 ## Completed work
 
@@ -36,15 +36,27 @@ P1 planning-contract defects, so Ship was not invoked.
 
 ## Blocking findings
 
-1. The raw process harness cannot prove the managed-launch H0a fix
-   without explicitly exercising the generated launch contract.
-2. Updating `managed_server_value` alone does not repair existing
-   installations because binary upgrade does not rewrite `.mcp.json`.
-3. The H0c branch has no tracked remediation that can reach the healthy
-   handshake required by the shipment definition of done.
-4. The plan requires the child cwd to equal the project root while also
-   requiring that cwd to be inside the project-root `.graphtor`
-   directory; both conditions cannot hold.
+Six unresolved P1 plan-contract defects (the earlier count of four omitted
+findings 1 and 6):
+
+1. Red-test polarity: the harness must always assert the successful
+   `initialize` response; the reproduced broken-pipe / early-exit / timeout
+   is diagnostic evidence only, never the expected assertion.
+2. H0a proof coupling: the raw process harness cannot prove the
+   managed-launch H0a fix without explicitly exercising the generated
+   launch contract.
+3. Existing-install migration: updating `managed_server_value` alone does
+   not repair existing installations because binary upgrade does not
+   rewrite `.mcp.json`.
+4. H0c closure: the H0c branch has no tracked remediation that can reach
+   the healthy handshake required by the shipment definition of done.
+5. Authorized-root / launch-cwd containment: the plan required the child
+   cwd to equal the project root while also requiring that cwd to be
+   inside the project-root `.graphtor` directory; both conditions cannot
+   hold.
+6. Live-lock age semantics: adding process start-time without changing the
+   age fallback can still evict a genuinely live long-running holder; a
+   matching pid + start-time identity must stay live regardless of age.
 
 ## Files and surfaces changed
 
@@ -87,8 +99,8 @@ directory were preserved and excluded from commits.
 ## Next steps
 
 1. Start a new Stage review session with a reset review-fix budget.
-2. Resolve the four P1 contracts without broadening implementation
-   scope.
+2. Resolve the six P1 contracts (and the `056.003-T` title P3) without
+   broadening implementation scope.
 3. Run a fresh current-HEAD report-only review.
 4. Update PR #106 readiness and obtain merge approval only after
    `P0=0, P1=0`.

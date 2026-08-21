@@ -146,12 +146,31 @@ single capture run and the remaining fixes are individually small and bounded:
    child **working directory** to the project root (which restores
    registry-backed Generation/background-sync together without relaxing the
    runtime cwd boundary), with explicit `--db-path` / `--config` only as a
-   complement and only within project-root `.graphtor`; explicit targets alone
-   do not restore Generation, and the genuinely-absent-registry case is
-   preserved. Isolate the unrelated H0b stale-lock liveness variant (record process
-   start-time alongside pid to survive pid reuse) and the optional startup
-   diagnosability sink as **separate conditional tasks**, taken only if
-   evidenced, rather than bundling them into the single-cause fix.
+   complement, validated as **project-root-derived** paths (typically within
+   `.graphtor`; the pinned `cwd` equals the project root by **equality**, not a
+   `.graphtor` descendant); explicit targets alone do not restore Generation,
+   and the genuinely-absent-registry case is preserved. Because
+   `generate_mcp_config` runs only from `install`/`install_full` and
+   `cmd_upgrade` never rewrites `.mcp.json`, delivering the refreshed managed
+   entry to **already-installed** workspaces is a separate H0a task
+   (`056.009-T`: refresh-on-upgrade or a required reinstall recipe), so the
+   reporter's existing install is actually repaired. Isolate the unrelated H0b
+   stale-lock liveness variant (record process start-time alongside pid so a
+   matching pid+start-time identity stays live **regardless of lock age**, age
+   evicting only as a fallback when strong identity is unavailable) and the
+   optional startup diagnosability sink as **separate conditional tasks**, taken
+   only if evidenced, rather than bundling them into the single-cause fix.
+   * **H0c fail-closed branch (`056.010-T`):** if T0 instead evidences a
+     legitimate fail-closed gate (malformed registry, missing explicit
+     `--config`, pre-v4 schema, duplicate intake, or another fail-closed cause),
+     the remediation is a **tracked operational correction that repairs the
+     workspace state** — never a weakening of the gate — plus, only if needed, a
+     bounded code change that makes the cause more actionable (preceded by its
+     own red test). Diagnostics (`056.006-T`) surface the cause but do not
+     remediate it, so this branch owns the curative path that reaches the
+     healthy `initialize` handshake before runtime verification (T4). Exactly
+     one causal branch (H0a / H0b / H0c / H1) activates from the evidence; the
+     rest close *not-needed*.
 4. **Only if H1 is evidenced, defer the model load off the handshake (T3):**
    lazy-load *only* the embedding model via `tokio::sync::OnceCell` +
    `spawn_blocking`, with a distinct retryable "model still loading" tool error
