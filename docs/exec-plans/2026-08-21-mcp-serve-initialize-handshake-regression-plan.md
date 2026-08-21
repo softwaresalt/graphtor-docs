@@ -56,6 +56,7 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 | Surface | Location | Change |
 |---|---|---|
 | Serve startup / early-exit paths (T2, single evidenced cause) | `src/main.rs::cmd_serve` (~2446-2655) | Containment-safe workspace-root resolution: resolve only from explicit `--db-path` / `--config` inputs or the launch cwd, **never** by walking to parent directories; refuse any candidate outside/above the launch-cwd boundary; convert the silent exit-2 discovery failure into a loud, actionable error; keep the existing fail-closed gates |
+| Managed MCP launcher config (T2, curative — conditional on H0a) | `src/workspace/mcp_config.rs` (`managed_server_value`, ~528-540) | Only if T0 confirms H0a (the CLI launches the child from a changed cwd and passes no explicit target): emit a **trusted workspace identity** in the generated managed `.mcp.json` entry — a containment-validated absolute `--db-path` / `--config` argument (or `env`) pinned to the project-root `.graphtor` — so the served set no longer depends on the launch cwd. The entry currently supplies only `args: ["serve"]`, so the "prefer explicit target" T2 change restores connectivity only if the launcher actually passes that target. Covered by an unrelated-cwd launch regression test. This is the curative lever within our control; do not weaken containment (validate via the shared `graphtor_core::path::validate_path` / `is_reparse_point` primitives, canonicalized) |
 | Advisory lock handling (T2b, conditional on H0b) | `src/lock.rs` (`DatabaseLock::acquire`, `AdvisoryLock::acquire`, `handle_existing_lock`, ~120-200) | Only if H0b is evidenced: harden stale-lock liveness by recording process start-time alongside pid so a reused pid is not misread as a live holder |
 | Diagnostic logging sink (T2c, conditional/optional) | `src/logging/init.rs`, serve path in `src/main.rs` | Only if a documented stderr-redirect recipe proves insufficient: env-gated opt-in sink. It MUST capture the pre-serve `eprintln!` early-exit messages (~2504/2549/2635) — convert them to `tracing` or tee stderr — because a `tracing`-only sink would silently miss those direct `eprintln!` / AutoStream writes |
 | Embedding-model resolution (conditional) | `src/embed/resolver.rs`, consumers in `src/mcp/server.rs` | Only if H1 evidenced: lazy `tokio::sync::OnceCell` + `spawn_blocking`, distinct "model loading" tool error |
@@ -138,13 +139,27 @@ linked deliberation. This plan restores connectivity **evidence-first** and
     into a loud, actionable error, so no discovery path exits silently.
 * **H0a scope note (diagnostic vs curative):** a loud early-exit still exits
   before the transport binds, so on its own it does not clear OS error 232 — it
-  only makes the cause visible. H0a connectivity is restored only when
-  resolution prefers an explicit target (above) that the CLI passes. If T0
-  shows the CLI supplies neither an explicit target nor a cwd-local `.graphtor`,
-  the remediation is an **operational launch-config / install recipe** (correct
-  cwd or pass `--db-path` / `--config`), and the T2 code change is
-  diagnosability only. T0 must record which case holds before T2 is scoped, and
-  T4's connectivity gate depends on it.
+  only makes the cause visible. H0a connectivity is restored only when the
+  server is launched with an explicit target (above) that the CLI passes.
+  Because graphtor-docs **owns** the managed `.mcp.json` generation
+  (`src/workspace/mcp_config.rs::managed_server_value`), the curative lever is
+  within our control: when T0 confirms H0a, update the config generator to emit
+  a **trusted workspace identity** in the managed entry — a containment-safe
+  absolute `--db-path` / `--config` argument (or `env`) pinned to the
+  project-root `.graphtor`, validated through the same shared
+  `graphtor_core::path::validate_path` / `is_reparse_point` primitives (both
+  operands canonicalized) so the pinned path cannot escape or climb above the
+  project root. The generated entry today supplies only `args: ["serve"]`, so
+  without this change the CLI keeps launching with no explicit target and the
+  "prefer explicit target" resolution never fires. Add an **unrelated-cwd
+  launch regression test**: a managed entry generated for project `P` must
+  serve `P`'s databases when the child is spawned from an unrelated cwd. Do
+  **not** invent parent-directory traversal — the trusted root is pinned at
+  generation time from `P`, not rediscovered by climbing from the launch cwd.
+  If T0 instead shows the CLI already supplies a usable cwd-local `.graphtor`
+  or an explicit target, the config-generator change is unnecessary and the T2
+  `cmd_serve` change is diagnosability only. T0 must record which case holds
+  before T2 is scoped, and T4's connectivity gate depends on it.
 * Green T1. Preserve all existing fail-closed semantics (malformed registry,
   missing explicit `--config`, pre-v4 gate, duplicate-intake preflight remain
   pre-serve gates) — add a regression assertion that each of these still exits
@@ -232,8 +247,11 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 ## Verification Commands
 
 ```text
-# Evidence capture (T0), from the CLI's launch cwd:
-$env:RUST_LOG='debug'; graphtor-docs serve 2> serve-stderr.log ; echo "exit=$LASTEXITCODE"
+# Evidence capture (T0), from the CLI's launch cwd — one command per line,
+# evidence written under logs/ (never the repo root):
+$env:RUST_LOG = 'debug'
+graphtor-docs serve 2> logs/serve-stderr.log
+echo "exit=$LASTEXITCODE"
 Get-ChildItem .graphtor -Filter *.lock
 
 # Quality gates:
@@ -349,6 +367,21 @@ and posture-classification context.
     explicit outside/parent refusal test.
   * rollback: `git revert` the T2 commit(s) in reverse dependency order.
   * approval_required: no (non-destructive); ActionResult: **planned**.
+* ProposedAction (conditional, T2 H0a-curative): when T0 confirms H0a, emit a
+  trusted workspace identity (containment-validated absolute `--db-path` /
+  `--config` argument or `env`, pinned to the project-root `.graphtor`) in the
+  generated managed `.mcp.json` entry so the served set no longer depends on
+  the launch cwd.
+  * targets: `src/workspace/mcp_config.rs` (`managed_server_value`, ~528-540);
+    reuse of the shared `graphtor_core::path::validate_path` /
+    `is_reparse_point` containment primitives (both operands canonicalized).
+  * change_kind: install-time managed-config generation output.
+  * ActionRisk: **moderate** — changes the launch contract the CLI consumes;
+    pinned path must stay within the project root (no parent traversal) and is
+    guarded by an unrelated-cwd launch regression test. Taken only if H0a is
+    evidenced. rollback: revert the T2 H0a-curative commit.
+  * approval_required: no (non-destructive); ActionResult: **planned** (or
+    **abandoned** if T0 shows the CLI already supplies a usable target/cwd).
 * ProposedAction (conditional, T2b): record process start-time alongside pid in
   advisory lock metadata to survive pid reuse.
   * targets: `src/lock.rs` (`DatabaseLock::acquire` / `AdvisoryLock::acquire` /
@@ -383,11 +416,27 @@ and posture-classification context.
   plus `cargo build --release`.
 * Rollback: revert shipment commits in reverse dependency order; re-pin prior
   rmcp if bumped (T4).
-* Post-deploy observation window (manual): owner is the merging developer;
-  signal is a completed `initialize` handshake with no OS error 232 on the
-  newest Copilot CLI; window is the next 3 serve starts or 24h; rollback
-  trigger is any OS error 232 recurrence; outcome (healthy / degraded /
-  rolled-back) is recorded in the shipment closure artifact (T4).
+* Post-deploy observation window (manual — no hosted observability is
+  available; STDIO serve is a local child process):
+  * **owner:** the merging developer (Ship / operator); no on-call rotation.
+  * **pre-fix baseline:** the T0 capture — the failing launch reproduced with a
+    concrete nonzero child exit code + early-exit stderr marker and the
+    client-visible OS error 232 on the newest Copilot CLI — recorded in
+    `056.001-T` and referenced here as the "before" state.
+  * **exact method / invocation:** for each of the next 3 serve starts (or 24h,
+    whichever comes first) run `/mcp show graphtor-docs` on the newest Copilot
+    CLI and capture the child's stderr with `RUST_LOG=debug` redirected to
+    `logs/serve-stderr.log` (per the Verification Commands recipe).
+  * **files / log signals:** `logs/serve-stderr.log` shows the serve-ready
+    startup log (transport bound) and no OS error 232; `/mcp show
+    graphtor-docs` reports connected with a completed `initialize` handshake.
+  * **success trigger:** all 3 starts (or the 24h window) complete the
+    handshake with no OS error 232 → outcome `healthy`.
+  * **rollback trigger:** any OS error 232 recurrence or an
+    exit-before-initialize in the window → revert the shipment commits in
+    reverse dependency order (T4) → outcome `rolled-back`.
+  * outcome (healthy / degraded / rolled-back) is recorded in the shipment
+    closure artifact (T4).
 
 ## Test-First Harness Expectations
 
@@ -511,3 +560,34 @@ III/IV containment trust boundary).
 * **Pre-existing MSRV note (out of scope):** the Rust 1.75 vs rmcp 1.5 /
   edition-2024 tooling context is a pre-existing residual and is not expanded by
   this shipment; any rmcp bump remains a conditional, separately-reviewed task.
+
+### Cycle 2 remediation (targeted review-fix — not a fresh full persona run)
+
+A second review-fix cycle addressed bot findings raised against an earlier HEAD
+(`1cb6554`) that remained valid at the reviewed HEAD. These are targeted
+documentation/backlog remediations by the Stage agent, **not** a new
+seven-persona run; the Cycle 1 gate decision above stands.
+
+* **Managed-launcher omission (H0a curative surface)** — the H0a "prefer an
+  explicit target" remediation relied on the CLI passing `--db-path` / `--config`,
+  but the managed `.mcp.json` generator (`src/workspace/mcp_config.rs::managed_server_value`)
+  emits only `args: ["serve"]`, so no trusted workspace identity reaches the
+  child under a changed cwd. Resolved: added `src/workspace/mcp_config.rs` as an
+  evidence-gated (H0a-only) curative surface in the Likely Surfaces table, the
+  T2 H0a scope note, the T2 Plan Hardening risky-action, and backlog `056.003-T`,
+  with an unrelated-cwd launch regression test and containment delegated to the
+  shared `validate_path` / `is_reparse_point` primitives (no parent traversal).
+* **Observation-window specificity** — the window now names owner (merging
+  developer), the pre-fix T0 baseline, the exact per-start invocation, the
+  `logs/serve-stderr.log` signals, and explicit success/rollback triggers, in
+  both this plan and `056.004-T`; no hosted observability is promised.
+* **Pipe-direction wording** — the linked deliberation's Problem Frame now
+  states 232 surfaces on the **client's** write to the server's stdin (read end
+  gone because the server exited), consistent with H0.
+* **Terminal-command hygiene** — the Verification Commands evidence recipe is
+  split to one command per line and writes evidence under `logs/` rather than
+  the repo root.
+* **Task-title / single-width** — `056.003-T` no longer references the
+  diagnosability sink in its title (the sink is isolated in `056.006-T`);
+  T2 single-width and the stdin-open harness polarity remain as remediated in
+  Cycle 1.

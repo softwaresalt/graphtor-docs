@@ -31,15 +31,17 @@ while the client is sending the `initialize` request. The regression began
 with the most recent Copilot CLI builds; the graphtor-docs binary and its
 `serve` code path were unchanged across the regression boundary.
 
-Windows OS error 232 is `ERROR_NO_DATA` — "The pipe is being closed." On the
-server side this surfaces when the process writes to a STDIO pipe whose read
-end is **gone** — i.e. the peer process has exited or been killed. The client's
-~500-byte `initialize` request fits trivially in the OS pipe buffer, so a
-merely slow server reader does not by itself produce a mid-write 232 on the
-client; the signature points at **the server process exiting (or being killed)
-before the handshake completes**. In an MCP STDIO launch this most often means
-the server hit an early-exit / fail-closed path before `rmcp::serve_server`
-ever bound the transport.
+Windows OS error 232 is `ERROR_NO_DATA` — "The pipe is being closed." It
+surfaces on the **client's** write to the server's **stdin** when that pipe's
+read end is **gone** — i.e. the server process has exited or been killed. The
+client sends `initialize` by writing to the child's stdin; once the server has
+exited, its stdin read end is closed, so the client's write fails with 232.
+The client's ~500-byte `initialize` request fits trivially in the OS pipe
+buffer, so a merely slow server reader does not by itself produce a mid-write
+232 on the client; the signature points at **the server process exiting (or
+being killed) before the handshake completes**. In an MCP STDIO launch this
+most often means the server hit an early-exit / fail-closed path before
+`rmcp::serve_server` ever bound the transport.
 
 This is an investigate-first situation: the trigger is an external component
 (the CLI) that we do not control, the exact root cause is not yet proven, and
