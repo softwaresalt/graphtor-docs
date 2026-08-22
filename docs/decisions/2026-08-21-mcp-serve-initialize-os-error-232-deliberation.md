@@ -1,6 +1,7 @@
 ---
 title: "MCP serve initialize-handshake regression: Copilot CLI OS error 232 (7BF1961D)"
 description: "Investigate-first differential diagnosis of the graphtor-docs MCP serve pipe-close-on-initialize regression triggered by recent GitHub Copilot CLI builds, and the chosen evidence-first remediation ordering"
+doc_type: "decision"
 topic: "graphtor-docs MCP STDIO serve initialize-handshake compatibility with recent Copilot CLI builds"
 depth: "lightweight"
 decision_status: "decided"
@@ -12,6 +13,7 @@ linked_artifacts:
 backlog_refs:
   - "049-S"
   - "056-F"
+source: "stash:7BF1961D"
 tags:
   - mcp
   - serve
@@ -104,7 +106,7 @@ executed test-first without over-committing to a single unverified hypothesis.
 | H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; six pre-serve exit paths; discovery + locks are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | **High** |
 | H1 | **Initialize latency from eager model load.** Cold-cache candle model load before the transport binds delays the handshake enough to trip a client connect timeout, after which the client teardown surfaces as 232. Secondary/contributing, not the primary 232 mechanism. | Heavy synchronous pre-transport model load | Yes — lazy-load model only | Medium |
 | H2 | Protocol-version negotiation mismatch via `get_info`. | — | — | **Ruled out** — rmcp 1.5 negotiates in-SDK; `get_info` change is a no-op; `LATEST` 2025-11-25 already newest |
-| H3 | **Client/transport incompatibility (two modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects the managed `cwd`**, so the managed-launch child starts in a **foreign cwd** and **early-exits** — distinct from H0a (where the CLI *honors* the pinned `cwd`), distinguished by generated-contract / client-capability evidence. | Regression tracks CLI builds; rmcp pinned old (A); managed `cwd` not honored (B) | Partly — **(A)** rmcp bump (1.8.0 available) / minimal framing fix; **(B)** an evidence-backed client-compatibility adjustment (a supported CLI version or a client-honored working-directory mechanism), **no** server-side external-path fallback | Low (owned by `056.011-T`) |
+| H3 | **Client/transport incompatibility (two modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary backup-first diagnostic entry invoked through the real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same real-client probe honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B) | Partly — **(A)** rmcp bump (1.8.0 available) / minimal framing fix; **(B)** an evidence-backed client-compatibility adjustment (a supported CLI version or a client-honored working-directory mechanism), **no** server-side external-path fallback | Low (owned by `056.011-T`) |
 | H4 | Startup panic/early-exit writing to stdout. | — | — | Ruled out (stderr logging, no pre-serve stdout) |
 
 H0 is the leading hypothesis and is settled by a **single evidence run** that
@@ -124,10 +126,12 @@ single capture run and the remaining fixes are individually small and bounded:
    `.graphtor/*.lock`. A nonzero exit code with an early-exit message
    identifies the H0 sub-cause directly.
 2. **Reproduce with an out-of-process red harness (T1).** Spawn the real binary
-   with a controllable cwd/env and assert the *exit-before-initialize* failure
-   mode, with model-cache state pinned so the harness is deterministic. Stop
-   gate: if the harness cannot be made red, return to T0 rather than
-   speculatively refactoring startup.
+   with a controllable cwd/env, keep stdin open, send a protocol-valid
+   `initialize`, and make the sole pass assertion a successful initialize
+   response. Capture exit, stderr, or a still-alive timeout only as diagnostic
+   evidence explaining the red. Pin model-cache state for determinism. Stop
+   gate: if the successful-response assertion cannot be made red for the
+   evidenced cause, return to T0 rather than speculatively refactoring startup.
 3. **Restore connectivity for the evidenced H0 sub-cause, split by width:** the
    runtime `cmd_serve` change (`056.003-T`) is **diagnostics-only and
    parity-safe** — convert the silent exit-2 discovery failures into loud,
@@ -143,15 +147,14 @@ single capture run and the remaining fixes are individually small and bounded:
    `cwd` (`load_source_config` → `cwd/.graphtor/config`; `validate_path(..,
    root=cwd)`; `cwd/.graphtor`; `acquire_plan::plan(.., &cwd)`). The
    curative H0a lever therefore lives in a separate launch-contract task
-   (`056.008-T`) that pins the child's trusted launch identity — primarily the
-   child **working directory** to the canonical project root (which restores
-   registry-backed Generation/background-sync together and makes the runtime's
-   existing explicit-target validation resolve correctly, without relaxing the
-   runtime cwd boundary), with explicit `--db-path` / `--config` only as a
-   complement, validated as **project-root-derived** paths (typically within
-   `.graphtor`; the pinned `cwd` equals the project root by **equality**, not a
-   `.graphtor` descendant); explicit targets alone do not restore Generation,
-   and the genuinely-absent-registry case is preserved. Because
+   (`056.008-T`) that pins the child's **working directory** to the canonical
+   project root. This single sufficient lever restores registry-backed
+   Generation/background-sync together and makes existing explicit-target
+   validation resolve correctly without relaxing runtime containment. It does
+   not generate `--db-path`, `--config`, or env target plumbing. T0 first proves
+   that the real target CLI honors its `cwd` field with a temporary,
+   backup-first diagnostic entry; a direct child spawn is not client evidence.
+   Because
    `generate_mcp_config` runs only from `install`/`install_full` and
    `cmd_upgrade` never rewrites `.mcp.json`, delivering the refreshed managed
    entry to **already-installed** workspaces is a separate H0a task
@@ -177,9 +180,8 @@ single capture run and the remaining fixes are individually small and bounded:
      incompatibility owned by `056.011-T`, kept live but low-confidence, with
      **two modes**: **(A)** an rmcp/client-transport framing incompatibility
      (child alive, `initialize` never negotiates) and **(B)** the CLI
-     ignoring/rejecting the managed `cwd` so the managed-launch child
-     **early-exits** from a foreign cwd — distinguished from H0a by
-     generated-contract / client-capability evidence and repaired **without** any
+     ignoring/rejecting configured `cwd`, proven by T0's real-client diagnostic
+     probe before `056.008-T` is selected, and repaired **without** any
      server-side external-path fallback.)
 4. **Only if H1 is evidenced, defer the model load off the handshake (T3):**
    lazy-load *only* the embedding model via `tokio::sync::OnceCell` +
@@ -213,7 +215,10 @@ requires.
   negotiated-protocol info logs on stderr, plus the opt-in file-log sink.
 * **VI Single Responsibility** — an rmcp upgrade and the model-lazy-load are
   taken only if evidence requires, not speculatively.
-* **VII Destructive Approval** — none; no destructive commands.
+* **VII Destructive Approval** — the common path is non-destructive. If H0c
+  requires a pre-v4 rebuild via `graphtor-docs sync` or source-registry
+  replacement, 056.010-T requires explicit operator approval and a backup
+  before the state-changing remediation.
 * **VIII Safety Modes** — investigate-first: evidence (T0/T1) precedes the fix.
 
 ## Open Questions / Residual Risk
