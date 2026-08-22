@@ -1,5 +1,7 @@
 ---
 type: session-memory
+doc_type: memory
+source: stage-correction-session
 timestamp: 2026-08-22T07:16:36Z
 agent: GitHub Copilot CLI
 scope: 049-S

@@ -901,3 +901,15 @@
 {"seq":902,"timestamp":"2026-08-21T22:50:31.5154198Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["priority"],"item_id":"056.009-T","schema_version":1}}
 {"seq":903,"timestamp":"2026-08-21T22:50:39.9100621Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["priority"],"item_id":"056.010-T","schema_version":1}}
 {"seq":904,"timestamp":"2026-08-22T00:30:52.6483353Z","event_type":"create_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["id","title","status"],"item_id":"056.011-T","schema_version":1,"status_delta":{"from":"","to":"queued"},"title_delta":{"from":"","to":"Conditional: rmcp/client transport compatibility fix (H3 only)"}}}
+{"seq":905,"timestamp":"2026-08-22T07:58:50.0022194Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.011-T","schema_version":1}}
+{"seq":906,"timestamp":"2026-08-22T07:58:57.0524714Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.004-T","schema_version":1}}
+{"seq":907,"timestamp":"2026-08-22T07:59:06.492762Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.002-T","schema_version":1}}
+{"seq":908,"timestamp":"2026-08-22T07:59:13.6452745Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.003-T","schema_version":1}}
+{"seq":909,"timestamp":"2026-08-22T07:59:21.2413997Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"feature","item_id":"056-F","schema_version":1}}
+{"seq":910,"timestamp":"2026-08-22T07:59:29.2737823Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.007-T","schema_version":1}}
+{"seq":911,"timestamp":"2026-08-22T07:59:37.1586184Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.005-T","schema_version":1}}
+{"seq":912,"timestamp":"2026-08-22T07:59:46.0322048Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.006-T","schema_version":1}}
+{"seq":913,"timestamp":"2026-08-22T07:59:53.7001065Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.008-T","schema_version":1}}
+{"seq":914,"timestamp":"2026-08-22T08:00:01.382881Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.009-T","schema_version":1}}
+{"seq":915,"timestamp":"2026-08-22T08:00:08.2520051Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.010-T","schema_version":1}}
+{"seq":916,"timestamp":"2026-08-22T08:00:17.79536Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.001-T","schema_version":1}}

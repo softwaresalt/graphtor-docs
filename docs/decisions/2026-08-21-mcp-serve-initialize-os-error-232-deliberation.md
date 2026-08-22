@@ -53,7 +53,7 @@ executed test-first without over-committing to a single unverified hypothesis.
 
 ## Evidence Gathered (read-only)
 
-* `src/main.rs::cmd_serve` (lines ~2446-2655) has **six pre-`serve_server`
+* `src/main.rs::cmd_serve` (lines ~2446-2655) has **multiple pre-`serve_server`
   early-exit paths plus fallible `?` operators**, all of which exit or return
   before the STDIO transport binds:
   * `no databases found to serve` (exit 2) — auto-discovery of `.graphtor/*.db`
@@ -64,7 +64,10 @@ executed test-first without over-committing to a single unverified hypothesis.
     `AdvisoryLock::acquire` / `handle_existing_lock`) returns `DatabaseLocked`
     when another live process holds `.graphtor/<db>.lock`, or when a stale
     lock's recorded pid has been reused. A client that spawns a probe
-    instance, restarts servers, or hard-kills children makes this fire.
+    instance, restarts servers, or hard-kills children makes this fire. This
+    path is reachable only for a registry target classified as
+    `ServeMode::Generation`; ReadOnly/auto-discovered targets do not acquire
+    the database lock.
   * pre-v4 schema gate, a **malformed** `sources.yaml` (fail-closed `Err`),
     an explicit `--config` target that does not exist (exit 2), the
     duplicate-intake preflight, and `open_serve_databases` open failures. A
@@ -103,10 +106,10 @@ executed test-first without over-committing to a single unverified hypothesis.
 
 | # | Hypothesis | Supporting signal | In our control | Confidence |
 |---|---|---|---|---|
-| H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; six pre-serve exit paths; discovery + locks are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | **High** |
+| H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** on a Generation target when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; multiple pre-serve exit paths; discovery + Generation-lock handling are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | **High** |
 | H1 | **Initialize latency from eager model load.** Cold-cache candle model load before the transport binds delays the handshake enough to trip a client connect timeout, after which the client teardown surfaces as 232. Secondary/contributing, not the primary 232 mechanism. | Heavy synchronous pre-transport model load | Yes — lazy-load model only | Medium |
 | H2 | Protocol-version negotiation mismatch via `get_info`. | — | — | **Ruled out** — rmcp 1.5 negotiates in-SDK; `get_info` change is a no-op; `LATEST` 2025-11-25 already newest |
-| H3 | **Client/transport incompatibility (two modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary backup-first diagnostic entry invoked through the real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same real-client probe honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B) | Partly — **(A)** rmcp bump (1.8.0 available) / minimal framing fix; **(B)** an evidence-backed client-compatibility adjustment (a supported CLI version or a client-honored working-directory mechanism), **no** server-side external-path fallback | Low (owned by `056.011-T`) |
+| H3 | **Client/transport incompatibility (two modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary backup-first diagnostic entry invoked through the real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same real-client probe honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B) | Partly — **(A)** rmcp bump/minimal framing fix with Rust-1.75 verification; **(B1)** supported CLI version honors managed `cwd`, keeping `056.008-T`/`056.009-T`; or **(B2)** a different client-honored working-directory mechanism, closing those tasks; **no** server-side external-path fallback | Low (owned by `056.011-T`) |
 | H4 | Startup panic/early-exit writing to stdout. | — | — | Ruled out (stderr logging, no pre-serve stdout) |
 
 H0 is the leading hypothesis and is settled by a **single evidence run** that
@@ -123,21 +126,28 @@ single capture run and the remaining fixes are individually small and bounded:
 1. **Capture the failure evidence first (T0).** Run the server with the exact
    command line, cwd, and env the CLI uses for the child, capturing exit code
    and `RUST_LOG=debug` stderr to a file, and check for a leftover
-   `.graphtor/*.lock`. A nonzero exit code with an early-exit message
-   identifies the H0 sub-cause directly.
-2. **Reproduce with an out-of-process red harness (T1).** Spawn the real binary
+   `.graphtor/*.lock`. Use a bounded driver that owns the child, waits at most
+   30 seconds, and terminates only that captured process on timeout. A nonzero
+   exit code with an early-exit message identifies the H0 sub-cause directly;
+   H0b additionally requires a Generation target.
+2. **Build an out-of-process driver and branch proof (T1).** Spawn the real binary
    with a controllable cwd/env, keep stdin open, send a protocol-valid
    `initialize`, and make the sole pass assertion a successful initialize
    response. Capture exit, stderr, or a still-alive timeout only as diagnostic
-   evidence explaining the red. Pin model-cache state for determinism. Stop
-   gate: if the successful-response assertion cannot be made red for the
-   evidenced cause, return to T0 rather than speculatively refactoring startup.
+   evidence explaining the red. For non-H1 fixtures, pin/prewarm model state
+   out of the path; for H1 use an injected blocking/failing loader seam rather
+   than cold-cache wall-clock behavior. Stop gate: if the
+   successful-response assertion cannot be made red for the evidenced
+   repository-code cause, return to T0 rather than speculatively refactoring
+   startup. Operational-only H0c/H3-B use bounded actual-client before/after
+   transcripts instead of a permanently failing Cargo test.
 3. **Restore connectivity for the evidenced H0 sub-cause, split by width:** the
    runtime `cmd_serve` change (`056.003-T`) is **diagnostics-only and
    parity-safe** — convert the silent exit-2 discovery failures into loud,
-   actionable errors and add a serve-ready log, **without** changing containment
+   actionable errors and add a structured `mcp_serve_ready` event immediately
+   before the initialize-ready `serve_server` loop, **without** changing containment
    or discovery: `cmd_serve` keeps validating an explicit `--db-path` /
-   `--config` against the authorized project-root cwd through the shared
+   `--config` against the authorized launch cwd through the shared
    `discover_served_databases` / `validate_path` / `is_reparse_point` primitives
    (`candidate_root = cwd`), with **no target-derived/split authorized root** and
    **no** parent-directory walk (Principle III/IV). **Curative-connectivity
@@ -157,7 +167,7 @@ single capture run and the remaining fixes are individually small and bounded:
    Because
    `generate_mcp_config` runs only from `install`/`install_full` and
    `cmd_upgrade` never rewrites `.mcp.json`, delivering the refreshed managed
-   entry to **already-installed** workspaces is a separate H0a task
+   entry to **already-installed** workspaces is a separate H0a/H3-B1 task
    (`056.009-T`: marker-safe refresh-on-upgrade as the primary path, with a
    manual reinstall recipe as fallback), so the
    reporter's existing install is actually repaired. Isolate the unrelated H0b
@@ -174,15 +184,16 @@ single capture run and the remaining fixes are individually small and bounded:
      bounded code change that makes the cause more actionable (preceded by its
      own red test). Diagnostics (`056.006-T`) surface the cause but do not
      remediate it, so this branch owns the curative path that reaches the
-     healthy `initialize` handshake before runtime verification (T4). Exactly
-     one causal branch (H0a / H0b / H0c / H1) activates from the evidence; the
-     rest close *not-needed*. (H3 is the fifth branch — a client/transport
+     healthy `initialize` handshake before runtime verification (T4). One causal
+       branch (H0a / H0b / H0c / H1 / H3) activates from the evidence; the
+       rest close *not-needed*. (H3 is a client/transport
      incompatibility owned by `056.011-T`, kept live but low-confidence, with
      **two modes**: **(A)** an rmcp/client-transport framing incompatibility
      (child alive, `initialize` never negotiates) and **(B)** the CLI
      ignoring/rejecting configured `cwd`, proven by T0's real-client diagnostic
-     probe before `056.008-T` is selected, and repaired **without** any
-     server-side external-path fallback.)
+     probe. B1 selects a supported CLI that honors managed `cwd` and keeps
+     `056.008-T`/`056.009-T` active; B2 uses a supported independent mechanism
+     and closes them. Neither adds a server-side external-path fallback.)
 4. **Only if H1 is evidenced, defer the model load off the handshake (T3):**
    lazy-load *only* the embedding model via `tokio::sync::OnceCell` +
    `spawn_blocking`, with a distinct retryable "model still loading" tool error
@@ -206,13 +217,16 @@ requires.
 
 * **I Safety-First Rust** — no `unsafe`; all new paths return `Result`; changes
   must pass `cargo clippy --all-targets -- -D warnings -D clippy::pedantic`.
-* **II Test-First (NON-NEGOTIABLE)** — the reproduction harness is written and
-  observed red before any fix lands.
+* **II Test-First (NON-NEGOTIABLE)** — repository-code branches are preceded
+  by observed-red tests; operational-only H0c/H3-B use bounded actual-client
+  before/after evidence, and any code change on those branches gets its own red
+  test.
 * **III/IV Workspace isolation & CLI containment** — serve remains localhost
   STDIO; deterministic workspace-root resolution must still reject paths
   outside the workspace; no relaxation of containment.
-* **V Structured Observability** — add startup/serve-ready and (if taken)
-  negotiated-protocol info logs on stderr, plus the opt-in file-log sink.
+* **V Structured Observability** — add `mcp_serve_ready` immediately before
+  `serve_server`, keep completed handshake evidence separate, and add the
+  opt-in file-log sink only if stderr redirection is insufficient.
 * **VI Single Responsibility** — an rmcp upgrade and the model-lazy-load are
   taken only if evidence requires, not speculatively.
 * **VII Destructive Approval** — the common path is non-destructive. If H0c
