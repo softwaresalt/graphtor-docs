@@ -104,7 +104,7 @@ executed test-first without over-committing to a single unverified hypothesis.
 | H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; six pre-serve exit paths; discovery + locks are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | **High** |
 | H1 | **Initialize latency from eager model load.** Cold-cache candle model load before the transport binds delays the handshake enough to trip a client connect timeout, after which the client teardown surfaces as 232. Secondary/contributing, not the primary 232 mechanism. | Heavy synchronous pre-transport model load | Yes — lazy-load model only | Medium |
 | H2 | Protocol-version negotiation mismatch via `get_info`. | — | — | **Ruled out** — rmcp 1.5 negotiates in-SDK; `get_info` change is a no-op; `LATEST` 2025-11-25 already newest |
-| H3 | rmcp 1.5 vs newest CLI framing/transport incompatibility. | Regression tracks CLI builds; rmcp pinned old | Partly — rmcp bump (1.8.0 available) | Low (owned by `056.011-T`) |
+| H3 | **Client/transport incompatibility (two modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects the managed `cwd`**, so the managed-launch child starts in a **foreign cwd** and **early-exits** — distinct from H0a (where the CLI *honors* the pinned `cwd`), distinguished by generated-contract / client-capability evidence. | Regression tracks CLI builds; rmcp pinned old (A); managed `cwd` not honored (B) | Partly — **(A)** rmcp bump (1.8.0 available) / minimal framing fix; **(B)** an evidence-backed client-compatibility adjustment (a supported CLI version or a client-honored working-directory mechanism), **no** server-side external-path fallback | Low (owned by `056.011-T`) |
 | H4 | Startup panic/early-exit writing to stdout. | — | — | Ruled out (stderr logging, no pre-serve stdout) |
 
 H0 is the leading hypothesis and is settled by a **single evidence run** that
@@ -173,8 +173,14 @@ single capture run and the remaining fixes are individually small and bounded:
      remediate it, so this branch owns the curative path that reaches the
      healthy `initialize` handshake before runtime verification (T4). Exactly
      one causal branch (H0a / H0b / H0c / H1) activates from the evidence; the
-     rest close *not-needed*. (H3 is the fifth branch — an rmcp/client-transport
-     framing incompatibility owned by `056.011-T` — kept live but low-confidence.)
+     rest close *not-needed*. (H3 is the fifth branch — a client/transport
+     incompatibility owned by `056.011-T`, kept live but low-confidence, with
+     **two modes**: **(A)** an rmcp/client-transport framing incompatibility
+     (child alive, `initialize` never negotiates) and **(B)** the CLI
+     ignoring/rejecting the managed `cwd` so the managed-launch child
+     **early-exits** from a foreign cwd — distinguished from H0a by
+     generated-contract / client-capability evidence and repaired **without** any
+     server-side external-path fallback.)
 4. **Only if H1 is evidenced, defer the model load off the handshake (T3):**
    lazy-load *only* the embedding model via `tokio::sync::OnceCell` +
    `spawn_blocking`, with a distinct retryable "model still loading" tool error
@@ -186,9 +192,13 @@ single capture run and the remaining fixes are individually small and bounded:
    graphtor-docs`, record startup-log evidence, and document rollback.
 
 A `get_info` protocol-echo change is explicitly **excluded** as a no-op on
-rmcp 1.5; H3's only real lever is an rmcp bump / client-transport framing fix,
-**owned by the queued conditional task `056.011-T`** (H3 kept live but
-low-confidence) and taken only if evidence requires.
+rmcp 1.5; H3's levers are **(A)** an rmcp bump / client-transport framing fix
+and **(B)** — when the CLI ignores/rejects the managed `cwd` — an
+evidence-backed client-compatibility adjustment (a supported CLI version or a
+client-honored working-directory mechanism), **never** a server-side
+external-path fallback. Both are **owned by the queued conditional task
+`056.011-T`** (H3 kept live but low-confidence) and taken only if evidence
+requires.
 
 ## Constitution Check
 
@@ -226,9 +236,13 @@ low-confidence) and taken only if evidence requires.
 * Stale-lock liveness is decided by pid today; pid reuse after an ungraceful
   kill yields a false "locked" — prefer recording process start-time over
   `--force` if H0b is implicated.
-* If H3 ever dominates, an rmcp bump (1.8.0 is available) may pull transitive
-  API changes; that risk is contained to its own conditional task (`056.011-T`)
-  and review.
+* If H3 ever dominates: **mode A** (an rmcp bump, 1.8.0 available) may pull
+  transitive API changes, contained to its own conditional task (`056.011-T`)
+  and review; **mode B** (the CLI ignores/rejects the managed `cwd`) is repaired
+  by an evidence-backed client-compatibility adjustment (a supported CLI version
+  or a client-honored working-directory mechanism), never a server-side
+  external-path fallback — distinguished from H0a by generated-contract /
+  client-capability evidence.
 * If H1/T3 is taken, a lazy model load shifts first-`search_semantic` latency
   to first use and must preserve semantic-search correctness; `research_topic`
   currently *silently* falls back to unranked text search when the model is
