@@ -925,3 +925,23 @@
 {"seq":926,"timestamp":"2026-08-22T08:41:21.3707375Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.005-T","schema_version":1}}
 {"seq":927,"timestamp":"2026-08-22T08:41:28.1675891Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.006-T","schema_version":1}}
 {"seq":928,"timestamp":"2026-08-22T08:41:35.094162Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.007-T","schema_version":1}}
+{"seq":929,"timestamp":"2026-08-22T19:57:23.0285758Z","event_type":"create_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["id","title","status"],"item_id":"056.012-T","schema_version":1,"status_delta":{"from":"","to":"queued"},"title_delta":{"from":"","to":"Document serve diagnostics and evidence-selected remediation"}}}
+{"seq":930,"timestamp":"2026-08-22T19:57:40.6402712Z","event_type":"create_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["title","status","id"],"item_id":"056.013-T","schema_version":1,"status_delta":{"from":"","to":"queued"},"title_delta":{"from":"","to":"Document managed MCP launch and compatibility contracts"}}}
+{"seq":931,"timestamp":"2026-08-22T20:00:20.3343886Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"feature","item_id":"056-F","schema_version":1}}
+{"seq":932,"timestamp":"2026-08-22T20:00:30.0762767Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.005-T","schema_version":1}}
+{"seq":933,"timestamp":"2026-08-22T20:00:40.6218764Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.006-T","schema_version":1}}
+{"seq":934,"timestamp":"2026-08-22T20:00:49.4592044Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.007-T","schema_version":1}}
+{"seq":935,"timestamp":"2026-08-22T20:00:59.0910596Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.008-T","schema_version":1}}
+{"seq":936,"timestamp":"2026-08-22T20:01:09.8830529Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.009-T","schema_version":1}}
+{"seq":937,"timestamp":"2026-08-22T20:01:19.1033196Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.010-T","schema_version":1}}
+{"seq":938,"timestamp":"2026-08-22T20:01:28.1956969Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.011-T","schema_version":1}}
+{"seq":939,"timestamp":"2026-08-22T20:01:38.8958783Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.002-T","schema_version":1}}
+{"seq":940,"timestamp":"2026-08-22T20:01:47.7104135Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.001-T","schema_version":1}}
+{"seq":941,"timestamp":"2026-08-22T20:02:02.3658942Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.003-T","schema_version":1}}
+{"seq":942,"timestamp":"2026-08-22T20:02:11.0332936Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.004-T","schema_version":1}}
+{"seq":943,"timestamp":"2026-08-22T20:08:27.3904316Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.011-T","schema_version":1}}
+{"seq":944,"timestamp":"2026-08-22T20:08:35.9017765Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.005-T","schema_version":1}}
+{"seq":945,"timestamp":"2026-08-22T20:08:44.8164524Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.003-T","schema_version":1}}
+{"seq":946,"timestamp":"2026-08-22T20:08:53.6067236Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.008-T","schema_version":1}}
+{"seq":947,"timestamp":"2026-08-22T20:09:02.5936164Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.009-T","schema_version":1}}
+{"seq":948,"timestamp":"2026-08-22T20:12:17.2799013Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.013-T","schema_version":1}}

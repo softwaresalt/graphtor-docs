@@ -123,13 +123,16 @@ by evidence, not static reading.
 Proceed **evidence-first**, because the leading hypothesis (H0) is settled by a
 single capture run and the remaining fixes are individually small and bounded:
 
-1. **Capture the failure evidence first (T0).** Invoke the actual target CLI
-   through a backup-first temporary transparent wrapper that proxies stdio
-   byte-for-byte and records allowlisted/redacted launch context, raw initialize
-   framing, exit, and stderr. Own the CLI process, bound it to 30 seconds, clean
-   up only its isolated process tree, and restore config on every outcome.
-   Direct replay is derived secondary evidence. A correlated nonzero early
-   exit identifies H0; H0b additionally requires a Generation target.
+1. **Capture the failure evidence first (T0).** Launch the actual target CLI
+   from one controlled foreign directory for a control entry without `cwd` and
+   a treatment entry requesting canonical project-root `cwd`. The backup-first
+   transparent wrapper records its CLI-assigned identity before any mutation
+   and the inner server identity separately, preserves cwd/env/args and the
+   unmodified bidirectional initialize transaction, and propagates inner
+   exit/pipe closure. Own the CLI/wrapper/server process tree, bound it to 30
+   seconds, and restore config on every outcome. Direct replay is derived
+   confirmation only. A correlated nonzero early exit identifies H0; H0b
+   additionally requires a Generation target.
 2. **Build an out-of-process driver and branch proof (T1).** Spawn the real binary
    with a controllable cwd/env, hold a named stdin handle open, send a protocol-valid
    `initialize`, and make the sole pass assertion a successful initialize
@@ -139,12 +142,14 @@ single capture run and the remaining fixes are individually small and bounded:
    than cold-cache wall-clock behavior. Stop gate: if the
    successful-response assertion cannot be made red for the evidenced
    repository-code cause, return to T0 rather than speculatively refactoring
-   startup.    H3-A replays T0's raw target-client transaction. Operational-only H0c/H3-B use bounded actual-client before/after
+   startup. H3-A replays T0's unmodified bidirectional target-client
+   transaction. Operational-only H0c/H3-B use bounded actual-client before/after
    transcripts instead of a permanently failing Cargo test.
 3. **Restore connectivity for the evidenced H0 sub-cause, split by width:** the
    runtime `cmd_serve` change (`056.003-T`) is **diagnostics-only and
-   parity-safe** — convert the four exit-2 messages to structured
-   `tracing::error!` events and add `mcp_serve_ready` immediately before the
+   parity-safe** — convert the four exit-2 messages and propagated preflight
+   errors at the outer command boundary to structured `tracing::error!` events
+   and add `mcp_serve_ready` immediately before the
    `serve_server` call as preflight-complete/about-to-call evidence, **without** changing containment
    or discovery: `cmd_serve` keeps validating an explicit `--db-path` /
    `--config` against the authorized launch cwd through the shared
@@ -161,17 +166,19 @@ single capture run and the remaining fixes are individually small and bounded:
    project root. This single sufficient lever restores registry-backed
    Generation/background-sync together and makes existing explicit-target
    validation resolve correctly without relaxing runtime containment. It does
-   not generate `--db-path`, `--config`, or env target plumbing. T0 first proves
-   that the real target CLI honors its `cwd` field with a temporary,
-   backup-first diagnostic entry; a direct child spawn is not client evidence.
+   not generate `--db-path`, `--config`, or env target plumbing. T0 proves
+   support only when the same CLI launched from a foreign directory leaves the
+   control wrapper foreign but starts the treatment wrapper in the requested
+   canonical root; a direct child spawn is not client evidence.
    Because
    `generate_mcp_config` runs only from `install`/`install_full` and
    `cmd_upgrade` never rewrites `.mcp.json`, delivering the refreshed managed
    entry to **already-installed** workspaces is a separate H0a/H3-B1 task
-   (`056.009-T`: backup-first marker-safe refresh-on-upgrade as the primary
-   path, with a manual reinstall recipe as fallback), so the
+   (`056.009-T`: backup-first marker-safe refresh-on-upgrade with a
+   collision-resistant recovery artifact under `.graphtor/recovery/`, plus a
+   manual reinstall fallback), so the
    reporter's existing install is actually repaired. Isolate the unrelated H0b
-   stale-lock liveness variant (record process start-time alongside pid so a
+   stale-lock liveness variant (record strong process-start identity alongside pid so a
    matching pid+start-time identity stays live **regardless of lock age**; a
    live legacy pid-only lock also stays locked because ownership is ambiguous)
    and the
@@ -186,30 +193,36 @@ single capture run and the remaining fixes are individually small and bounded:
      own red test). Diagnostics (`056.006-T`) surface the cause but do not
      remediate it, so this branch owns the curative path that reaches the
      healthy `initialize` handshake before runtime verification (T4). After
-     each approved repair, rerun the same probe; if another sequential H0c gate
-     appears, keep the task active and repeat or rescope before further
-     mutation. One causal branch (H0a / H0b / H0c / H1 / H3) activates from
+     each separately approved and backed-up repair, rerun the same probe. Keep
+     sequential H0c gates active. If a different branch appears, preserve H0c
+     rollback state and reclassify the remaining cause rather than closing H0c
+     as not-needed. One causal branch (H0a / H0b / H0c / H1 / H3) activates from
      the evidence; non-selected conditional tasks move to `done` with
      `not-needed: <rationale>` comments. (H3 is a client/transport
      incompatibility owned by `056.011-T`, kept live but low-confidence, with
      **two modes**: **(A)** an rmcp/client-transport framing incompatibility
      (child alive, `initialize` never negotiates) and **(B)** the CLI
      ignoring/rejecting configured `cwd`, proven by T0's real-client diagnostic
-     probe. B1 selects a supported CLI that honors managed `cwd` and keeps
-     `056.008-T`/`056.009-T` active; B2 uses a supported independent mechanism
+     contrast probe. B1 selects a supported CLI that honors the temporary
+     treatment entry, completes capability adjudication, and then activates
+     `056.008-T`/`056.009-T`; B2 uses a supported independent mechanism
      and completes them `done` with rationale. Neither adds a server-side
      external-path fallback.)
 4. **Only if H1 is evidenced, defer the model load off the handshake (T3):**
-   lazy-load *only* the embedding model via clone-shared per-server state such
-   as `Arc<tokio::sync::OnceCell<_>>` + `spawn_blocking`, with a distinct
+   lazy-load *only* the embedding model via clone-shared typed per-server
+   `Uninitialized`/`Loading`/`Ready`/`Disabled`/`Failed` state. A lazy cell may
+   store the ready value but is not the full state machine. Start one owned
+   `spawn_blocking` load without awaiting it, with a distinct
    retryable "model still loading" tool error
    — while **keeping DB open, lock acquisition, the pre-v4 gate, and the
    duplicate-intake preflight as pre-serve fail-closed gates** (do not convert
    loud pre-connect failures into silent per-tool errors). If not selected,
    complete `done` with a not-needed rationale (Constitution Principle VI).
 5. **Verify against the real newest Copilot CLI** via three correlated
-   `/mcp show graphtor-docs` starts. Record CLI/config/timestamp/PID/capture
-   identity, separate preflight from handshake evidence, and document rollback.
+   `/mcp show graphtor-docs` starts against the restored post-fix user-facing
+   entry. Record CLI/production-config/timestamp/wrapper-server-PID/capture
+   identity, separate preflight from handshake evidence, and document
+   branch-aware rollback including H0c state restoration.
 
 A `get_info` protocol-echo change is explicitly **excluded** as a no-op on
 rmcp 1.5; H3's levers are **(A)** an rmcp bump / client-transport framing fix
@@ -235,14 +248,18 @@ requires.
   `mcp_serve_ready` means preflight complete/about to call `serve_server`;
   completed handshake evidence stays separate. Add the opt-in sink only if
   actual-client stderr/wrapper capture is insufficient.
-* **VI Single Responsibility** — an rmcp upgrade and the model-lazy-load are
-  taken only if evidence requires, not speculatively.
-* **VII Destructive Approval** — changing upgrade refresh writes a contained
-  byte-for-byte recovery file before mutating owned config. If H0c
+* **VI Single Responsibility** — code/config tasks remain separate from
+  documentation-only `056.012-T`/`056.013-T`; an rmcp upgrade and the
+  model-lazy-load are taken only if evidence requires.
+* **VII Destructive Approval** — T0 requires approval before temporary mutation
+  of the user-owned MCP config and records abnormal-termination recovery.
+  Changing upgrade refresh writes a secure contained byte-for-byte recovery
+  file before mutating owned config. If H0c
   requires a pre-v4 rebuild via `graphtor-docs sync` or source-registry
   replacement, 056.010-T requires explicit operator approval and a backup
   before the state-changing remediation.
-* **VIII Safety Modes** — investigate-first: evidence (T0/T1) precedes the fix.
+* **VIII Safety Modes** — investigate-first: T0 selects and T1 confirms before
+  the fix.
 
 ## Open Questions / Residual Risk
 
@@ -254,13 +271,11 @@ requires.
   field while preserving legacy recognition. Local `.mcp.json` siblings use
   `type: "stdio"` + `env`, but this is not asserted as the root cause without
   evidence (F7).
-* Diagnosability gap: if the CLI discards child stderr, early-exit reasons are
-  invisible — a documented stderr-redirect recipe is the low-complexity
-  default (already exercised in T0). An opt-in runtime file-log sink is
-  deferred/conditional and, if ever built, MUST actually capture the pre-serve
-  `eprintln!` early-exit messages (convert them to `tracing`, or tee the real
-  stderr stream) rather than adding a `tracing`-only sink that would silently
-  miss those direct `eprintln!` / AutoStream writes.
+* Diagnosability gap: if the CLI discards child stderr and wrapper capture is
+  unavailable, T0/T4 set an opt-in sink gate on the probe-owned CLI process
+  environment. The sink consumes the explicit guards plus the outer propagated
+  preflight-error event and `mcp_serve_ready`; it does not change the production
+  managed entry.
 * Stale-lock liveness is decided by pid today; pid reuse after an ungraceful
   kill yields a false "locked" — prefer recording process start-time over
   `--force` if H0b is implicated.
@@ -274,5 +289,6 @@ requires.
 * If H1/T3 is taken, a lazy model load shifts first-`search_semantic` latency
   to first use and must preserve semantic-search correctness; `research_topic`
   currently *silently* falls back to unranked text search when the model is
-  `None` (`src/mcp/server.rs`), so the lazy window needs a distinct
-  "loading" signal rather than a silent-degrade or "disabled" message.
+  `None` (`src/mcp/server.rs`), so the typed state must distinguish retryable
+  loading/failure from terminal disabled behavior and must never silently
+  degrade during loading.
