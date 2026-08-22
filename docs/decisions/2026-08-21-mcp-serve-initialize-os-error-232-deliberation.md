@@ -123,15 +123,15 @@ by evidence, not static reading.
 Proceed **evidence-first**, because the leading hypothesis (H0) is settled by a
 single capture run and the remaining fixes are individually small and bounded:
 
-1. **Capture the failure evidence first (T0).** Run the server with the exact
-   command line, cwd, and env the CLI uses for the child, capturing exit code
-   and `RUST_LOG=debug` stderr to a file, and check for a leftover
-   `.graphtor/*.lock`. Use a bounded driver that owns the child, waits at most
-   30 seconds, and terminates only that captured process on timeout. A nonzero
-   exit code with an early-exit message identifies the H0 sub-cause directly;
-   H0b additionally requires a Generation target.
+1. **Capture the failure evidence first (T0).** Invoke the actual target CLI
+   through a backup-first temporary transparent wrapper that proxies stdio
+   byte-for-byte and records allowlisted/redacted launch context, raw initialize
+   framing, exit, and stderr. Own the CLI process, bound it to 30 seconds, clean
+   up only its isolated process tree, and restore config on every outcome.
+   Direct replay is derived secondary evidence. A correlated nonzero early
+   exit identifies H0; H0b additionally requires a Generation target.
 2. **Build an out-of-process driver and branch proof (T1).** Spawn the real binary
-   with a controllable cwd/env, keep stdin open, send a protocol-valid
+   with a controllable cwd/env, hold a named stdin handle open, send a protocol-valid
    `initialize`, and make the sole pass assertion a successful initialize
    response. Capture exit, stderr, or a still-alive timeout only as diagnostic
    evidence explaining the red. For non-H1 fixtures, pin/prewarm model state
@@ -139,13 +139,13 @@ single capture run and the remaining fixes are individually small and bounded:
    than cold-cache wall-clock behavior. Stop gate: if the
    successful-response assertion cannot be made red for the evidenced
    repository-code cause, return to T0 rather than speculatively refactoring
-   startup. Operational-only H0c/H3-B use bounded actual-client before/after
+   startup.    H3-A replays T0's raw target-client transaction. Operational-only H0c/H3-B use bounded actual-client before/after
    transcripts instead of a permanently failing Cargo test.
 3. **Restore connectivity for the evidenced H0 sub-cause, split by width:** the
    runtime `cmd_serve` change (`056.003-T`) is **diagnostics-only and
-   parity-safe** — convert the silent exit-2 discovery failures into loud,
-   actionable errors and add a structured `mcp_serve_ready` event immediately
-   before the initialize-ready `serve_server` loop, **without** changing containment
+   parity-safe** — convert the four exit-2 messages to structured
+   `tracing::error!` events and add `mcp_serve_ready` immediately before the
+   `serve_server` call as preflight-complete/about-to-call evidence, **without** changing containment
    or discovery: `cmd_serve` keeps validating an explicit `--db-path` /
    `--config` against the authorized launch cwd through the shared
    `discover_served_databases` / `validate_path` / `is_reparse_point` primitives
@@ -168,12 +168,13 @@ single capture run and the remaining fixes are individually small and bounded:
    `generate_mcp_config` runs only from `install`/`install_full` and
    `cmd_upgrade` never rewrites `.mcp.json`, delivering the refreshed managed
    entry to **already-installed** workspaces is a separate H0a/H3-B1 task
-   (`056.009-T`: marker-safe refresh-on-upgrade as the primary path, with a
-   manual reinstall recipe as fallback), so the
+   (`056.009-T`: backup-first marker-safe refresh-on-upgrade as the primary
+   path, with a manual reinstall recipe as fallback), so the
    reporter's existing install is actually repaired. Isolate the unrelated H0b
    stale-lock liveness variant (record process start-time alongside pid so a
-   matching pid+start-time identity stays live **regardless of lock age**, age
-   evicting only as a fallback when strong identity is unavailable) and the
+   matching pid+start-time identity stays live **regardless of lock age**; a
+   live legacy pid-only lock also stays locked because ownership is ambiguous)
+   and the
    optional startup diagnosability sink as **separate conditional tasks**, taken
    only if evidenced, rather than bundling them into the single-cause fix.
    * **H0c fail-closed branch (`056.010-T`):** if T0 instead evidences a
@@ -184,25 +185,31 @@ single capture run and the remaining fixes are individually small and bounded:
      bounded code change that makes the cause more actionable (preceded by its
      own red test). Diagnostics (`056.006-T`) surface the cause but do not
      remediate it, so this branch owns the curative path that reaches the
-     healthy `initialize` handshake before runtime verification (T4). One causal
-       branch (H0a / H0b / H0c / H1 / H3) activates from the evidence; the
-       rest close *not-needed*. (H3 is a client/transport
+     healthy `initialize` handshake before runtime verification (T4). After
+     each approved repair, rerun the same probe; if another sequential H0c gate
+     appears, keep the task active and repeat or rescope before further
+     mutation. One causal branch (H0a / H0b / H0c / H1 / H3) activates from
+     the evidence; non-selected conditional tasks move to `done` with
+     `not-needed: <rationale>` comments. (H3 is a client/transport
      incompatibility owned by `056.011-T`, kept live but low-confidence, with
      **two modes**: **(A)** an rmcp/client-transport framing incompatibility
      (child alive, `initialize` never negotiates) and **(B)** the CLI
      ignoring/rejecting configured `cwd`, proven by T0's real-client diagnostic
      probe. B1 selects a supported CLI that honors managed `cwd` and keeps
      `056.008-T`/`056.009-T` active; B2 uses a supported independent mechanism
-     and closes them. Neither adds a server-side external-path fallback.)
+     and completes them `done` with rationale. Neither adds a server-side
+     external-path fallback.)
 4. **Only if H1 is evidenced, defer the model load off the handshake (T3):**
-   lazy-load *only* the embedding model via `tokio::sync::OnceCell` +
-   `spawn_blocking`, with a distinct retryable "model still loading" tool error
+   lazy-load *only* the embedding model via clone-shared per-server state such
+   as `Arc<tokio::sync::OnceCell<_>>` + `spawn_blocking`, with a distinct
+   retryable "model still loading" tool error
    — while **keeping DB open, lock acquisition, the pre-v4 gate, and the
    duplicate-intake preflight as pre-serve fail-closed gates** (do not convert
-   loud pre-connect failures into silent per-tool errors). Close as not-needed
-   if evidence does not implicate latency (Constitution Principle VI).
-5. **Verify against the real newest Copilot CLI** via `/mcp show
-   graphtor-docs`, record startup-log evidence, and document rollback.
+   loud pre-connect failures into silent per-tool errors). If not selected,
+   complete `done` with a not-needed rationale (Constitution Principle VI).
+5. **Verify against the real newest Copilot CLI** via three correlated
+   `/mcp show graphtor-docs` starts. Record CLI/config/timestamp/PID/capture
+   identity, separate preflight from handshake evidence, and document rollback.
 
 A `get_info` protocol-echo change is explicitly **excluded** as a no-op on
 rmcp 1.5; H3's levers are **(A)** an rmcp bump / client-transport framing fix
@@ -224,12 +231,14 @@ requires.
 * **III/IV Workspace isolation & CLI containment** — serve remains localhost
   STDIO; deterministic workspace-root resolution must still reject paths
   outside the workspace; no relaxation of containment.
-* **V Structured Observability** — add `mcp_serve_ready` immediately before
-  `serve_server`, keep completed handshake evidence separate, and add the
-  opt-in file-log sink only if stderr redirection is insufficient.
+* **V Structured Observability** — normalize exit diagnostics through tracing;
+  `mcp_serve_ready` means preflight complete/about to call `serve_server`;
+  completed handshake evidence stays separate. Add the opt-in sink only if
+  actual-client stderr/wrapper capture is insufficient.
 * **VI Single Responsibility** — an rmcp upgrade and the model-lazy-load are
   taken only if evidence requires, not speculatively.
-* **VII Destructive Approval** — the common path is non-destructive. If H0c
+* **VII Destructive Approval** — changing upgrade refresh writes a contained
+  byte-for-byte recovery file before mutating owned config. If H0c
   requires a pre-v4 rebuild via `graphtor-docs sync` or source-registry
   replacement, 056.010-T requires explicit operator approval and a backup
   before the state-changing remediation.
