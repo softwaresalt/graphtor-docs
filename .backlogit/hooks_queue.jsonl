@@ -971,3 +971,21 @@
 {"seq":972,"timestamp":"2026-08-22T20:54:50.9360604Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["priority"],"item_id":"056.020-T","schema_version":1}}
 {"seq":973,"timestamp":"2026-08-22T20:54:56.926148Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["priority"],"item_id":"056.018-T","schema_version":1}}
 {"seq":974,"timestamp":"2026-08-22T20:55:02.8102423Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["priority"],"item_id":"056.019-T","schema_version":1}}
+{"seq":975,"timestamp":"2026-08-22T21:37:35.6733033Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["title"],"item_id":"056.001-T","schema_version":1,"title_delta":{"from":"Run exact-CLI differential serve probe and select branch","to":"Run exact-CLI differential serve probe and order causes"}}}
+{"seq":976,"timestamp":"2026-08-22T21:37:41.4663433Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.015-T","schema_version":1}}
+{"seq":977,"timestamp":"2026-08-22T21:37:47.4112871Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.008-T","schema_version":1}}
+{"seq":978,"timestamp":"2026-08-22T21:37:53.3251432Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.009-T","schema_version":1}}
+{"seq":979,"timestamp":"2026-08-22T21:37:58.892005Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.011-T","schema_version":1}}
+{"seq":980,"timestamp":"2026-08-22T21:38:04.9133341Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["title"],"item_id":"056.002-T","schema_version":1,"title_delta":{"from":"Add out-of-process serve handshake regression harness (red)","to":"Add out-of-process serve handshake test driver"}}}
+{"seq":981,"timestamp":"2026-08-22T21:38:10.3803306Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.005-T","schema_version":1}}
+{"seq":982,"timestamp":"2026-08-22T21:38:15.8865943Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["priority"],"item_id":"056.007-T","schema_version":1}}
+{"seq":983,"timestamp":"2026-08-22T21:39:37.3481181Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"feature","item_id":"056-F","schema_version":1}}
+{"seq":984,"timestamp":"2026-08-22T21:39:42.8292476Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.017-T","schema_version":1}}
+{"seq":985,"timestamp":"2026-08-22T21:39:48.315577Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","changed_fields":["title"],"item_id":"056.016-T","schema_version":1}}
+{"seq":986,"timestamp":"2026-08-22T21:39:53.6380404Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.003-T","schema_version":1}}
+{"seq":987,"timestamp":"2026-08-22T21:39:59.029456Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.004-T","schema_version":1}}
+{"seq":988,"timestamp":"2026-08-22T21:40:04.6708562Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.020-T","schema_version":1}}
+{"seq":989,"timestamp":"2026-08-22T21:40:10.1819846Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.012-T","schema_version":1}}
+{"seq":990,"timestamp":"2026-08-22T21:40:15.789224Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.018-T","schema_version":1}}
+{"seq":991,"timestamp":"2026-08-22T21:40:21.6867464Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.019-T","schema_version":1}}
+{"seq":992,"timestamp":"2026-08-22T21:40:27.4422508Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"056.013-T","schema_version":1}}

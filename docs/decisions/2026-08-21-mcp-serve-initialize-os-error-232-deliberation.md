@@ -50,6 +50,10 @@ This is an investigate-first situation: the trigger is an external component
 more than one plausible cause exists. This artifact records the differential
 diagnosis and fixes the remediation ordering so the implementation plan can be
 executed test-first without over-committing to a single unverified hypothesis.
+The causes may be layered: correcting foreign cwd can expose a later lock,
+schema, model, or framing blocker, so every proven prerequisite remains in the
+causal chain until the exact client reaches a healthy initialize or is
+classified as unsupported.
 
 ## Evidence Gathered (read-only)
 
@@ -109,43 +113,44 @@ executed test-first without over-committing to a single unverified hypothesis.
 | H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** on a Generation target when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; multiple pre-serve exit paths; discovery + Generation-lock handling are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | **High** |
 | H1 | **Initialize latency from eager model load.** Cold-cache candle model load before the transport binds delays the handshake enough to trip a client connect timeout, after which the client teardown surfaces as 232. Secondary/contributing, not the primary 232 mechanism. | Heavy synchronous pre-transport model load | Yes — lazy-load model only | Medium |
 | H2 | Protocol-version negotiation mismatch via `get_info`. | — | — | **Ruled out** — rmcp 1.5 negotiates in-SDK; `get_info` change is a no-op; `LATEST` 2025-11-25 already newest |
-| H3 | **Client/transport incompatibility (two independently owned modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary secure diagnostic entry invoked through the exact real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same executable honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B) | Partly — **(A)** minimal Rust-1.75-compatible framing fix (`056.011-T`; rmcp 1.8.x excluded because it requires edition 2024); **(B1)** exact supported CLI identity honors managed `cwd`, activating managed-config work, or **(B2)** a documented client-honored independent mechanism (`056.019-T`); **no** server-side external-path fallback | Low |
+| H3 | **Client/transport incompatibility (two independently owned modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary secure diagnostic entry invoked through the exact real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same executable honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B) | Partly — **(A)** minimal Rust-1.75-compatible framing fix (`056.011-T`; rmcp 1.8.x excluded because it requires edition 2024); **(B1)** the same exact CLI passes a second contrast through a different documented working-directory mechanism, activating managed-config work, or **(B2)** that exact CLI has no safe mechanism and blocks shipment as unsupported-client (`056.019-T`); **no** server-side external-path fallback | Low |
 | H4 | Startup panic/early-exit writing to stdout. | — | — | Ruled out (stderr logging, no pre-serve stdout) |
 
-H0 is the leading hypothesis and is settled by a **single evidence run** that
-captures the server child's exit code and stderr under the exact cwd/env the
-CLI uses; a nonzero exit code with an early-exit message confirms it and may
-make the latency work (H1) unnecessary. H0 sub-causes and H1 are discriminated
-by evidence, not static reading.
+H0 is the leading hypothesis and begins with one controlled evidence contrast
+that captures the server child's exit code and stderr under the exact cwd/env
+the CLI uses. The process then iterates: if a cwd correction advances to a
+later blocker, H0a remains a proven prerequisite while the new H0b/H0c/H1/H3-A
+cause is added. Evidence, not static reading, orders the chain.
 
 ## Decision
 
-Proceed **evidence-first**, because the leading hypothesis (H0) is settled by a
-single capture run and the remaining fixes are individually small and bounded:
+Proceed **evidence-first**, because the leading hypothesis (H0) can be ordered
+by bounded contrasts and the remaining fixes are individually small and
+bounded:
 
 1. **Validate a secure non-shipping probe harness, then capture T0.**
-   `056.020-T` first proves independent full-duplex pumps, half-close
+   `056.020-T` first supplies the feature-gated `graphtor-mcp-probe` target at
+   `tools/mcp-probe/main.rs` and proves independent full-duplex pumps, half-close
    propagation, bounded buffers, continuous stderr drain, timeout/process-tree
    cleanup, redaction, component-by-component no-follow/reparse containment,
-   exclusive owner-protected backup, and exact-byte-or-absence restoration.
+   exclusive owner-protected backup, and    exact-byte-or-absence restoration. The real config substitution requires a
+   caller-supplied recorded approval receipt.
    T0 then launches the exact newest failing CLI executable/version/build from
    one controlled foreign directory for a control entry without `cwd` and a
    minimal-delta treatment entry requesting canonical project-root `cwd`.
    Record CLI-assigned wrapper identity and inner server identity separately.
    A correlated nonzero early exit identifies H0; H0b additionally requires a
    Generation target. The wrapper is diagnostic-only and cannot satisfy T4.
-2. **Build an out-of-process driver and branch proof (T1).** Spawn the real binary
+2. **Build a green out-of-process driver (T1).** Spawn the real binary
    with a controllable cwd/env, hold a named stdin handle open, send a protocol-valid
-   `initialize`, and make the sole pass assertion a successful initialize
-   response. Capture exit, stderr, or a still-alive timeout only as diagnostic
-   evidence explaining the red. For non-H1 fixtures, pin/prewarm model state
-   out of the path; for H1 use an injected blocking/failing loader seam rather
-   than cold-cache wall-clock behavior. Stop gate: if the
-   successful-response assertion cannot be made red for the evidenced
-   repository-code cause, return to T0 rather than speculatively refactoring
-   startup. H3-A replays T0's unmodified bidirectional target-client
-   transaction. Operational-only H0c/H3-B use bounded actual-client before/after
-   transcripts instead of a permanently failing Cargo test.
+   `initialize`, concurrently drain bounded stderr, and expose a successful
+   initialize response as the positive signal. T1 itself ends green and commits
+   no branch-specific failure. Each selected curative task owns its failing
+   assertion, observes red, implements, and returns green before completion.
+   For H1 use an injected blocking/failing loader seam rather than cold-cache
+   wall-clock behavior. H3-A deterministically replays T0's captured
+   transaction. Operational-only H0c/H3-B use bounded actual-client
+   before/after transcripts.
 3. **Restore connectivity only for the evidenced branch, with isolated
    ownership.** Non-conditional T2 diagnostics (`056.003-T`) introduce one
    exhaustive typed preflight-exit seam covering all normal exits (including
@@ -154,49 +159,59 @@ single capture run and the remaining fixes are individually small and bounded:
    H0a uses typed managed-config outcomes (`056.017-T`), generated canonical
    `cwd` (`056.008-T`), a no-follow contained recovery primitive
    (`056.018-T`), and existing-install upgrade orchestration (`056.009-T`).
-   H0b first pins shared `DatabaseLock` and `WorkspaceLock` policy
-   (`056.016-T`), then implements high-resolution process identity plus a
-   boot/session discriminator (`056.007-T`); ambiguous identity stays locked.
+   H0b first records a passing shared `DatabaseLock`/`WorkspaceLock`
+   characterization (`056.016-T`), then `056.007-T` owns the red/green
+   production change: high-resolution process identity plus a boot/session
+   discriminator under one conservative policy. Ambiguous and live legacy
+   pid-only identity stays locked; evidenced legacy reused-pid recovery is
+   exact-lock, backup-first, and approval-gated.
    H0c repairs state without weakening a gate (`056.010-T`). The optional sink
    (`056.006-T`) uses one exclusive absolute owner-protected file per attempt
    and is selected only when stderr is unavailable and env inheritance is
    proven.
 4. **Only if H1 is evidenced, share one supervised lazy model owner across MCP
    and Generation sync.** Typed resolver outcomes (`056.014-T`) distinguish
-   `Loaded`, terminal `Disabled`, and retryable `Failed`; the lifecycle
-   (`056.005-T`) owns one monitored blocking task and deterministic retry/drop
-   behavior; `cmd_serve` wiring (`056.015-T`) passes clones to `DocServer` and
-   background sync without blocking initialize. DB/lock/schema/intake gates
-   remain pre-serve fail-closed.
+   `Loaded`, terminal `Disabled`, and retryable `Failed`; the shared
+   `src/embed/lifecycle.rs` owner (`056.005-T`) defines versioned
+   Loading/Failed/Disabled MCP fields, one serialized retry, remediation, and
+   terminal-disabled fallback metadata. `cmd_serve` wiring (`056.015-T`) lands
+   after preflight diagnostics and keeps Generation sync subscribed across
+   `Failed → Loading → Ready`. DB/lock/schema/intake gates remain pre-serve
+   fail-closed.
 5. **Keep H3 modes separate.** H3-A transport/framing belongs to `056.011-T`
    and must use an edition-2021/Rust-1.75-compatible fix; rmcp 1.8.x is
-   excluded. H3-B client cwd capability belongs to `056.019-T`; temporary
-   capability proof may activate managed-config work but cannot satisfy
-   production acceptance. Neither mode adds an external-path fallback.
+   excluded; a fork/patch override requires separate deliberation. H3-B client
+   cwd capability belongs to `056.019-T`. B1 requires the same exact CLI to
+   pass a second contrast through a different documented working-directory
+   mechanism; B2 means that exact CLI has no safe mechanism and blocks the
+   shipment as unsupported-client. Neither mode adds an external-path fallback,
+   and only T4 accepts production.
 6. **Verify production parity with the exact newest failing CLI identity.**
-   Three `/mcp show graphtor-docs` starts must use the restored production
+   After a managed branch records target-workspace upgrade refresh and its
+   production config hash, three `/mcp show graphtor-docs` starts must use the restored production
    command/args/cwd/env. Record CLI path/version/build, production config hash,
    server PID, timestamp, capture path, and result. T0's wrapper, temporary
    config, executable substitution, wrapper PID, and wrapper-only logs are
-   invalid T4 evidence.
+   invalid T4 evidence. If the optional diagnostic sink landed, at least one
+   start runs with its gate off.
 
 A `get_info` protocol-echo change remains excluded as a no-op on rmcp 1.5.
 H3-A and H3-B are taken only when T0 selects their distinct evidence and are
 owned by `056.011-T` and `056.019-T`, respectively.
 
 The latest exact-HEAD standard review of
-`dddcac33a1e0adae27ef34f0870e7d279676ba7f` was `BLOCKED`; this decision now
-reflects additional correction round 2. A fresh current-HEAD review is still
-required, so no PASS is claimed.
+`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc` was `BLOCKED`; this decision now
+reflects the final user-authorized correction round 3. A fresh current-HEAD
+review is still required, so no PASS is claimed.
 
 ## Constitution Check
 
 * **I Safety-First Rust** — no `unsafe`; all new paths return `Result`; changes
   must pass `cargo clippy --all-targets -- -D warnings -D clippy::pedantic`.
-* **II Test-First (NON-NEGOTIABLE)** — repository-code branches are preceded
-  by observed-red tests; operational-only H0c/H3-B use bounded actual-client
-  before/after evidence, and any code change on those branches gets its own red
-  test.
+* **II Test-First (NON-NEGOTIABLE)** — T1 and characterization infrastructure
+  finish green. Each curative repository-code task owns its observed red,
+  implementation, and green result atomically; operational-only H0c/H3-B use
+  bounded actual-client before/after evidence.
 * **III/IV Workspace isolation & CLI containment** — serve remains localhost
   STDIO; deterministic workspace-root resolution must still reject paths
   outside the workspace; no relaxation of containment.
@@ -205,18 +220,23 @@ required, so no PASS is claimed.
   `mcp_serve_ready` remains preflight evidence, not handshake evidence. The
   opt-in sink is selected only when stderr is unavailable and env inheritance
   is proven.
-* **VI Single Responsibility** — probe, diagnostics, lock policy, model
-  lifecycle, config mutation, recovery, H3 modes, and documentation are
-  separately owned; conditional tasks are taken only when evidence requires.
-* **VII Destructive Approval** — the validated T00 harness exclusively creates
-  an owner-only backup and restores exact bytes/absence around T0. Changing
+* **VI Single Responsibility** — probe, diagnostics, lock policy, shared model
+  lifecycle, typed config mutation, generated fields, narrow handle-safe
+  recovery, upgrade orchestration, H3 modes, T4 acceptance, and documentation
+  are separately owned.
+* **VII Destructive Approval** — T0 requires and records explicit approval
+  before the validated T00 harness creates an owner-only backup and substitutes
+  user config, then restores exact bytes/absence. Changing
   upgrade refresh uses the typed contained recovery primitive before mutation.
   If H0c
   requires a pre-v4 rebuild via `graphtor-docs sync` or source-registry
   replacement, 056.010-T requires explicit operator approval and a backup
   before the state-changing remediation.
-* **VIII Safety Modes** — investigate-first: T0 selects and T1 confirms before
-  the fix.
+  A live legacy pid-only lock is never age-evicted or used to terminate a
+  process; `056.007-T` requires explicit approval before exact-lock
+  backup/removal.
+* **VIII Safety Modes** — investigate-first: T0 orders causes before curative
+  work; each curative task proves its own red/green.
 
 ## Open Questions / Residual Risk
 
@@ -232,11 +252,13 @@ required, so no PASS is claimed.
   T0/T4 may set one unique absolute opt-in sink path per attempt. If env
   inheritance is absent, only non-substituting OS tracing is acceptable for T4.
 * Stale-lock liveness is decided by pid today; pid reuse after an ungraceful
-  kill yields a false "locked" — prefer recording process start-time over
-  `--force` if H0b is implicated.
+  kill yields a false "locked". The selected policy requires strong
+  start-time plus boot/session identity; live legacy pid-only records stay
+  locked until approval-gated exact-lock recovery.
 * If H3-A dominates, candidate rmcp metadata must be checked before coding;
-  1.8.x is excluded by edition 2024. H3-B must preserve exact CLI identity and
-  distinguish temporary capability proof from restored-production acceptance.
+  1.8.x is excluded by edition 2024 and a fork/patch requires a new
+  deliberation. H3-B preserves exact CLI identity; B1 proves a distinct
+  documented mechanism, while B2 blocks shipment as unsupported-client.
 * If H1 is taken, one owner must preserve semantic-search and Generation
   embeddings. `research_topic` must not silently fall back while Loading or
   Failed; terminal Disabled preserves the established disabled behavior.
