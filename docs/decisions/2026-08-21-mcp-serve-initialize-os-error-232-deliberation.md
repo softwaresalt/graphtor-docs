@@ -104,7 +104,7 @@ executed test-first without over-committing to a single unverified hypothesis.
 | H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; six pre-serve exit paths; discovery + locks are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | **High** |
 | H1 | **Initialize latency from eager model load.** Cold-cache candle model load before the transport binds delays the handshake enough to trip a client connect timeout, after which the client teardown surfaces as 232. Secondary/contributing, not the primary 232 mechanism. | Heavy synchronous pre-transport model load | Yes — lazy-load model only | Medium |
 | H2 | Protocol-version negotiation mismatch via `get_info`. | — | — | **Ruled out** — rmcp 1.5 negotiates in-SDK; `get_info` change is a no-op; `LATEST` 2025-11-25 already newest |
-| H3 | rmcp 1.5 vs newest CLI framing/transport incompatibility. | Regression tracks CLI builds; rmcp pinned old | Partly — rmcp bump (1.8.0 available) | Low |
+| H3 | rmcp 1.5 vs newest CLI framing/transport incompatibility. | Regression tracks CLI builds; rmcp pinned old | Partly — rmcp bump (1.8.0 available) | Low (owned by `056.011-T`) |
 | H4 | Startup panic/early-exit writing to stdout. | — | — | Ruled out (stderr logging, no pre-serve stdout) |
 
 H0 is the leading hypothesis and is settled by a **single evidence run** that
@@ -128,23 +128,25 @@ single capture run and the remaining fixes are individually small and bounded:
    mode, with model-cache state pinned so the harness is deterministic. Stop
    gate: if the harness cannot be made red, return to T0 rather than
    speculatively refactoring startup.
-3. **Fix the single evidenced H0 sub-cause (T2), scoped by evidence:** make
-   `serve` robust to the launching cwd by resolving the workspace root only
-   from explicit inputs (an `--db-path` / `--config` argument) or the launch
-   cwd itself — **never** by walking to parent directories — so resolution can
-   neither escape nor climb above the launch-cwd containment boundary
-   (Principle III/IV), and convert the silent exit-2 discovery failure into a
-   loud, actionable error. Any resolved candidate that lands outside or above
-   the containment boundary MUST be refused, covered by an explicit refusal
-   test. **Curative-connectivity note:** a loud early-exit alone does not clear
+3. **Restore connectivity for the evidenced H0 sub-cause, split by width:** the
+   runtime `cmd_serve` change (`056.003-T`) is **diagnostics-only and
+   parity-safe** — convert the silent exit-2 discovery failures into loud,
+   actionable errors and add a serve-ready log, **without** changing containment
+   or discovery: `cmd_serve` keeps validating an explicit `--db-path` /
+   `--config` against the authorized project-root cwd through the shared
+   `discover_served_databases` / `validate_path` / `is_reparse_point` primitives
+   (`candidate_root = cwd`), with **no target-derived/split authorized root** and
+   **no** parent-directory walk (Principle III/IV). **Curative-connectivity
+   note:** a loud early-exit alone does not clear
    OS error 232, and registry discovery, posture/Generation-target validation,
    DB auto-discovery, and background sync are **all** anchored to the launch
    `cwd` (`load_source_config` → `cwd/.graphtor/config`; `validate_path(..,
    root=cwd)`; `cwd/.graphtor`; `acquire_plan::plan(.., &cwd)`). The
    curative H0a lever therefore lives in a separate launch-contract task
    (`056.008-T`) that pins the child's trusted launch identity — primarily the
-   child **working directory** to the project root (which restores
-   registry-backed Generation/background-sync together without relaxing the
+   child **working directory** to the canonical project root (which restores
+   registry-backed Generation/background-sync together and makes the runtime's
+   existing explicit-target validation resolve correctly, without relaxing the
    runtime cwd boundary), with explicit `--db-path` / `--config` only as a
    complement, validated as **project-root-derived** paths (typically within
    `.graphtor`; the pinned `cwd` equals the project root by **equality**, not a
@@ -153,7 +155,8 @@ single capture run and the remaining fixes are individually small and bounded:
    `generate_mcp_config` runs only from `install`/`install_full` and
    `cmd_upgrade` never rewrites `.mcp.json`, delivering the refreshed managed
    entry to **already-installed** workspaces is a separate H0a task
-   (`056.009-T`: refresh-on-upgrade or a required reinstall recipe), so the
+   (`056.009-T`: marker-safe refresh-on-upgrade as the primary path, with a
+   manual reinstall recipe as fallback), so the
    reporter's existing install is actually repaired. Isolate the unrelated H0b
    stale-lock liveness variant (record process start-time alongside pid so a
    matching pid+start-time identity stays live **regardless of lock age**, age
@@ -170,7 +173,8 @@ single capture run and the remaining fixes are individually small and bounded:
      remediate it, so this branch owns the curative path that reaches the
      healthy `initialize` handshake before runtime verification (T4). Exactly
      one causal branch (H0a / H0b / H0c / H1) activates from the evidence; the
-     rest close *not-needed*.
+     rest close *not-needed*. (H3 is the fifth branch — an rmcp/client-transport
+     framing incompatibility owned by `056.011-T` — kept live but low-confidence.)
 4. **Only if H1 is evidenced, defer the model load off the handshake (T3):**
    lazy-load *only* the embedding model via `tokio::sync::OnceCell` +
    `spawn_blocking`, with a distinct retryable "model still loading" tool error
@@ -182,7 +186,9 @@ single capture run and the remaining fixes are individually small and bounded:
    graphtor-docs`, record startup-log evidence, and document rollback.
 
 A `get_info` protocol-echo change is explicitly **excluded** as a no-op on
-rmcp 1.5; H3's only real lever is an rmcp bump, taken only if evidence requires.
+rmcp 1.5; H3's only real lever is an rmcp bump / client-transport framing fix,
+**owned by the queued conditional task `056.011-T`** (H3 kept live but
+low-confidence) and taken only if evidence requires.
 
 ## Constitution Check
 
@@ -204,6 +210,12 @@ rmcp 1.5; H3's only real lever is an rmcp bump, taken only if evidence requires.
 
 * The exact cwd/env/lifecycle the newest CLI uses to launch the child is not
   yet captured; T0 must record it along with the child exit code and stderr.
+* The exact Copilot CLI MCP config schema (does the stdio entry use `type` vs
+  `transport`; does it honor `cwd`/`env`?) is not yet confirmed for the failing
+  build; T0 (`056.001-T`) must record it and `056.008-T` emits the evidenced
+  field while preserving legacy recognition. Local `.mcp.json` siblings use
+  `type: "stdio"` + `env`, but this is not asserted as the root cause without
+  evidence (F7).
 * Diagnosability gap: if the CLI discards child stderr, early-exit reasons are
   invisible — a documented stderr-redirect recipe is the low-complexity
   default (already exercised in T0). An opt-in runtime file-log sink is
@@ -215,7 +227,8 @@ rmcp 1.5; H3's only real lever is an rmcp bump, taken only if evidence requires.
   kill yields a false "locked" — prefer recording process start-time over
   `--force` if H0b is implicated.
 * If H3 ever dominates, an rmcp bump (1.8.0 is available) may pull transitive
-  API changes; that risk is contained to its own conditional task and review.
+  API changes; that risk is contained to its own conditional task (`056.011-T`)
+  and review.
 * If H1/T3 is taken, a lazy model load shifts first-`search_semantic` latency
   to first use and must preserve semantic-search correctness; `research_topic`
   currently *silently* falls back to unranked text search when the model is
