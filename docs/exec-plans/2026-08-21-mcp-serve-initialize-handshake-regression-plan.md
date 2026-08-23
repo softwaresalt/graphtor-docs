@@ -602,6 +602,16 @@ New-Item -ItemType Directory -Force logs
 $probeNonce = [guid]::NewGuid().ToString('N')
 $probeTargetDir = "logs/probe/$probeNonce"
 New-Item -ItemType Directory -Force $probeTargetDir | Out-Null
+# Enforce an owner-only ACL (disable inheritance, grant only the current
+# principal) and verify it before either Cargo command runs:
+$probeAcl = Get-Acl $probeTargetDir
+$probeAcl.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($probeAcl.Access)) { $probeAcl.RemoveAccessRule($rule) | Out-Null }
+$probeRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    "$env:USERDOMAIN\$env:USERNAME", 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+$probeAcl.AddAccessRule($probeRule)
+Set-Acl -Path $probeTargetDir -AclObject $probeAcl
+if ((Get-Acl $probeTargetDir).Access.Count -ne 1) { throw "owner-only ACL verification failed for $probeTargetDir" }
 cargo +1.75.0 check --features probe-harness --bin graphtor-mcp-probe --target-dir $probeTargetDir
 # The check above only type-checks the probe; run the three required
 # self-test groups explicitly so the harness is verified, not merely compiled:
