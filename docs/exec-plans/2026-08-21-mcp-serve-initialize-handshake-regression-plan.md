@@ -115,7 +115,7 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 | Shared lazy lifecycle (conditional H1) | `src/embed/lifecycle.rs` | Supervised clone-shared lifecycle state machine only; expose a stable typed lifecycle-state accessor; the versioned Loading/Failed/Disabled availability projection and `src/mcp/server.rs` consumers move to `056.025-T` → `056.005-T` |
 | Serve/background-sync orchestration (conditional H1) | `src/main.rs::cmd_serve`, `spawn_background_sync` | Inject one shared lazy owner into `DocServer` and Generation sync; neither eager load nor background sync may block initialize; consume the 056.025-T availability projection → `056.015-T` |
 | MCP availability projection (conditional H1) | `src/mcp/server.rs` | Own the versioned Loading/Failed/Disabled MCP availability projection and `search_semantic`/`research_topic` fallback metadata (moved from `056.005-T`/`056.015-T`); red-first projection/tool-contract tests; no `cmd_serve`/background sync → `056.025-T` |
-| Server transport compatibility (conditional H3-A) | rmcp pin + STDIO wiring, after `056.015-T` | Own transport types/wiring only; reacquire the exact-client transaction SEPARATELY before and after the fix through the `056.022-T` wrapper (semantic initialize correlation plus redacted transcript digest, not raw replay or persistence), red/green and Rust 1.75 proof; T4 owns production acceptance → `056.011-T` |
+| Server transport compatibility (conditional H3-A) | rmcp pin + STDIO wiring; standing dep `056.003-T`, after `056.015-T` ONLY when H1+H3-A co-selected | Own transport types/wiring only; reacquire the exact-client transaction SEPARATELY before and after the fix through the `056.022-T` wrapper (semantic initialize correlation plus redacted transcript digest, not raw replay or persistence), red/green and Rust 1.75 proof; T4 owns production acceptance → `056.011-T` |
 | Client isolated-config + cwd compatibility (conditional H3-B) | actual Copilot CLI capability evidence | Sole H3-B terminal: consume T0's `H3-B-candidate` and adjudicate BOTH a documented explicit isolated-config discovery mechanism (owning the one bounded attempt, plus one deferred control/treatment contrast through the `056.001-T` runner when isolation becomes possible) and a distinct working-directory mechanism; H3-B1 is forward evidence, H3-B2 blocks, inconclusive blocks with evidence (not Unsupported); never reads/mutates the user root config; temporary proof only activates managed-config tasks and never satisfies T4 → `056.019-T` |
 | Operator documentation (documentation-only) | `056.012-T`: `docs/troubleshooting.md` + the `### search_semantic`/`### research_topic`/`### get_status` headings and a `Runtime diagnostics and recovery` subsection in `docs/mcp-tools.md`. `056.013-T`: the `### 2. Configure your MCP client` managed-launch content in `docs/mcp-tools.md` + `### serve`/`### install`/`### upgrade`/`### uninstall` in `docs/cli-reference/graphtor-docs.md` | Diagnostics plus selected H0b/H0c/H1 contracts (no CLI-reference) → `056.012-T`; managed launch/recovery and H3, reconciling the `type`/`transport` discriminator → `056.013-T` |
 | Tests | `tests/common/mcp_driver.rs`, `tests/mcp_serve_handshake_test.rs`, and colocated focused tests | T1 owns the shared driver module; each production task owns at most three grouped scenarios. Actual-client acceptance remains the final H3/T4 gate |
@@ -367,10 +367,11 @@ linked deliberation. This plan restores connectivity **evidence-first** and
     Cargo tests; do not make a committed regression depend on cold-cache
     wall-clock timing or network access.
 * Stop gate: for a repository-code branch, if its successful-`initialize`
-  assertion cannot be made **red for the confirmed T0 cause**, halt and return
-  to T0 rather than refactoring startup on a green or ambiguous test. For
-  external-only H0c/H3-B, require a reproducible bounded before transcript
-  instead.
+  assertion cannot be made **red for the confirmed T0 cause**, **block T4 and
+  create a NEW bounded Stage follow-up** to derive the missing selected-branch
+  red rather than refactoring startup on a green or ambiguous test. T0 is
+  one-shot and is **never reopened**. For external-only H0c/H3-B, require a
+  reproducible bounded before transcript instead.
 * Deliverable: the green shared `tests/common/mcp_driver.rs` module with a
   concurrent bounded stderr drain and neutral self-tests. T1 commits no
   branch-specific failing assertion.
@@ -385,8 +386,11 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   deterministic loader seam plus the runtime transcript. Operational-only H0c
   and H3 mode B use the same bounded actual-client probe before and after the
   approved state/client repair rather than leaving an unsatisfiable Cargo test.
-  H3 mode A replays the unmodified bidirectional transaction captured by T0;
-  a generic valid initialize request is not an adequate framing regression.
+  H3 mode A reacquires the exact-client transaction SEPARATELY before and after
+  the fix through the `056.022-T` wrapper and `056.023-T` observer (semantic
+  initialize correlation plus redacted transcript digest, not raw-frame replay or
+  persistence); a generic valid initialize request is not an adequate framing
+  regression.
   Any H0c actionability code change receives its own red test. Every task ends
   with all tests green; no failing-suite handoff is permitted.
 * Width: test infrastructure only.
@@ -458,13 +462,11 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 
 #### T2d — (Conditional on H0a/H3-B1) Managed launch-contract generation — backlog `056.008-T`
 
-* **Two parts.** (1) The generator `type`/`transport` discriminator
-  reconciliation visits **UNCONDITIONALLY**: whenever exact-CLI evidence shows a
-  `type` vs `transport` mismatch, reconcile the generated stdio discriminator to
-  the CLI-honored field regardless of the primary H0/H1/H3-A cause; if no
-  mismatch is evidenced, close that part with
-  `not-needed: no type/transport mismatch evidenced`. (2) The canonical `cwd`
-  generation is evidence-selected.
+* **cwd generation only (discriminator split out).** This task now owns ONLY the
+  evidence-selected canonical `cwd` generation. The generator `type`/`transport`
+  discriminator reconciliation was split into the UNCONDITIONAL discriminator
+  task **`056.026-T`** (T2g) and its existing-install delivery **`056.027-T`**
+  (T2h); this task no longer reconciles or emits the discriminator.
 * For the cwd-generation part: only if T0 evidences H0a and the target build
   honors `cwd`, or if H3-B1 proves the same exact CLI honors a different
   documented working-directory mechanism. If the current build supports no safe
@@ -487,14 +489,17 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 * **Containment:** validate the pinned `cwd` by equality to the canonicalized
   project root. Add no target-derived/split authorized root, target
   self-authorization, parent traversal, or external-path fallback.
-* **Config-schema (F7):** emit the T0-evidenced supported transport field. The
-  sibling `.mcp.json` entries (`backlogit`/`github`/`context7`/`tavily`) use
-  `type: "stdio"` while `managed_server_value` emits `transport: "stdio"`; if T0
-  confirms the Copilot CLI honors `type`, emit `type` (keeping or migrating the
-  legacy `transport` recognition via `is_exact_legacy_shape`). Preserve
-  marker-based recognition so already-installed managed entries still refresh
-  after gaining `cwd` plus the evidenced stdio key. Do **not** claim the field name is the
-  current root cause without T0 evidence.
+* **Config-schema (F7) — owned by `056.026-T` (T2g), not this task:** the
+  generator `type`/`transport` discriminator reconciliation (emit the
+  T0-evidenced supported field; the sibling `.mcp.json` entries
+  `backlogit`/`github`/`context7`/`tavily` use `type: "stdio"` while today's
+  `managed_server_value` emits `transport: "stdio"`; keep or migrate the legacy
+  `transport` recognition via `is_exact_legacy_shape`) is the UNCONDITIONAL
+  discriminator task `056.026-T`. This task preserves marker-based recognition so
+  already-installed managed entries still refresh after gaining `cwd`, composing
+  whatever discriminator `056.026-T` reconciled; it does **not** decide or emit
+  the discriminator itself, and no one claims the field name is the current root
+  cause without T0 evidence.
 * **Test (test-first proof for this width):** three grouped scenarios cover
   managed-value fields, the unrelated-parent launch below, and
   containment/legacy-marker preservation. The managed-launch integration test
@@ -513,12 +518,11 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   managed entry on `cmd_upgrade`/reinstall). Do not assume a binary upgrade
   rewrites `.mcp.json`.
 * `056.013-T` owns the selected stdio-field and managed-cwd documentation.
-* Contingency: when neither H0a nor H3-B1 selects managed `cwd`, close the
-  cwd-generation part with a `not-needed: <rationale>` backlog comment; the
-  discriminator reconciliation still visits unconditionally (closing `not-needed`
-  only when no `type`/`transport` mismatch is evidenced). `not-needed` is a
-  disposition, not a backlog status. Width: managed launch-config generation
-  only.
+* Contingency: when neither H0a nor H3-B1 selects managed `cwd`, close this
+  task with a `not-needed: managed cwd generation not selected` backlog comment.
+  The `type`/`transport` discriminator reconciliation is `056.026-T` (T2g), not
+  this task. `not-needed` is a disposition, not a backlog status. Width: managed
+  cwd launch-config generation only.
 
 #### T2e — (Conditional on H0a/H3-B1) Deliver the launch contract to existing installs — backlog `056.009-T`
 
@@ -564,6 +568,59 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 * Contingency: move to `done` with a `not-needed: 056.008-T not selected`
   comment whenever `056.008-T` closes.
   Width: install/upgrade delivery of the managed entry only.
+
+#### T2g — (Conditional on discriminator mismatch) Generator type/transport discriminator reconciliation — backlog `056.026-T`
+
+* **Unconditional-when-evidenced, split from T2d.** Whenever exact-CLI evidence
+  (T0 / `056.019-T`) shows a docs/generator `type` vs `transport` mismatch,
+  reconcile the generated stdio discriminator in `managed_server_value` to the
+  exact CLI-honored field regardless of the primary H0/H1/H3-A cause; if no
+  mismatch is evidenced, close with `not-needed: no type/transport mismatch
+  evidenced`.
+* **Depends only on `056.019-T`** (the completed evidence classification), NOT on
+  `056.017-T`/`056.024-T`/`056.018-T`. Owns ONLY the `managed_server_value`
+  discriminator field plus exact legacy-shape recognition (`is_exact_legacy_shape`,
+  recognizing both the pre- and post-reconciliation discriminator) and focused
+  generation tests. No cwd field (`056.008-T`), no mutation API (`056.017-T`), no
+  recovery, no delivery.
+* **Test-first:** red-then-green three groups — discriminator reconciled to the
+  CLI-honored field; legacy-shape recognition across old and new discriminator;
+  containment/marker preservation. This proves generation only.
+* **Co-selection assembly rule:** when both the discriminator remedy and the
+  H0a/H3-B1 cwd remedy (`056.008-T`) are selected into one managed-config
+  shipment, Stage orders `056.026-T` before `056.008-T` at shipment-assembly time
+  (discriminator reconciled first, then the cwd field composed) — a co-selection
+  ordering, not a standing backlog edge. Width: generated discriminator field
+  only.
+
+#### T2h — (Conditional on discriminator existing-install delivery) Deliver reconciled discriminator to existing installs — backlog `056.027-T`
+
+* **Bounded existing-install discriminator delivery, split so the discriminator
+  remedy ships without the cwd chain.** `056.009-T` cannot own this: it closes
+  `not-needed` when `056.008-T` (cwd) is unselected, so in a discriminator-only
+  remedy it would deliver nothing. This task refreshes ONLY the marked managed
+  entry's stdio discriminator on `cmd_upgrade`.
+* **Depends on `056.026-T`** (reconciled generated value) **and `056.018-T`**
+  (safe no-follow recovery; transitively `056.024-T`/`056.017-T`). It does NOT
+  depend on `056.008-T` or `056.009-T`. Because a discriminator existing-install
+  mutation IS a sensitive managed-`.mcp.json` mutation, the activation predicates
+  of `056.017-T`/`056.024-T`/`056.018-T` INCLUDE this branch, so they are selected
+  (not `not-needed`) and produce their typed API and recovery handles whenever
+  this task is selected — no task depends on a prerequisite that closed
+  `not-needed`.
+* **Composition:** compose `056.017-T` typed config actions and `056.018-T`
+  recovery handles in `cmd_upgrade` to refresh only the discriminator field,
+  width-separated from `056.009-T`'s cwd/recovery refresh. Preserve
+  unowned/non-JSON bytes; user collision is a typed non-mutating outcome;
+  containment stays a hard `PathViolation`; backup-first through the verified
+  handle.
+* **Test-first + re-probe:** red-then-green three groups (nested marked/legacy
+  discriminator refresh with recovery metadata; no-change/collision/non-JSON
+  preservation without backup; recovery/mutation failure with original bytes
+  intact). On a shipping discriminator remedy unit, own exactly one exact-client
+  re-probe after delivery; record the post-refresh production config hash.
+  `056.013-T` owns docs (incl. the README Quick Start example). Width:
+  existing-install discriminator delivery only.
 
 #### T2b — (Conditional H0b) Shared lock-policy harness and implementation — backlogs `056.016-T` / `056.007-T`
 
@@ -749,10 +806,19 @@ retry contract.
   placement or working-directory mechanism (activates managed-config tasks, cannot
   satisfy T4). Never deliberately read or mutate the user root config.
 * **B2** means the exact identity supports no safe isolated-config or
-  working-directory mechanism: close managed tasks done-plus-not-needed and block
-  shipment/T4 as `unsupported-client`. An INCONCLUSIVE result (neither proven
-  supported nor proven unsupported) blocks with the captured evidence rather than
-  being classified Unsupported. Switching CLI identity is not a fix for this
+  working-directory mechanism: mark `056.019-T` `done` with the recorded H3-B2
+  classification and block shipment/T4 as `unsupported-client`. The managed-config
+  family is thereby unselected; `056.019-T` does NOT itself mutate any sibling
+  task's status — Stage's Final Assembly Protocol applies the `done` +
+  `not-needed: H3-B2` disposition to those unselected tasks (selection gate). Only
+  a conclusive **B1** (supported) or a proven **B2** is a terminal verdict that
+  closes `056.019-T` and lets `049-S`
+  close. An **INCONCLUSIVE** result (neither proven supported nor proven
+  unsupported) is NOT terminal and NOT trusted cause selection: it moves
+  `056.019-T` to **`blocked`** status with the captured evidence, **blocks
+  `049-S` closure**, and **requires a NAMED new bounded Stage follow-up** (or
+  operator adjudication); it is never `done`, never classified Unsupported, and
+  never switches CLI identity. Switching CLI identity is not a fix for this
   acceptance contract.
 * Record exact CLI executable path, version/build, invocation, and capability.
   Neither mode may add a server-side external-path fallback. T4 still requires
@@ -819,8 +885,10 @@ retry contract.
   robustness), plus the
   **curative** fix tasks, each conditional and moved to **`done` with a
   `not-needed: <rationale>` log comment** when
-  its hypothesis is not the evidenced cause: T2d launch-contract (H0a/H3-B1) =
-  `056.008-T`, T2e existing-install migration (H0a/H3-B1) = `056.009-T`, T2b
+  its hypothesis is not the evidenced cause: T2d cwd launch-contract (H0a/H3-B1) =
+  `056.008-T`, T2g discriminator generation = `056.026-T`, T2h discriminator
+  existing-install delivery = `056.027-T`, T2e existing-install cwd migration
+  (H0a/H3-B1) = `056.009-T`, T2b
   stale-lock harness/implementation (H0b) = `056.016-T`/`056.007-T`, T2c
   diagnosability = `056.006-T`, T2f H0c remediation = `056.010-T`, H1 resolver/
   lifecycle/projection/orchestration =
@@ -829,10 +897,11 @@ retry contract.
   `056.017-T`/`056.018-T`,   core transport = `056.020-T`,
   process spawning/teardown = `056.022-T`, observer seam/evidence = `056.023-T`,
   isolated workspace/fixtures = `056.021-T`, safe no-follow decision =
-  `056.024-T`, and documentation-only
+  `056.024-T`, standalone-probe CI = `056.028-T`, and documentation-only
   tasks `056.012-T`/`056.013-T`. T0 may activate an **ordered sequence**:
-  **H0a → 056.017 + 056.008 + 056.024 + 056.018 +
-  056.009**; **H0b → 056.016 + 056.007**; **H0c → 056.010** with 056.006
+  **H0a → 056.017 + 056.008 (cwd) + 056.024 + 056.018 +
+  056.009**; **discriminator → 056.026 + 056.027 (+ 056.017 + 056.024 + 056.018)**;
+  **H0b → 056.016 + 056.007**; **H0c → 056.010** with 056.006
   independently evidence-gated; **H1 → 056.014 + 056.005 + 056.025 + 056.015**;
   **H3-A → 056.011**; **H3-B1 → 056.019 + managed-config tasks**;
   **H3-B2 → 056.019 and BLOCKED**. A cwd correction that advances to a later
@@ -894,10 +963,28 @@ than restate every clause:
   selected remediation units (unshipped until T0 selects them, grouped by cause
   family), PHASE 3 final acceptance/docs (unshipped, dependent on the selected
   remedies). Remedy family entries depend on the evidence foundation
-  (`056.003-T`, or `056.019-T` for the H3-B-selected managed-config group);
-  intra-family order is a true dependency edge, but unrelated cause families are
-  NOT chained into a total order. Sequential single-shipment execution is
-  enforced by Orchestrator/Ship under P-001/P-016, not by fake cross-cause edges.
+  (`056.003-T`, or `056.019-T` for the H3-B-selected managed-config/discriminator
+  groups); intra-family order is a true dependency edge, but unrelated cause
+  families are NOT chained into a total order. Sequential single-shipment
+  execution is enforced by the **explicit selection gate below plus** one
+  in-flight shipment at a time (P-001) and single-worktree topology (P-016), not
+  by fake cross-cause edges. Total task count is 28 (`056.001-T`..`056.028-T`).
+* **Explicit selection gate (dependency-ready ≠ selected)** — every PHASE 2
+  (`phase:remedy`) task carries a machine-queryable `selection:pending` label plus
+  its `cause:<family>` label. After `049-S` closes, Stage consumes the
+  T0/`056.019-T` classification, flips ONLY the selected families' tasks to
+  `selection:selected`, and only then creates a queued remedy shipment of those
+  tasks. Unselected tasks keep `selection:pending` and no shipment membership (so
+  no Ship/Orchestrator routing claims them) until dispositioned `done` +
+  `not-needed:<evidence id>`. Required pre-shipment gate (Stage/Orchestrator MUST
+  run it before creating or claiming any remedy shipment, and MUST NOT add a
+  `selection:pending` task to any shipment): the query `SELECT id, labels FROM
+  items WHERE id IN (<candidate member ids>) AND (labels NOT LIKE
+  '%selection:selected%' OR labels LIKE '%selection:pending%')` — any returned row
+  FAILS the gate and the shipment MUST NOT be created. P-001/P-016 do NOT
+  perform this selection — the label + shipment-membership gate is the claim
+  authority. Unselected remedy tasks are NOT set to backlog status `blocked`;
+  they stay `queued` + `selection:pending`.
 * **One-shot classification** — `056.001-T` runs exactly one control/treatment
   pair and emits an ordered classification; it never loops, reruns per
   correction, or reopens a downstream task. Backward-pointing or unowned evidence
@@ -912,9 +999,9 @@ than restate every clause:
   fixture live only inside the owned `logs/probe/<nonce>` workspace; the user
   `.mcp.json` is never read, mutated, backed up, restored, or substituted by the
   probe/T0. This invariant is scoped to the probe/T0 only; production
-  managed-config tasks (`056.008-T`/`056.009-T`/`056.018-T`) may read, mutate,
-  back up, and recover the configured workspace `.mcp.json` with typed ownership
-  and approval where destructive.
+  managed-config tasks (`056.008-T`/`056.009-T`/`056.018-T`/`056.027-T`) may read,
+  mutate, back up, and recover the configured workspace `.mcp.json` with typed
+  ownership and approval where destructive.
 * **PR readiness is the sole dynamic authority** — the PR #106
   `## Local Review Readiness` block is authoritative; this plan claims no
   current READY.
@@ -1004,13 +1091,31 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
 * `056.024-T` (retained, moved) — bounded decision/spike that closes
   `not-needed` when no managed-config mutation/recovery is selected, otherwise
   selects an MSRV-1.75 safe no-follow config-mutation primitive and records it in
-  a NEW `docs/decisions/` artifact (or blocks `056.018`/shipment). In the chain
-  after `056.017`, before `056.008`.
+  a NEW `docs/decisions/` artifact (or blocks `056.018`/shipment). Corrected DAG:
+  after `056.017`, before `056.018` (parallel to `056.017 → 056.008`); it gates
+  only `056.018`/shipment, never `056.008` cwd generation or `056.026`
+  discriminator generation. Its activation predicate includes discriminator
+  existing-install delivery (`056.027-T`), not only H0a/H3-B1.
 * `056.025-T` (new) — the versioned Loading/Failed/Disabled MCP availability
   projection and `search_semantic`/`research_topic` fallback metadata in
   `src/mcp/server.rs` (moved out of `056.005-T`/`056.015-T`); red-first
   projection/tool-contract tests only, no `cmd_serve`/background sync. In the
   chain after `056.005`, before `056.015`.
+* `056.026-T` (new) — UNCONDITIONAL generator `type`/`transport` discriminator
+  reconciliation split out of `056.008-T`: owns only the `managed_server_value`
+  discriminator field + exact legacy-shape recognition + focused generation tests.
+  Depends on `056.019-T` only (not `056.017`/`056.024`/`056.018`); closes
+  `not-needed` when no mismatch is evidenced.
+* `056.027-T` (new) — bounded existing-install discriminator delivery: composes
+  `056.017-T` typed API + `056.018-T` recovery in `cmd_upgrade` to refresh only
+  the marked entry's discriminator, width-separated from `056.009-T`'s
+  cwd/recovery delivery. Depends on `056.026-T` and `056.018-T`; does not require
+  `056.008`/`056.009`.
+* `056.028-T` (new) — dedicated standalone-probe CI job for the `tools/mcp-probe/`
+  crate's separate manifest/lockfile (fmt/clippy/test/build + `cargo audit --file
+  tools/mcp-probe/Cargo.lock`). Depends on `056.020-T`; evidence-infrastructure
+  follow-up outside `049-S`, in T4 fan-in. Created by Stage now; implemented by
+  Ship per its test-first contract (seeded-violation red proof).
 * Every causal node is wired into cause-family branches off the evidence
   foundation (see phased ordering below), not one total-order chain. `056.005-T`
   narrows to the embedding lifecycle state machine; `056.025-T` owns the MCP
@@ -1021,64 +1126,104 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
   after the `056.015-T` serve-orchestration restructure, applied at
   shipment-assembly time rather than as a standing cross-family backlog edge;
   `056.006-T` is the optional diagnostic sink, selected only when stderr is
-  unavailable; `056.010-T` owns one H0c repair; `056.008-T` reconciles the
-  generator `type`/`transport` discriminator unconditionally and generates the
-  evidence-selected `cwd`; `056.018-T` implements only the `056.024-T` decision;
+  unavailable and env inheritance is proven (via `056.001-T` sentinel +
+  `056.022-T` observation); `056.010-T` owns one H0c repair; `056.008-T`
+  generates the evidence-selected `cwd` ONLY (the unconditional `type`/`transport`
+  discriminator reconciliation is `056.026-T` and its existing-install delivery is
+  `056.027-T`); `056.018-T` implements only the `056.024-T` decision (recovery
+  consumed by `056.009-T` cwd delivery and `056.027-T` discriminator delivery);
   `056.019-T` is the sole H3-B terminal, adjudicating both isolated-config and cwd
-  mechanisms with at most one deferred contrast. T4's direct fan-in is all tasks
-  `056.001`..`056.025` except `056.004`, with explicit evidence-chain edges to
+  mechanisms with at most one deferred contrast, fail-closed on inconclusive
+  (`blocked` + named Stage follow-up). T4's direct fan-in is all tasks
+  `056.001`..`056.028` except `056.004`, with explicit evidence-chain edges to
   `056.001-T`, `056.002-T`, `056.021-T`, `056.022-T`, `056.023-T`, `056.024-T`,
-  and `056.025-T`.
+  `056.025-T`, `056.026-T`, `056.027-T`, and `056.028-T`.
 
 ### Authoritative task ordering (release-unit phases)
 
 The authoritative structure is a set of release-unit phases with cause-family
-branches off a shared evidence spine, not a single 25-task total order. Each edge
+branches off a shared evidence spine, not a single 28-task total order. Each edge
 `X → Y` is a backlog dependency (Y depends on X; X runs first). Sequential
-single-shipment execution is enforced by Orchestrator/Ship under P-001/P-016, so
-unrelated cause families are deliberately NOT chained into a total order.
+single-shipment execution is enforced by the explicit selection gate plus one
+in-flight shipment at a time (P-001) and single-worktree topology (P-016), so
+unrelated cause families are deliberately NOT chained into a total order, and
+dependency-ready never means selected.
 
 **PHASE 1 — Evidence foundation (shipment `049-S`, the only queued shipment):**
 
-`056.020 → 056.022 → 056.023 → 056.021 → 056.001 → 056.002 → 056.003 → 056.019`
+Two evidence spines converge at the sole H3-B terminal `056.019`:
 
-The probe sub-chain `056.020 → 056.022 → 056.023 → 056.021` precedes T0
-(`056.001`); the driver (`056.002`), diagnostics (`056.003`), and the sole H3-B
-terminal (`056.019`) complete the foundation. This unit's acceptance is the
-trusted exact-Copilot classification/cause-selection record and does NOT require
-the restored-production T4. The umbrella feature `056-F` is excluded from the
-manifest (protected covering feature per P-015).
+* probe + T0: `056.020 → 056.022 → 056.023 → 056.021 → 056.001`
+* independent green driver + diagnostics: `056.002 → 056.003`
+* convergence: `056.019` depends on both `056.001` and `056.003`
+
+`056.002` is a T0-agnostic reusable green driver and carries NO dependency on
+`056.001`; `056.003` (always-on production diagnostics) reuses the `056.002`
+driver. This unit is the "evidence foundation + parity-safe always-on
+diagnostics"; its acceptance is the trusted exact-Copilot classification/
+cause-selection record plus the always-on diagnostics seam, and does NOT require
+the restored-production T4. Fail-closed H3-B: only a conclusive H3-B1 or proven
+H3-B2 closes `056.019` and lets `049-S` close; an inconclusive verdict moves
+`056.019` to `blocked`, blocks `049-S` closure, and requires a named new bounded
+Stage follow-up. The eight-task manifest is `056.020`/`056.022`/`056.023`/
+`056.021`/`056.001`/`056.002`/`056.003`/`056.019`; the umbrella feature `056-F`
+is excluded (protected covering feature per P-015).
 
 **PHASE 2 — Selected remediation units (unshipped follow-ups; NOT queued for
-Ship until T0 evidence selects them; each family entry depends on the evidence
-foundation):**
+Ship until the selection gate flips them to `selection:selected`; each family
+entry depends on the evidence foundation):**
 
-* managed-config/discriminator: `056.019 → 056.017 → 056.024 → 056.008 →
-  056.018 → 056.009` (internally complete — activates as one unit when a
-  discriminator-only or H3-B1 selection is made)
+* managed-config cwd/recovery (corrected DAG, delivery split):
+  `056.019 → 056.017`; then `056.017 → 056.008` (cwd gen) IN PARALLEL WITH
+  `056.017 → 056.024 → 056.018` (recovery); then `{056.008, 056.018} → 056.009`
+  (cwd/recovery existing-install delivery).
+* type/transport discriminator: `056.019 → 056.026` (unconditional generation
+  when a mismatch is evidenced) and `{056.026, 056.018} → 056.027` (existing-
+  install discriminator delivery). A discriminator-only remedy also selects the
+  safe-mutation prerequisites `056.017`/`056.024`/`056.018` (their activation
+  predicates include discriminator delivery), while `056.008`/`056.009` close
+  `not-needed`. Co-selection with the cwd remedy orders `056.026` before
+  `056.008` at assembly time.
 * lock recovery: `056.003 → 056.016 → 056.007`
 * H0c state repair: `056.003 → 056.010`
 * H1 model lifecycle: `056.003 → 056.014 → 056.005 → 056.025 → 056.015`
-* H3-A transport compatibility: `056.003 → 056.011`
-* diagnostic sink (optional): `056.003 → 056.006`
+* H3-A transport compatibility: `056.003 → 056.011` (standing edge; the
+  `after 056.015` ordering is a co-selection-only assembly edge)
+* diagnostic sink (optional): `056.003 → 056.006` (selected only when stderr is
+  unavailable AND env inheritance is proven; the `after 056.011` ordering is a
+  co-selection-only assembly edge)
 
 Each SHIPPING remediation unit owns exactly one exact-client re-probe after its
 correction (shipment-interface rule); characterization (`056.016`) and
 decision/PoC (`056.024`) are not corrections and do not re-probe. Conditional
-families not selected by T0 close `not-needed` and pass evidence unchanged;
-`056.010-T` owns exactly one H0c repair and a second gate is a new bounded
-follow-up.
+families not selected close `done` + `not-needed:<evidence id>` and pass evidence
+unchanged; `056.010-T` owns exactly one H0c repair and a second gate is a new
+bounded follow-up.
 
 **PHASE 3 — Final acceptance and documentation (unshipped; dependent on all
 selected remedies; not prematurely Ship-ready):**
 
 * docs: `056.012 → 056.013`, where `056.012` depends on every remedy-family leaf
-  (`056.006`, `056.007`, `056.009`, `056.010`, `056.011`, `056.015`) so it is not
-  ready until every family resolves (done or not-needed).
+  (`056.006`, `056.007`, `056.009`, `056.010`, `056.011`, `056.015`) and
+  `056.013` additionally depends on the discriminator delivery `056.027`, so docs
+  are not ready until every family resolves (done or not-needed).
 * `056.004` (T4) keeps direct dependencies on every other task
-  `056.001`..`056.025` except `056.004` itself — with explicit evidence-chain
-  edges to `056.001`, `056.002`, `056.021`, `056.022`, `056.023`, `056.024`, and
-  `056.025` — and is the sole restored-production actual-client acceptance node.
+  `056.001`..`056.028` except `056.004` itself — with explicit evidence-chain
+  edges to `056.001`, `056.002`, `056.021`, `056.022`, `056.023`, `056.024`,
+  `056.025`, `056.026`, `056.027`, and `056.028` — and is the sole
+  restored-production actual-client acceptance node and the single registry-backed
+  acceptance gate.
+* **Final Assembly Protocol (Stage-owned):** after the selected remedy shipments
+  complete, Stage (1) confirms every PHASE 2 task is terminal — `done` (selected +
+  shipped) or `done` + `not-needed:<evidence id>` (unselected) — the owned
+  disposition that satisfies the `056.012`/`056.004` fan-in without an unowned
+  mass sweep; (2) for any selected NEW follow-up created during remediation (e.g.
+  a second H0c gate or an H3-B-inconclusive follow-up), adds it to the fan-in
+  owners (`056.004`, and `056.012` for docs) by a single Stage dependency update
+  BEFORE creating the PHASE 3 shipment — never by reopening a completed code task;
+  (3) only then creates the queued PHASE 3 shipment. Where backlogit supports
+  shipment-to-shipment `blocks` edges, Stage may also sequence the PHASE 3
+  shipment after the selected remedy shipments.
 
 ### Explicit residual risks
 
@@ -1102,12 +1247,32 @@ selected remedies; not prematurely Ship-ready):**
 * If `056.024-T` finds no MSRV-safe no-follow primitive, `056.018-T` and the
   shipment stay blocked rather than accepting an unsafe check-then-open recovery.
 * T4 remains the sole restored-production actual-client acceptance node.
-* **Scope boundary (round 3):** unrelated learnings about direct-`main`/closure
-  lifetimes, post-merge closure, or cargo-process TOCTOU are NOT changes to this
-  feature plan; this plan does not expand into install-binary overwrite,
-  database-open, or unrelated production TOCTOU findings. `056.024-T` and
-  `056.018-T` are scoped only to the managed-config recovery selected by this
-  feature.
+* Selection gate: dependency-ready ≠ selected. Every PHASE 2 task carries
+  `selection:pending` + `cause:<family>`; Stage flips only selected families to
+  `selection:selected` after `049-S` closes, and unselected tasks stay `queued` /
+  `selection:pending` with no shipment membership (never backlog status
+  `blocked`). No Ship/Orchestrator routing can claim an unselected task because it
+  has no shipment membership.
+* Discriminator split (delivery-safe): the unconditional `type`/`transport`
+  reconciliation (`056.026-T`) depends only on the evidence classification, and
+  its existing-install delivery (`056.027-T`) composes the selected
+  `056.017`/`056.024`/`056.018` safe-mutation contracts — so no delivery task
+  depends on a prerequisite that closed `not-needed`.
+* Direct-`Child` guards are RAII (`Drop`) so kill+wait runs on panic/unwind
+  (`056.020-T`/`056.022-T`); the `056.006-T` env-inheritance criterion is proven
+  by a bounded probe-owned sentinel (`056.001-T` set + `056.022-T` observe), not
+  assumed. The `056.020-T` transport self-test helper-child mechanism is
+  platform-portable and within-width.
+* `056.028-T` owns a dedicated standalone-probe CI job because the probe crate
+  has a separate manifest/lockfile the root pipeline does not cover; it is an
+  evidence-infrastructure follow-up outside `049-S`, gated into T4 fan-in.
+* **Scope boundary (round 3, extended 2026-08-23):** unrelated learnings about
+  direct-`main`/closure lifetimes, post-merge closure, or cargo-process TOCTOU are
+  NOT changes to this feature plan; this plan does not expand into install-binary
+  overwrite, database-open, or unrelated production TOCTOU findings. `056.024-T`
+  and `056.018-T` are scoped only to the managed-config recovery selected by this
+  feature; `056.026-T`/`056.027-T` are scoped only to the `type`/`transport`
+  discriminator; `056.028-T` only to the standalone-probe CI job.
 
 ## Verification Commands
 
@@ -1199,15 +1364,17 @@ if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
 #    classifier; 056.004-T/T4 owns restored-production acceptance). It launches
 #    the exact Copilot CLI NORMALLY against the restored user-facing entry and
 #    MUST NOT wrap/substitute the server or use temp config. Repeat for THREE
-#    exact-Copilot /mcp show sessions (one gate-off); each records a completed,
-#    valid initialize (jsonrpc 2.0, correlated id, no error, result.protocolVersion)
-#    with no OS error 232 and correlates the production config hash/file identity
-#    with the Copilot-spawned server startup event. Advertised tools from /mcp
-#    show are recorded as supporting evidence; a direct T1 production driver
-#    separately confirms expected tools and one side-effect-free get_status as a
-#    server control (not proof of Copilot UI invocation). Use the exact recorded
-#    T0 invocation:
-$McpShowArgs = $env:GRAPHTOR_MCP_SHOW_INVOCATION -split ' '
+#    exact-Copilot /mcp show sessions (one gate-off); each records ONLY the
+#    CLI-visible connected/initialized status (and advertised tool list/count when
+#    shown) with no OS error 232, correlating the production config hash/file
+#    identity with the Copilot-spawned server startup event. The JSON-RPC wire
+#    fields (jsonrpc 2.0, correlated id, no error, result.protocolVersion) are NOT
+#    read from /mcp show; the direct 056.002-T read-only production 'server
+#    control' proves them SEPARATELY (plus expected tools and one side-effect-free
+#    get_status) against the same production binary/workspace. Provide the exact
+#    recorded T0 invocation as a STRUCTURED argv array (never split a command
+#    string on spaces, which loses quoting/argument boundaries):
+$McpShowArgs = $env:GRAPHTOR_MCP_SHOW_INVOCATION | ConvertFrom-Json  # persisted argv array, e.g. ["mcp","show","graphtor-docs"]
 for ($i = 1; $i -le 3; $i++) {
   & $CopilotExe @McpShowArgs
   if ($LASTEXITCODE -ne 0) { throw "T4 session $i restored-production /mcp show failed (exit $LASTEXITCODE)" }
@@ -1315,9 +1482,11 @@ Get-ChildItem .graphtor -Filter *.lock
   closed). The user `.mcp.json` is never read, mutated, backed up, or
   restored, so no config approval receipt is required, and isolated config
   creation plus owned-workspace cleanup need no approval; destructive cleanup
-  beyond the owned workspace stays approval-gated. T2e consumes 056.018-T's typed, no-follow
-  contained recovery
-  policy before any changing managed-entry refresh. The
+  beyond the owned workspace stays approval-gated. T2e (`056.009-T`, cwd/recovery)
+  and T2h (`056.027-T`, discriminator) each consume 056.018-T's typed, no-follow
+  contained recovery policy and, as destructive managed-`.mcp.json` mutations,
+  run their existing-install refresh backup-first and **operator-approval-gated**
+  before T4 (Principle VII). The
   **conditional H0c operational remediation (T2f/`056.010-T`)** can require a
   **pre-v4→v4 schema rebuild via `graphtor-docs sync`** or a **source-registry
   replacement** — high-risk, potentially data-affecting steps that are
@@ -1330,6 +1499,19 @@ Get-ChildItem .graphtor -Filter *.lock
 * **VIII Safety Modes** — investigate-first: T0 orders the causal chain; each
   selected curative task owns its red/green proof before implementation closes.
 * **XI Merge-commit history** — Ship enforces merge-commit-only at merge time.
+* **Phased release-unit structure (P-001/P-015/P-016, IX, X)** — the 28 tasks
+  ship as phased release units, not one chain. **P-015**: the umbrella feature
+  `056-F` is the protected covering feature, excluded from every task-only
+  manifest (`049-S` and later remedy/acceptance units). **P-001**: exactly one
+  release unit is in flight at a time; it does NOT perform intra-feature cause
+  selection. **P-016**: a single active implementation branch/worktree; it does
+  NOT perform selection either. Cause selection is the explicit
+  `selection:pending → selection:selected` label + shipment-membership gate owned
+  by Stage after `049-S` closes. **IX (Git-friendly persistence)**: backlog
+  artifacts stay Markdown + YAML frontmatter and dependency edges are mutated only
+  through backlogit operations. **X (context efficiency)**: the authoritative
+  graph lives in this single `## Issue and Dependency Graph` section; superseded
+  historical Plan Review DAGs are retained only as audit metadata.
 
 ## Plan Hardening Signals
 
@@ -1349,10 +1531,13 @@ Get-ChildItem .graphtor -Filter *.lock
   no generated target arguments, while the runtime keeps its existing
   containment (no target self-authorization, no parent walk).
 * Migration / backfill / destructive or irreversible step: **present (bounded,
-  conditional on H0a/H3-B1 and H0c)** — the existing-install managed-entry refresh
-  (T2e/`056.009-T`) is an idempotent, marker-safe, backup-first config rewrite
-  that preserves user-authored entries and is reversible by restoring the
-  reported recovery file. However, the **conditional H0c
+  conditional on H0a/H3-B1, the discriminator remedy, and H0c)** — the
+  existing-install managed-entry refresh (T2e/`056.009-T`, cwd/recovery, and
+  T2h/`056.027-T`, `type`/`transport` discriminator) is an idempotent,
+  marker-safe, backup-first config rewrite that preserves user-authored entries,
+  is reversible by restoring the reported recovery file, and is
+  **operator-approval-gated** before T4 (Principle VII). However, the
+  **conditional H0c
   operational remediation (T2f/`056.010-T`)** can require a **pre-v4→v4 schema
   rebuild via `graphtor-docs sync`** or a **source-registry replacement** — a
   potentially data-affecting, hard-to-reverse step. It is **approval-gated**
@@ -1662,8 +1847,10 @@ and posture-classification context.
 * Repository-code branches commit a branch-specific observed-red test that the
   selected curative task greens: H0a uses the driver in `056.008-T`'s
   generated-entry test; H0b uses a reachable Generation-lock fixture; H3 mode
-  A replays T0's unmodified bidirectional target-client transaction but closes
-  only after actual-client production-entry acceptance; H1 uses the split
+  A reacquires the exact-client transaction SEPARATELY before and after the fix
+    through the `056.022-T` wrapper and `056.023-T` observer (semantic initialize
+    correlation plus redacted transcript digest, not raw-frame replay) and closes
+    only after actual-client production-entry acceptance; H1 uses the split
   `056.014-T`/`056.005-T`/`056.015-T` deterministic seams.
 * Operational-only H0c and H3-B preserve a bounded actual-client red
   transcript and rerun the exact `/mcp show graphtor-docs` production-entry
@@ -1725,6 +1912,67 @@ causal task re-probes" rule is replaced by the shipment-interface re-probe rule.
 PR #106 is staging/planning-only and its dynamic readiness remains BLOCKED
 pending a fresh current-HEAD local review after this pass.
 
+### Report-only review — 2026-08-23 narrow remediation (fresh cycle)
+
+**Gate: ADVISORY** (report-only; the backlog already exists). Four reviewer
+personas — Constitution Reviewer, Architecture Strategist, Correctness Reviewer,
+and Agent-Native Parity Reviewer (multi-model) — reviewed the narrow remediation
+(discriminator split `056.026`/`056.027`, corrected managed-config DAG, explicit
+selection gate, fail-closed H3-B inconclusive, PHASE 3 assembly protocol,
+evidence-cohesion + `056.001→056.002` edge removal, stale-string removal,
+`056.002` read-only production control, `056.028` probe CI, `056.022` RAII
+teardown, `056.020` portable fixture, task count 28).
+
+**Consensus P1 findings — all remediated in this pass:**
+
+* Verification Commands step 5 still demanded per-session JSON-RPC wire fields
+  from `/mcp show` and split the invocation on spaces — reworded to CLI-visible
+  status only (wire fields via the direct `056.002-T` control) and a structured
+  argv array.
+* The re-decomposition Plan Review "Remediated P2" bullet still called an
+  inconclusive H3-B verdict a terminal classification that closes
+  `056.019-T`/`049-S` — superseded with the fail-closed rule (inconclusive →
+  `blocked` + named follow-up).
+* `056.019-T`'s H3-B2 outcome mutated sibling managed-config task status,
+  conflicting with the Stage-owned selection gate — reworded so `056.019-T`
+  records its own classification/blocks only, and Stage's Final Assembly Protocol
+  applies the `done`+`not-needed:H3-B2` disposition.
+* The selection gate lacked a concrete enforceable check — added the required
+  pre-shipment SQL gate (reject any candidate member lacking `selection:selected`
+  or retaining `selection:pending`).
+* `056.002-T`'s read-only production 'server control' was an unbounded assertion
+  — specified an enforceable read-only boundary (ReadOnly/auto-discovered posture
+  only, background sync/persistence disabled, DB opened read-only, fail on any
+  write/lock); and the stdout-parity assertion (which needs `056.003`) was moved
+  out of `056.002`'s completion gate into `056.003` + an `049-S` shipment-level
+  control.
+
+**Consensus P2 findings — remediated:**
+
+* `056.027-T` (discriminator existing-install delivery) lacked the
+  operator-approval gate its sibling `056.009-T` carries for the destructive
+  managed-`.mcp.json` mutation — added, and enumerated in the Constitution Check
+  VII + Plan Hardening destructive-step lists.
+* `056.028-T` contradicted itself (implement the workflow vs "plan-only now") —
+  reconciled: Stage creates the task now, Ship implements the CI job per the
+  test-first contract; the stale duplicate description was removed.
+
+**P3 advisories (accepted, non-blocking):** `056.008`/`056.026` share
+`managed_server_value` at field granularity (co-selection ordering handles it;
+per-field helper extraction is an implementation nicety); `056.012` fan-in
+includes `056.009` whose docs surface `056.013` owns (transitively harmless —
+docs ship as one PHASE 3 unit; `056.013` already depends on the discriminator
+delivery `056.027`); `056.024` bundles a throwaway PoC with a decision doc
+(explicit spike); `056.003` always-on diagnostics in the evidence unit is a
+defensible non-conditional inclusion (Principle V, YAGNI-justified, carries its
+own red/green). The selection gate now has a concrete required query but still
+relies on Stage/Orchestrator running it (runtime enforcement is a
+Ship/Orchestrator concern, out of Stage's planning scope).
+
+**Verdict: no unresolved P0/P1** after in-pass remediation; residual items are P3
+advisories. PR #106 dynamic readiness remains BLOCKED pending a fresh
+current-HEAD local review by Ship after this Stage commit.
+
 ### Report-only review — 2026-08-23 Stage re-decomposition
 
 **Gate: ADVISORY** (report-only; the backlog already exists, so this does not
@@ -1745,14 +1993,17 @@ manifest) is correct and required, and the no-kill test-only teardown split in
   unconditionally, contradicting the removed cross-family edge — qualified as a
   co-selection-only shipment-assembly edge; the standing edge is
   `056.003 → 056.011` only.
-* H3-B2/inconclusive closability — clarified in the `056-F` DoD that an
-  H3-B1 / H3-B2 / inconclusive verdict is each a valid terminal evidence
-  classification that closes `056.019-T` and lets `049-S` close; the
-  "blocks shipment" semantics apply to the downstream production-remediation
-  units and T4, not the evidence unit.
-* managed-config block-scope — clarified that `056.024-T` blocks only
-  `056.018`/shipment, never `056.008-T`'s unconditional discriminator
-  reconciliation.
+* H3-B closability (superseded 2026-08-23 by the narrow remediation —
+  fail-closed): only a conclusive H3-B1 or a proven H3-B2 is a terminal evidence
+  classification that closes `056.019-T` and lets `049-S` close (H3-B2's "blocks
+  shipment" semantics apply to the downstream production-remediation units and T4,
+  not the evidence unit). An INCONCLUSIVE verdict is NOT terminal: it moves
+  `056.019-T` to `blocked`, blocks `049-S` closure, and requires a named new
+  bounded Stage follow-up. (The earlier round wording that listed inconclusive as
+  terminal-closing is superseded.)
+* managed-config block-scope — `056.024-T` blocks only `056.018`/shipment, never
+  `056.008-T`'s cwd generation or `056.026-T`'s unconditional `type`/`transport`
+  discriminator reconciliation.
 * Added an explicit `056.019-T ← 056.001-T` evidence-chain edge (mirrors T4's
   explicit-edge robustness; `056.019-T` reuses the `056.001-T` runner).
 

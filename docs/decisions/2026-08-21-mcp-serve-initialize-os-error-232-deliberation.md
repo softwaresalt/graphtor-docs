@@ -197,12 +197,16 @@ bounded:
    exhaustive typed preflight-exit seam covering all normal exits (including
    pre-v4 and duplicate intake), mirror each event to unconditional fatal
    stderr, and add `mcp_serve_ready`; tracing never replaces the stderr message.
-   H0a uses typed managed-config outcomes (`056.017-T`), an unconditional
-   generator `type`/`transport` discriminator reconciliation plus evidence-selected
-   canonical `cwd` generation (`056.008-T`), a no-follow contained recovery
-   primitive (`056.018-T`) gated on the `056.024-T` safe-primitive decision (chain
-   `056.017 → 056.024 → 056.008 → 056.018`), and existing-install upgrade
-   orchestration (`056.009-T`). `056.024-T` records its decision in a NEW
+   H0a uses typed managed-config outcomes (`056.017-T`), evidence-selected
+   canonical `cwd` generation (`056.008-T`), and a no-follow contained recovery
+   primitive (`056.018-T`) gated on the `056.024-T` safe-primitive decision, in
+   the corrected DAG `056.017 → 056.008` (cwd) parallel to
+   `056.017 → 056.024 → 056.018` (recovery), then `{056.008, 056.018} → 056.009`
+   existing-install cwd/recovery upgrade orchestration. The unconditional
+   generator `type`/`transport` discriminator reconciliation is a SEPARATE task
+   (`056.026-T`, depends only on the evidence classification) with its own bounded
+   existing-install delivery (`056.027-T`); `056.017`/`056.024`/`056.018` also
+   serve that discriminator delivery branch. `056.024-T` records its decision in a NEW
    `docs/decisions/` artifact rather than rewriting this deliberation, and closes
    `not-needed` when no managed-config mutation/recovery is selected. The "never
    read/mutate user `.mcp.json`" invariant is scoped to T0/probe; production
@@ -230,32 +234,42 @@ bounded:
    keep Generation sync subscribed across `Failed → Loading → Ready`.
    DB/lock/schema/intake gates remain pre-serve fail-closed.
 5. **Keep H3 modes separate.** H3-A transport/framing belongs to `056.011-T`,
-   which owns transport types/wiring only after `056.015-T` and reacquires the
-   exact-client transaction separately before and after the fix through the
-   `056.022-T` wrapper (validating semantic initialize correlation plus the
-   redacted transcript digest, not byte-identical raw replay or persistence); it
-   must use an edition-2021/Rust-1.75-compatible fix; rmcp 1.8.x is excluded; a
-   fork/patch override requires separate deliberation. H3-B client capability
-   belongs to `056.019-T`, the sole H3-B terminal, which consumes T0's
+   which owns transport types/wiring only (standing dependency `056.003-T`; after
+   `056.015-T` ONLY when H1 and H3-A are co-selected in one shipment) and
+   reacquires the exact-client transaction separately before and after the fix
+   through the `056.022-T` wrapper (validating semantic initialize correlation
+   plus the redacted transcript digest, not byte-identical raw replay or
+   persistence); it must use an edition-2021/Rust-1.75-compatible fix; rmcp 1.8.x
+   is excluded; a fork/patch override requires separate deliberation. H3-B client
+   capability belongs to `056.019-T`, the sole H3-B terminal, which consumes T0's
    `H3-B-candidate` and adjudicates BOTH a documented explicit isolated-config
    discovery mechanism (owning the one bounded attempt, plus exactly one deferred
    control/treatment contrast through the `056.001-T` runner when isolation becomes
-   possible) and a distinct documented working-directory mechanism. A
-   proven-supported mechanism is H3-B1 forward evidence; a proven-unsupported
-   exact identity is H3-B2 and blocks the shipment as unsupported-client; an
-   inconclusive result blocks with evidence rather than being classified
-   Unsupported. It never deliberately reads or mutates the user root
+   possible) and a distinct documented working-directory mechanism. Fail-closed
+   terminal semantics: a proven-supported mechanism is H3-B1 forward evidence
+   (done); a proven-unsupported exact identity is H3-B2 (done) and blocks the
+   downstream remediation units and T4 as unsupported-client — only these
+   CONCLUSIVE verdicts close `056.019-T` and let `049-S` close; an INCONCLUSIVE
+   result is NOT terminal and NOT trusted cause selection: it moves `056.019-T` to
+   `blocked` with captured evidence, blocks `049-S` closure, and requires a NAMED
+   new bounded Stage follow-up (or operator adjudication) rather than being
+   classified Unsupported. It never deliberately reads or mutates the user root
    config. Neither mode adds an external-path fallback, and only T4 accepts
    production.
 6. **Verify production parity with the exact newest failing CLI identity.**
    After a managed branch records target-workspace upgrade refresh and its
    production config hash, three exact-Copilot `/mcp show graphtor-docs` sessions
    must use the restored production command/args/cwd/env. Acceptance for THIS bug
-   is that each session completes a valid initialize negotiation (`jsonrpc` 2.0,
-   correlated id, no error, `result.protocolVersion`) with no OS error 232, and
-   correlates the exact production config hash/file identity with the
-   Copilot-spawned server startup event (PID, executable/build, canonical cwd,
-   timestamp). If `/mcp show` reports advertised tools, record their list/count as
+   is that each `/mcp show` session proves the server CONNECTED and INITIALIZED
+   with no OS error 232 using ONLY the connection/initialization status the CLI
+   surfaces (and advertised tool list/count when shown) — NOT the raw JSON-RPC
+   wire fields — and correlates the exact production config hash/file identity
+   with the Copilot-spawned server startup event (PID, executable/build, canonical
+   cwd, timestamp). The correlated wire fields (`jsonrpc` 2.0, correlated id, no
+   error, `result.protocolVersion`) are proven SEPARATELY by the direct T1
+   (`056.002-T`) production driver against the same production binary/workspace,
+   not by `/mcp show`. If `/mcp show` reports advertised tools, record their
+   list/count as
    supporting evidence, but do not require a tool invocation unrelated to the
    reported load bug and do not route a missing deterministic tool-call UI to
    H3-B2. Separately, a direct T1 production driver confirms the expected MCP
@@ -290,6 +304,30 @@ Sequential single-shipment execution holds under P-001/P-016, and the global
 characterization `056.016-T` and decision/PoC `056.024-T` tasks do not). The
 settled removed designs (custom Cargo target/DACL hardening, user-config
 substitution, raw-frame persistence) are not reopened.
+
+A subsequent narrow Stage remediation (2026-08-23) further refines that phased
+structure without changing the causal analysis: (a) the `type`/`transport`
+discriminator reconciliation is split out of `056.008-T` into an UNCONDITIONAL
+generation task (`056.026-T`, depends only on the evidence classification) plus a
+bounded existing-install delivery task (`056.027-T`), so the discriminator remedy
+can ship without the H0a/H3-B1 cwd chain; the managed-config recovery DAG is
+corrected to `056.017 → 056.008` (cwd) in parallel with
+`056.017 → 056.024 → 056.018` (recovery), then `{056.008, 056.018} → 056.009`,
+and the `056.017`/`056.024`/`056.018` activation predicates include the
+discriminator delivery branch (so no delivery task depends on a prerequisite that
+closed `not-needed`). (b) An explicit selection gate
+(`selection:pending → selection:selected` labels + shipment membership, owned by
+Stage after `049-S` closes) is the cause-selection authority — NOT P-001/P-016,
+which only bound one in-flight release unit and prevent parallel worktrees.
+(c) An INCONCLUSIVE H3-B verdict is fail-closed: it moves `056.019-T` to
+`blocked`, blocks `049-S` closure, and requires a named new bounded Stage
+follow-up (only a conclusive H3-B1 or proven H3-B2 closes the evidence unit).
+(d) `049-S` stays the eight-task evidence unit — "evidence foundation +
+parity-safe always-on diagnostics" (`056.003-T` is an always-valuable production
+diagnostics seam, acceptable under YAGNI), with `056.002-T` a T0-agnostic
+reusable driver carrying no dependency on `056.001-T`. A dedicated
+standalone-probe CI task (`056.028-T`) covers the probe crate's separate
+lockfile. Task count is 28 (`056.001-T`..`056.028-T`).
 
 ## Constitution Check
 
@@ -356,7 +394,11 @@ substitution, raw-frame persistence) are not reopened.
 * If H3-A dominates, candidate rmcp metadata must be checked before coding;
   1.8.x is excluded by edition 2024 and a fork/patch requires a new
   deliberation. H3-B preserves exact CLI identity; B1 proves a distinct
-  documented mechanism, while B2 blocks shipment as unsupported-client.
+  documented mechanism, while B2 blocks shipment as unsupported-client. Both B1
+  and a proven B2 are terminal (done) and close `056.019-T`/`049-S`; an
+  INCONCLUSIVE H3-B verdict is fail-closed — it moves `056.019-T` to `blocked`,
+  blocks `049-S` closure, and requires a named new bounded Stage follow-up (never
+  done, never Unsupported).
 * If H1 is taken, one owner must preserve semantic-search and Generation
   embeddings. `research_topic` must not silently fall back while Loading or
   Failed; terminal Disabled preserves the established disabled behavior.
