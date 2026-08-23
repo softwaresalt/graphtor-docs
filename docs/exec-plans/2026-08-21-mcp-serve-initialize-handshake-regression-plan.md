@@ -599,10 +599,13 @@ New-Item -ItemType Directory -Force logs
 # Self-test 056.020-T's secure non-shipping wrapper, then run 056.001-T through
 # exact `/mcp show graphtor-docs` target-CLI identity.
 # Dedicated T00 target gate (default release/all-target commands exclude it):
-cargo +1.75.0 check --features probe-harness --bin graphtor-mcp-probe
+$probeNonce = [guid]::NewGuid().ToString('N')
+$probeTargetDir = "logs/probe/$probeNonce"
+New-Item -ItemType Directory -Force $probeTargetDir | Out-Null
+cargo +1.75.0 check --features probe-harness --bin graphtor-mcp-probe --target-dir $probeTargetDir
 # The check above only type-checks the probe; run the three required
 # self-test groups explicitly so the harness is verified, not merely compiled:
-cargo +1.75.0 test --features probe-harness --bin graphtor-mcp-probe
+cargo +1.75.0 test --features probe-harness --bin graphtor-mcp-probe --target-dir $probeTargetDir
 # Launch the same target CLI from one controlled foreign cwd. Run a control
 # entry without cwd, then a treatment entry with canonical project-root cwd.
 # Capture wrapper-entry + inner-server identity and bidirectional framing,
