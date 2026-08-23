@@ -41,26 +41,29 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 
 * The newest Copilot CLI connects to `graphtor-docs` via `/mcp show
   graphtor-docs` with no OS error 232 and a completed `initialize` handshake.
-* `056.020-T` first self-tests a feature-gated, non-shipping transparent MCP
-  byte proxy with a **read-only observer seam**, built with the **standard**
-  Cargo target directory. `056.022-T` then owns exact process identity and
-  all-outcome teardown (PID plus process-start-time for runner/wrapper/inner
-  server, direct `Child` handle preferred, deepest-first exact-identity
-  `sysinfo` fallback, never PID-only or name-based kill). `056.021-T` then
-  creates a fresh isolated `logs/probe/<nonce>` workspace, generates temporary
-  in-workspace control/treatment `.mcp.json` plus an owned nested ancestor/child
-  config fixture, and owns the evidence lifecycle. T0 (`056.001-T`) records the
-  exact newest failing CLI executable, version/build, and `/mcp show
-  graphtor-docs` invocation; it **first proves ancestor config-isolation** with
-  the exact CLI against the nested fixture, then runs a minimal control/treatment
-  pair in that isolated workspace. The proxy performs concurrent full-duplex
-  forwarding and preserves inner launch identity and half-close semantics;
-  teardown is the exact recorded-identity contract in `056.022-T`, not a broad
-  whole-tree guarantee. The user `.mcp.json` is never read, mutated, or restored,
-  so no config approval receipt is required. Raw frames stay in memory (via the
-  observer seam) for same-run replay; only redacted summaries and digests are
-  persisted. Direct replay confirms only evidence derived from that actual-client
-  transcript.
+* The probe is a **standalone, non-published diagnostic crate** at
+  `tools/mcp-probe/` (its own `Cargo.toml` with an empty `[workspace]` table plus
+  `publish = false`, Rust 2021 / MSRV 1.75), split by width: `056.020-T`
+  self-tests the **core synchronous transport** (raw `std::process`/`std::thread`
+  duplex pumps, half-close, bounded stderr drain, deadlines); `056.023-T` owns
+  the copy-only observer seam and in-memory evidence; `056.021-T` owns the
+  isolated `logs/probe/<nonce>` workspace plus control/treatment and nested
+  ancestor/child config fixtures; `056.022-T` owns process spawning and teardown
+  by **direct `Child` handles only** (a `sysinfo` adapter observes identity for
+  diagnostics/tests but never kills). The chain is
+  `056.020 -> 056.022 -> 056.023 -> 056.021 -> 056.001`. T0 (`056.001-T`) owns
+  `exact_cli.rs`, records the exact newest failing CLI executable/version/build
+  and `/mcp show graphtor-docs` invocation, **first proves ancestor
+  config-isolation** against the nested fixture, then runs ONE control/treatment
+  pair through the diagnostic wrapper handoff (child `.mcp.json` uses the wrapper
+  as `command`; wrapper args encode the exact absolute production inner
+  executable plus original args; control/treatment differ only by treatment
+  `cwd`), emits the ordered cause classification, and ends `done` or blocked/
+  H3-B2 with no implementation loop. The user `.mcp.json` is never read, mutated,
+  or restored, so no config approval receipt is required. Raw frames stay in
+  memory (via the observer seam) for same-run replay; only redacted summaries and
+  digests are persisted. The ordinary Cargo target is a build cache, not a trust
+  boundary.
 * The evidenced branch restores connectivity without relaxing workspace
   containment, fail-closed validation, or verified-live lock ownership.
 * Server startup failures are diagnosable even when the CLI discards child
@@ -69,176 +72,210 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   `cargo clippy --all-targets -- -D warnings -D clippy::pedantic`,
   `cargo test --all-targets`, `cargo audit`, and `cargo build --release`.
   Any rmcp/dependency change also passes
-  `cargo +1.75.0 check --all-targets`.
-* Rollback and three successful `/mcp show graphtor-docs` starts on the exact
-  T0 CLI identity and restored post-fix user-facing entry are documented.
+  `cargo +1.75.0 check --all-targets`. The standalone probe crate is verified
+  separately via `cargo +1.75.0 check|test|build|clippy --manifest-path
+  tools/mcp-probe/Cargo.toml` (clippy `-D warnings -D clippy::pedantic`).
+* Rollback and three exact-Copilot sessions on the exact T0 CLI identity and
+  restored post-fix user-facing entry are documented; each session records a
+  completed `initialize`, a `tools/list` containing the expected tools, and one
+  side-effect-free `get_status` fingerprint matched to a direct control, with the
+  production config hash correlated to the Copilot-spawned server startup event.
   T0's wrapper or any executable substitution is invalid production evidence.
 
 ## Likely Surfaces (exact)
 
 | Surface | Location | Change |
 |---|---|---|
-| Transparent MCP byte proxy + observer seam (T00A, non-shipping) | feature-gated `[[bin]]` `graphtor-mcp-probe` at `tools/mcp-probe/main.rs`, standard `target/` | Self-test full-duplex byte forwarding, half-close, bounded stderr, wrapper/inner identity, output-boundary redaction, timeout signaling, and a read-only byte-observer seam that copies without mutating/reframing wire bytes. Own only the direct inner-server `Child` handle; no descendant-tree teardown here. Normal `target/` is a build cache, not an evidence trust boundary; default gates exclude the required-feature bin → `056.020-T` |
-| Probe process identities + teardown (T00C, non-shipping) | `tools/mcp-probe/process.rs` + sequential `main.rs` wiring, existing safe `sysinfo` | Record PID plus process-start-time for runner/wrapper/inner server at spawn; prefer direct `Child` kill/wait, then deepest-first exact PID-plus-start-time `sysinfo` fallback; never PID-only, identity-mismatch, or name kill; surface exact residual identities on unproven ownership rather than claiming atomic whole-tree ownership → `056.022-T` |
-| Isolated probe workspace, ancestor fixture, evidence lifecycle (T00B, non-shipping) | Rust probe `tools/mcp-probe/workspace.rs` + `tools/mcp-probe/evidence.rs` creating `logs/probe/<nonce>` + temporary in-workspace `.mcp.json` | Exclusive-create isolated workspace validated by `validate_path`/`is_reparse_point`; generate in-workspace control/treatment entries and an owned nested ancestor/child config fixture; capture raw frames in memory via the 056.020-T observer seam with redacted persistence; owned-workspace-only cleanup. Never touches the user `.mcp.json` → `056.021-T` |
+| Core synchronous transport (T00A, standalone crate) | standalone `tools/mcp-probe/` crate (own `Cargo.toml`, `[workspace]` + `publish=false`, Rust 2021/MSRV 1.75): `src/main.rs` + `src/transport.rs` | Self-test raw `std::process`/`std::thread` full-duplex pumps, half-close, bounded stderr drain and buffers, deadline signaling; expose a post-write bounded non-blocking copy-delivery seam. No observer/evidence, workspace/config, process teardown, Tokio, or `unsafe`. Ordinary Cargo target is a build cache, not a trust boundary → `056.020-T` |
+| Probe process spawning + teardown (T00C, standalone crate) | `tools/mcp-probe/src/process.rs` + sequential `main.rs` wiring; observe-only `sysinfo` adapter | Direct `Child` handles are the sole kill/wait authority (runner owns the Copilot `Child`, wrapper owns the inner-server `Child`; wrapper PID observed-only). A `sysinfo` adapter observes PID/start-time/executable/parent/nonce for diagnostics/tests but never kills; same-second identity is ambiguous and fails closed; residual/unknown descendants fail the evidence and surface exact identities for operator action → `056.022-T` |
+| Probe observer seam + evidence (T00D, standalone crate) | `tools/mcp-probe/src/evidence.rs` (+ `observer.rs` only if needed) | Copy-only read-only observer seam consumed after each direction's ordered write/flush; bounded non-blocking delivery; saturation/failure atomically invalidates capture while forwarding is unchanged; raw chunks in memory only, redacted structured summaries/digests persisted → `056.023-T` |
+| Isolated probe workspace + config fixtures (T00B, standalone crate) | `tools/mcp-probe/src/workspace.rs` creating `logs/probe/<nonce>` + temporary in-workspace `.mcp.json` | Exclusive-create isolated workspace validated by `validate_path`/`is_reparse_point`; generate in-workspace control/treatment entries and an owned nested ancestor/child config fixture; owned-workspace-only cleanup. Owns no observer/evidence module; never touches the user `.mcp.json` → `056.021-T` |
 | Serve startup diagnostics (T2, non-conditional, parity-safe) | `src/main.rs::cmd_serve`, duplicate-intake and database-open preflight | Route every pre-transport normal exit through an exhaustive typed seam, including pre-v4 and duplicate-intake exits. Preserve unconditional stderr and add structured events; emit `mcp_serve_ready` immediately before `serve_server` → `056.003-T` |
 | Managed config outcome contract (conditional H0a/H3-B1) | `src/workspace/mcp_config.rs` | Distinguish typed create/update/no-change/collision outcomes from fail-closed `PathViolation`; forbid message sniffing → `056.017-T` |
 | Managed MCP launch fields (T2d, conditional H0a/H3-B1) | `src/workspace/mcp_config.rs::managed_server_value` | Add only canonical project-root `cwd` and the evidenced stdio discriminator after T0/H3-B capability proof → `056.008-T` |
-| Contained recovery primitive (conditional H0a/H3-B1) | bounded workspace recovery module + lazy accessor in `src/workspace/paths.rs` | Same verified no-follow handles for I/O, exclusive owner-protected artifacts, and exact restore; no managed-config/install/uninstall/doctor edits → `056.018-T` |
+| Safe no-follow primitive decision (conditional H0a/H3-B1) | decision/spike recorded in `docs/decisions/` → `056.024-T` | Decide an MSRV-1.75, safe-call-site, no-follow/capability-based mutation primitive without relaxing `#![forbid(unsafe_code)]`; evaluate a narrowly justified safe dependency vs a std-only contract, prove with a minimal PoC, and record the decision or block 056.018/shipment → `056.024-T` |
+| Contained recovery primitive (conditional H0a/H3-B1) | selected primitive in `graphtor_core::path` (e.g. `src/path/handle.rs`) + lazy accessor in `src/workspace/paths.rs` | Implement ONLY the `056.024-T`-selected no-follow/reparse-safe primitive for I/O, exclusive owner-protected artifacts, and exact restore; assert no std handle-level no-follow, take no `unsafe` exemption, make no managed-config/install/uninstall/doctor edits → `056.018-T` |
 | Existing-install refresh (T2e, conditional H0a/H3-B1) | `src/main.rs::cmd_upgrade`, managed-config typed APIs | Refresh marked/exact-legacy entries and expose typed text/JSON action + recovery metadata; preserve collision/non-JSON bytes and Minimal footprint → `056.009-T` |
 | Advisory lock characterization + implementation (conditional H0b) | `src/lock.rs` shared `AdvisoryLock` used by Database and Workspace locks | Passing characterization → `056.016-T`; one conservative high-resolution/boot-aware policy plus task-local red/green and legacy recovery → `056.007-T` |
 | Diagnostic logging sink (T2c, conditional/optional) | `src/logging/init.rs`, serve path in `src/main.rs` | Only if stderr is unavailable and CLI env inheritance works: unique exclusive absolute per-attempt sink consuming typed T2 events. No shared/relative sink or production-entry env field → `056.006-T` |
-| H0c operational remediation (T2f, H0c-only — conditional) | evidenced fail-closed surface (registry / explicit `--config` / pre-v4 schema / duplicate-intake) + operational recipe | Repair one evidenced gate at a time with fresh approval and backup, retaining rollback through T4. Sequential H0c gates remain active; a newly exposed different branch is reclassified without discarding completed H0c recovery state. Pre-v4 rebuild uses `sync`, never `upgrade` → `056.010-T` |
+| H0c operational remediation (T2f, H0c-only — conditional) | evidenced fail-closed surface (registry / explicit `--config` / pre-v4 schema / duplicate-intake) + operational recipe | Repair exactly ONE evidenced gate with fresh approval and backup, then one confirming re-probe; retain rollback through T4. A second H0c gate, backward-pointing, or unowned evidence blocks T4 and becomes a NEW bounded Stage follow-up (no in-place loop or sibling reactivation). Pre-v4 rebuild uses `sync`, never `upgrade` → `056.010-T` |
 | Embedding resolution outcomes (conditional H1) | `src/embed/resolver.rs` | Add typed `Loaded`/`Disabled`/`Failed` detailed result while preserving an adapter for unrelated callers → `056.014-T` |
-| Shared lazy lifecycle (conditional H1) | `src/embed/lifecycle.rs` + MCP projection in `src/mcp/server.rs` | Supervised clone-shared state and versioned Loading/Failed/Disabled contract → `056.005-T` |
-| Serve/background-sync lazy wiring (conditional H1) | `src/main.rs::cmd_serve`, `spawn_background_sync` | Inject one shared owner into MCP and Generation sync; neither eager load nor background sync may block initialize → `056.015-T` |
-| Server transport compatibility (conditional H3-A) | rmcp pin + STDIO wiring | Task-local replay red/green and Rust 1.75 proof; T4 owns production acceptance → `056.011-T` |
-| Client cwd compatibility (conditional H3-B) | actual Copilot CLI capability evidence | Separate B1/B2 adjudication from server transport; temporary proof only activates managed-config tasks and never satisfies T4 → `056.019-T` |
+| Shared lazy lifecycle (conditional H1) | `src/embed/lifecycle.rs` | Supervised clone-shared lifecycle state machine only; the versioned Loading/Failed/Disabled availability projection and `src/mcp/server.rs` wiring move to `056.015-T` → `056.005-T` |
+| Serve/background-sync wiring + MCP availability projection (conditional H1) | `src/main.rs::cmd_serve`, `spawn_background_sync`, `src/mcp/server.rs` | Own the versioned Loading/Failed/Disabled MCP availability projection (moved from `056.005-T`); inject one shared owner into MCP and Generation sync; neither eager load nor background sync may block initialize → `056.015-T` |
+| Server transport compatibility (conditional H3-A) | rmcp pin + STDIO wiring, after `056.015-T` | Own transport types/wiring only; reacquire/replay the exact-client transaction in one execution via the `056.001-T` runner + `056.023-T` observer (no persisted raw frames), red/green and Rust 1.75 proof; T4 owns production acceptance → `056.011-T` |
+| Client isolated-config + cwd compatibility (conditional H3-B) | actual Copilot CLI capability evidence | Adjudicate BOTH a documented isolated-config discovery mechanism (owning the one bounded attempt when Gate 1 shows ancestor merge) and a distinct working-directory mechanism, each one-shot; B2 unsupported-client blocks; never reads/mutates the user root config; temporary proof only activates managed-config tasks and never satisfies T4 → `056.019-T` |
 | Operator documentation (documentation-only) | two named sections each in `docs/troubleshooting.md` / `docs/cli-reference/graphtor-docs.md` or `docs/mcp-tools.md` / `docs/cli-reference/graphtor-docs.md` | Diagnostics plus selected H0b/H0c/H1 contracts → `056.012-T`; managed launch/recovery and H3 → `056.013-T` |
 | Tests | `tests/common/mcp_driver.rs`, `tests/mcp_serve_handshake_test.rs`, and colocated focused tests | T1 owns the shared driver module; each production task owns at most three grouped scenarios. Actual-client acceptance remains the final H3/T4 gate |
 
 ## Task Breakdown (evidence-first, test-first, ~2h each, single-width)
 
-### T00A — Transparent MCP byte proxy and observer seam — backlog `056.020-T`
+### T00A — Core synchronous transport — backlog `056.020-T`
 
-* Add a non-default, feature-gated `[[bin]]` named `graphtor-mcp-probe` at
-  `tools/mcp-probe/main.rs`, gated by a `probe-harness` required feature in
-  `Cargo.toml`. Build it with the **standard** Cargo target directory
-  (`target/`); introduce no custom `--target-dir`, nonce build directory,
-  owner-only build artifact, Windows ACL/DACL, artifact manifest, or post-build
-  artifact-ACL verification. Normal `target/` is a build cache, not an evidence
-  trust boundary — anyone able to modify source or `target/` can already alter
-  the probe, so build-artifact hardening is security theater and is removed.
-  Default release/all-target gates exclude the required-feature bin while
-  dedicated Rust 1.75 `check`/`test`/`build`/`clippy` commands cover it; the bin
-  is never installed/committed and is invalid for T4.
-* Self-test transport only (no actual CLI, no filesystem mutation beyond normal
-  Cargo build output):
-  1. independent concurrent pumps for client→child stdin and child→client
-     stdout, a concurrent bounded stderr drain, bounded buffers, client
-     EOF→child stdin half-close, child stdout EOF→client close, and timeout
-     signaling; protocol bytes never rewritten or reframed;
-  2. exact wrapper-entry and inner-server identity captured separately and
-     inherited cwd/env/args preserved except allowlisted diagnostics;
-  3. a **read-only byte-observer seam** that receives copies or immutable chunks
-     of each forwarded direction with bounded, explicit-backpressure semantics —
-     an observer that fails or falls behind invalidates downstream evidence but
-     never alters, drops, or reframes forwarded wire bytes — plus
-     output-boundary argv/env/message redaction.
-* This task owns the byte proxy and observer seam only, holding just the direct
-  inner-server `Child` handle needed to wire stdio. It adds no `sysinfo` /
-  process-tree ownership and no `unsafe`; process spawning, exact identity, and
-  teardown are `056.022-T`. It runs no real CLI, creates no isolated workspace,
-  writes no `.mcp.json`, and persists no raw frames. Isolated workspace,
-  temporary config, ancestor fixture, and evidence lifecycle are `056.021-T`;
-  the approved real-CLI run is `056.001-T`.
+* Create a **standalone, non-published diagnostic crate** rooted at
+  `tools/mcp-probe/` with its own `Cargo.toml` declaring an empty `[workspace]`
+  table (so the crate stands outside the production package and workspace),
+  `publish = false`, and `edition = "2021"` / `rust-version = "1.75"`. Add no
+  root `probe-harness` feature, no root `[[bin]]`, no custom `--target-dir`, and
+  no ACL/DACL/artifact hardening. The standalone crate's ordinary Cargo target
+  directory is a build cache, not an evidence trust boundary — anyone able to
+  modify source can already alter the probe, so build-artifact hardening is
+  security theater and is removed.
+* Own the **core synchronous transport only**: a thin `src/main.rs` composition
+  root plus `src/transport.rs`. Self-test transport only (no actual CLI, no
+  workspace, no config, no persisted evidence, no observer):
+  1. raw `std::process`/`std::thread` independent full-duplex pumps for
+     client→child stdin and child→client stdout, a bounded stderr drain, bounded
+     buffers, client EOF→child stdin half-close, child stdout EOF→client close,
+     and deadline signaling; protocol bytes never rewritten or reframed;
+  2. after each direction's ordered write-and-flush completes, deliver forwarded
+     byte copies through a **bounded, non-blocking** hook (the seam consumed by
+     `056.023-T`); with an absent or slow delivery target the pump forwards bytes
+     byte-for-byte unchanged and never blocks.
+* This task owns no observer, evidence, redaction, workspace, config,
+  process-identity, or exact-CLI concern. It holds only the direct
+  `std::process::Child` handle needed to wire stdio for transport self-tests and
+  adds no `sysinfo`/process-tree ownership, no kill/wait teardown authority
+  (`056.022-T`), no Tokio, and no `unsafe`. The observer seam and evidence are
+  `056.023-T`; process spawning/teardown are `056.022-T`; the isolated workspace
+  and config fixtures are `056.021-T`; the exact-CLI run is `056.001-T`.
+* Verify via `cargo +1.75.0 check|test|build|clippy --manifest-path
+  tools/mcp-probe/Cargo.toml` (clippy `-D warnings -D clippy::pedantic`). The
+  crate is never installed or committed as a binary and is invalid for T4.
 
-### T00C — Probe process identities and teardown — backlog `056.022-T`
+### T00C — Probe process spawning and teardown — backlog `056.022-T`
 
-* Depends on `056.020-T`. Own `tools/mcp-probe/process.rs` and focused tests;
-  sequentially wire it into `tools/mcp-probe/main.rs` to compose the process
-  lifecycle onto the transparent proxy. Reuse the existing safe `sysinfo`
-  dependency; add no `unsafe` and no new process crate.
-* Establish ownership **at spawn**, not post-hoc only: the outer runner holds
-  the exact CLI-assigned Copilot `Child` and the wrapper holds the exact
-  inner-server `Child`. Record PID plus process-start-time for runner, wrapper,
-  and inner server at spawn and maintain the live owned-identity registry.
-* Teardown prefers the direct `Child` kill/wait wherever a handle exists, then a
-  **deepest-first** fallback matching on exact PID plus process-start-time
-  through the existing safe `sysinfo` enumeration. Never kill on PID alone, on
-  identity mismatch, or by name. Repeat bounded verification until every
-  RECORDED owned identity is absent; if ownership cannot be proven, evidence
-  fails and the exact residual identities are surfaced for operator action —
-  there is **no** atomic whole-tree ownership guarantee.
-* Self-test at most three grouped scenarios: (1) normal completion plus
-  back-to-back runs with no recorded identity leaked; (2) deadline/error
-  teardown; (3) intermediate child exit and PID-reuse mismatch (a reused PID
-  with a different start-time is refused). Runs no real CLI, creates no
-  workspace, writes no `.mcp.json`, persists no evidence.
+* Depends on `056.020-T`. Own `tools/mcp-probe/src/process.rs` and focused tests;
+  sequentially wire it into `tools/mcp-probe/src/main.rs` to compose process
+  spawning onto the transport. Add no `unsafe` and no new process-control crate.
+* **Direct `std::process::Child` handles are the ONLY kill/wait authority.** The
+  exact-CLI runner (the `056.001-T` composition point) owns the Copilot `Child`
+  guard; the wrapper owns the inner-server `Child` guard. Each guard kills and
+  waits its own child on every outcome. The wrapper PID is **observed-only** and
+  is never used to kill.
+* Remove every `sysinfo`/PID/start-time **kill** fallback and every claim of
+  exact arbitrary-descendant identity or atomic whole-tree ownership. A safe
+  `sysinfo` adapter behind a trait MAY observe PID, process-start-time,
+  executable, parent, and a launch nonce for diagnostics and deterministic
+  tests, but enumeration can only verify and report — it MUST NOT kill.
+* Fail closed on ambiguity: a same-second start-time (or otherwise
+  indistinguishable identity) is never a confirmed match. If residual wrapper or
+  unknown descendant processes remain after the owned guards run, the evidence
+  fails and the exact diagnostic identities (PID/start-time/executable/parent)
+  are surfaced for operator-approved action; the task never kills them itself.
+* Self-test at most three grouped scenarios through an injectable observation
+  adapter: (1) normal completion plus back-to-back runs cleaned up by direct
+  handles with no leaked owned child; (2) deadline/error teardown by direct
+  handles; (3) deterministic PID-reuse ambiguity (a reused PID with a
+  same-second/indistinguishable start-time is reported ambiguous and fails
+  closed) and an observed-only residual descendant surfaced, not reaped. Runs no
+  real CLI, creates no workspace, writes no `.mcp.json`, persists no evidence.
 
-### T00B — Isolated probe workspace, ancestor fixture, and evidence lifecycle — backlog `056.021-T`
+### T00D — Probe observer seam and evidence capture — backlog `056.023-T`
 
-* Depends on `056.022-T` (transitive `056.020-T → 056.022-T → 056.021-T`). Own
-  `tools/mcp-probe/workspace.rs` and `tools/mcp-probe/evidence.rs`; sequentially
-  wire both into `tools/mcp-probe/main.rs` after `056.022-T`. Compose — never
-  reimplement — the `056.020-T` proxy/observer seam and the `056.022-T` process
-  teardown.
+* Depends on `056.022-T` (chain `056.020 → 056.022 → 056.023 → 056.021`). Own
+  `tools/mcp-probe/src/evidence.rs` (add `observer.rs` only if genuinely needed)
+  and the copy-only read-only observer seam. Never reimplement the `056.020-T`
+  duplex pumps or the `056.022-T` teardown.
+* Define the seam so the `056.020-T` pump performs its ordered write-and-flush
+  FIRST, then delivers copies/immutable chunks. The pump NEVER awaits observer
+  work and NEVER takes a cross-direction observer lock, so observation cannot
+  reorder, delay, or deadlock forwarding.
+* Deliver through a bounded, non-blocking channel. On saturation or observer
+  failure, atomically invalidate the affected capture (mark evidence incomplete)
+  while forwarding continues byte-for-byte unchanged. The observer receives
+  copies or immutable chunks only and never mutates, reorders, drops, or reframes
+  wire bytes.
+* Keep raw transaction chunks in memory only for same-run replay by `056.001-T`;
+  persist only redacted structured summaries and digests — never raw frame bytes
+  on disk.
+* Self-test exactly this evidence-observation domain (no process spawn, no
+  workspace/config, no exact CLI): (1) a paused/slow observer and a failing
+  observer each prove byte-identical forwarded order, half-close propagation, and
+  deadline outcome versus a no-observer control; (2) redaction of secret-bearing
+  argv/env/message fields; (3) no raw-frame persistence. Verify via
+  `cargo +1.75.0 check|test|build|clippy --manifest-path tools/mcp-probe/Cargo.toml`.
+
+### T00B — Isolated probe workspace and config fixtures — backlog `056.021-T`
+
+* Depends on `056.023-T` (chain `056.020 → 056.022 → 056.023 → 056.021`). Own
+  **only** `tools/mcp-probe/src/workspace.rs`; sequentially wire it into
+  `tools/mcp-probe/src/main.rs` after `056.023-T`. Compose — never reimplement —
+  the `056.020-T` transport, the `056.022-T` process guards, and the `056.023-T`
+  observer/evidence seam. Own **no** observer/evidence module and add **no** new
+  production path primitive.
 * Create a fresh isolated workspace under the canonical repository path
   `logs/probe/<nonce>` through the Rust probe using **exclusive creation** (fail
   if the path already exists), validating every component with the existing
   `graphtor_core::path::validate_path` / `is_reparse_point` helpers before use.
-  Add **no** new production path primitive.
 * Threat model (explicit): this protects against accidental escape of the
   repository root and a pre-existing reparse point/junction on the workspace
-  path. It does **not** defend against a malicious same-user process that can
-  modify source or the workspace; the documented
-  `validate_path`/`is_reparse_point` TOCTOU window is an **accepted residual
-  risk** for this non-sensitive, same-user diagnostic workspace.
+  path. It does **not** defend against a malicious same-user process; the
+  documented `validate_path`/`is_reparse_point` TOCTOU window is an **accepted
+  residual risk** for this non-sensitive, same-user diagnostic workspace.
 * Generate the temporary control and treatment `.mcp.json` **only inside** that
   isolated workspace. Never read-modify-write, back up, restore, or substitute
   the user `.mcp.json`; therefore no config backup, restore, or approval receipt
   is required. Control and treatment are byte-equivalent to the production
-  server entry semantics except the wrapper `command`; the treatment entry alone
-  adds the candidate `cwd` mechanism.
+  server entry semantics except the diagnostic wrapper `command`; the treatment
+  entry alone differs by adding the candidate `cwd` mechanism.
 * Build an **owned nested ancestor-discovery fixture** inside the isolated
   workspace: an owned parent directory holding a deliberately invalid/sentinel
   ancestor `.mcp.json`, and a child run directory holding the intended temporary
   `.mcp.json`. This lets `056.001-T` prove, with the exact target CLI, that the
   nearest child config shadows (and does not merge) the ancestor before any
   causal contrast; the repository-root `.mcp.json` is never assumed unread.
-* Capture raw transaction frames in memory (through the `056.020-T` observer
-  seam) for same-run replay by `056.001-T`; persist only a redacted structured
-  summary and digests (no raw frame bytes on disk). Own the runtime evidence
-  lifecycle and the exact workspace cleanup/retention policy: never delete
-  anything outside the exact owned `logs/probe/<nonce>` workspace, and keep
-  destructive-cleanup approval constraints explicit.
+* Own the exact workspace cleanup/retention policy: never delete anything outside
+  the exact owned `logs/probe/<nonce>` workspace, and keep destructive-cleanup
+  approval constraints explicit. The redacted evidence written into the workspace
+  is owned by `056.023-T`.
 * Performs no production acceptance. The exact-CLI run is `056.001-T` and
   restored-production acceptance remains solely T4.
 
-### T0 — Run the exact-CLI differential evidence probe — backlog `056.001-T`
+### T0 — Run the one-shot exact-CLI classification — backlog `056.001-T`
 
-* Record the **exact** newest failing Copilot executable path, version/build,
-  and `/mcp show graphtor-docs` invocation. T4 must use the same identity.
+* Own `tools/mcp-probe/src/exact_cli.rs` plus the ONE final subcommand-wiring
+  edit in the thin `tools/mcp-probe/src/main.rs`. Record the **exact** newest
+  failing Copilot executable path, version/build, and `/mcp show graphtor-docs`
+  invocation. T4 must use the same identity.
 * Run inside `056.021-T`'s isolated `logs/probe/<nonce>` workspace using its
   temporary in-workspace control/treatment `.mcp.json`, the `056.020-T`
-  proxy/observer seam, and the `056.022-T` process lifecycle. Both entries are
-  byte-equivalent to the user-facing production entry except `command = wrapper`;
-  treatment alone adds canonical project-root `cwd`. No extra env, targets,
-  `--db-path`, args, or alternate stdio discriminator. The user `.mcp.json` is
+  transport, the `056.022-T` process guards, and the `056.023-T` observer seam;
+  never reimplement pumps, teardown, or evidence capture. The user `.mcp.json` is
   never read or written, so no approval receipt applies.
+* **Diagnostic wrapper handoff (parity):** the child `.mcp.json` uses the
+  diagnostic wrapper as `command`; diagnostic-only wrapper args encode the exact
+  absolute production inner executable plus its original args. Control and
+  treatment are identical in this handoff and differ ONLY by the treatment `cwd`.
+  Record and hash the exact inner executable path and version.
 * **Gate 1 (ancestor config-isolation, first):** using the exact target CLI
-  against `056.021-T`'s owned nested ancestor/child fixture, prove the nearest
-  child `.mcp.json` shadows and does not merge the sentinel ancestor. Only after
-  isolation is proven may the causal control/treatment contrast run. If the
-  exact CLI reads or merges the ancestor config, stop the causal H0 comparison
-  and route to H3-B via `056.019-T`; never assume the repository-root
-  `.mcp.json` is unread.
-* Record wrapper-entry cwd and inner-child spawn cwd separately; require the
-  inner child to inherit the wrapper's CLI-assigned cwd. Preserve the unmodified
-  bidirectional initialize transaction, stderr, exit/still-alive state, locks,
-  and Generation posture. Raw frames stay in memory (via the observer seam) for
-  same-run replay.
-* Causes are ordered, not mutually exclusive. Select H0a when treatment reaches
-  healthy initialize **or** demonstrably advances past foreign-cwd discovery
-  to a later gate/handshake stage; in the latter case retain H0a as a
-  prerequisite and also select the newly exposed H0b/H0c/H1/H3-A cause.
-  If both legs remain foreign or the original
-  field is rejected, select H3-B.
-* **Bound the evidence loop:** run exactly one control/treatment contrast per
-  selected correction. After each correction exactly one terminal outcome holds
-  — initialize succeeds, one newly evidenced downstream task is selected, H3-B2
-  blocks the shipment, or the task returns blocked with the captured evidence.
-  No open-ended implementation loop runs inside T0, and no already-proven
-  prerequisite is discarded.
-* Enforce the 30-second `056.020-T` deadline and the exact recorded
-  PID-plus-start-time identity/handle teardown contract in `056.022-T` (not a
-  broad process-tree guarantee); fail closed if exact CLI identity, minimal entry
-  parity, ancestor config-isolation, or exact process ownership cannot be proved.
-  Direct replay is confirmation only and cannot select the branch.
-* Deliverable: correlated transcripts naming ordered proven prerequisites/
-  causes or an explicit H3-B2 unsupported-client blocker. Preserve the in-memory
-  H3-A transaction for same-run replay. T0 links tasks; it owns no production
-  implementation or docs.
+  against `056.021-T`'s nested fixture, prove the nearest child `.mcp.json`
+  shadows and does not merge the sentinel ancestor. Only then may the single
+  control/treatment contrast run. If the exact CLI reads or merges the ancestor
+  config, stop the causal H0 comparison and route to H3-B via `056.019-T`; never
+  assume the repository-root `.mcp.json` is unread.
+* **One-shot classification:** run exactly one control (no `cwd`) / treatment
+  (canonical project-root `cwd`) pair through the shared runner, then emit the
+  current **ordered** cause classification (proven prerequisites first — H0a is
+  retained when a cwd correction exposes a later blocker) from child
+  exit/liveness/framing/lock/Generation evidence. No implementation loop runs
+  inside T0; it never reruns per correction, waits for production health, or
+  reopens a downstream task.
+* Terminal outcome: after the single pair the task emits the ordered downstream
+  classification and moves to `done`, or blocks as H3-B2 unsupported-client, or
+  returns blocked with the captured evidence. Downstream causal tasks are visited
+  once in the authoritative forward-chain order.
+* Preserve the unmodified duplex transaction, concurrent stderr, exit/still-alive
+  state, locks, and Generation posture. Keep raw frames in memory via the
+  `056.023-T` observer seam for same-run replay; direct replay is confirmation
+  only. Apply the deadline through `056.020-T` and the direct-`Child`-handle
+  teardown through `056.022-T` (no whole-tree claim). Persist only redacted
+  summaries and digests; fail closed if process ownership, exact CLI identity,
+  ancestor config-isolation, or same-inner-executable parity is unproved.
+* Runtime classification runs via `cargo +1.75.0 run --manifest-path
+  tools/mcp-probe/Cargo.toml -- exact-cli ...`; there is no `self-test`
+  subcommand. Deliverable: correlated transcripts naming ordered proven
+  prerequisites/causes or an explicit H3-B2 blocker. T0 links tasks; it owns no
+  production implementation or docs.
 
 ### T1 — Green out-of-process handshake driver
 
@@ -564,16 +601,17 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   that names the offending registry/schema), it is bounded to the evidenced
   cause and preceded by its own red test — the fail-closed behavior itself is
   never relaxed.
-* **Iterative verification:** each state mutation gets a fresh approval and
-  backup. After it, rerun the same actual-client probe. If another H0c gate
-  appears, keep `056.010-T` active and repeat. If a different branch appears,
-  preserve the completed H0c remediation and rollback record, reclassify the
-  remaining cause, and reactivate its owning task. If width is exceeded, create
-  a bounded dependent follow-up and keep H0c blocked/active until that follow-up
-  plus actual-client initialize succeeds. No invalid Cargo fixture remains.
+* **One-shot verification:** the single approved state mutation gets a fresh
+  approval and backup, followed by exactly one confirming actual-client re-probe
+  through the `056.001-T` runner and `056.023-T` observer. `056.010-T` owns
+  exactly one H0c repair — it never loops, runs sequential repairs, or
+  reactivates a sibling. A second H0c gate, backward-pointing evidence, or an
+  unowned cause blocks T4 and becomes a NEW bounded Stage follow-up rather than an
+  in-place repeat. No invalid Cargo fixture remains.
 * Contingency: when H0c is not evidenced, move the task to `done` with
-  `not-needed: H0c not evidenced`. When H0c is selected, complete it only after
-  the actual client negotiates initialize.
+  `not-needed: H0c not evidenced`. When H0c is selected, complete it after the
+  single approved repair plus its one confirming re-probe, or after handing a
+  revealed second gate to a new bounded Stage follow-up.
 
 ### T3 — (Conditional H1) Typed outcomes, lazy lifecycle, and serve orchestration
 
@@ -590,13 +628,17 @@ consumed by both `DocServer` and Generation background sync:
    `Uninitialized` / `Loading` / `Ready` / `Disabled` / `Failed` owner, not a
    module global or bare OnceCell. Atomically start one blocking load, own and
    monitor its task, convert panic/JoinError to Failed, define drop/cancel
-   behavior, and serialize retry transitions. A versioned availability
-   projection defines stable Loading/Failed/Disabled code, retryability,
-   remediation, and fallback metadata. Neither tool falls back while
-   Loading/Failed; terminal Disabled permits `research_topic` keyword fallback
-   only with explicit metadata. Exactly three groups cover concurrency,
-   Disabled parity, and failure/panic/retry/Ready.
-3. **Serve/background-sync wiring (`056.015-T`):** `cmd_serve` creates one owner
+   behavior, and serialize retry transitions. It exposes a stable typed
+   lifecycle-state accessor only; the versioned availability projection and
+   `src/mcp/server.rs` wiring are `056.015-T`. Exactly three groups cover
+   concurrency, terminal-Disabled/drop-cancel behavior, and
+   failure/panic/retry/Ready.
+3. **Serve/background-sync wiring + availability projection (`056.015-T`):** own
+   the versioned MCP availability projection and `src/mcp/server.rs` wiring
+   (moved from `056.005-T`) — stable Loading/Failed/Disabled code, retryability,
+   remediation, and fallback metadata; neither tool falls back while
+   Loading/Failed and terminal Disabled permits `research_topic` keyword fallback
+   only with explicit metadata. `cmd_serve` creates one owner
    and passes clones to `DocServer` and `spawn_background_sync`. The first
    model-dependent consumer may be sync or a request and calls the same
    serialized `ensure_loading`. Background sync remains subscribed across
@@ -613,8 +655,12 @@ retry contract.
 #### T-H3-A — Server framing/version compatibility — backlog `056.011-T`
 
 * Select only when the child remains alive but T0's framed transaction never
-  negotiates a protocol version. Replay the exact unmodified bidirectional
-  transaction red/green; a generic direct initialize is insufficient.
+  negotiates a protocol version. Own **only** transport types and rmcp/stdio
+  wiring, landing **after** `056.015-T`. Do NOT require persisted T0 raw frames:
+  in ONE same execution, reacquire the exact-client transaction through the
+  `056.001-T` runner and the `056.023-T` in-memory observer, add/observe the
+  H3-A capture/replay red, then green it with the minimal fix. No raw bytes on
+  disk; a generic direct initialize is insufficient.
 * Inspect candidate crate metadata before implementation. rmcp 1.8.x uses
   edition 2024 and is excluded by Rust 1.75. Prefer a minimal framing
   adaptation around pinned 1.5.x; use another release only after recording
@@ -625,23 +671,36 @@ retry contract.
 
 #### T-H3-B — Client cwd compatibility — backlog `056.019-T`
 
-* Select only when the exact CLI ignores/rejects T0's original `cwd` field.
-  **B1** requires that same executable to pass a second foreign-directory
-  contrast using a different documented field placement or working-directory
-  mechanism; it activates managed-config tasks but cannot satisfy T4.
-  **B2** means the exact identity supports no safe mechanism: close managed
-  tasks done-plus-not-needed and block shipment/T4 as `unsupported-client`.
-  Switching CLI identity is not a fix for this acceptance contract.
+* Adjudicate BOTH client mechanisms one-shot on the exact CLI. If T0's Gate 1
+  shows the exact CLI **merges** ancestor config, own the ONE bounded attempt to
+  find and use a documented isolated-config discovery mechanism; if it exists it
+  activates managed-config tasks, else classify B2 and block. Separately, when
+  the exact CLI ignores/rejects T0's original `cwd` field, **B1** requires that
+  same executable to pass a second foreign-directory contrast using a different
+  documented field placement or working-directory mechanism (activates
+  managed-config tasks, cannot satisfy T4). Never deliberately read or mutate the
+  user root config.
+* **B2** means the exact identity supports no safe isolated-config or
+  working-directory mechanism: close managed tasks done-plus-not-needed and block
+  shipment/T4 as `unsupported-client`. Switching CLI identity is not a fix for
+  this acceptance contract.
 * Record exact CLI executable path, version/build, invocation, and capability.
   Neither mode may add a server-side external-path fallback. T4 still requires
-  three restored production-entry starts. If H3-B is not selected, complete
+  three restored production-entry sessions. If H3-B is not selected, complete
   done-plus-not-needed.
 
 ### T4 — Runtime verification, rollback, and closure evidence
 
-* Verify with the exact T0 Copilot executable path/version/build:
+* Verify with the exact T0 Copilot executable path/version/build across three
+  exact-Copilot sessions:
   `/mcp show graphtor-docs` shows a healthy connected server with no OS error
-  232; capture `mcp_serve_ready` separately as preflight evidence only.
+  232, and each session records a completed initialize, a `tools/list`
+  containing the expected tools, and one side-effect-free `get_status`
+  fingerprint matched to a direct control, with the production config hash
+  correlated to the Copilot-spawned server startup event (PID, executable/build,
+  canonical cwd, timestamp). If the exact client lacks a deterministic
+  tool-invocation surface, route/block through H3-B2 — handshake-only is
+  incomplete. Capture `mcp_serve_ready` separately as preflight evidence only.
 * On a managed-config branch, first require `056.009-T` evidence that the
   delivered upgrade refreshed the target workspace and record the post-refresh
   production config hash.
@@ -674,9 +733,10 @@ retry contract.
   proves initialize completion.
 * Dependency note: T4 depends on `056.003-T` (**non-conditional** cmd_serve
   diagnostics — loud exit-2 errors + `mcp_serve_ready`, always lands), on the
-  always-land probe evidence chain `056.020-T → 056.022-T → 056.021-T →
-  056.001-T` (with **explicit direct evidence-chain edges** to `056.001-T`,
-  `056.021-T`, and `056.022-T` for robustness), plus the
+  always-land probe evidence chain `056.020-T → 056.022-T → 056.023-T →
+  056.021-T → 056.001-T` (with **explicit direct evidence-chain edges** to
+  `056.001-T`, `056.021-T`, `056.022-T`, `056.023-T`, and `056.024-T` for
+  robustness), plus the
   **curative** fix tasks, each conditional and moved to **`done` with a
   `not-needed: <rationale>` log comment** when
   its hypothesis is not the evidenced cause: T2d launch-contract (H0a/H3-B1) =
@@ -685,11 +745,12 @@ retry contract.
   diagnosability = `056.006-T`, T2f H0c remediation = `056.010-T`, H1 resolver/
   lifecycle/orchestration = `056.014-T`/`056.005-T`/`056.015-T`, H3-A transport
   = `056.011-T`, H3-B compatibility = `056.019-T`, typed config/recovery =
-  `056.017-T`/`056.018-T`, transparent byte proxy + observer seam = `056.020-T`,
-  process identities/teardown = `056.022-T`, isolated workspace/ancestor
-  fixture/evidence = `056.021-T`, and documentation-only
+  `056.017-T`/`056.018-T`,   core transport = `056.020-T`,
+  process spawning/teardown = `056.022-T`, observer seam/evidence = `056.023-T`,
+  isolated workspace/fixtures = `056.021-T`, safe no-follow decision =
+  `056.024-T`, and documentation-only
   tasks `056.012-T`/`056.013-T`. T0 may activate an **ordered sequence**:
-  **H0a → 056.017 + 056.008 + 056.018 +
+  **H0a → 056.017 + 056.008 + 056.024 + 056.018 +
   056.009**; **H0b → 056.016 + 056.007**; **H0c → 056.010** with 056.006
   independently evidence-gated; **H1 → 056.014 + 056.005 + 056.015**;
   **H3-A → 056.011**; **H3-B1 → 056.019 + managed-config tasks**;
@@ -715,23 +776,37 @@ this plan claims no current READY.
 These invariants hold for the whole plan; task sections reference them rather
 than restate every clause:
 
-* **Standard target, not a trust boundary** — the probe builds on the normal
-  Cargo `target/`; no custom `--target-dir`, DACL/ACL, `Assert-*` helper,
-  owner-only artifact, user-config backup, or approval receipt exists. The
-  built bin is ephemeral and invalid as T4 evidence.
-* **Read-only observer seam** — `056.020-T`'s observer receives copies/immutable
-  chunks and never mutates, reorders, drops, or reframes forwarded wire bytes;
-  observer failure invalidates evidence but never changes the wire.
-* **Exact-identity teardown, no whole-tree guarantee** — `056.022-T` records PID
-  plus process-start-time at spawn and reaps by direct `Child` handle then
-  deepest-first exact PID-plus-start-time match; never PID-only, mismatch, or
-  name kill. Unproven ownership fails evidence and surfaces exact residual
-  identities for operator action.
+* **Standalone crate, not a trust boundary** — the probe is a standalone,
+  non-published crate at `tools/mcp-probe/` (own `Cargo.toml` with `[workspace]`
+  + `publish = false`, Rust 2021 / MSRV 1.75); no feature-gated root `[[bin]]`,
+  custom `--target-dir`, DACL/ACL, `Assert-*` helper, owner-only artifact,
+  user-config backup, or approval receipt exists. Its ordinary Cargo target is a
+  build cache; the built binary is ephemeral and invalid as T4 evidence.
+* **Width-split probe** — `056.020-T` owns core synchronous transport,
+  `056.023-T` owns the copy-only observer seam and in-memory evidence,
+  `056.021-T` owns the isolated workspace and config fixtures, `056.022-T` owns
+  process spawning/teardown, and `056.001-T` owns the exact-CLI run.
+* **Copy-only observer seam** — `056.023-T`'s observer receives copies/immutable
+  chunks after the `056.020-T` pump's ordered write/flush and never mutates,
+  reorders, drops, or reframes forwarded wire bytes; the pump never awaits the
+  observer or takes a cross-direction lock; saturation/failure invalidates
+  capture but never changes the wire.
+* **Direct-handle teardown, no whole-tree guarantee** — `056.022-T` reaps by
+  direct `Child` handle only (runner owns the Copilot child, wrapper owns the
+  inner-server child; wrapper PID observed-only). A `sysinfo` adapter observes
+  identity for diagnostics/tests but never kills; same-second identity is
+  ambiguous and fails closed; residual/unknown descendants fail evidence and
+  surface exact identities for operator action.
 * **Ancestor config-isolation gate first** — `056.001-T` proves with the exact
   CLI that the nearest child `.mcp.json` shadows and does not merge a sentinel
   ancestor before any causal contrast; if the CLI merges ancestor config, route
   to H3-B via `056.019-T`. The repository-root `.mcp.json` is never assumed
   unread.
+* **One-shot classification, forward-only chain** — `056.001-T` runs exactly one
+  control/treatment pair and emits an ordered classification; every causal task
+  is visited once in the authoritative forward order and never reopens a
+  completed/not-needed sibling. Backward-pointing or unowned evidence blocks T4
+  and creates a new bounded Stage follow-up.
 * **No user-config mutation** — control/treatment and the nested fixture live
   only inside the owned `logs/probe/<nonce>` workspace; the user `.mcp.json` is
   never read, mutated, backed up, restored, or substituted.
@@ -751,70 +826,108 @@ the trust boundary — anyone able to modify source or `target/` can already alt
 the probe — so hardening them is security theater. The sensitive state is the
 runtime config, the evidence, and process ownership.
 
+Correction round 2 further splits the probe into a standalone `tools/mcp-probe/`
+crate with width-separated ownership (transport `056.020-T`, observer/evidence
+`056.023-T`, workspace/fixtures `056.021-T`, process teardown `056.022-T`,
+exact-CLI `056.001-T`) and replaces the earlier re-entrant causal loop with a
+forward-only, single-total-order state machine.
+
 ### Removed nodes (do not reintroduce)
 
+* The feature-gated `probe-harness` required feature, the root `[[bin]]`
+  `graphtor-mcp-probe`, and any probe target inside the production package/
+  workspace (the probe is a standalone `tools/mcp-probe/` crate).
 * Custom Cargo `--target-dir` and the `logs/probe/<nonce>` build directory.
 * Owner-only build artifacts, Windows ACL/DACL creation, and the post-build
   artifact-manifest/ACL verification, plus the undefined `Assert-ProtectedDir`
   and `Assert-OwnerOnlyArtifact` helpers.
+* Every `sysinfo`/PID/start-time **kill** fallback and any atomic whole-tree
+  ownership claim (teardown is by direct `Child` handle only).
+* `056.021-T` owning `evidence.rs` or raw-frame capture (the observer seam and
+  evidence move to `056.023-T`); on-disk raw-frame persistence.
+* Unbounded/sequential H0c repairs, sibling reactivation, and any in-place loop
+  (`056.010-T` owns one repair; a second gate is a new bounded follow-up).
+* The unsupported assertion that std already provides handle-level no-follow, and
+  any `unsafe` exemption for the recovery primitive.
 * User `.mcp.json` mutation, backup, restore, and the config approval receipt.
-* On-disk raw-frame persistence.
-* `056.001-T` depending directly on `056.020-T`.
+* The `self-test` probe subcommand and the `--features probe-harness --bin
+  graphtor-mcp-probe` verification commands.
 
 ### Retained and new nodes
 
-* `056.020-T` (retained, narrowed) — feature-gated transparent MCP byte proxy
-  plus a read-only byte-observer seam on the standard Cargo target; self-tests
-  only. Holds only the direct inner-server `Child` handle; no process-tree
-  ownership.
-* `056.022-T` (new) — exact probe process identities and all-outcome teardown:
-  PID plus process-start-time for runner/wrapper/inner server, direct `Child`
-  handle then deepest-first exact-identity `sysinfo` fallback, no whole-tree
-  guarantee. Depends on `056.020-T`.
-* `056.021-T` (retained, re-parented) — isolated `logs/probe/<nonce>` workspace,
-  owned nested ancestor/child config fixture, and evidence lifecycle;
-  exclusive-create plus `validate_path`/`is_reparse_point`; in-workspace
-  temporary `.mcp.json`; in-memory raw frames (via the observer seam) with
-  redacted persistence. Now depends on `056.022-T`, not `056.020-T`.
-* `056.001-T` (retained) — exact-CLI differential run inside `056.021-T`'s
-  workspace; proves ancestor config-isolation first; depends on `056.021-T`,
-  not `056.020-T`.
-* All diagnostics, curative, H3, and documentation nodes are unchanged. T4
-  gains explicit evidence-chain edges to `056.001-T`, `056.021-T`, and
-  `056.022-T`.
+* `056.020-T` (retained, narrowed) — core synchronous transport of the
+  standalone `tools/mcp-probe/` crate (`src/main.rs` + `src/transport.rs`): raw
+  std-process/std-thread duplex pumps, half-close, bounded stderr drain,
+  deadlines, and a post-write bounded non-blocking copy-delivery seam. No
+  observer/evidence, workspace/config, teardown, Tokio, or `unsafe`.
+* `056.022-T` (retained, corrected) — probe process spawning and teardown by
+  direct `Child` handles only; a `sysinfo` adapter observes identity but never
+  kills; same-second identity fails closed. Depends on `056.020-T`.
+* `056.023-T` (new) — copy-only observer seam and in-memory evidence
+  (`evidence.rs`): bounded non-blocking delivery, saturation invalidates
+  capture, redacted persistence only. Depends on `056.022-T`.
+* `056.021-T` (retained, narrowed) — isolated `logs/probe/<nonce>` workspace and
+  the owned nested ancestor/child config fixture (`workspace.rs` only);
+  exclusive-create plus `validate_path`/`is_reparse_point`. Owns no
+  observer/evidence module. Depends on `056.023-T`.
+* `056.001-T` (retained, one-shot) — owns `exact_cli.rs`; runs one control/
+  treatment pair inside `056.021-T`'s workspace, proves ancestor
+  config-isolation first, and emits the ordered classification. Depends on
+  `056.021-T`.
+* `056.024-T` (new) — bounded decision/spike selecting an MSRV-1.75 safe
+  no-follow config-mutation primitive (or blocking `056.018`/shipment). In the
+  chain after `056.008`, before `056.018`.
+* Every causal node is re-wired into one authoritative forward chain (see
+  ordering below). `056.005-T` narrows to the embedding lifecycle state machine;
+  `056.015-T` gains the MCP availability projection and `src/mcp/server.rs`
+  wiring; `056.011-T` owns transport types/wiring after `056.015-T`;
+  `056.006-T` composes last after `056.011-T`; `056.010-T` owns one H0c repair;
+  `056.018-T` implements only the `056.024-T` decision; `056.019-T` adjudicates
+  both isolated-config and cwd mechanisms. T4 gains explicit evidence-chain edges
+  to `056.001-T`, `056.021-T`, `056.022-T`, `056.023-T`, and `056.024-T`.
 
 ### Authoritative task ordering
 
-* `056.020 → 056.022 → 056.021 → 056.001 → 056.002`
-* `056.002 → {056.003, 056.006, 056.007, 056.008, 056.010, 056.011,
-  056.014, 056.016, 056.017, 056.019}`
-* `056.002 + 056.014 → 056.005`; `056.003 + 056.005 + 056.014 → 056.015`
-* `056.003 → 056.006`; `056.016 → 056.007`
-* `056.001 + 056.002 → {056.011, 056.019}`
-* `056.002 + 056.017 + 056.019 → 056.008`; `056.017 → 056.018`;
-  `056.008 + 056.017 + 056.018 → 056.009`
-* `056.003 + 056.006 + 056.007 + 056.010 + 056.015 → 056.012`
-* `056.008 + 056.009 + 056.011 + 056.018 + 056.019 → 056.013`
-* T4 `056.004` depends on `056.003`, every task `056.005`..`056.022`, and — as
-  explicit evidence-chain edges — directly on `056.001`, `056.021`, and
-  `056.022`.
+The single authoritative forward sequence — each task depends only on its
+immediate predecessor, and T4 additionally gates on all tasks directly. This
+intentionally serializes every shared runtime/docs surface under P-001/P-016 and
+prevents reopen/merge races:
+
+`056.020 → 056.022 → 056.023 → 056.021 → 056.001 → 056.002 → 056.003 →
+056.019 → 056.017 → 056.008 → 056.024 → 056.018 → 056.009 → 056.016 →
+056.007 → 056.010 → 056.014 → 056.005 → 056.015 → 056.011 → 056.006 →
+056.012 → 056.013 → 056.004`
+
+* Each conditional task may close as `not-needed` at its turn and pass evidence
+  unchanged; a selected task implements exactly its one owned correction and runs
+  one exact-client re-probe before passing evidence forward. No task reopens a
+  completed/not-needed sibling; backward-pointing or unowned evidence blocks T4
+  and creates a new bounded Stage follow-up.
+* T4 `056.004` keeps direct dependencies on every task `056.001`, `056.003`,
+  `056.005`..`056.024` (the chain is also transitive), with explicit
+  evidence-chain edges to `056.001`, `056.021`, `056.022`, `056.023`, and
+  `056.024`.
 
 ### Explicit residual risks
 
 * The `validate_path`/`is_reparse_point` TOCTOU window is accepted for this
   non-sensitive, same-user diagnostic workspace; it defends against accidental
   escape and pre-existing reparse points, not a malicious same-user source
-  modifier. No new production path primitive is introduced.
-* Normal `target/` is a build cache, not an evidence trust boundary; the probe
-  binary is ephemeral and invalid as T4 production evidence.
-* Teardown is the exact recorded PID-plus-start-time identity/handle contract
-  (`056.022-T`); there is no atomic whole-tree or `sysinfo` guarantee, and
-  unproven ownership surfaces exact residual identities for operator action.
-* The `056.020-T` observer seam is read-only: it captures copies for evidence
-  and never mutates or reframes forwarded wire bytes.
+  modifier. No new production path primitive is introduced by the probe.
+* The standalone probe crate's ordinary Cargo target is a build cache, not an
+  evidence trust boundary; the probe binary is ephemeral and invalid as T4
+  production evidence.
+* Teardown is by direct `Child` handle only (`056.022-T`); the `sysinfo` adapter
+  observes but never kills, same-second identity fails closed, and
+  residual/unknown descendants surface exact identities for operator action.
+* The `056.023-T` observer seam is copy-only: it captures copies for evidence
+  after the pump's ordered write/flush and never mutates or reframes forwarded
+  wire bytes; the pump never awaits it.
 * Ancestor config-isolation is proven with the exact CLI before any causal
   contrast (`056.001-T` Gate 1); the repository-root `.mcp.json` is never
   assumed unread, and a merging CLI routes to H3-B via `056.019-T`.
+* If `056.024-T` finds no MSRV-safe no-follow primitive, `056.018-T` and the
+  shipment stay blocked rather than accepting an unsafe check-then-open recovery.
 * T4 remains the sole restored-production actual-client acceptance node.
 
 ## Verification Commands
@@ -831,48 +944,53 @@ if ($LASTEXITCODE -ne 0) { throw "cannot resolve canonical repository root" }
 $repoRoot = [System.IO.Path]::GetFullPath($repoRoot)
 Set-Location -LiteralPath $repoRoot
 
-# 2. Build and self-test the feature-gated probe on the STANDARD Cargo target
-#    (target/). No custom --target-dir, nonce directory, or ACL/DACL handling:
-#    normal target/ is a build cache, not an evidence trust boundary. Default
-#    release/all-target gates exclude the required-feature bin; these dedicated
-#    Rust 1.75 commands cover it. Check $LASTEXITCODE immediately after EVERY
-#    native command and throw on nonzero (one command at a time):
-cargo +1.75.0 check --features probe-harness --bin graphtor-mcp-probe
+# 2. Verify the STANDALONE, non-published probe crate at tools/mcp-probe/ (its
+#    own Cargo.toml with an empty [workspace] table + publish=false stands
+#    outside the production workspace). No custom --target-dir or ACL/DACL: the
+#    crate's ordinary Cargo target is a build cache, not an evidence trust
+#    boundary. Check $LASTEXITCODE immediately after EVERY native command (one
+#    command at a time):
+cargo +1.75.0 fmt --manifest-path tools/mcp-probe/Cargo.toml --all -- --check
+if ($LASTEXITCODE -ne 0) { throw "probe fmt failed (exit $LASTEXITCODE)" }
+cargo +1.75.0 check --manifest-path tools/mcp-probe/Cargo.toml
 if ($LASTEXITCODE -ne 0) { throw "probe check failed (exit $LASTEXITCODE)" }
-cargo +1.75.0 test --features probe-harness --bin graphtor-mcp-probe
-if ($LASTEXITCODE -ne 0) { throw "probe self-tests failed (exit $LASTEXITCODE)" }
-cargo +1.75.0 build --features probe-harness --bin graphtor-mcp-probe
-if ($LASTEXITCODE -ne 0) { throw "probe build failed (exit $LASTEXITCODE)" }
-cargo +1.75.0 clippy --features probe-harness --bin graphtor-mcp-probe -- -D warnings -D clippy::pedantic
+cargo +1.75.0 clippy --manifest-path tools/mcp-probe/Cargo.toml -- -D warnings -D clippy::pedantic
 if ($LASTEXITCODE -ne 0) { throw "probe clippy pedantic failed (exit $LASTEXITCODE)" }
+cargo +1.75.0 test --manifest-path tools/mcp-probe/Cargo.toml
+if ($LASTEXITCODE -ne 0) { throw "probe self-tests failed (exit $LASTEXITCODE)" }
+cargo +1.75.0 build --manifest-path tools/mcp-probe/Cargo.toml
+if ($LASTEXITCODE -ne 0) { throw "probe build failed (exit $LASTEXITCODE)" }
+# audit is as-applicable: meaningful only once the probe has a Cargo.lock with
+# third-party dependencies (the core transport is std-only).
+cargo audit --file tools/mcp-probe/Cargo.lock
+if ($LASTEXITCODE -ne 0) { throw "probe audit failed (exit $LASTEXITCODE)" }
 
-# 3. Run the probe self-test through Cargo (platform-neutral; no hardcoded
-#    target\debug\*.exe path). This resolves the required-feature bin on any
-#    OS and checks the exit code immediately.
-cargo +1.75.0 run --features probe-harness --bin graphtor-mcp-probe -- self-test
-if ($LASTEXITCODE -ne 0) { throw "probe self-test failed (exit $LASTEXITCODE)" }
-
-# 4. The actual-client evidence run (T0 = 056.001-T) is performed BY the probe,
-#    not by this block. 056.021-T creates a fresh isolated logs/probe/<nonce>
-#    workspace (exclusive creation, validate_path/is_reparse_point), writes
-#    temporary in-workspace control/treatment .mcp.json plus an owned nested
-#    ancestor/child config fixture, and captures redacted evidence through the
-#    056.020-T read-only observer seam. The user .mcp.json is never read,
-#    mutated, backed up, or restored, so no approval receipt is required. The
-#    probe first proves ancestor config-isolation with the exact CLI (nearest
-#    child config shadows and does not merge the sentinel ancestor); only then
-#    does it launch the exact target CLI from one controlled foreign cwd (control
-#    without cwd, then treatment with canonical project-root cwd), forward both
+# 3. The one-shot actual-client classification (T0 = 056.001-T) is performed BY
+#    the probe via its exact-cli subcommand, not by this block. 056.021-T creates
+#    a fresh isolated logs/probe/<nonce> workspace (exclusive creation,
+#    validate_path/is_reparse_point), writes temporary in-workspace
+#    control/treatment .mcp.json plus an owned nested ancestor/child config
+#    fixture, and captures redacted evidence through the 056.023-T copy-only
+#    observer seam. The user .mcp.json is never read, mutated, backed up, or
+#    restored, so no approval receipt is required. The probe first proves ancestor
+#    config-isolation with the exact CLI (nearest child config shadows and does
+#    not merge the sentinel ancestor); only then does it launch the exact target
+#    CLI through the diagnostic wrapper handoff (control without cwd, then
+#    treatment with canonical project-root cwd; the wrapper args encode the exact
+#    absolute production inner executable plus original args), forward both
 #    directions, keep raw frames in memory for same-run replay, enforce a <=30s
-#    deadline, and reap by the exact recorded PID-plus-start-time identity
-#    contract (056.022-T) on every outcome -- not a broad process-tree sweep. If
-#    056.006-T is selected, set its env gate on the probe-owned CLI process.
-# Each T4 start instead uses the RESTORED production entry and records exact CLI
-# identity, production-config hash, timestamp, server PID, and capture path.
-# The probe wrapper or any executable substitution is invalid T4 evidence.
-Get-ChildItem .graphtor -Filter *.lock
+#    deadline, and reap by direct Child handle (056.022-T) on every outcome — not
+#    a broad process-tree sweep or sysinfo kill. If 056.006-T is selected, set its
+#    env gate on the probe-owned CLI process. Provide the exact recorded Copilot
+#    path/version/build as $CopilotExe (no substitution) and run the one-shot
+#    classifier:
+$CopilotExe = $env:GRAPHTOR_EXACT_COPILOT
+if (-not (Test-Path -LiteralPath $CopilotExe)) { throw "exact Copilot identity not resolved" }
+cargo +1.75.0 run --manifest-path tools/mcp-probe/Cargo.toml -- exact-cli --copilot $CopilotExe
+if ($LASTEXITCODE -ne 0) { throw "exact-cli classification failed (exit $LASTEXITCODE)" }
 
-# 5. Quality gates — check $LASTEXITCODE immediately after EVERY native command:
+# 4. Root production quality gates — check $LASTEXITCODE immediately after EVERY
+#    native command:
 cargo fmt --all -- --check
 if ($LASTEXITCODE -ne 0) { throw "fmt check failed (exit $LASTEXITCODE)" }
 cargo clippy --all-targets -- -D warnings -D clippy::pedantic
@@ -894,20 +1012,35 @@ if ($LASTEXITCODE -ne 0) { throw "release build failed (exit $LASTEXITCODE)" }
 cargo +1.75.0 check --all-targets
 if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
 
+# 5. Restored-production acceptance runner (056.001-T owns the exact-cli
+#    classifier; 056.004-T/T4 owns restored-production acceptance). It launches
+#    the exact Copilot CLI NORMALLY against the restored user-facing entry and
+#    MUST NOT wrap/substitute the server or use temp config. Repeat for THREE
+#    exact-Copilot sessions; each records completed initialize, tools/list with
+#    the expected tools, and one side-effect-free get_status fingerprint matched
+#    to a direct control, with the production config hash correlated to the
+#    Copilot-spawned server startup event. Use the exact recorded T0 invocation:
+$McpShowArgs = $env:GRAPHTOR_MCP_SHOW_INVOCATION -split ' '
+for ($i = 1; $i -le 3; $i++) {
+  & $CopilotExe @McpShowArgs
+  if ($LASTEXITCODE -ne 0) { throw "T4 session $i restored-production /mcp show failed (exit $LASTEXITCODE)" }
+}
+Get-ChildItem .graphtor -Filter *.lock
+
 # Manual runtime check against the newest Copilot CLI:
 #   /mcp show graphtor-docs   (expect: connected, no OS error 232)
 ```
 
 ## Rollback / Compatibility
 
-* The probe evidence chain (`056.020-T` byte proxy + observer seam, `056.022-T`
-  exact-identity teardown, `056.021-T` isolated workspace/ancestor fixture,
-  `056.001-T` exact-CLI run) is non-shipping: it lives behind the
-  `probe-harness` required feature and is never installed or committed as a
-  binary. Reverting those commits removes the feature-gated bin with no
-  production impact; `056.022-T` teardown and `056.021-T` owned-workspace
-  cleanup leave no persistent state, and the user `.mcp.json` is never mutated,
-  so there is nothing to restore.
+* The probe evidence chain (`056.020-T` core transport, `056.022-T`
+  direct-handle teardown, `056.023-T` observer seam + evidence, `056.021-T`
+  isolated workspace/ancestor fixture, `056.001-T` exact-CLI run) is a
+  **standalone, non-published** `tools/mcp-probe/` crate that is never installed
+  or committed as a binary. Reverting those commits removes the standalone crate
+  with no production impact; `056.022-T` direct-handle teardown and `056.021-T`
+  owned-workspace cleanup leave no persistent state, and the user `.mcp.json` is
+  never mutated, so there is nothing to restore.
 * T2 is additive diagnostics (loud discovery errors + `mcp_serve_ready`; no
   containment or discovery-signature change — the conditional T2d
   launch-contract, T2b richer lock metadata, and T2c opt-in log sink are
@@ -970,12 +1103,14 @@ if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
   `serve_server` means preflight-complete/about-to-call only. Production
   capture uses inherited stderr, unique T2c sink, or non-substituting OS
   tracing; T0's wrapper is diagnostic-only.
-* **VI Single Responsibility** — the transparent byte proxy and read-only
-  observer seam (`056.020-T`), exact process identity and teardown
-  (`056.022-T`), the isolated workspace/ancestor-fixture/evidence lifecycle
-  (`056.021-T`), the exact-CLI run, diagnostics, typed
+* **VI Single Responsibility** — the core synchronous transport
+  (`056.020-T`), process spawning and direct-handle teardown (`056.022-T`), the
+  copy-only observer seam and in-memory evidence (`056.023-T`), the isolated
+  workspace and config fixtures (`056.021-T`), the exact-CLI run (`056.001-T`),
+  diagnostics, typed
   config
-  outcomes, generated fields, the narrow handle-safe recovery primitive,
+  outcomes, generated fields, the safe no-follow primitive decision
+  (`056.024-T`) plus the narrow handle-safe recovery primitive,
   existing-install delivery, shared-lock
   characterization/implementation, diagnosability, H0c remediation, H1
   resolver/lifecycle/orchestration, H3-A transport, and H3-B capability are
@@ -987,9 +1122,9 @@ if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
   workspace via exclusive creation validated by the existing
   `validate_path`/`is_reparse_point` helpers, generates the temporary
   control/treatment `.mcp.json` and the nested ancestor/child fixture only inside
-  it, and T0 runs entirely inside it. `056.022-T` teardown kills only exact
-  recorded PID-plus-start-time identities (never PID-only, identity-mismatch, or
-  name kill). The user `.mcp.json` is never read, mutated, backed up, or
+  it, and T0 runs entirely inside it. `056.022-T` teardown reaps only via direct `Child` handles (the
+  `sysinfo` adapter observes identity but never kills; same-second identity fails
+  closed). The user `.mcp.json` is never read, mutated, backed up, or
   restored, so no config approval receipt is required, and isolated config
   creation plus owned-workspace cleanup need no approval; destructive cleanup
   beyond the owned workspace stays approval-gated. T2e consumes 056.018-T's typed, no-follow
@@ -1094,29 +1229,29 @@ and posture-classification context.
 
 ### Risky actions (ProposedAction / ActionRisk / ActionResult)
 
-* ProposedAction (non-conditional, T00A/T00C/T00B/T0 evidence transaction):
-  after `056.020-T` proves full-duplex forwarding, the read-only observer seam,
-  and redaction, and `056.022-T` proves exact recorded-identity teardown,
+* ProposedAction (non-conditional, T00A/T00C/T00D/T00B/T0 evidence transaction):
+  after `056.020-T` proves the core transport, `056.022-T` proves direct-handle
+  teardown, and `056.023-T` proves the copy-only observer seam and redaction,
   `056.021-T` creates a fresh isolated `logs/probe/<nonce>` workspace, generates
   temporary in-workspace control/treatment `.mcp.json` plus an owned nested
   ancestor/child fixture, and `056.001-T` proves ancestor config-isolation
-  before running the exact-CLI control/treatment pair inside it through the
-  proxy.
+  before running the one-shot exact-CLI control/treatment pair inside it through
+  the transport.
   * targets: the isolated `logs/probe/<nonce>` workspace and its temporary
-    `.mcp.json`, plus the probe-owned CLI/wrapper/server processes identified by
-    exact PID plus process-start-time. The user `.mcp.json` is never touched.
+    `.mcp.json`, plus the probe-owned Copilot/wrapper/inner-server processes held
+    by direct `Child` handles. The user `.mcp.json` is never touched.
   * change_kind: isolated-workspace creation plus temporary in-workspace config
     generation plus external process launch (no user-config mutation).
   * ActionRisk: **moderate** — a crash can leak processes or leave an owned
-    workspace behind, so the probe enforces a deadline, owns all-outcome
-    exact-identity teardown (`056.022-T`, deepest-first PID-plus-start-time; no
+    workspace behind, so the probe enforces a deadline, reaps by direct `Child`
+    handle (`056.022-T`; a `sysinfo` adapter observes but never kills; no
     whole-tree guarantee), redacts sensitive values, and confines every write to
-    the owned workspace. Normal `target/` is a build cache, not a trust
-    boundary.
-  * rollback: on every outcome, reap by the exact recorded PID-plus-start-time
-    identities and clean up only the owned `logs/probe/<nonce>` workspace; never
-    delete outside it, surface any unproven residual identity for operator
-    action, and keep destructive cleanup beyond the workspace approval-gated.
+    the owned workspace. The standalone crate's ordinary Cargo target is a build
+    cache, not a trust boundary.
+  * rollback: on every outcome, reap by the owned direct `Child` handles and
+    clean up only the owned `logs/probe/<nonce>` workspace; never delete outside
+    it, surface any residual/unknown descendant identity for operator action, and
+    keep destructive cleanup beyond the workspace approval-gated.
   * approval_required: no for config, because the real `.mcp.json` is never read
     or written; ActionResult: **planned**.
 * ProposedAction (non-conditional, T2 diagnostics): route every typed normal
@@ -1222,6 +1357,20 @@ and posture-classification context.
     commit. approval_required: **yes** for the schema rebuild / registry
     replacement; ActionResult: **planned** (or **abandoned** if H0c is not
     evidenced).
+* ProposedAction (conditional, T2g safe no-follow primitive decision): decide an
+  MSRV-1.75, safe-call-site, no-follow/capability-based file-mutation primitive
+  for the sensitive recovery path without relaxing `#![forbid(unsafe_code)]`;
+  compare a narrowly justified safe dependency against a std-only contract and
+  prove the choice with a minimal PoC.
+  * targets: `docs/decisions/` (the linked deliberation) and a bounded PoC; no
+    production `graphtor_core` edit (that is `056.018-T`).
+  * change_kind: bounded technical decision/spike (plus an optional throwaway PoC).
+  * ActionRisk: **low** — investigation and a minimal PoC; no production mutation.
+    If no compliant MSRV-safe primitive exists, it blocks `056.018-T` and the
+    shipment rather than accepting an unsafe check-then-open.
+  * rollback: none required (decision/PoC only). approval_required: no.
+    ActionResult: **planned** (or **abandoned** if managed-config recovery is not
+    selected).
 * ProposedAction (conditional, H3-A/H3-B compatibility): obtain task-local
   branch proof for the evidenced mode; T4 alone accepts production.
   **H3-A** (child alive,
@@ -1341,10 +1490,10 @@ and posture-classification context.
   accepted as the passing result. An empty/closed stdin is explicitly
   disallowed — it would only exercise a benign EOF-driven shutdown and could not
   distinguish the regression.
-* Per-width proofs remain separate: `056.020-T` owns the transparent byte proxy
-  and read-only observer seam; `056.022-T` owns exact process identities and
-  teardown; `056.021-T` owns the isolated workspace, ancestor fixture, and
-  evidence lifecycle;
+* Per-width proofs remain separate: `056.020-T` owns the core synchronous
+  transport; `056.023-T` owns the copy-only observer seam and in-memory evidence;
+  `056.022-T` owns process spawning and direct-handle teardown; `056.021-T` owns
+  the isolated workspace and config fixtures;
   `056.003-T` owns the exhaustive typed preflight seam and `mcp_serve_ready`;
   `056.017-T` owns config outcomes; `056.008-T` owns generated-entry execution;
   `056.018-T` owns recovery containment; `056.009-T` owns upgrade integration;
@@ -1362,16 +1511,27 @@ and posture-classification context.
 #106 `## Local Review Readiness` block** — reviewed HEAD, outcome, and P0/P1
 counts live there. This plan document does not assert its own current review
 outcome and does not independently authorize Ship or merge; consult the PR
-block for the live decision. The current artifact additionally reflects a Stage
-holistic graph-rewrite correction (2026-08-23): `056.020-T` is narrowed to the
-transparent MCP byte proxy plus a read-only observer seam, the new `056.022-T`
-owns exact process identities and all-outcome teardown, `056.021-T` owns the
-isolated workspace, an owned nested ancestor/child config fixture, and the
-evidence lifecycle and now depends on `056.022-T` (chain
-`056.020 → 056.022 → 056.021 → 056.001`), `056.001-T` proves ancestor
-config-isolation before any causal contrast, T4 gains direct evidence-chain
-edges to `056.001-T`/`056.021-T`/`056.022-T`, and all build-artifact
-ACL/target-dir/user-config-substitution machinery remains removed.
+block for the live decision. The current artifact additionally reflects the
+**correction round 2** holistic graph rewrite (2026-08-23): the probe becomes a
+**standalone, non-published** `tools/mcp-probe/` crate split by width —
+`056.020-T` core synchronous transport, the new `056.023-T` copy-only observer
+seam plus in-memory evidence, `056.021-T` isolated workspace and config fixtures
+(evidence.rs ownership moved out), `056.022-T` process spawning and
+**direct-`Child`-handle** teardown (all `sysinfo`/PID kill fallbacks removed; the
+adapter observes but never kills), and `056.001-T` a **one-shot** exact-CLI
+classifier owning `exact_cli.rs`. The re-entrant causal loop is replaced by one
+authoritative forward-only chain
+`056.020 → 056.022 → 056.023 → 056.021 → 056.001 → 056.002 → 056.003 → 056.019 →
+056.017 → 056.008 → 056.024 → 056.018 → 056.009 → 056.016 → 056.007 → 056.010 →
+056.014 → 056.005 → 056.015 → 056.011 → 056.006 → 056.012 → 056.013 → 056.004`;
+the new `056.024-T` decides a safe MSRV-1.75 no-follow config-mutation primitive
+(or blocks `056.018`/shipment); `056.010-T` owns one H0c repair; `056.005-T`
+narrows to the embedding lifecycle while `056.015-T` gains the MCP availability
+projection; `056.019-T` adjudicates both isolated-config and cwd mechanisms; T4
+correlates the production config hash with the server startup event across three
+`tools/list`+`get_status` sessions and gains direct evidence-chain edges to
+`056.001-T`/`056.021-T`/`056.022-T`/`056.023-T`/`056.024-T`; and all
+build-artifact ACL/target-dir/user-config-substitution machinery remains removed.
 The authoritative task ordering now lives in the `## Issue and Dependency Graph`
 section above; the DAGs in the historical sections below are superseded. The
 round-3 correction below — applied against the
@@ -1402,18 +1562,21 @@ current artifact state — see the current-status note above.
 * Plan: `docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md`
   (this file), on branch `chore/stage-049-S`. **Latest reviewed input:**
   committed HEAD **`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc`**, outcome
-  **BLOCKED**. **Review status of the round-3 corrected artifacts:** report-only
-  gate **PENDING** against the next committed HEAD — explicitly **not** a PASS.
+  **BLOCKED**. **Review status of the correction-round-2 corrected artifacts:**
+  report-only gate **PENDING** against the next committed HEAD — explicitly
+  **not** a PASS.
 * Linked deliberation: `docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md`.
 * Backlog scope: shipment `049-S` / feature `056-F`, tasks
-  `056.001-T`..`056.020-T`: T0/T1 `056.001-T`/`056.002-T`; T2 diagnostics
-  `056.003-T`; T4 `056.004-T`; H1 lifecycle `056.005-T`; diagnostic sink
-  `056.006-T`; H0b implementation `056.007-T`; managed generation/delivery
-  `056.008-T`/`056.009-T`; H0c `056.010-T`; H3-A `056.011-T`; docs
-  `056.012-T`/`056.013-T`; typed resolver + serve wiring
-  `056.014-T`/`056.015-T`; shared-lock harness `056.016-T`; typed config +
-  recovery `056.017-T`/`056.018-T`; H3-B `056.019-T`; and secure T00
-  `056.020-T`.
+  `056.001-T`..`056.024-T`: T0/T1 `056.001-T`/`056.002-T`; T2 diagnostics
+  `056.003-T`; T4 `056.004-T`; H1 lifecycle/resolver/wiring
+  `056.005-T`/`056.014-T`/`056.015-T`; diagnostic sink `056.006-T`; H0b
+  characterization/implementation `056.016-T`/`056.007-T`; managed
+  generation/delivery `056.008-T`/`056.009-T`; H0c `056.010-T`; H3-A
+  `056.011-T`; docs `056.012-T`/`056.013-T`; typed config + recovery
+  `056.017-T`/`056.018-T`; H3-B `056.019-T`; standalone probe crate
+  transport/teardown/observer-evidence/workspace/exact-CLI
+  `056.020-T`/`056.022-T`/`056.023-T`/`056.021-T`/`056.001-T`; and safe
+  no-follow primitive decision `056.024-T`.
 
 ### Personas and criteria
 
@@ -1433,748 +1596,40 @@ III/IV containment trust boundary).
   nothing blocking **at the Cycle-1 HEAD**.
 * **Current status:** the standard report-only review of exact HEAD
   `41adf77f1767aaec1b7b588b03fb6ea41d2a67fc` was `BLOCKED` with the
-  deduplicated counts above. Round 3 remediates the blockers and coupled
-  safety/actionability findings named in the current-status paragraph.
+  deduplicated counts above. Correction round 2 (the current holistic rewrite)
+  supersedes those blockers with the standalone probe crate and forward-only
+  chain named in the current-status paragraph.
   A fresh current-HEAD review must establish `P0=0, P1=0`, followed by the
   mandatory adversarial re-review.
 * **Consensus review (2026-08-21, HEAD `22d18f1`):** a 3-model adversarial
   consensus review produced a deduplicated remediation queue (F1/F2/F3/N1
   containment reversal; F4 status parity; F5 stale wording; F6 H3 owner; F7
   config schema; S1 migration primacy; S7 hardening; per-surface test-first),
-  applied in "Consensus review remediation cycle 1 (2026-08-21)" below. A fresh
-  current-HEAD report-only review is required to re-establish `P0=0, P1=0`.
+  applied in prior remediation cycles (see the historical audit trail below). A
+  fresh current-HEAD report-only review is required to re-establish `P0=0, P1=0`.
 * **Fresh-cycle P2 status:** the six consensus P2s were corrected or explicitly
-  adjudicated in fresh correction cycle 1; validation is pending.
+  adjudicated in prior correction cycles; validation is pending.
 * **P3 / carried advisories: several**, recorded for Ship execution.
 
-### Additional review-fix round 2 remediation (2026-08-22) — report-only gate PENDING
+### Historical review audit trail (superseded)
 
-The exact-HEAD standard review of `dddcac33a1e0adae27ef34f0870e7d279676ba7f`
-remained `BLOCKED`. This second user-authorized correction round merges only
-findings grounded in the reviewed commit and current source:
+All prior Plan Review DAGs, dependency orderings, and per-cycle remediation
+bodies are **superseded** by the current `## Issue and Dependency Graph` section
+and its authoritative forward chain. They are retained only as audit metadata;
+none of their task-ordering or dependency prose is normative. The live decision
+is the PR #106 `## Local Review Readiness` block.
 
-* T00 is now a separately owned, non-shipping secure probe harness
-  (`056.020-T`) with true full-duplex forwarding, bounded buffers, half-close
-  propagation, continuous stderr drain, deadline/process-tree teardown,
-  owner-protected exclusive artifacts, sensitive-data redaction, and
-  exact-byte-or-absence `.mcp.json` restoration.
-* T2 uses an exhaustive typed normal-exit seam, including pre-v4 and duplicate
-  intake, and mirrors every typed event to unconditional fatal stderr. Tracing
-  is additive because `RUST_LOG=off` can suppress tracing.
-* H1 is split into typed resolver outcomes (`056.014-T`), one shared supervised
-  lifecycle (`056.005-T`), and `cmd_serve`/Generation sync wiring
-  (`056.015-T`); one owner now serves both MCP handlers and background sync.
-* H0b is split into a shared Database/Workspace red harness (`056.016-T`) and
-  implementation (`056.007-T`); only high-resolution process identity plus a
-  boot/session discriminator is strong, and ambiguity remains locked.
-* Managed launch/recovery is split into typed mutation outcomes
-  (`056.017-T`), generated fields (`056.008-T`), contained recovery primitives
-  (`056.018-T`), and upgrade orchestration (`056.009-T`).
-* H3-A transport (`056.011-T`) and H3-B client capability (`056.019-T`) are
-  independent. rmcp 1.8.x is excluded under Rust 1.75. Temporary H3-B
-  capability evidence cannot satisfy T4.
-* T4 accepts only three exact-CLI `/mcp show graphtor-docs` starts against the
-  restored production command/args/cwd/env. The diagnostic wrapper,
-  temporary config, executable substitution, wrapper PID, or wrapper-only logs
-  are invalid production evidence.
+| Reviewed HEAD | Date | Outcome | Notes |
+|---|---|---|---|
+| `22d18f1` | 2026-08-21 | remediation queue | 3-model adversarial consensus (F1/F2/F3/N1 containment, F4 parity, F5 wording, F6 H3 owner, F7 config schema, S1 migration, S7 hardening) |
+| consensus cycles 1-3 | 2026-08-21 | report-only PENDING | containment reversal, status parity, H3 owner split, config schema, migration primacy, per-surface test-first |
+| `1bcadaa` | 2026-08-22 | BLOCKED (2x P1) | fresh three-round budget, correction round 1 |
+| `dddcac3` | 2026-08-22 | BLOCKED | review-fix round 2 |
+| `41adf77` | 2026-08-22 | BLOCKED (P0=1, P1=5, P2=15, P3=7) | review-fix round 3 (final round of the prior budget) |
+| current HEAD | 2026-08-23 | report-only PENDING | correction round 2 holistic rewrite: standalone probe crate, forward-only chain, `056.023-T`/`056.024-T` added. A fresh current-HEAD review is required; no PASS is claimed |
 
-The unusable learnings-review result and findings based only on explicitly
-excluded old memory/stash files were discarded; they do not expand this
-remediation queue.
-
-**Historical round-2 DAG (superseded by round 3 below):** shipment `049-S` contains `056-F` and
-`056.001-T`..`056.020-T`.
-
-* `056.020 → 056.001 → 056.002`
-* `056.002 → {056.003, 056.006, 056.007, 056.008, 056.010, 056.011,
-  056.014, 056.016, 056.017, 056.019}`
-* `056.014 → 056.005`; `056.005 + 056.014 → 056.015`
-* `056.003 → 056.006`; `056.016 → 056.007`
-* `056.001 + 056.002 → {056.011, 056.019}`
-* `056.019 → 056.017`; `056.002 + 056.017 + 056.019 → 056.008`;
-  `056.017 → 056.018`; `056.008 + 056.017 + 056.018 → 056.009`
-* `056.003 + 056.007 + 056.010 + 056.015 → 056.012`
-* `056.008 + 056.009 + 056.011 + 056.018 + 056.019 → 056.013`
-* T4 `056.004` depends on `056.003` and every task `056.005`..`056.020`;
-  evidence selection and all branch dispositions therefore complete first.
-
-### Additional review-fix round 3 remediation (2026-08-22) — final authorized round
-
-The exact-HEAD review of `41adf77f1767aaec1b7b588b03fb6ea41d2a67fc`
-remained `BLOCKED`. This final user-authorized correction round:
-
-* makes T1/T2b-characterization infrastructure finish green and assigns every
-  red/green lifecycle atomically to its curative task;
-* treats H0a as an ordered prerequisite when cwd correction exposes a later
-  blocker rather than discarding proven evidence;
-* gives H1 a retryable `Failed` state shared by MCP and Generation sync;
-* narrows recovery to one handle-safe primitive and removes unrelated
-  install/uninstall/doctor ownership;
-* serializes `cmd_serve` ownership by placing T2 preflight before H1 wiring;
-* applies one conservative lock policy to Database/Workspace locks and adds
-  approval-gated recovery for evidenced live legacy pid-only locks;
-* makes H3-B1 require a same-executable distinct documented mechanism and
-  makes H3-B2 an explicit unsupported-client shipment blocker; and
-* leaves actual-client production acceptance solely with T4, including target
-  upgrade refresh and at least one diagnostic-gate-off start.
-
-Out-of-scope findings against archived `054-F`/`055.*` artifacts and the
-unusable workspace-inaccessible learnings pass were discarded.
-
-**Round-3 DAG (historical; superseded by the Issue and Dependency Graph
-section above):** shipment `049-S` contained `056-F` and
-`056.001-T`..`056.020-T` at that reviewed HEAD.
-
-* `056.020 → 056.001 → 056.002`
-* `056.002 → {056.003, 056.006, 056.007, 056.008, 056.010, 056.011,
-  056.014, 056.016, 056.017, 056.019}`
-* `056.002 + 056.014 → 056.005`;
-  `056.003 + 056.005 + 056.014 → 056.015`
-* `056.003 → 056.006`; `056.016 → 056.007`
-* `056.001 + 056.002 → {056.011, 056.019}`
-* `056.002 + 056.017 + 056.019 → 056.008`; `056.017 → 056.018`;
-  `056.008 + 056.017 + 056.018 → 056.009`
-* `056.003 + 056.007 + 056.010 + 056.015 → 056.012`
-* `056.008 + 056.009 + 056.011 + 056.018 + 056.019 → 056.013`
-* T4 `056.004` depends on `056.003` and every task `056.005`..`056.020`.
-
-### Consensus P2 findings (historical; superseded by current T0-T4 contracts)
-
-* **Containment must reuse the shared primitives, canonicalize both operands,
-  and enumerate escape vectors** (Constitution, Learnings, Architecture,
-  Security consensus). Resolved: T2, the Constitution Check III/IV entry, and
-  the Plan Hardening invariant now delegate refusal to
-  `graphtor_core::path::validate_path` / `is_reparse_point` (the same guard
-  `src/workspace/serve_discovery.rs` uses), canonicalize both operands, and the
-  refusal test enumerates absolute-above / `..`-traversal / escaping symlink /
-  junction-reparse-point / Windows short-name-case vectors.
-* **SUPERSEDED — do not implement:** **H0a fix is diagnostic-plus-operational**
-  (Rust, Architecture consensus): replaced by the authoritative current T2
-  diagnostics-only contract plus T2d canonical-cwd generation and T2e
-  backup-first existing-install delivery. Do not generate target arguments.
-* **T2 must cover every silent exit-2 discovery site** (Rust): resolved — T2
-  now names all four exit-2 sites — missing `--config`, `served_paths` empty, `classified.postures` empty, and the structurally-unreachable `primary` None guard.
-* **T2b lock-file format compatibility** (Rust, Learnings): resolved — a
-  legacy start-time-less lock file degrades to pid-only rather than
-  parse-erroring into a new fail-closed exit; atomic write-cleanup preserved;
-  compatibility test required (`056.007-T`).
-* **Gates-still-fail-closed regression assertion** (Security): resolved — T2
-  now requires a regression assertion that each fail-closed gate still exits
-  pre-serve after the cwd change.
-* **Historical T3 OnceCell guidance (superseded):** the earlier DocServer-only
-  instance state is replaced by the shared `src/embed/lifecycle.rs` owner,
-  projected consistently to MCP handlers and Generation background sync.
-* **Model resolution is `Ok(None)` graceful degrade, not a fail-closed gate**
-  (Rust): resolved — noted in the deliberation so implementers do not add it to
-  the pre-serve gate list.
-
-### Carried P3 advisories (for Ship, non-blocking)
-
-* If the conditional T2b/T2c are activated, each should carry its own colocated
-  red test rather than relying solely on the out-of-process T1 harness.
-* Assign the positive serve-ready startup log as an explicit T2 deliverable if
-  it does not already exist.
-* T1's primary red assertion is the bounded-timeout response-absence + captured
-  child exit; the write-side broken-pipe error is a secondary signal (already
-  reflected in the verification detail) — keep the primary/secondary ordering
-  explicit at implementation time.
-* **Historical sink-location guidance (superseded):** do not use a fixed
-  `.graphtor/logs/` path. The current contract uses a unique absolute
-  owner-protected path supplied by the explicit per-attempt diagnostic gate.
-* If a conditional rmcp bump (H3) is ever taken, re-verify the `serve_server`
-  signature and `schemars` re-export per
-  `docs/compound/best-practices/rmcp-1-5-serve-server-pattern-2026-04-30.md`.
-
-### Notes on limitations acknowledged
-
-* **Structured feature references:** backlogit's typed link/dependency
-  operations act on backlogit items, not on `docs/exec-plans` /
-  `docs/decisions` markdown, so the plan/deliberation cannot be a backlogit
-  link endpoint. As the safe alternative, the backlog tasks carry `references:`
-  to this plan, the feature `056-F` carries structured `references:` to **both**
-  this plan and the deliberation (Cycle 3), and this plan and the deliberation
-  carry an informational `backlog_refs` frontmatter field (`049-S`, `056-F`).
-* **No implementation/test code on this staging PR is expected or a finding:**
-  T0/T1/T2 and the conditionals are intentionally future Ship tasks; reviewers
-  were instructed not to treat the absence of code as a finding.
-* **Pre-existing MSRV note (out of scope):** the Rust 1.75 vs rmcp 1.5 /
-  edition-2024 tooling context is a pre-existing residual and is not expanded by
-  this shipment; any rmcp bump remains a conditional, separately-reviewed task.
-
-### Cycle 2 remediation (targeted review-fix — not a fresh full persona run)
-
-A second review-fix cycle addressed bot findings raised against an earlier HEAD
-(`1cb6554`) that remained valid at the reviewed HEAD. These are targeted
-documentation/backlog remediations by the Stage agent, **not** a new
-seven-persona run; the Cycle 1 gate decision above stands.
-
-* **Managed-launcher omission (H0a curative surface)** — the H0a "prefer an
-  explicit target" remediation relied on the CLI passing `--db-path` / `--config`,
-  but the managed `.mcp.json` generator (`src/workspace/mcp_config.rs::managed_server_value`)
-  emits only `args: ["serve"]`, so no trusted workspace identity reaches the
-  child under a changed cwd. Resolved: added `src/workspace/mcp_config.rs` as an
-  evidence-gated (H0a-only) curative surface in the Likely Surfaces table, the
-  T2 H0a scope note, the T2 Plan Hardening risky-action, and backlog `056.003-T`,
-  with an unrelated-cwd launch regression test and containment delegated to the
-  shared `validate_path` / `is_reparse_point` primitives (no parent traversal).
-* **Observation-window specificity** — the window now names owner (merging
-  developer), the pre-fix T0 baseline, the exact per-start invocation, the
-  `logs/serve-stderr.log` signals, and explicit success/rollback triggers, in
-  both this plan and `056.004-T`; no hosted observability is promised.
-* **Pipe-direction wording** — the linked deliberation's Problem Frame now
-  states 232 surfaces on the **client's** write to the server's stdin (read end
-  gone because the server exited), consistent with H0.
-* **Terminal-command hygiene** — the Verification Commands evidence recipe is
-  split to one command per line and writes evidence under `logs/` rather than
-  the repo root.
-* **Task-title / single-width** — `056.003-T` no longer references the
-  diagnosability sink in its title (the sink is isolated in `056.006-T`);
-  T2 single-width and the stdin-open harness polarity remain as remediated in
-  Cycle 1.
-
-### Historical cycle 3 remediation (superseded)
-
-A third and final review-fix cycle (hard cap) at HEAD `59e883a` addressed merged
-high-confidence findings. These are targeted documentation/backlog remediations
-by the Stage agent, verified against the actual source via ENGRAM_DIRECT graph /
-search plus exact reads; **not** a new multi-persona run, and the Cycle 1 gate
-decision above still stands (no fresh PASS is claimed).
-
-* **Dependency coherence (P1, blocking)** — **[SUPERSEDED by Consensus review remediation cycle 1 (below): `056.003-T` is now NON-conditional cmd_serve diagnostics that always lands; the "conditional H0a-only" disposition in this bullet is retained for history only.]** `056.003-T` was unconditional but
-  its acceptance is H0a-specific, so an H0b/H1 evidence branch made it
-  impossible. Resolved: `056.003-T` (T2 cmd_serve) is now **explicitly
-  conditional H0a-only** with a close-as-not-needed disposition; every causal
-  branch has a satisfiable path (H0a → `056.003` + `056.008`; H0b → `056.007`;
-  H1 → `056.005`; H0c → diagnosability/operational), and non-selected tasks
-  close as *not-needed* to satisfy T4. No speculative H0a implementation forced.
-* **Task width (P2)** — the managed launch-contract generation
-  (`src/workspace/mcp_config.rs`) is split out of `056.003-T` into its own
-  H0a-gated task **`056.008-T` (T2d)**; shipment membership, dependencies, plan,
-  and Likely Surfaces updated. Each task stays single-width / ~2h.
-* **Launch-identity contract (P2, correctness)** — verified via Engram
-  (`run` / `cmd_serve` / `load_source_config` / `classify_serve_postures` /
-  `spawn_background_sync`) that registry discovery, posture/Generation
-  validation, DB auto-discovery, and background sync are **all** launch-cwd
-  anchored. The contract is now non-ambiguous: **primary lever = pin the child
-  `cwd` to the project root** (restores registry-backed Generation together);
-  explicit `--db-path`/`--config` are a complement and do **not** alone restore
-  Generation; the genuinely-absent-registry zero-config case is preserved.
-* **Historical branch-sensitive evidence/baseline (P2; T1 ownership
-  superseded)** — the branch signals remain: H0 = nonzero exit / marker / pipe
-  close; H1 = bounded `initialize` timeout with the child alive. The selected
-  curative task, not T1, owns the red/green lifecycle.
-* **Plan Hardening Signals (P2)** — the public/contract-change signal is now
-  **present (bounded, H0a)**, naming `src/workspace/mcp_config.rs` / the managed
-  `.mcp.json` contract, with a new protected invariant (5): pinned `cwd` /
-  `--db-path` / `--config` must resolve within project-root `.graphtor` after
-  the shared containment checks, and pinning `cwd` must not relax the runtime
-  boundary.
-* **Structured `references:` on `056-F` (P3)** — the feature now carries
-  `references:` to both this plan and the deliberation (direct frontmatter edit;
-  index re-synced).
-* **Speculative-logging adjudication (`056.006-T`, P2)** — retained, but
-  tightened to be strictly evidence-gated on the T0 condition that the CLI
-  discards child stderr (the `logs/` redirect being impossible/insufficient);
-  closes as *not-needed* when the default `logs/serve-stderr.log` capture
-  solves the evidenced case. Rationale recorded in the T2c plan bullet and the
-  task.
-
-### Stage correction session (2026-08-21) — report-only gate PENDING
-
-A new **bounded Stage correction session** (operator-directed continuation
-after the prior session hit its three-cycle review-fix cap; a fresh session with
-a reset budget, **not** a hidden counter reset) corrected the six P1
-plan-contract defects and the P3 advisory that a later report-only review
-recorded against HEAD `4525cd0` (PR #106, readiness `BLOCKED`). These are
-targeted Stage-owned plan/backlog corrections **grounded in the actual source
-via `ENGRAM_DIRECT=1` code-graph/symbol lookups plus exact reads**; **no fresh
-multi-persona review was run and no fresh PASS is claimed.** A fresh
-current-HEAD report-only review must gate the corrected artifacts before Ship.
-
-* **P1-1 red-test polarity** — the T1 harness's **sole pass assertion** is now a
-  successful `initialize` response; the reproduced broken-pipe/exit/timeout is
-  captured only as **diagnostic evidence** explaining the red, never the
-  expected result. Updated: Likely-Surfaces Tests row, T1 section, Test-First
-  Harness Expectations, `056.002-T`, and `056-F` DoD.
-* **P1-2 H0a proof coupling** — the raw T1 transport harness greens the runtime
-  `cmd_serve` fix (`056.003-T`) only; the generator (`056.008-T`) and the new
-  existing-install delivery (`056.009-T`) each carry their **own** test-first
-  proof (a managed-launch integration test that **executes the generated launch
-  contract** from an unrelated cwd; a migration test that refreshes an existing
-  managed entry). No single test proves an unrelated surface.
-* **P1-3 existing-install migration** — Engram + exact reads confirm
-  `generate_mcp_config` runs **only** from `cmd_install`/`cmd_install_full`
-  (`src/main.rs` ~3258/~3360) and `cmd_upgrade` (~3480-3538) →
-  `workspace::upgrade::upgrade` never rewrites `.mcp.json`. Added the tracked
-  H0a delivery task **`056.009-T`** (idempotent, marker-safe refresh on
-  `cmd_upgrade` and/or a required reinstall recipe) so the bug reporter's
-  already-installed workspace is repairable, with a migration test.
-* **P1-4 H0c closure** — added the tracked H0c operational-remediation task
-  **`056.010-T`** (repairs the evidenced fail-closed workspace state — malformed
-  registry / missing `--config` / pre-v4 schema / duplicate intake — and reaches
-  a healthy handshake **without weakening any fail-closed gate**), wired into T4,
-  with a matching H0c decision branch added to the deliberation. Non-selected
-  H0c sub-causes close *not-needed*; the selected branch must reach T4.
-* **P1-5 authorized-root / launch-cwd containment** (the split-root portion was
-  **later reversed by Consensus cycle 1 — F1/F2/F3/N1**; see below) — removed the
-  contradiction:
-  the launch `cwd` is authorized by **equality to the canonicalized project
-  root** (NOT constrained inside `.graphtor`), while `--db-path`/`--config` are
-  validated as **project-root-derived** paths (typically under `.graphtor`), and
-  an explicit target establishes its authorized root **from the target itself**,
-  not a foreign launch cwd. Verified against the GitHub Copilot CLI/SDK MCP docs
-  that the stdio contract **supports `cwd` and `env`** (locally the `backlogit`
-  entry already uses `env`), so the primary `cwd`-pin lever is viable with an
-  `env`/explicit-arg fallback; no parent traversal, nothing outside the project
-  root. Updated T2, T2d, Constitution III/IV, and Plan Hardening invariant (5).
-* **P1-6 live-lock age semantics** — a matching pid + process-start-time
-  identity stays **live regardless of lock age**; `STALE_SECS` age evicts only
-  as a fallback when strong identity is unavailable (legacy pid-only), with
-  legacy compatibility and concurrent-release NotFound preserved. Confirmed via
-  exact read that today's `is_stale_with_system` (`src/lock.rs` ~472-481) evicts
-  by age even when the pid is alive. Updated the T2b surface/section and
-  `056.007-T`, and Plan Hardening invariant (3).
-* **P3 `056.003-T` title integrity** — re-scoped the title to
-  workspace-root resolution only (no diagnostic-sink promise; that sink is owned
-  by `056.006-T`).
-
-**Superseded note:** the Cycle-3 log described an invariant (5) requiring the
-pinned `cwd` to "resolve within project-root `.graphtor`", and the Stage
-correction session replaced it with a **split-trust-root** invariant (5). Both
-are now **superseded** by Consensus review remediation cycle 1 (below): the
-runtime introduces **no target-derived/split authorized root** at all —
-cmd_serve keeps validating explicit `--db-path`/`--config` against the
-authorized project-root cwd via the shared primitives, and the T2d generated
-`cwd` equals the canonical project root by equality (targets
-project-root-derived). The Plan Hardening invariant (5) now reflects that final
-state.
-
-**Shipment / DAG (snapshot at the Stage correction session; superseded by
-Consensus cycle 1 below):** `049-S` membership was `056-F` + `056.001-T`..
-`056.010-T`; `056.008-T → 056.009-T`; T4 depended on `056.003`..`056.010`.
-
-**Engram evidence (ENGRAM_DIRECT=1):** `engram symbols --prefix cmd_`
-(cmd_install/cmd_install_full/cmd_upgrade), `engram map-code generate_mcp_config`
-/ `managed_server_value`, `engram symbols --file src/lock.rs` +
-`engram symbols --file src/workspace/upgrade.rs`, and `engram search` for the
-managed launch-contract; each corroborated by exact reads of `src/main.rs`,
-`src/lock.rs`, and `src/workspace/mcp_config.rs`.
-
-### Consensus review remediation cycle 1 (2026-08-21) — report-only gate PENDING
-
-A **3-model adversarial consensus review** at HEAD `22d18f1` produced a
-deduplicated remediation queue that this cycle applies to the Stage-owned
-plan/backlog artifacts. Corrections are **grounded in the actual source via
-`ENGRAM_DIRECT=1` code-graph/symbol lookups plus exact reads**; **no fresh
-multi-persona review was run and no fresh PASS is claimed.** A fresh
-current-HEAD report-only review must gate the corrected artifacts before Ship.
-
-* **F1/F2/F3/N1 — containment reversal (BLOCKING):** the earlier
-  split-root / target-derived authorization (`workspace::paths::project_root` /
-  `find_workspace_dir` on an explicit target) is **removed** — no target
-  self-authorizes. Engram + exact reads confirm the runtime already validates an
-  explicit `--db-path` against the **project-root** `candidate_root`
-  (`discover_served_databases(scan_root = cwd/.graphtor, candidate_root = cwd,
-  …)` in `src/workspace/serve_discovery.rs`; `cmd_serve` at `src/main.rs`
-  ~2489-2499). H0a connectivity is owned by the managed launch contract
-  `056.008-T` (generated config pins the child `cwd` to the canonical project
-  root); the runtime `cmd_serve` continues validating explicit `--db-path` /
-  `--config` against that authorized project-root cwd with the shared
-  `validate_path` / `is_reparse_point` primitives, never parent-walking from a
-  foreign launch cwd. `056.003-T` is retitled and re-scoped to **non-conditional
-  diagnostics** (loud exit-2 errors + serve-ready log) that no longer claim to
-  green a no-target wrong-cwd managed launch; its own serve-ready-log/loud-error
-  test goes red→green from its production change. Updated: Likely Surfaces, T2,
-  T2d, Constitution III/IV, Plan Hardening intro + invariants (1)(5), Risky
-  actions (T2/T2d), `056.003-T`, `056.008-T`, `056.002-T` coupling, and the
-  deliberation Decision step 3.
-* **F4 — status/discovery parity (chosen scope):** because F1 removes any
-  split-root signature change, the runtime discovery signature is **unchanged**,
-  so `discover_served_databases`, `classify_serve_postures`,
-  `discover_status_db_paths`, and `cmd_status` remain in parity with **no new
-  test and no divergence**. Rationale recorded in T2 and `056.003-T`. (If a
-  future runtime discovery signature change is ever taken, it must include those
-  four surfaces + parity tests; this remediation deliberately avoids that.)
-* **F5 — stale wording:** every remaining requirement that `cwd` must live
-  inside project-root `.graphtor` or "cannot escape the original foreign launch
-  cwd" is removed. Authoritative rule: the generated `cwd` equals the canonical
-  project root; file targets are project-root-derived and validated against the
-  project root; no external-path capability. Updated Rollback, Constitution
-  III/IV, Plan Hardening, Risky actions, and `056.008-T`.
-* **F6 — H3 branch (low confidence, kept live):** added the queued conditional
-  owner **`056.011-T` (T-H3)** for an rmcp/client transport-framing
-  compatibility fix, taken only if T0/T1 implicates H3 (child alive, no early
-  exit, `initialize` never negotiates). Wired: depends on `056.002-T`, added to
-  `049-S`, and T4 `056.004-T` depends on it; branch taxonomy, the T4
-  baseline, and the deliberation H3 row updated so the branch reaches a healthy
-  handshake.
-* **F7 — config schema:** T0 `056.001-T` now records the exact target Copilot
-  CLI MCP config schema (`type` vs `transport`; `cwd`/`env` support).
-  `056.008-T` emits the evidenced supported field and preserves legacy
-  recognition safely. Evidence (read-only): the local `.mcp.json` sibling
-  entries (`backlogit`/`github`/`context7`/`tavily`) use `type: "stdio"` +
-  `env`/`${workspaceFolder}` while `managed_server_value` emits
-  `transport: "stdio"` — not claimed as the current root cause without T0
-  evidence.
-* **S1 — migration primacy:** `056.009-T` makes the marker-safe `cmd_upgrade`
-  managed-entry refresh the **primary code acceptance** with an observed-red
-  migration test; reinstall is an explicit **manual fallback/rollback** only,
-  not an alternative that satisfies automated red/green. Updated T2e and
-  `056.009-T`.
-* **S7 — hardening gaps:** added ProposedAction / ActionRisk / rollback entries
-  for T2e (`056.009-T`, existing-install managed-config refresh) and T2f
-  (`056.010-T`, operational H0c repair — backups, no fail-closed weakening,
-  operator approval for schema upgrade / registry replacement) in the Risky
-  actions section and each task's Safety bullet.
-* **Per-surface test-first:** explicit observed-red tests added/confirmed for
-  `056.003-T` (serve-ready-log/loud-error), `056.006-T` (diagnostic sink if
-  activated), `056.007-T` (pid-reuse / live-long-running / legacy-lock),
-  `056.008-T` (generated-contract launch), `056.009-T` (upgrade migration), and
-  `056.011-T` (H3 handshake). The T1 sole pass assertion stays a **successful
-  `initialize`**; diagnostics explain the red only.
-* **Preserved false-positive dispositions:** the stash journal is left as-is
-  (the missing-journal claim was refuted by consensus); `056.008-T` keeps its
-  dependency on `056.002-T` (the unnecessary-dependency claim was refuted); and
-  the pre-existing `013.008-T` orphan, unrelated stale lock files, and
-  pre-existing symlink-write backlog items are **out of 049-S scope** and left
-  untouched.
-
-**Shipment / DAG (historical; superseded by correction-cycle-2 DAG):** `049-S` membership is
-`056-F` + `056.001-T`..`056.011-T`. Dependencies: `056.001-T → 056.002-T`;
-`056.002-T →` {`056.003-T`, `056.005-T`, `056.006-T`, `056.007-T`, `056.008-T`,
-`056.010-T`, `056.011-T`}; `056.008-T → 056.009-T`; and T4 `056.004-T` depends
-on {`056.003`, `056.005`, `056.006`, `056.007`, `056.008`, `056.009`, `056.010`,
-`056.011`}. `056.003-T` is **non-conditional** (cmd_serve diagnostics; always
-lands); the curative branch tasks are evidence-gated (**H0a → 056.008 +
-056.009**; **H0b → 056.007**; **H0c → 056.010**; **H1 → 056.005**; **H3 →
-056.011**) and non-selected branches close *not-needed*. Each task stays
-single-width / ~2h.
-
-**Engram evidence (ENGRAM_DIRECT=1, this cycle):** `engram symbols --prefix
-discover_` / `--prefix classify_` (located `discover_served_databases`
-serve_discovery.rs:92-165, `classify_serve_postures` 263-325,
-`discover_status_db_paths` main.rs:2664-2758); `engram map-code
-discover_served_databases` / `classify_serve_postures` (confirmed
-`candidate_root`=project-root validation of explicit `--db-path` and the shared
-`validate_path`/`is_reparse_point` guards, grounding F1/F4); corroborated by
-exact reads of `src/main.rs` (`cmd_serve` ~2446-2520, `discover_status_db_paths`
-~2664-2720), `src/workspace/mcp_config.rs` (`managed_server_value` ~526-544,
-`generate_mcp_config` / `is_exact_legacy_shape`), `Cargo.toml` (`rmcp = "1.5"`),
-and read-only `.mcp.json` (F7 `type`/`env` sibling evidence).
-
-### Consensus review remediation cycle 2 (2026-08-21) — report-only gate PENDING
-
-A second fresh bounded Stage correction session applied a further report-only
-remediation queue against the Consensus-cycle-1 artifacts. Corrections are
-**grounded in the actual source via `ENGRAM_DIRECT=1` code-graph/symbol lookups
-plus exact reads**; **no fresh multi-persona review was run and no fresh PASS is
-claimed.** A fresh current-HEAD report-only review must gate the corrected
-artifacts before Ship.
-
-* **F8 (P1) — H0c pre-v4 remediation corrected to `sync` (not `upgrade`):**
-  exact reads confirm `workspace::upgrade::upgrade` (`src/workspace/upgrade.rs`)
-  only **replaces the `.graphtor/bin/` binary** ("Preserves config and data
-  directories") and never rebuilds an index or touches schema, while both the
-  serve gate (`open_serve_databases`) and the status gate
-  (`load_status_databases`) themselves emit *"has pre-v4 schema; run
-  `graphtor-docs sync` to rebuild the index"*. The pre-v4→v4 rebuild lives in the
-  **sync** path (`src/sync/mod.rs::validate_and_apply_v4_migration` →
-  `apply_v4_prune` → `prune_v4_data_for_rebuild` → `migrate_to_v4`). Fixed the
-  H0c recipe to `graphtor-docs sync` in T2f, the Likely-Surfaces T2f row, the
-  Risky-actions T2f entry (and its "schema upgrade" → "pre-v4→v4 schema rebuild"
-  wording), and `056.010-T`; the binary/config `cmd_upgrade` refresh
-  (T2e/`056.009-T`) is kept **distinct** and the fail-closed gate stays intact
-  (state repair only, never a fail-open).
-* **F9 (P1) — exit-site completeness (four sites, not "two + primary"):** exact
-  reads of `cmd_serve` enumerate **four** distinct pre-transport exit-2 sites,
-  named by semantic guard: (1) missing explicit `--config` (`config_override` →
-  non-existent file); (2) `served_paths.is_empty()` after
-  `discover_served_databases`; (3) `classified.postures.is_empty()` after
-  `classify_serve_postures` + the phantom-default `retain` filter (a **second,
-  distinct** "no databases found to serve" the prior text conflated with site
-  2); (4) the structurally-unreachable `primary` None guard (`stores.next() ==
-  None`). T2 and `056.003-T` now own all four with a **red diagnostic test per
-  site** (four total) plus the serve-ready-log test, and preserve the
-  no-discovery-signature / status-parity guarantee (F4).
-* **F10 (P2) — false H0a env/arg fallback removed:** the claim that
-  `GRAPHTOR_DB_PATH`/`GRAPHTOR_SOURCES` or explicit `--db-path`/`--config` can
-  substitute when the target CLI ignores the managed `cwd` is removed from T2d
-  and `056.008-T`. The runtime is **cwd-anchored by containment** (validates
-  targets against `candidate_root = cwd`), so a foreign launch cwd cannot be
-  re-authorized by a target; a CLI that lacks/ignores `cwd` is routed to H3
-  (`056.011-T`) or an explicit operational **unsupported-client** path, never a
-  fake curative fallback. The pinned-`cwd` primary lever and the
-  within-project-root `--db-path`/`--config` complement (valid **only** because
-  `cwd` is pinned) are unchanged.
-* **F11 (P2) — verification consistency:** the Verification Commands now annotate
-  that `cargo test --test mcp_serve_handshake_test` is the reusable T1 protocol
-  harness (`056.002-T`) whose **success** scenario is greened by the selected
-  curative branch; the H0a red/green proof is `056.008-T`'s generated-contract
-  integration test, and `056.003-T` owns its **diagnostic** exit-site tests (it
-  does **not** green the raw no-target wrong-cwd `initialize`). Updated the
-  Verification Commands, `056.003-T` DoD/description, and T2.
-* **F12 (P2, FALSE POSITIVE — DAG preserved) — conditional dependency gate:** the
-  missing-conditional-dependency claim is refuted. The curative tasks
-  (`056.008-T` et al.) depend on `056.002-T`, which depends on `056.001-T` (T0),
-  so the **T0 evidence gate is transitively enforced**; no direct edge to T0 is
-  needed. DAG left unchanged; the transitive gate is noted here for clarity only.
-* **F13 (P2) — H3 pre-fix baseline added to the Plan Hardening observation
-  window** to match T4/`056.004-T`: for an **H3** cause, the child **still
-  alive** with the framed `initialize` never negotiating a `protocolVersion`
-  (transport/framing, no early exit).
-* **F14 (P2) — Cycle-3 "056.003 conditional H0a-only" marked superseded in
-  place:** an inline SUPERSEDED marker now points readers to Consensus cycle 1,
-  where `056.003-T` became NON-conditional diagnostics; the history is retained.
-* **F15 (P2) — Plan Review current status de-HEAD-anchored:** the status line no
-  longer hard-codes a HEAD; it names the **next committed HEAD** as the review
-  target (this remediation is uncommitted at authoring time).
-* **F16 (verified — stash journal) — PRESERVED, false-positive recorded:** a
-  direct literal read confirms stash entry `7BF1961D` **is present exactly once**
-  at line 51 of `.backlogit/archive/stash.jsonl`. The adversarial reviewer's
-  presence claim is verified; the other reviewer's "absent" claim is the false
-  positive. The journal is left as-is (no duplication, no backlogit repair).
-* **F17 (P2 Rust guidance, non-blocking) — applied to task notes:** `056.008-T`
-  compares **parsed `serde_json::Value`** (never raw serialized bytes/key-order)
-  and preserves `is_exact_legacy_shape`; `056.007-T` emits a debug diagnostic on
-  the legacy start-time-less lock parse fallback; `056.003-T` keeps the
-  loud-message formatting DRY (one shared remediation-text helper) without scope
-  creep.
-* **Grounded accuracy fix (`acquire_database_lock`):** the prior claim "there is
-  no `acquire_database_lock` symbol" is **false** — it is a real `src/main.rs`
-  helper (~2803-2824) that validates the path and delegates to
-  `workspace::lock::DatabaseLock::acquire`. Corrected in `056.001-T`,
-  `056.003-T`, and `056.007-T`; the H0b liveness change still lands in the
-  `src/lock.rs` primitives, not this wrapper.
-* **Preserved false positives / refuted items (unchanged):** `056.008-T`'s
-  dependency on `056.002-T`; no target self-authorization; no split-root
-  helper/signature change; and the pre-existing `013.008-T` orphan, unrelated
-  stale `.lock` files in the queue, and pre-existing symlink-write backlog items
-  (all out of 049-S scope) are left untouched.
-
-**Shipment / DAG (unchanged this cycle):** identical to the Consensus-cycle-1
-authoritative DAG above — `049-S` = `056-F` + `056.001-T`..`056.011-T`;
-`056.001-T → 056.002-T → {056.003, 056.005, 056.006, 056.007, 056.008, 056.010,
-056.011}`; `056.008-T → 056.009-T`; T4 `056.004-T →` the eight fix/diagnostic
-tasks. No membership or edge change.
-
-**Engram evidence (ENGRAM_DIRECT=1, this cycle):** `engram symbols --prefix
-cmd_` (located `cmd_serve` main.rs:2446-2654, `cmd_upgrade` 3480-3538, `cmd_sync`
-441-601); `engram map-code cmd_upgrade` (→ `workspace::upgrade::upgrade`);
-`engram map-code needs_v4_migration` / `validate_and_apply_v4_migration` (v4
-rebuild owned by `src/sync/mod.rs` + `src/db/schema.rs::apply_v4_prune`); `engram
-symbols --prefix acquire_` + `map-code acquire_database_lock` (`src/main.rs`
-~2803-2824 wrapping `DatabaseLock::acquire`); `engram search` for the pre-v4 gate
-message; each corroborated by exact reads of `src/main.rs` (`cmd_serve`
-2446-2660, `open_serve_databases` 2370-2443, `load_status_databases`
-2760-2801), `src/workspace/upgrade.rs`, and a literal read of
-`.backlogit/archive/stash.jsonl:51`.
-
-### Consensus review remediation cycle 3 (final) (2026-08-21) — report-only gate PENDING
-
-A third and **final** fresh bounded Stage correction session (hard review-fix
-cap) applied a further report-only remediation queue against the
-Consensus-cycle-2 artifacts on branch `chore/stage-049-S` (reviewed input HEAD
-`b6133ed`, unpushed). Corrections are **grounded in the actual source via
-`ENGRAM_DIRECT=1` code-graph/symbol lookups plus exact reads**; **no fresh
-multi-persona review was run and no fresh PASS is claimed.** A fresh
-current-HEAD report-only review must gate the corrected artifacts before Ship.
-
-* **P1-1 (BLOCKING) — H3 expanded to two-mode client/transport compatibility:**
-  the prior text routed a **client that ignores/rejects the managed `cwd`** to
-  H3 (`056.011-T`), but H3's discriminator assumed the child stays **alive**,
-  whereas an ignored `cwd` makes the managed-launch child start in a **foreign
-  cwd** and **early-exit** (child dead) — a contradiction. Resolved: `056.011-T`
-  (T-H3) now owns **client/transport compatibility** with **two modes**, each
-  reaching a healthy `initialize`: **mode A** (framing/version — child alive,
-  `initialize` never negotiates → rmcp bump / minimal framing fix, observed-red
-  handshake test) and **mode B** (client ignores/rejects the pinned `cwd` →
-  managed-launch early exit → an **evidence-backed client-compatibility
-  adjustment**: a supported CLI version or a client-honored working-directory
-  mechanism, verified by a manual compatibility check — **no server-side
-  external-path fallback**, containment unchanged F1/F2/F3/N1). **H3 is
-  distinguished from H0a by generated-contract / client-capability evidence:**
-  H0a = the CLI honors the pinned `cwd` (`056.008-T`'s pin cures it); H3 mode B
-  = it ignores/rejects the pin. Updated: Likely Surfaces (T-H3 + Tests rows),
-  the T-H3 section, the T2d "cwd ignored" routing note, T4 branch-sensitive
-  baseline, the Plan Hardening observation-window baseline + rollback trigger,
-  Risky actions (T-H3), Rollback / Compatibility, Constitution Check II/VI,
-  Test-First Expectations, the deliberation H3 row / Decision / residual, and
-  `056.011-T` / `056.008-T` / `056.001-T` / `056.004-T`.
-* **Historical P1-2 — branch-sensitive T2c sink verification (location
-  superseded by round 3):** when the T2c sink
-  (`056.006-T`) is selected because the CLI **discards** child stderr, T4 cannot
-  require `logs/serve-stderr.log` from a shell redirect (impossible on that
-  branch). Resolved: T4 verification is **branch-sensitive** — stderr capture
-  (`logs/serve-stderr.log`) for the normal branches, and **read/validate the
-  configured unique absolute env-gated sink file for the T2c
-  branch. Updated: T4 section, T2c section, the Plan Hardening observation window
-  (method + signals), Verification Commands, and `056.004-T` / `056.006-T`.
-* **P1-3 — `cmd_upgrade` canonical-project-root derivation:** grounded via
-  Engram + exact reads — `find_workspace_dir` (`src/workspace/paths.rs:37-63`)
-  returns the **`.graphtor` directory itself** ("Returns the path to the
-  `.graphtor/` directory (not the project root)"), `project_root` is its
-  `.parent()`, and `generate_mcp_config(project_root)` does
-  `project_root.join(".mcp.json")` + validates the binary within `project_root`;
-  `cmd_install`/`cmd_install_full` pass their `cwd` because install runs from the
-  project root. Resolved: `056.009-T`'s `cmd_upgrade` refresh MUST pass the
-  **canonical project root = the located `.graphtor` parent**
-  (`find_workspace_dir(cwd).parent()` / `workspace::paths::project_root`, already
-  canonicalized and reparse-guarded — no parent-walk beyond locating the
-  workspace) — **not** the nested invocation `cwd` and **not** `.graphtor`
-  itself — with a **nested-subdirectory invocation red test** and marker-safe
-  user-entry preservation. Updated: Likely Surfaces (T2e row), the T2e section,
-  Risky actions (T2e), and `056.009-T`.
-* **SUPERSEDED — do not implement:** **P2 — raw-harness H0a success-list
-  correction:** the Verification Commands
-  comment claimed the raw `mcp_serve_handshake_test` SUCCESS scenario is greened
-  by `H0a 056.008-T`; removed. The raw harness greens **H0b / H0c / H1 / H3 mode
-  A**; the current contract instead uses the common T1 helper in
-  `056.008-T`'s generated-entry integration test, bounded before/after evidence
-  for operational-only H0c, and the T0 actual-client probe with explicit B1/B2
-  disposition for H3 mode B.
-* **P2 — H0c destructive / approval-gated acknowledged:** Constitution Check VII
-  and the Plan Hardening Signals migration/destructive signal no longer read
-  flat "none/absent"; they acknowledge the **conditional H0c** operational
-  remediation (`056.010-T`) can require a **pre-v4→v4 schema rebuild via
-  `graphtor-docs sync`** or a **source-registry replacement** — high-risk,
-  approval-gated (operator approval + backup-first), never a fail-closed-gate
-  weakening.
-* **P2 — `056.003-T` table-driven diagnostic matrix (supersedes F9 per-site
-  granularity):** the four exit-2 diagnostic tests + serve-ready-log scenario are
-  consolidated into **one table-driven red diagnostic matrix** (four exit-2 cases
-  + one serve-ready-log row), preserving every semantic site. The existing
-  `tests/explicit_db_target_no_registry_test.rs` negative **"config file"**
-  assertion (verified present: `serve` with an explicit `--db-path` and no
-  registry must NOT emit "config file") is explicitly preserved while wording the
-  new loud messages. Updated T2, Test-First Expectations, and `056.003-T`.
-* **SUPERSEDED polarity note:** **P2 — `056.007-T` forward-compat lock test:**
-  a lock file carrying an **unknown extra field** parses
-  **without error** (forward-compatible), alongside the existing
-  alongside the start-time / legacy / pid-reuse / live-long-running tests. The
-  unknown-field and legacy cases are pre-change-green guards; pid reuse and the
-  live-old-holder case are red anchors. A matching
-  pid + start-time identity stays live **regardless of age**. Updated T2b and
-  `056.007-T`.
-* **P2 — `Cargo.toml` rmcp anchored by dependency name:** the T-H3 surface and
-  Risky action reference `Cargo.toml` `[dependencies]` `rmcp` pin, not the
-  brittle line ~44.
-* **Preserved dispositions / false positives (unchanged):** the Cycle-3
-  "056.003 conditional H0a-only" superseded marker (F14) is retained; the stash
-  journal `7BF1961D` is present exactly once (`.backlogit/archive/stash.jsonl:51`)
-  and is **not** duplicated (F16); `049-S` stays **frontmatter-only** (backlogit
-  standard shipment format — no hand-woven body/items section); `056.008-T`
-  keeps its parsed-`serde_json::Value` equality + `is_exact_legacy_shape`
-  preservation and its `056.002-T` dependency; and the absence of implementation
-  / evidence-pending task work is **not** treated as a review defect (staging is
-  planning-only). The pre-existing `013.008-T` orphan, unrelated stale `.lock`
-  files, and pre-existing symlink-write backlog items remain out of 049-S scope.
-
-**Shipment / DAG (unchanged this cycle):** identical to the Consensus-cycle-1
-authoritative DAG — `049-S` = `056-F` + `056.001-T`..`056.011-T`;
-`056.001-T → 056.002-T → {056.003, 056.005, 056.006, 056.007, 056.008, 056.010,
-056.011}`; `056.008-T → 056.009-T`; T4 `056.004-T →` the eight fix/diagnostic
-tasks. No membership or edge change.
-
-**Engram evidence (ENGRAM_DIRECT=1, this cycle):** `engram workspace-status`
-(bound; 1307 files scanned; not stale); `engram symbols --prefix find_workspace`
-(→ `find_workspace_dir` `src/workspace/paths.rs:37-63`); `engram map-code
-find_workspace_dir` (→ `project_root`) and `engram map-code generate_mcp_config`
-(callers `cmd_install`/`cmd_install_full`; project-root argument). Corroborated
-by exact reads of `src/workspace/paths.rs` (`find_workspace_dir` returns the
-`.graphtor` dir; `project_root` = its parent), `src/workspace/mcp_config.rs`
-(`generate_mcp_config(project_root)` → `project_root.join(".mcp.json")`),
-`src/main.rs` (`cmd_install` ~3258 / `cmd_install_full` ~3360 pass `cwd`;
-`cmd_upgrade` ~3480-3538 resolves `workspace_dir = find_workspace_dir(cwd)`),
-`Cargo.toml` (`rmcp` in `[dependencies]`), and
-`tests/explicit_db_target_no_registry_test.rs` (the negative "config file"
-assertion).
-
-### Historical fresh correction cycle 1 (2026-08-21) — superseded
-
-Standard and mandatory three-family adversarial report-only reviews of HEAD
-`7b56a42` confirmed three HIGH-confidence P1 residuals and related P2
-inconsistencies. This fresh bounded correction session applies one
-reconciliation pass; it does not claim a review PASS.
-
-* **Real-client cwd discriminator:** T0 now uses a temporary, backup-first
-  diagnostic MCP entry invoked through the actual target Copilot CLI to record
-  whether the configured `cwd` is honored. The current managed entry has no
-  `cwd`, and a direct child spawn cannot prove client behavior.
-* **H3 mode-B ownership:** `056.011-T` depends explicitly on `056.001-T`.
-  Mode B consumes T0's real-client evidence and chooses B1 (keep
-  `056.008-T`/`056.009-T`) or B2 (close them *not-needed*); it never treats a
-  direct child spawn as client evidence.
-* **Minimal H0a contract:** `056.008-T` adds only the canonical-project-root
-  `cwd` and the evidenced stdio field. Generated `--db-path`, `--config`, and
-  env target plumbing were removed as unnecessary coupling.
-* **Test polarity and parser accuracy:** T1 supplies the common helper; the
-  selected code branch owns its red/green proof, while external-only H0c/H3-B
-  use bounded before/after evidence. The H0b
-  reused-pid and live-old-holder tests remain the observed-red anchors; legacy
-  and unknown-field lock cases are pre-change-green compatibility guards for
-  the existing hand-written parser.
-* **Satellite reconciliation:** the feature description marker and
-  branch-neutral existing-install DoD, deliberation initialize polarity, and
-  H0c approval text now match the authoritative plan.
-* **Review identity:** frontmatter is `draft`; committed HEAD `13485d0` is the
-  latest blocked reviewed input. The next committed HEAD requires a fresh
-  current-HEAD report-only review.
-
-**Authoritative correction-cycle-2 DAG:** `056.001-T → 056.002-T`;
-`056.001-T + 056.002-T → 056.011-T`; `056.002-T → {056.003, 056.005,
-056.007, 056.010}`; `056.003-T → 056.006-T`;
-`056.002-T + 056.011-T → 056.008-T`; `056.008-T → 056.009-T`; T4
-`056.004-T` depends on the eight fix/diagnostic tasks. Shipment membership is
-unchanged.
-
-**Engram evidence:** `ENGRAM_DIRECT=1 engram --workspace
-C:\Source\GitHub\graphtor workspace-status` reported the branch bound and not
-stale. Exact reads grounded the changed task, plan, decision, and feature
-contracts.
-
-### Historical fresh correction cycle 2 (2026-08-22) — superseded
-
-Standard review of `13485d0` found that the prior common-harness contract could
-not be greened mechanically on H0a or operational-only H0c, H3 mode B closed
-the managed-cwd tasks too early, and several live sections still asserted
-superseded behavior. This cycle:
-
-* makes T1 a reusable driver with branch-owned red/green tests and bounded
-  before/after actual-client evidence for external-only H0c/H3-B;
-* historically split H3 mode B into B1/B2; this wording is superseded by
-  round 3, where B1 requires the same exact CLI through a distinct documented
-  mechanism and B2 is an unsupported-client shipment blocker;
-* makes `mcp_serve_ready` a preflight-complete pre-`serve_server` event and
-  requires three observed healthy starts before closure can be `healthy`;
-* makes H1 tests deterministic through an injected loader seam and records the
-  Tokio `sync`/Rust-1.75 dependency gate;
-* sequences T2c after T2, covers all four diagnostics, and hardens sink,
-  upgrade-refresh, lock-recovery, and fixture prerequisites.
-
-The corrected artifacts are not yet reviewed. A fresh current-HEAD standard
-report-only review is required; if P0/P1 clears, the mandatory three-family
-adversarial re-review follows.
-
-### Fresh three-round budget: correction round 1 (2026-08-22)
-
-The operator authorized up to three more review-fix rounds. Exact-HEAD review
-of `1bcadaa4213b9cc37c26c2bdd8f336af64e2c175` was `BLOCKED` with two
-deduplicated P1 findings. Round 1 applies the following current contracts:
-
-* T0 uses an actual-CLI foreign-directory control/treatment pair and records
-  wrapper-entry versus inner-server identity before any mutation
-* The wrapper preserves cwd/env/args, bidirectional framing, inner exit/pipe
-  closure, and full isolated process-tree ownership
-* Historical T0/T1 ownership (superseded): round 3 orders layered causes in T0,
-  keeps T1 green, and assigns red/green proof to each selected curative task
-* H0b legacy-live-old behavior is an observed-red safety anchor, not a
-  pre-change-green parser guard
-* H1 uses explicit clone-shared typed load states rather than a bare lazy cell
-* H3-B1 capability proof uses the temporary contrast entry; production-entry
-  verification remains in T4 after generation and delivery
-* T4 verifies three starts against the restored user-facing entry and restores
-  H0c state from recorded backups when rollback triggers
-* Documentation is isolated from code in `056.012-T` and `056.013-T`
-
-Round 1 does not claim a PASS. The next committed HEAD requires a fresh
-exact-HEAD standard report-only review.
+Carried P3 advisories from prior cycles remain non-blocking Ship-phase notes:
+prefer targeted diagnostics over broad logging, keep the standalone probe crate
+out of the production dependency graph, and preserve MSRV (`cargo +1.75.0`) on
+any rmcp or dependency change. Any retained "close as not-needed" shorthand
+means: move the task to `done` and append a `not-needed: <rationale>` comment.

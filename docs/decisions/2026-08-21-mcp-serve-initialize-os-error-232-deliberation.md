@@ -116,11 +116,13 @@ classified as unsupported.
 | H3 | **Client/transport incompatibility (two independently owned modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary secure diagnostic entry invoked through the exact real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same executable honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B) | Partly — **(A)** minimal Rust-1.75-compatible framing fix (`056.011-T`; rmcp 1.8.x excluded because it requires edition 2024); **(B1)** the same exact CLI passes a second contrast through a different documented working-directory mechanism, activating managed-config work, or **(B2)** that exact CLI has no safe mechanism and blocks shipment as unsupported-client (`056.019-T`); **no** server-side external-path fallback | Low |
 | H4 | Startup panic/early-exit writing to stdout. | — | — | Ruled out (stderr logging, no pre-serve stdout) |
 
-H0 is the leading hypothesis and begins with one controlled evidence contrast
-that captures the server child's exit code and stderr under the exact cwd/env
-the CLI uses. The process then iterates: if a cwd correction advances to a
+H0 is the leading hypothesis. T0 runs one controlled control/treatment contrast
+that captures the server child's exit code and stderr under the exact cwd/env the
+CLI uses, then emits an ordered classification: if a cwd correction advances to a
 later blocker, H0a remains a proven prerequisite while the new H0b/H0c/H1/H3-A
-cause is added. Evidence, not static reading, orders the chain.
+cause is ordered after it. Downstream causal tasks are then visited once in the
+authoritative forward chain; evidence, not static reading, orders them, and no
+task reopens a completed sibling.
 
 ## Decision
 
@@ -128,36 +130,42 @@ Proceed **evidence-first**, because the leading hypothesis (H0) can be ordered
 by bounded contrasts and the remaining fixes are individually small and
 bounded:
 
-1. **Validate a secure non-shipping probe harness, then capture T0.**
-   `056.020-T` first supplies the feature-gated `graphtor-mcp-probe` target at
-   `tools/mcp-probe/main.rs` on the standard Cargo target and proves the
-   transparent full-duplex byte proxy: independent pumps, half-close
-   propagation, bounded buffers, a continuous bounded stderr drain, timeout
-   signaling, and a read-only byte-observer seam that hands out copies or
-   immutable chunks without ever mutating or reframing forwarded wire bytes.
-   `056.022-T` then owns exact process identity and all-outcome teardown: it
-   records PID plus process-start-time for the runner, wrapper, and inner server
-   at spawn, prefers the direct `Child` handle, and falls back deepest-first to
-   exact PID-plus-start-time matches through existing safe `sysinfo`, never
-   killing on PID alone, on identity mismatch, or by name, and surfaces exact
-   residual identities instead of claiming atomic whole-tree ownership.
-   `056.021-T` then owns the isolated `logs/probe/<nonce>` workspace and evidence
-   lifecycle: exclusive creation validated by the existing
-   `validate_path`/`is_reparse_point` helpers, temporary in-workspace
-   control/treatment `.mcp.json`, an owned nested ancestor/child config fixture,
-   in-memory raw-frame capture through the observer seam, and redacted
-   persistence. The user `.mcp.json` is never read, modified, backed up,
+1. **Validate the standalone probe crate, then capture T0.**
+   The probe is a standalone, non-published crate at `tools/mcp-probe/` (own
+   `Cargo.toml` with `[workspace]` + `publish = false`, Rust 2021 / MSRV 1.75).
+   `056.020-T` supplies the core synchronous transport (`src/main.rs` +
+   `src/transport.rs`): raw `std::process`/`std::thread` independent full-duplex
+   pumps, half-close propagation, bounded buffers, a continuous bounded stderr
+   drain, deadline signaling, and a post-write bounded non-blocking copy-delivery
+   seam. `056.023-T` owns that copy-only observer seam and in-memory evidence:
+   bounded non-blocking delivery, saturation/failure atomically invalidating
+   capture while forwarding is unchanged, raw chunks in memory only, and redacted
+   structured summaries/digests persisted. `056.022-T` owns process spawning and
+   teardown by **direct `Child` handles only**: the exact-CLI runner owns the
+   Copilot `Child` guard and the wrapper owns the inner-server `Child` guard
+   (wrapper PID observed-only). A safe `sysinfo` adapter observes
+   PID/start-time/executable/parent/nonce for diagnostics and deterministic tests
+   but never kills; same-second identity is ambiguous and fails closed; residual
+   or unknown descendants fail the evidence and surface exact identities for
+   operator-approved action. `056.021-T` owns the isolated `logs/probe/<nonce>`
+   workspace and config fixtures (`workspace.rs` only): exclusive creation
+   validated by the existing `validate_path`/`is_reparse_point` helpers, temporary
+   in-workspace control/treatment `.mcp.json`, and an owned nested ancestor/child
+   config fixture. The user `.mcp.json` is never read, modified, backed up,
    restored, or substituted, so no config approval receipt is required.
-   T0 (`056.001-T`) then launches the exact newest failing CLI
-   executable/version/build from one controlled foreign directory. It first
-   proves ancestor config-isolation with the exact CLI against the owned nested
-   fixture (the nearest child `.mcp.json` shadows and does not merge the sentinel
-   ancestor); if the exact CLI reads or merges the ancestor config it stops the
-   causal H0 comparison and routes to H3-B via `056.019-T`, never assuming the
-   repository-root `.mcp.json` is unread. Only after isolation is proven does it
-   run a control entry without `cwd` and a minimal-delta treatment entry
-   requesting canonical project-root `cwd`. Record CLI-assigned wrapper identity
-   and inner server identity separately. A correlated nonzero early exit
+   T0 (`056.001-T`) owns `exact_cli.rs` and the final `main.rs` subcommand wiring.
+   It first proves ancestor config-isolation with the exact CLI against the owned
+   nested fixture (the nearest child `.mcp.json` shadows and does not merge the
+   sentinel ancestor); if the exact CLI reads or merges the ancestor config it
+   stops the causal H0 comparison and routes to H3-B via `056.019-T`, never
+   assuming the repository-root `.mcp.json` is unread. Only after isolation is
+   proven does it run ONE control/treatment pair through the diagnostic wrapper
+   handoff — the child `.mcp.json` uses the wrapper as `command`, the wrapper args
+   encode the exact absolute production inner executable plus its original args,
+   and control/treatment differ only by the treatment canonical-project-root
+   `cwd`. It then emits the ordered cause classification and ends `done` or
+   blocked/H3-B2 — one-shot, with no implementation loop, no per-correction
+   rerun, and no reopening of a downstream task. A correlated nonzero early exit
    identifies H0; H0b additionally requires a Generation target. The wrapper is
    diagnostic-only and cannot satisfy T4.
 2. **Build a green out-of-process driver (T1).** Spawn the real binary
@@ -197,22 +205,34 @@ bounded:
    after preflight diagnostics and keeps Generation sync subscribed across
    `Failed → Loading → Ready`. DB/lock/schema/intake gates remain pre-serve
    fail-closed.
-5. **Keep H3 modes separate.** H3-A transport/framing belongs to `056.011-T`
-   and must use an edition-2021/Rust-1.75-compatible fix; rmcp 1.8.x is
-   excluded; a fork/patch override requires separate deliberation. H3-B client
-   cwd capability belongs to `056.019-T`. B1 requires the same exact CLI to
-   pass a second contrast through a different documented working-directory
-   mechanism; B2 means that exact CLI has no safe mechanism and blocks the
-   shipment as unsupported-client. Neither mode adds an external-path fallback,
-   and only T4 accepts production.
+5. **Keep H3 modes separate.** H3-A transport/framing belongs to `056.011-T`,
+   which owns transport types/wiring only after `056.015-T` and reacquires/
+   replays the exact-client transaction in one execution via the `056.001-T`
+   runner and `056.023-T` observer (no persisted raw frames); it must use an
+   edition-2021/Rust-1.75-compatible fix; rmcp 1.8.x is excluded; a fork/patch
+   override requires separate deliberation. H3-B client capability belongs to
+   `056.019-T`, which adjudicates BOTH a documented isolated-config discovery
+   mechanism (owning the one bounded attempt when Gate 1 shows ancestor-config
+   merge) and a distinct documented working-directory mechanism. B1 requires the
+   same exact CLI to pass a second contrast through such a mechanism; B2 means
+   that exact CLI has no safe mechanism and blocks the shipment as
+   unsupported-client. It never deliberately reads or mutates the user root
+   config. Neither mode adds an external-path fallback, and only T4 accepts
+   production.
 6. **Verify production parity with the exact newest failing CLI identity.**
    After a managed branch records target-workspace upgrade refresh and its
-   production config hash, three `/mcp show graphtor-docs` starts must use the restored production
-   command/args/cwd/env. Record CLI path/version/build, production config hash,
-   server PID, timestamp, capture path, and result. T0's wrapper, temporary
-   config, executable substitution, wrapper PID, and wrapper-only logs are
-   invalid T4 evidence. If the optional diagnostic sink landed, at least one
-   start runs with its gate off.
+   production config hash, three exact-Copilot `/mcp show graphtor-docs` sessions
+   must use the restored production command/args/cwd/env. Each session requires a
+   completed initialize, a `tools/list` containing the expected tools, and one
+   side-effect-free `get_status` fingerprint matched to a direct control, and
+   correlates the production config hash with the Copilot-spawned server startup
+   event (PID, executable/build, canonical cwd, timestamp); if the exact client
+   lacks a deterministic tool-invocation surface, route/block through H3-B2
+   because handshake-only is incomplete. Record CLI path/version/build,
+   production config hash, server PID, timestamp, capture path, and result. T0's
+   wrapper, temporary config, executable substitution, wrapper PID, and
+   wrapper-only logs are invalid T4 evidence. If the optional diagnostic sink
+   landed, at least one session runs with its gate off.
 
 A `get_info` protocol-echo change remains excluded as a no-op on rmcp 1.5.
 H3-A and H3-B are taken only when T0 selects their distinct evidence and are
@@ -239,20 +259,22 @@ review is still required, so no PASS is claimed.
   `mcp_serve_ready` remains preflight evidence, not handshake evidence. The
   opt-in sink is selected only when stderr is unavailable and env inheritance
   is proven.
-* **VI Single Responsibility** — the transparent byte proxy and read-only
-  observer seam, exact process identity and teardown, the isolated workspace and
-  evidence lifecycle, the exact-CLI run, diagnostics, lock policy, shared model
-  lifecycle, typed config mutation, generated fields, narrow handle-safe
-  recovery, upgrade orchestration, H3 modes, T4 acceptance, and documentation
-  are separately owned.
+* **VI Single Responsibility** — the core synchronous transport, the copy-only
+  observer seam and in-memory evidence, process spawning and direct-handle
+  teardown, the isolated workspace and config fixtures, the exact-CLI run,
+  diagnostics, lock policy, embedding lifecycle, MCP availability projection,
+  typed config mutation, generated fields, the safe no-follow primitive decision,
+  narrow handle-safe recovery, upgrade orchestration, H3 modes, T4 acceptance,
+  and documentation are separately owned.
 * **VII Destructive Approval** — the probe path is non-destructive to user
   state and requires no approval receipt: `056.021-T` creates the isolated
   `logs/probe/<nonce>` workspace by exclusive creation validated by the existing
   `validate_path`/`is_reparse_point` helpers, generates temporary control and
   treatment `.mcp.json` and the nested ancestor/child fixture only inside that
   owned workspace, and never reads, modifies, backs up, restores, or substitutes
-  the user `.mcp.json`. `056.022-T` teardown kills only exact recorded
-  PID-plus-start-time identities and cleanup stays within the owned workspace,
+  the user `.mcp.json`. `056.022-T` teardown reaps only via direct `Child`
+  handles (the `sysinfo` adapter observes but never kills) and cleanup stays
+  within the owned workspace,
   so isolated config creation and owned-workspace cleanup need no operator
   approval. Approval is retained only for genuinely destructive later steps: a
   changing upgrade refresh uses the typed contained recovery primitive before
