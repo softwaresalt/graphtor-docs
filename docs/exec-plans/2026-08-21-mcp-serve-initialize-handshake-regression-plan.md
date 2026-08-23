@@ -598,24 +598,78 @@ $env:RUST_LOG = 'debug'
 New-Item -ItemType Directory -Force logs
 # Self-test 056.020-T's secure non-shipping wrapper, then run 056.001-T through
 # exact `/mcp show graphtor-docs` target-CLI identity.
-# Dedicated T00 target gate (default release/all-target commands exclude it):
+# Dedicated T00 target gate (default release/all-target commands exclude it).
+# Fail closed on any cmdlet error throughout this block:
+$ErrorActionPreference = 'Stop'
+
+# 1. Resolve a verified canonical repository root (absolute, reparse-free).
+$repoRoot = (& git -C $PWD rev-parse --show-toplevel)
+if ($LASTEXITCODE -ne 0) { throw "cannot resolve canonical repository root" }
+$repoRoot = [System.IO.Path]::GetFullPath($repoRoot)
+$repoRootInfo = Get-Item -LiteralPath $repoRoot -Force
+if ($repoRootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "repository root is a reparse point" }
+$currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+
+# 2. Reject reparse points/junctions in every existing workspace-relative
+#    ancestor (`logs`, `logs\probe`). Create missing ancestors WITHOUT -Force.
+foreach ($rel in @('logs', 'logs\probe')) {
+    $ancestor = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $rel))
+    if (-not $ancestor.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "ancestor escapes repo root: $ancestor" }
+    if (Test-Path -LiteralPath $ancestor) {
+        if ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "ancestor is a reparse point: $ancestor" }
+    } else {
+        New-Item -ItemType Directory -Path $ancestor | Out-Null
+    }
+}
+
+# 3. Compute an unpredictable nonce; reject any pre-existing nonce path.
 $probeNonce = [guid]::NewGuid().ToString('N')
-$probeTargetDir = "logs/probe/$probeNonce"
-New-Item -ItemType Directory -Force $probeTargetDir | Out-Null
-# Enforce an owner-only ACL (disable inheritance, grant only the current
-# principal) and verify it before either Cargo command runs:
-$probeAcl = Get-Acl $probeTargetDir
-$probeAcl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($probeAcl.Access)) { $probeAcl.RemoveAccessRule($rule) | Out-Null }
-$probeRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-    "$env:USERDOMAIN\$env:USERNAME", 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
-$probeAcl.AddAccessRule($probeRule)
-Set-Acl -Path $probeTargetDir -AclObject $probeAcl
-if ((Get-Acl $probeTargetDir).Access.Count -ne 1) { throw "owner-only ACL verification failed for $probeTargetDir" }
+$probeTargetDir = [System.IO.Path]::GetFullPath((Join-Path $repoRoot "logs\probe\$probeNonce"))
+if (-not $probeTargetDir.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "target dir escapes repo root: $probeTargetDir" }
+if (Test-Path -LiteralPath $probeTargetDir) { throw "nonce target dir already exists: $probeTargetDir" }
+
+# 4. Create the nonce directory WITH a protected owner-only DACL AT CREATION
+#    time (no create-then-harden): owner = current SID, inheritance disabled,
+#    exactly one inheritable Allow/FullControl ACE for the current SID.
+$probeSec = New-Object System.Security.AccessControl.DirectorySecurity
+$probeSec.SetOwner($currentSid)
+$probeSec.SetAccessRuleProtection($true, $false)
+$probeSec.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $currentSid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+[System.IO.Directory]::CreateDirectory($probeTargetDir, $probeSec) | Out-Null
+
+# 5. Verify the created directory BEFORE invoking Cargo. Assert-ProtectedDir
+#    fails closed unless ALL hold: full path starts with $repoRoot; Get-Item
+#    .Attributes has no ReparsePoint bit; (Get-Acl).Owner resolves to
+#    $currentSid; AreAccessRulesProtected is $true; and there is exactly one
+#    FileSystemAccessRule — Allow, FullControl, IdentityReference == $currentSid,
+#    InheritanceFlags == ContainerInherit,ObjectInherit.
+Assert-ProtectedDir -Path $probeTargetDir -Root $repoRoot -Sid $currentSid
+
+# 6. Build/test the probe with the ABSOLUTE target dir; check $LASTEXITCODE
+#    immediately after each native command and throw before any actual-client
+#    probe on nonzero (one command at a time):
 cargo +1.75.0 check --features probe-harness --bin graphtor-mcp-probe --target-dir $probeTargetDir
+if ($LASTEXITCODE -ne 0) { throw "probe check failed (exit $LASTEXITCODE)" }
 # The check above only type-checks the probe; run the three required
 # self-test groups explicitly so the harness is verified, not merely compiled:
 cargo +1.75.0 test --features probe-harness --bin graphtor-mcp-probe --target-dir $probeTargetDir
+if ($LASTEXITCODE -ne 0) { throw "probe self-tests failed (exit $LASTEXITCODE)" }
+
+# 7. After Cargo succeeds, verify the produced artifacts used for execution
+#    (probe exe plus the generated manifest/metadata) remain under the target
+#    root, are not reparse points, and are not writable by any identity other
+#    than the current SID. Assert-OwnerOnlyArtifact fails closed unless the
+#    resolved full path stays under $probeTargetDir, has no ReparsePoint
+#    attribute, and every write-capable ACE (FullControl/Modify/Write/WriteData/
+#    AppendData/WriteAttributes/WriteExtendedAttributes/ChangePermissions/
+#    TakeOwnership) targets ONLY $currentSid:
+foreach ($artifact in @(
+    (Join-Path $probeTargetDir 'debug\graphtor-mcp-probe.exe'),
+    (Join-Path $probeTargetDir 'debug\graphtor-mcp-probe.d'),
+    (Join-Path $probeTargetDir 'debug\.fingerprint'))) {
+    Assert-OwnerOnlyArtifact -Path $artifact -Root $probeTargetDir -Sid $currentSid
+}
 # Launch the same target CLI from one controlled foreign cwd. Run a control
 # entry without cwd, then a treatment entry with canonical project-root cwd.
 # Capture wrapper-entry + inner-server identity and bidirectional framing,
@@ -1074,21 +1128,19 @@ and posture-classification context.
 
 ## Plan Review
 
-**Current status: `READY_WITH_FOLLOWUPS` at reviewed HEAD
-`90b45685a35e2fa8a6337f99f67d5e0c9c251dd4`.** A fresh current-HEAD
-report-only review found `P0=0, P1=0` (`P2=7, P3=6` carried as explicit
-Ship-phase follow-ups; see the PR #106 Local Review Readiness block for the
-enumerated list). The round-3 correction below — applied against the earlier
-exact HEAD **`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc`**, which had returned
-`BLOCKED` after deduplication (`P0=1, P1=5, P2=15, P3=7`) — corrected the
-convergent failing-suite handoff, layered-cause selection, H1 retry,
+**Current status: the authoritative review state is tracked solely by the PR
+#106 `## Local Review Readiness` block** — reviewed HEAD, outcome, and P0/P1
+counts live there. This plan document does not assert its own current review
+outcome and does not independently authorize Ship or merge; consult the PR
+block for the live decision. The round-3 correction below — applied against the
+earlier exact HEAD **`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc`**, which had
+returned `BLOCKED` after deduplication (`P0=1, P1=5, P2=15, P3=7`) — corrected
+the convergent failing-suite handoff, layered-cause selection, H1 retry,
 recovery-width/ownership, overlapping `cmd_serve`, and legacy-lock blockers,
 plus tightly coupled P2 safety/actionability gaps. Findings based only on
-excluded old memory/archive state remain discarded.
-Earlier review/remediation sections below are historical. PR
-[#106](https://github.com/softwaresalt/graphtor-docs/pull/106) is
-staging/planning-only; this shipment is ready for merge review with the
-follow-ups above, not for Ship execution.
+excluded old memory/archive state remain discarded. Earlier
+review/remediation sections below are historical records of prior reviewed
+HEADs and do not describe the current artifact state.
 
 > [!IMPORTANT]
 > Historical review sections below use the shorthand "close as not-needed."
