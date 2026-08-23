@@ -130,17 +130,36 @@ bounded:
 
 1. **Validate a secure non-shipping probe harness, then capture T0.**
    `056.020-T` first supplies the feature-gated `graphtor-mcp-probe` target at
-   `tools/mcp-probe/main.rs` and proves independent full-duplex pumps, half-close
-   propagation, bounded buffers, continuous stderr drain, timeout/process-tree
-   cleanup, redaction, component-by-component no-follow/reparse containment,
-   exclusive owner-protected backup, and    exact-byte-or-absence restoration. The real config substitution requires a
-   caller-supplied recorded approval receipt.
-   T0 then launches the exact newest failing CLI executable/version/build from
-   one controlled foreign directory for a control entry without `cwd` and a
-   minimal-delta treatment entry requesting canonical project-root `cwd`.
-   Record CLI-assigned wrapper identity and inner server identity separately.
-   A correlated nonzero early exit identifies H0; H0b additionally requires a
-   Generation target. The wrapper is diagnostic-only and cannot satisfy T4.
+   `tools/mcp-probe/main.rs` on the standard Cargo target and proves the
+   transparent full-duplex byte proxy: independent pumps, half-close
+   propagation, bounded buffers, a continuous bounded stderr drain, timeout
+   signaling, and a read-only byte-observer seam that hands out copies or
+   immutable chunks without ever mutating or reframing forwarded wire bytes.
+   `056.022-T` then owns exact process identity and all-outcome teardown: it
+   records PID plus process-start-time for the runner, wrapper, and inner server
+   at spawn, prefers the direct `Child` handle, and falls back deepest-first to
+   exact PID-plus-start-time matches through existing safe `sysinfo`, never
+   killing on PID alone, on identity mismatch, or by name, and surfaces exact
+   residual identities instead of claiming atomic whole-tree ownership.
+   `056.021-T` then owns the isolated `logs/probe/<nonce>` workspace and evidence
+   lifecycle: exclusive creation validated by the existing
+   `validate_path`/`is_reparse_point` helpers, temporary in-workspace
+   control/treatment `.mcp.json`, an owned nested ancestor/child config fixture,
+   in-memory raw-frame capture through the observer seam, and redacted
+   persistence. The user `.mcp.json` is never read, modified, backed up,
+   restored, or substituted, so no config approval receipt is required.
+   T0 (`056.001-T`) then launches the exact newest failing CLI
+   executable/version/build from one controlled foreign directory. It first
+   proves ancestor config-isolation with the exact CLI against the owned nested
+   fixture (the nearest child `.mcp.json` shadows and does not merge the sentinel
+   ancestor); if the exact CLI reads or merges the ancestor config it stops the
+   causal H0 comparison and routes to H3-B via `056.019-T`, never assuming the
+   repository-root `.mcp.json` is unread. Only after isolation is proven does it
+   run a control entry without `cwd` and a minimal-delta treatment entry
+   requesting canonical project-root `cwd`. Record CLI-assigned wrapper identity
+   and inner server identity separately. A correlated nonzero early exit
+   identifies H0; H0b additionally requires a Generation target. The wrapper is
+   diagnostic-only and cannot satisfy T4.
 2. **Build a green out-of-process driver (T1).** Spawn the real binary
    with a controllable cwd/env, hold a named stdin handle open, send a protocol-valid
    `initialize`, concurrently drain bounded stderr, and expose a successful
@@ -220,21 +239,28 @@ review is still required, so no PASS is claimed.
   `mcp_serve_ready` remains preflight evidence, not handshake evidence. The
   opt-in sink is selected only when stderr is unavailable and env inheritance
   is proven.
-* **VI Single Responsibility** — probe, diagnostics, lock policy, shared model
+* **VI Single Responsibility** — the transparent byte proxy and read-only
+  observer seam, exact process identity and teardown, the isolated workspace and
+  evidence lifecycle, the exact-CLI run, diagnostics, lock policy, shared model
   lifecycle, typed config mutation, generated fields, narrow handle-safe
   recovery, upgrade orchestration, H3 modes, T4 acceptance, and documentation
   are separately owned.
-* **VII Destructive Approval** — T0 requires and records explicit approval
-  before the validated T00 harness creates an owner-only backup and substitutes
-  user config, then restores exact bytes/absence. Changing
-  upgrade refresh uses the typed contained recovery primitive before mutation.
-  If H0c
-  requires a pre-v4 rebuild via `graphtor-docs sync` or source-registry
-  replacement, 056.010-T requires explicit operator approval and a backup
-  before the state-changing remediation.
-  A live legacy pid-only lock is never age-evicted or used to terminate a
-  process; `056.007-T` requires explicit approval before exact-lock
-  backup/removal.
+* **VII Destructive Approval** — the probe path is non-destructive to user
+  state and requires no approval receipt: `056.021-T` creates the isolated
+  `logs/probe/<nonce>` workspace by exclusive creation validated by the existing
+  `validate_path`/`is_reparse_point` helpers, generates temporary control and
+  treatment `.mcp.json` and the nested ancestor/child fixture only inside that
+  owned workspace, and never reads, modifies, backs up, restores, or substitutes
+  the user `.mcp.json`. `056.022-T` teardown kills only exact recorded
+  PID-plus-start-time identities and cleanup stays within the owned workspace,
+  so isolated config creation and owned-workspace cleanup need no operator
+  approval. Approval is retained only for genuinely destructive later steps: a
+  changing upgrade refresh uses the typed contained recovery primitive before
+  mutation; if H0c requires a pre-v4 rebuild via `graphtor-docs sync` or
+  source-registry replacement, `056.010-T` requires explicit operator approval
+  and a backup before the state-changing remediation; and a live legacy pid-only
+  lock is never age-evicted or used to terminate a process — `056.007-T`
+  requires explicit approval before exact-lock backup/removal.
 * **VIII Safety Modes** — investigate-first: T0 orders causes before curative
   work; each curative task proves its own red/green.
 

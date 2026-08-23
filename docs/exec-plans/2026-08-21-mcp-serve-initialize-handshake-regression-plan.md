@@ -41,19 +41,26 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 
 * The newest Copilot CLI connects to `graphtor-docs` via `/mcp show
   graphtor-docs` with no OS error 232 and a completed `initialize` handshake.
-* `056.020-T` first self-tests a feature-gated, non-shipping transparent proxy
-  and process harness built with the **standard** Cargo target directory.
-  `056.021-T` then creates a fresh isolated `logs/probe/<nonce>` workspace,
-  generates temporary in-workspace control/treatment `.mcp.json`, and owns the
-  evidence lifecycle. T0 (`056.001-T`) records the exact newest failing CLI
-  executable, version/build, and `/mcp show graphtor-docs` invocation through a
-  minimal control/treatment pair run in that isolated workspace. The proxy
-  performs concurrent full-duplex forwarding, preserves inner launch identity
-  and half-close semantics, and owns all-outcome descendant teardown. The user
-  `.mcp.json` is never read, mutated, or restored, so no config approval receipt
-  is required. Raw frames stay in memory for same-run replay; only redacted
-  summaries and digests are persisted. Direct replay confirms only evidence
-  derived from that actual-client transcript.
+* `056.020-T` first self-tests a feature-gated, non-shipping transparent MCP
+  byte proxy with a **read-only observer seam**, built with the **standard**
+  Cargo target directory. `056.022-T` then owns exact process identity and
+  all-outcome teardown (PID plus process-start-time for runner/wrapper/inner
+  server, direct `Child` handle preferred, deepest-first exact-identity
+  `sysinfo` fallback, never PID-only or name-based kill). `056.021-T` then
+  creates a fresh isolated `logs/probe/<nonce>` workspace, generates temporary
+  in-workspace control/treatment `.mcp.json` plus an owned nested ancestor/child
+  config fixture, and owns the evidence lifecycle. T0 (`056.001-T`) records the
+  exact newest failing CLI executable, version/build, and `/mcp show
+  graphtor-docs` invocation; it **first proves ancestor config-isolation** with
+  the exact CLI against the nested fixture, then runs a minimal control/treatment
+  pair in that isolated workspace. The proxy performs concurrent full-duplex
+  forwarding and preserves inner launch identity and half-close semantics;
+  teardown is the exact recorded-identity contract in `056.022-T`, not a broad
+  whole-tree guarantee. The user `.mcp.json` is never read, mutated, or restored,
+  so no config approval receipt is required. Raw frames stay in memory (via the
+  observer seam) for same-run replay; only redacted summaries and digests are
+  persisted. Direct replay confirms only evidence derived from that actual-client
+  transcript.
 * The evidenced branch restores connectivity without relaxing workspace
   containment, fail-closed validation, or verified-live lock ownership.
 * Server startup failures are diagnosable even when the CLI discards child
@@ -71,8 +78,9 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 
 | Surface | Location | Change |
 |---|---|---|
-| Transparent proxy and process harness (T00A, non-shipping) | feature-gated `[[bin]]` `graphtor-mcp-probe` at `tools/mcp-probe/main.rs`, standard `target/` | Self-test full-duplex byte forwarding, half-close, bounded stderr, wrapper/inner identity, output-boundary redaction, deadline, and all-outcome `sysinfo` descendant teardown. Normal `target/` is a build cache, not an evidence trust boundary; default gates exclude the required-feature bin → `056.020-T` |
-| Isolated probe workspace and evidence lifecycle (T00B, non-shipping) | Rust probe creating `logs/probe/<nonce>` + temporary in-workspace `.mcp.json` | Exclusive-create isolated workspace validated by `validate_path`/`is_reparse_point`; generate in-workspace control/treatment entries; in-memory raw frames with redacted persistence; owned-workspace-only cleanup. Never touches the user `.mcp.json` → `056.021-T` |
+| Transparent MCP byte proxy + observer seam (T00A, non-shipping) | feature-gated `[[bin]]` `graphtor-mcp-probe` at `tools/mcp-probe/main.rs`, standard `target/` | Self-test full-duplex byte forwarding, half-close, bounded stderr, wrapper/inner identity, output-boundary redaction, timeout signaling, and a read-only byte-observer seam that copies without mutating/reframing wire bytes. Own only the direct inner-server `Child` handle; no descendant-tree teardown here. Normal `target/` is a build cache, not an evidence trust boundary; default gates exclude the required-feature bin → `056.020-T` |
+| Probe process identities + teardown (T00C, non-shipping) | `tools/mcp-probe/process.rs` + sequential `main.rs` wiring, existing safe `sysinfo` | Record PID plus process-start-time for runner/wrapper/inner server at spawn; prefer direct `Child` kill/wait, then deepest-first exact PID-plus-start-time `sysinfo` fallback; never PID-only, identity-mismatch, or name kill; surface exact residual identities on unproven ownership rather than claiming atomic whole-tree ownership → `056.022-T` |
+| Isolated probe workspace, ancestor fixture, evidence lifecycle (T00B, non-shipping) | Rust probe `tools/mcp-probe/workspace.rs` + `tools/mcp-probe/evidence.rs` creating `logs/probe/<nonce>` + temporary in-workspace `.mcp.json` | Exclusive-create isolated workspace validated by `validate_path`/`is_reparse_point`; generate in-workspace control/treatment entries and an owned nested ancestor/child config fixture; capture raw frames in memory via the 056.020-T observer seam with redacted persistence; owned-workspace-only cleanup. Never touches the user `.mcp.json` → `056.021-T` |
 | Serve startup diagnostics (T2, non-conditional, parity-safe) | `src/main.rs::cmd_serve`, duplicate-intake and database-open preflight | Route every pre-transport normal exit through an exhaustive typed seam, including pre-v4 and duplicate-intake exits. Preserve unconditional stderr and add structured events; emit `mcp_serve_ready` immediately before `serve_server` → `056.003-T` |
 | Managed config outcome contract (conditional H0a/H3-B1) | `src/workspace/mcp_config.rs` | Distinguish typed create/update/no-change/collision outcomes from fail-closed `PathViolation`; forbid message sniffing → `056.017-T` |
 | Managed MCP launch fields (T2d, conditional H0a/H3-B1) | `src/workspace/mcp_config.rs::managed_server_value` | Add only canonical project-root `cwd` and the evidenced stdio discriminator after T0/H3-B capability proof → `056.008-T` |
@@ -91,7 +99,7 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 
 ## Task Breakdown (evidence-first, test-first, ~2h each, single-width)
 
-### T00A — Transparent actual-client proxy and process harness — backlog `056.020-T`
+### T00A — Transparent MCP byte proxy and observer seam — backlog `056.020-T`
 
 * Add a non-default, feature-gated `[[bin]]` named `graphtor-mcp-probe` at
   `tools/mcp-probe/main.rs`, gated by a `probe-harness` required feature in
@@ -102,28 +110,59 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   trust boundary — anyone able to modify source or `target/` can already alter
   the probe, so build-artifact hardening is security theater and is removed.
   Default release/all-target gates exclude the required-feature bin while
-  dedicated Rust 1.75 `check`/`test`/`build` commands cover it; the bin is never
-  installed/committed and is invalid for T4.
-* Self-test three behavior groups (no actual CLI, no filesystem mutation beyond
-  normal Cargo build output):
+  dedicated Rust 1.75 `check`/`test`/`build`/`clippy` commands cover it; the bin
+  is never installed/committed and is invalid for T4.
+* Self-test transport only (no actual CLI, no filesystem mutation beyond normal
+  Cargo build output):
   1. independent concurrent pumps for client→child stdin and child→client
      stdout, a concurrent bounded stderr drain, bounded buffers, client
-     EOF→child stdin half-close, child stdout EOF→client close, and
-     exit/deadline coordination;
-  2. exact wrapper-entry and inner-server identity captured separately,
-     inherited cwd/env/args preserved except allowlisted diagnostics, and
-     protocol bytes never rewritten or reframed;
-  3. output-boundary argv/env/message redaction and complete all-outcome
-     descendant-tree reaping via a safe process-tree enumeration dependency (for
-     example `sysinfo`, no `unsafe`), including two successful proxy legs run
-     back-to-back with no leaked process.
-* This task owns the byte proxy and owned-descendant teardown only. It runs no
-  real CLI, creates no isolated workspace, writes no `.mcp.json`, and persists
-  no raw frames. Isolated workspace, temporary config, and evidence lifecycle
-  are `056.021-T`; the approved real-CLI run is `056.001-T`.
+     EOF→child stdin half-close, child stdout EOF→client close, and timeout
+     signaling; protocol bytes never rewritten or reframed;
+  2. exact wrapper-entry and inner-server identity captured separately and
+     inherited cwd/env/args preserved except allowlisted diagnostics;
+  3. a **read-only byte-observer seam** that receives copies or immutable chunks
+     of each forwarded direction with bounded, explicit-backpressure semantics —
+     an observer that fails or falls behind invalidates downstream evidence but
+     never alters, drops, or reframes forwarded wire bytes — plus
+     output-boundary argv/env/message redaction.
+* This task owns the byte proxy and observer seam only, holding just the direct
+  inner-server `Child` handle needed to wire stdio. It adds no `sysinfo` /
+  process-tree ownership and no `unsafe`; process spawning, exact identity, and
+  teardown are `056.022-T`. It runs no real CLI, creates no isolated workspace,
+  writes no `.mcp.json`, and persists no raw frames. Isolated workspace,
+  temporary config, ancestor fixture, and evidence lifecycle are `056.021-T`;
+  the approved real-CLI run is `056.001-T`.
 
-### T00B — Isolated probe workspace and evidence lifecycle — backlog `056.021-T`
+### T00C — Probe process identities and teardown — backlog `056.022-T`
 
+* Depends on `056.020-T`. Own `tools/mcp-probe/process.rs` and focused tests;
+  sequentially wire it into `tools/mcp-probe/main.rs` to compose the process
+  lifecycle onto the transparent proxy. Reuse the existing safe `sysinfo`
+  dependency; add no `unsafe` and no new process crate.
+* Establish ownership **at spawn**, not post-hoc only: the outer runner holds
+  the exact CLI-assigned Copilot `Child` and the wrapper holds the exact
+  inner-server `Child`. Record PID plus process-start-time for runner, wrapper,
+  and inner server at spawn and maintain the live owned-identity registry.
+* Teardown prefers the direct `Child` kill/wait wherever a handle exists, then a
+  **deepest-first** fallback matching on exact PID plus process-start-time
+  through the existing safe `sysinfo` enumeration. Never kill on PID alone, on
+  identity mismatch, or by name. Repeat bounded verification until every
+  RECORDED owned identity is absent; if ownership cannot be proven, evidence
+  fails and the exact residual identities are surfaced for operator action —
+  there is **no** atomic whole-tree ownership guarantee.
+* Self-test at most three grouped scenarios: (1) normal completion plus
+  back-to-back runs with no recorded identity leaked; (2) deadline/error
+  teardown; (3) intermediate child exit and PID-reuse mismatch (a reused PID
+  with a different start-time is refused). Runs no real CLI, creates no
+  workspace, writes no `.mcp.json`, persists no evidence.
+
+### T00B — Isolated probe workspace, ancestor fixture, and evidence lifecycle — backlog `056.021-T`
+
+* Depends on `056.022-T` (transitive `056.020-T → 056.022-T → 056.021-T`). Own
+  `tools/mcp-probe/workspace.rs` and `tools/mcp-probe/evidence.rs`; sequentially
+  wire both into `tools/mcp-probe/main.rs` after `056.022-T`. Compose — never
+  reimplement — the `056.020-T` proxy/observer seam and the `056.022-T` process
+  teardown.
 * Create a fresh isolated workspace under the canonical repository path
   `logs/probe/<nonce>` through the Rust probe using **exclusive creation** (fail
   if the path already exists), validating every component with the existing
@@ -141,39 +180,61 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   is required. Control and treatment are byte-equivalent to the production
   server entry semantics except the wrapper `command`; the treatment entry alone
   adds the candidate `cwd` mechanism.
-* Keep raw transaction frames in memory for same-run replay by `056.001-T`;
-  persist only a redacted structured summary and digests (no raw frame bytes on
-  disk). Own the runtime evidence lifecycle and the exact workspace
-  cleanup/retention policy: never delete anything outside the exact owned
-  `logs/probe/<nonce>` workspace, and keep destructive-cleanup approval
-  constraints explicit.
-* Depends on the `056.020-T` proxy; performs no production acceptance. The
-  exact-CLI run is `056.001-T` and restored-production acceptance remains solely
-  T4.
+* Build an **owned nested ancestor-discovery fixture** inside the isolated
+  workspace: an owned parent directory holding a deliberately invalid/sentinel
+  ancestor `.mcp.json`, and a child run directory holding the intended temporary
+  `.mcp.json`. This lets `056.001-T` prove, with the exact target CLI, that the
+  nearest child config shadows (and does not merge) the ancestor before any
+  causal contrast; the repository-root `.mcp.json` is never assumed unread.
+* Capture raw transaction frames in memory (through the `056.020-T` observer
+  seam) for same-run replay by `056.001-T`; persist only a redacted structured
+  summary and digests (no raw frame bytes on disk). Own the runtime evidence
+  lifecycle and the exact workspace cleanup/retention policy: never delete
+  anything outside the exact owned `logs/probe/<nonce>` workspace, and keep
+  destructive-cleanup approval constraints explicit.
+* Performs no production acceptance. The exact-CLI run is `056.001-T` and
+  restored-production acceptance remains solely T4.
 
 ### T0 — Run the exact-CLI differential evidence probe — backlog `056.001-T`
 
 * Record the **exact** newest failing Copilot executable path, version/build,
   and `/mcp show graphtor-docs` invocation. T4 must use the same identity.
 * Run inside `056.021-T`'s isolated `logs/probe/<nonce>` workspace using its
-  temporary in-workspace control/treatment `.mcp.json` and the `056.020-T`
-  proxy. Both entries are byte-equivalent to the user-facing production entry
-  except `command = wrapper`; treatment alone adds canonical project-root `cwd`.
-  No extra env, targets, `--db-path`, args, or alternate stdio discriminator.
-  The user `.mcp.json` is never read or written, so no approval receipt applies.
+  temporary in-workspace control/treatment `.mcp.json`, the `056.020-T`
+  proxy/observer seam, and the `056.022-T` process lifecycle. Both entries are
+  byte-equivalent to the user-facing production entry except `command = wrapper`;
+  treatment alone adds canonical project-root `cwd`. No extra env, targets,
+  `--db-path`, args, or alternate stdio discriminator. The user `.mcp.json` is
+  never read or written, so no approval receipt applies.
+* **Gate 1 (ancestor config-isolation, first):** using the exact target CLI
+  against `056.021-T`'s owned nested ancestor/child fixture, prove the nearest
+  child `.mcp.json` shadows and does not merge the sentinel ancestor. Only after
+  isolation is proven may the causal control/treatment contrast run. If the
+  exact CLI reads or merges the ancestor config, stop the causal H0 comparison
+  and route to H3-B via `056.019-T`; never assume the repository-root
+  `.mcp.json` is unread.
 * Record wrapper-entry cwd and inner-child spawn cwd separately; require the
   inner child to inherit the wrapper's CLI-assigned cwd. Preserve the unmodified
   bidirectional initialize transaction, stderr, exit/still-alive state, locks,
-  and Generation posture. Raw frames stay in memory for same-run replay.
+  and Generation posture. Raw frames stay in memory (via the observer seam) for
+  same-run replay.
 * Causes are ordered, not mutually exclusive. Select H0a when treatment reaches
   healthy initialize **or** demonstrably advances past foreign-cwd discovery
   to a later gate/handshake stage; in the latter case retain H0a as a
   prerequisite and also select the newly exposed H0b/H0c/H1/H3-A cause.
-  Iterate after each correction. If both legs remain foreign or the original
+  If both legs remain foreign or the original
   field is rejected, select H3-B.
-* Enforce the 30-second `056.020-T` deadline and fail if exact CLI identity,
-  minimal entry parity, or owned process-tree teardown cannot be proved. Direct
-  replay is confirmation only and cannot select the branch.
+* **Bound the evidence loop:** run exactly one control/treatment contrast per
+  selected correction. After each correction exactly one terminal outcome holds
+  — initialize succeeds, one newly evidenced downstream task is selected, H3-B2
+  blocks the shipment, or the task returns blocked with the captured evidence.
+  No open-ended implementation loop runs inside T0, and no already-proven
+  prerequisite is discarded.
+* Enforce the 30-second `056.020-T` deadline and the exact recorded
+  PID-plus-start-time identity/handle teardown contract in `056.022-T` (not a
+  broad process-tree guarantee); fail closed if exact CLI identity, minimal entry
+  parity, ancestor config-isolation, or exact process ownership cannot be proved.
+  Direct replay is confirmation only and cannot select the branch.
 * Deliverable: correlated transcripts naming ordered proven prerequisites/
   causes or an explicit H3-B2 unsupported-client blocker. Preserve the in-memory
   H3-A transaction for same-run replay. T0 links tasks; it owns no production
@@ -612,7 +673,10 @@ retry contract.
   `mcp_serve_ready` proves preflight only; the correlated `/mcp show` result
   proves initialize completion.
 * Dependency note: T4 depends on `056.003-T` (**non-conditional** cmd_serve
-  diagnostics — loud exit-2 errors + `mcp_serve_ready`, always lands) plus the
+  diagnostics — loud exit-2 errors + `mcp_serve_ready`, always lands), on the
+  always-land probe evidence chain `056.020-T → 056.022-T → 056.021-T →
+  056.001-T` (with **explicit direct evidence-chain edges** to `056.001-T`,
+  `056.021-T`, and `056.022-T` for robustness), plus the
   **curative** fix tasks, each conditional and moved to **`done` with a
   `not-needed: <rationale>` log comment** when
   its hypothesis is not the evidenced cause: T2d launch-contract (H0a/H3-B1) =
@@ -621,8 +685,9 @@ retry contract.
   diagnosability = `056.006-T`, T2f H0c remediation = `056.010-T`, H1 resolver/
   lifecycle/orchestration = `056.014-T`/`056.005-T`/`056.015-T`, H3-A transport
   = `056.011-T`, H3-B compatibility = `056.019-T`, typed config/recovery =
-  `056.017-T`/`056.018-T`, proxy/process harness = `056.020-T`, isolated
-  workspace/evidence = `056.021-T`, and documentation-only
+  `056.017-T`/`056.018-T`, transparent byte proxy + observer seam = `056.020-T`,
+  process identities/teardown = `056.022-T`, isolated workspace/ancestor
+  fixture/evidence = `056.021-T`, and documentation-only
   tasks `056.012-T`/`056.013-T`. T0 may activate an **ordered sequence**:
   **H0a → 056.017 + 056.008 + 056.018 +
   056.009**; **H0b → 056.016 + 056.007**; **H0c → 056.010** with 056.006
@@ -644,6 +709,35 @@ This section is the authoritative task-ordering and issue graph for the current
 artifact. It supersedes every DAG in the historical Plan Review sections below.
 The live review decision remains the PR #106 `## Local Review Readiness` block;
 this plan claims no current READY.
+
+### Authoritative invariants (single source of truth)
+
+These invariants hold for the whole plan; task sections reference them rather
+than restate every clause:
+
+* **Standard target, not a trust boundary** — the probe builds on the normal
+  Cargo `target/`; no custom `--target-dir`, DACL/ACL, `Assert-*` helper,
+  owner-only artifact, user-config backup, or approval receipt exists. The
+  built bin is ephemeral and invalid as T4 evidence.
+* **Read-only observer seam** — `056.020-T`'s observer receives copies/immutable
+  chunks and never mutates, reorders, drops, or reframes forwarded wire bytes;
+  observer failure invalidates evidence but never changes the wire.
+* **Exact-identity teardown, no whole-tree guarantee** — `056.022-T` records PID
+  plus process-start-time at spawn and reaps by direct `Child` handle then
+  deepest-first exact PID-plus-start-time match; never PID-only, mismatch, or
+  name kill. Unproven ownership fails evidence and surfaces exact residual
+  identities for operator action.
+* **Ancestor config-isolation gate first** — `056.001-T` proves with the exact
+  CLI that the nearest child `.mcp.json` shadows and does not merge a sentinel
+  ancestor before any causal contrast; if the CLI merges ancestor config, route
+  to H3-B via `056.019-T`. The repository-root `.mcp.json` is never assumed
+  unread.
+* **No user-config mutation** — control/treatment and the nested fixture live
+  only inside the owned `logs/probe/<nonce>` workspace; the user `.mcp.json` is
+  never read, mutated, backed up, restored, or substituted.
+* **PR readiness is the sole dynamic authority** — the PR #106
+  `## Local Review Readiness` block is authoritative; this plan claims no
+  current READY.
 
 ### Root cause of the prior P1s
 
@@ -669,19 +763,29 @@ runtime config, the evidence, and process ownership.
 
 ### Retained and new nodes
 
-* `056.020-T` (retained, narrowed) — feature-gated transparent proxy and
-  process harness on the standard Cargo target; self-tests only.
-* `056.021-T` (new) — isolated `logs/probe/<nonce>` workspace and evidence
-  lifecycle; exclusive-create plus `validate_path`/`is_reparse_point`;
-  in-workspace temporary `.mcp.json`; in-memory raw frames with redacted
-  persistence.
+* `056.020-T` (retained, narrowed) — feature-gated transparent MCP byte proxy
+  plus a read-only byte-observer seam on the standard Cargo target; self-tests
+  only. Holds only the direct inner-server `Child` handle; no process-tree
+  ownership.
+* `056.022-T` (new) — exact probe process identities and all-outcome teardown:
+  PID plus process-start-time for runner/wrapper/inner server, direct `Child`
+  handle then deepest-first exact-identity `sysinfo` fallback, no whole-tree
+  guarantee. Depends on `056.020-T`.
+* `056.021-T` (retained, re-parented) — isolated `logs/probe/<nonce>` workspace,
+  owned nested ancestor/child config fixture, and evidence lifecycle;
+  exclusive-create plus `validate_path`/`is_reparse_point`; in-workspace
+  temporary `.mcp.json`; in-memory raw frames (via the observer seam) with
+  redacted persistence. Now depends on `056.022-T`, not `056.020-T`.
 * `056.001-T` (retained) — exact-CLI differential run inside `056.021-T`'s
-  workspace; now depends on `056.021-T`, not `056.020-T`.
-* All diagnostics, curative, H3, documentation, and T4 nodes are unchanged.
+  workspace; proves ancestor config-isolation first; depends on `056.021-T`,
+  not `056.020-T`.
+* All diagnostics, curative, H3, and documentation nodes are unchanged. T4
+  gains explicit evidence-chain edges to `056.001-T`, `056.021-T`, and
+  `056.022-T`.
 
 ### Authoritative task ordering
 
-* `056.020 → 056.021 → 056.001 → 056.002`
+* `056.020 → 056.022 → 056.021 → 056.001 → 056.002`
 * `056.002 → {056.003, 056.006, 056.007, 056.008, 056.010, 056.011,
   056.014, 056.016, 056.017, 056.019}`
 * `056.002 + 056.014 → 056.005`; `056.003 + 056.005 + 056.014 → 056.015`
@@ -689,9 +793,11 @@ runtime config, the evidence, and process ownership.
 * `056.001 + 056.002 → {056.011, 056.019}`
 * `056.002 + 056.017 + 056.019 → 056.008`; `056.017 → 056.018`;
   `056.008 + 056.017 + 056.018 → 056.009`
-* `056.003 + 056.007 + 056.010 + 056.015 → 056.012`
+* `056.003 + 056.006 + 056.007 + 056.010 + 056.015 → 056.012`
 * `056.008 + 056.009 + 056.011 + 056.018 + 056.019 → 056.013`
-* T4 `056.004` depends on `056.003` and every task `056.005`..`056.021`.
+* T4 `056.004` depends on `056.003`, every task `056.005`..`056.022`, and — as
+  explicit evidence-chain edges — directly on `056.001`, `056.021`, and
+  `056.022`.
 
 ### Explicit residual risks
 
@@ -701,6 +807,14 @@ runtime config, the evidence, and process ownership.
   modifier. No new production path primitive is introduced.
 * Normal `target/` is a build cache, not an evidence trust boundary; the probe
   binary is ephemeral and invalid as T4 production evidence.
+* Teardown is the exact recorded PID-plus-start-time identity/handle contract
+  (`056.022-T`); there is no atomic whole-tree or `sysinfo` guarantee, and
+  unproven ownership surfaces exact residual identities for operator action.
+* The `056.020-T` observer seam is read-only: it captures copies for evidence
+  and never mutates or reframes forwarded wire bytes.
+* Ancestor config-isolation is proven with the exact CLI before any causal
+  contrast (`056.001-T` Gate 1); the repository-root `.mcp.json` is never
+  assumed unread, and a merging CLI routes to H3-B via `056.019-T`.
 * T4 remains the sole restored-production actual-client acceptance node.
 
 ## Verification Commands
@@ -729,24 +843,30 @@ cargo +1.75.0 test --features probe-harness --bin graphtor-mcp-probe
 if ($LASTEXITCODE -ne 0) { throw "probe self-tests failed (exit $LASTEXITCODE)" }
 cargo +1.75.0 build --features probe-harness --bin graphtor-mcp-probe
 if ($LASTEXITCODE -ne 0) { throw "probe build failed (exit $LASTEXITCODE)" }
+cargo +1.75.0 clippy --features probe-harness --bin graphtor-mcp-probe -- -D warnings -D clippy::pedantic
+if ($LASTEXITCODE -ne 0) { throw "probe clippy pedantic failed (exit $LASTEXITCODE)" }
 
-# 3. Run the deterministically produced probe self-test binary. `cargo build`
-#    (NOT `cargo test`) emits target\debug\graphtor-mcp-probe.exe; run its
-#    self-test subcommand and check the exit code immediately.
-& (Join-Path $repoRoot 'target\debug\graphtor-mcp-probe.exe') self-test
-if ($LASTEXITCODE -ne 0) { throw "probe self-test binary failed (exit $LASTEXITCODE)" }
+# 3. Run the probe self-test through Cargo (platform-neutral; no hardcoded
+#    target\debug\*.exe path). This resolves the required-feature bin on any
+#    OS and checks the exit code immediately.
+cargo +1.75.0 run --features probe-harness --bin graphtor-mcp-probe -- self-test
+if ($LASTEXITCODE -ne 0) { throw "probe self-test failed (exit $LASTEXITCODE)" }
 
 # 4. The actual-client evidence run (T0 = 056.001-T) is performed BY the probe,
 #    not by this block. 056.021-T creates a fresh isolated logs/probe/<nonce>
 #    workspace (exclusive creation, validate_path/is_reparse_point), writes
-#    temporary in-workspace control/treatment .mcp.json, and captures redacted
-#    evidence. The user .mcp.json is never read, mutated, backed up, or
-#    restored, so no approval receipt is required. The probe launches the exact
-#    target CLI from one controlled foreign cwd (control without cwd, then
-#    treatment with canonical project-root cwd), forwards both directions, keeps
-#    raw frames in memory for same-run replay, enforces a <=30s deadline, and
-#    reaps the owned descendant tree on every outcome. If 056.006-T is selected,
-#    set its env gate on the probe-owned CLI process.
+#    temporary in-workspace control/treatment .mcp.json plus an owned nested
+#    ancestor/child config fixture, and captures redacted evidence through the
+#    056.020-T read-only observer seam. The user .mcp.json is never read,
+#    mutated, backed up, or restored, so no approval receipt is required. The
+#    probe first proves ancestor config-isolation with the exact CLI (nearest
+#    child config shadows and does not merge the sentinel ancestor); only then
+#    does it launch the exact target CLI from one controlled foreign cwd (control
+#    without cwd, then treatment with canonical project-root cwd), forward both
+#    directions, keep raw frames in memory for same-run replay, enforce a <=30s
+#    deadline, and reap by the exact recorded PID-plus-start-time identity
+#    contract (056.022-T) on every outcome -- not a broad process-tree sweep. If
+#    056.006-T is selected, set its env gate on the probe-owned CLI process.
 # Each T4 start instead uses the RESTORED production entry and records exact CLI
 # identity, production-config hash, timestamp, server PID, and capture path.
 # The probe wrapper or any executable substitution is invalid T4 evidence.
@@ -780,6 +900,14 @@ if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
 
 ## Rollback / Compatibility
 
+* The probe evidence chain (`056.020-T` byte proxy + observer seam, `056.022-T`
+  exact-identity teardown, `056.021-T` isolated workspace/ancestor fixture,
+  `056.001-T` exact-CLI run) is non-shipping: it lives behind the
+  `probe-harness` required feature and is never installed or committed as a
+  binary. Reverting those commits removes the feature-gated bin with no
+  production impact; `056.022-T` teardown and `056.021-T` owned-workspace
+  cleanup leave no persistent state, and the user `.mcp.json` is never mutated,
+  so there is nothing to restore.
 * T2 is additive diagnostics (loud discovery errors + `mcp_serve_ready`; no
   containment or discovery-signature change — the conditional T2d
   launch-contract, T2b richer lock metadata, and T2c opt-in log sink are
@@ -842,8 +970,10 @@ if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
   `serve_server` means preflight-complete/about-to-call only. Production
   capture uses inherited stderr, unique T2c sink, or non-substituting OS
   tracing; T0's wrapper is diagnostic-only.
-* **VI Single Responsibility** — the transparent proxy/process harness, the
-  isolated workspace/evidence lifecycle, the exact-CLI run, diagnostics, typed
+* **VI Single Responsibility** — the transparent byte proxy and read-only
+  observer seam (`056.020-T`), exact process identity and teardown
+  (`056.022-T`), the isolated workspace/ancestor-fixture/evidence lifecycle
+  (`056.021-T`), the exact-CLI run, diagnostics, typed
   config
   outcomes, generated fields, the narrow handle-safe recovery primitive,
   existing-install delivery, shared-lock
@@ -855,10 +985,14 @@ if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
   evidenced); no speculative `get_info` change (proven no-op).
 * **VII Destructive Approval** — T00B creates the isolated `logs/probe/<nonce>`
   workspace via exclusive creation validated by the existing
-  `validate_path`/`is_reparse_point` helpers, and T0 runs entirely inside it.
-  The user `.mcp.json` is never read, mutated, backed up, or restored, so no
-  config approval receipt is required; destructive cleanup beyond the owned
-  workspace stays approval-gated. T2e consumes 056.018-T's typed, no-follow
+  `validate_path`/`is_reparse_point` helpers, generates the temporary
+  control/treatment `.mcp.json` and the nested ancestor/child fixture only inside
+  it, and T0 runs entirely inside it. `056.022-T` teardown kills only exact
+  recorded PID-plus-start-time identities (never PID-only, identity-mismatch, or
+  name kill). The user `.mcp.json` is never read, mutated, backed up, or
+  restored, so no config approval receipt is required, and isolated config
+  creation plus owned-workspace cleanup need no approval; destructive cleanup
+  beyond the owned workspace stays approval-gated. T2e consumes 056.018-T's typed, no-follow
   contained recovery
   policy before any changing managed-entry refresh. The
   **conditional H0c operational remediation (T2f/`056.010-T`)** can require a
@@ -960,24 +1094,29 @@ and posture-classification context.
 
 ### Risky actions (ProposedAction / ActionRisk / ActionResult)
 
-* ProposedAction (non-conditional, T00A/T00B/T0 evidence transaction): after
-  `056.020-T` proves full-duplex forwarding, owned-descendant teardown, and
-  redaction, `056.021-T` creates a fresh isolated `logs/probe/<nonce>`
-  workspace, generates temporary in-workspace control/treatment `.mcp.json`, and
-  runs the exact-CLI control/treatment pair inside it through the proxy.
+* ProposedAction (non-conditional, T00A/T00C/T00B/T0 evidence transaction):
+  after `056.020-T` proves full-duplex forwarding, the read-only observer seam,
+  and redaction, and `056.022-T` proves exact recorded-identity teardown,
+  `056.021-T` creates a fresh isolated `logs/probe/<nonce>` workspace, generates
+  temporary in-workspace control/treatment `.mcp.json` plus an owned nested
+  ancestor/child fixture, and `056.001-T` proves ancestor config-isolation
+  before running the exact-CLI control/treatment pair inside it through the
+  proxy.
   * targets: the isolated `logs/probe/<nonce>` workspace and its temporary
-    `.mcp.json`, plus the probe-owned CLI/wrapper/server process tree. The user
-    `.mcp.json` is never touched.
+    `.mcp.json`, plus the probe-owned CLI/wrapper/server processes identified by
+    exact PID plus process-start-time. The user `.mcp.json` is never touched.
   * change_kind: isolated-workspace creation plus temporary in-workspace config
     generation plus external process launch (no user-config mutation).
   * ActionRisk: **moderate** — a crash can leak processes or leave an owned
     workspace behind, so the probe enforces a deadline, owns all-outcome
-    descendant teardown, redacts sensitive values, and confines every write to
+    exact-identity teardown (`056.022-T`, deepest-first PID-plus-start-time; no
+    whole-tree guarantee), redacts sensitive values, and confines every write to
     the owned workspace. Normal `target/` is a build cache, not a trust
     boundary.
-  * rollback: on every outcome, reap the owned descendant tree and clean up only
-    the owned `logs/probe/<nonce>` workspace; never delete outside it, and keep
-    destructive cleanup beyond the workspace approval-gated.
+  * rollback: on every outcome, reap by the exact recorded PID-plus-start-time
+    identities and clean up only the owned `logs/probe/<nonce>` workspace; never
+    delete outside it, surface any unproven residual identity for operator
+    action, and keep destructive cleanup beyond the workspace approval-gated.
   * approval_required: no for config, because the real `.mcp.json` is never read
     or written; ActionResult: **planned**.
 * ProposedAction (non-conditional, T2 diagnostics): route every typed normal
@@ -1202,9 +1341,10 @@ and posture-classification context.
   accepted as the passing result. An empty/closed stdin is explicitly
   disallowed — it would only exercise a benign EOF-driven shutdown and could not
   distinguish the regression.
-* Per-width proofs remain separate: `056.020-T` owns the transparent
-  proxy/process harness; `056.021-T` owns the isolated workspace and evidence
-  lifecycle;
+* Per-width proofs remain separate: `056.020-T` owns the transparent byte proxy
+  and read-only observer seam; `056.022-T` owns exact process identities and
+  teardown; `056.021-T` owns the isolated workspace, ancestor fixture, and
+  evidence lifecycle;
   `056.003-T` owns the exhaustive typed preflight seam and `mcp_serve_ready`;
   `056.017-T` owns config outcomes; `056.008-T` owns generated-entry execution;
   `056.018-T` owns recovery containment; `056.009-T` owns upgrade integration;
@@ -1223,10 +1363,15 @@ and posture-classification context.
 counts live there. This plan document does not assert its own current review
 outcome and does not independently authorize Ship or merge; consult the PR
 block for the live decision. The current artifact additionally reflects a Stage
-holistic graph-rewrite correction (2026-08-22): `056.020-T` is narrowed to the
-transparent proxy/process harness, the new `056.021-T` owns the isolated
-workspace and evidence lifecycle, `056.001-T` now depends on `056.021-T`, and
-all build-artifact ACL/target-dir/user-config-substitution machinery is removed.
+holistic graph-rewrite correction (2026-08-23): `056.020-T` is narrowed to the
+transparent MCP byte proxy plus a read-only observer seam, the new `056.022-T`
+owns exact process identities and all-outcome teardown, `056.021-T` owns the
+isolated workspace, an owned nested ancestor/child config fixture, and the
+evidence lifecycle and now depends on `056.022-T` (chain
+`056.020 → 056.022 → 056.021 → 056.001`), `056.001-T` proves ancestor
+config-isolation before any causal contrast, T4 gains direct evidence-chain
+edges to `056.001-T`/`056.021-T`/`056.022-T`, and all build-artifact
+ACL/target-dir/user-config-substitution machinery remains removed.
 The authoritative task ordering now lives in the `## Issue and Dependency Graph`
 section above; the DAGs in the historical sections below are superseded. The
 round-3 correction below — applied against the
