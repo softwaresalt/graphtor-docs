@@ -584,8 +584,8 @@ retry contract.
   blocker retains H0a and adds the new cause. The
   non-selected tasks complete with that explicit disposition, which
   **satisfies** T4's dependency on them — T4 does not wait for a conditional
-  task that evidence ruled out. **The selected curative branch always includes a
-  task sequence must produce a healthy deterministic/operational branch proof;
+  task that evidence ruled out. **The selected curative branch's task sequence
+  must always produce a healthy deterministic/operational branch proof**;
   T4 alone owns production-entry acceptance. H3-B2 is intentionally
   unsatisfiable and blocks rather than manufacturing a different CLI identity.
 * Width: runtime verification + closure evidence.
@@ -600,6 +600,9 @@ New-Item -ItemType Directory -Force logs
 # exact `/mcp show graphtor-docs` target-CLI identity.
 # Dedicated T00 target gate (default release/all-target commands exclude it):
 cargo +1.75.0 check --features probe-harness --bin graphtor-mcp-probe
+# The check above only type-checks the probe; run the three required
+# self-test groups explicitly so the harness is verified, not merely compiled:
+cargo +1.75.0 test --features probe-harness --bin graphtor-mcp-probe
 # Launch the same target CLI from one controlled foreign cwd. Run a control
 # entry without cwd, then a treatment entry with canonical project-root cwd.
 # Capture wrapper-entry + inner-server identity and bidirectional framing,
@@ -1058,19 +1061,21 @@ and posture-classification context.
 
 ## Plan Review
 
-**Current status: final authorized correction round 3, report-only gate
-PENDING — NOT a PASS.** The exact-HEAD standard review of
-**`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc`** returned `BLOCKED`
-after deduplication (`P0=1, P1=5, P2=15, P3=7`). Round 3 corrects the
+**Current status: `READY_WITH_FOLLOWUPS` at reviewed HEAD
+`90b45685a35e2fa8a6337f99f67d5e0c9c251dd4`.** A fresh current-HEAD
+report-only review found `P0=0, P1=0` (`P2=7, P3=6` carried as explicit
+Ship-phase follow-ups; see the PR #106 Local Review Readiness block for the
+enumerated list). The round-3 correction below — applied against the earlier
+exact HEAD **`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc`**, which had returned
+`BLOCKED` after deduplication (`P0=1, P1=5, P2=15, P3=7`) — corrected the
 convergent failing-suite handoff, layered-cause selection, H1 retry,
 recovery-width/ownership, overlapping `cmd_serve`, and legacy-lock blockers,
 plus tightly coupled P2 safety/actionability gaps. Findings based only on
-excluded old memory/archive state remain discarded. This is the final
-user-authorized correction round; its next committed HEAD requires a fresh
-standard review.
+excluded old memory/archive state remain discarded.
 Earlier review/remediation sections below are historical. PR
-[#106](https://github.com/softwaresalt/graphtor-docs/pull/106) remains blocked;
-no fresh PASS is claimed here.
+[#106](https://github.com/softwaresalt/graphtor-docs/pull/106) is
+staging/planning-only; this shipment is ready for merge review with the
+follow-ups above, not for Ship execution.
 
 > [!IMPORTANT]
 > Historical review sections below use the shorthand "close as not-needed."
