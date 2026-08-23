@@ -83,14 +83,16 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   tools/mcp-probe/Cargo.toml` (clippy `-D warnings -D clippy::pedantic`).
 * Rollback and three exact-Copilot `/mcp show graphtor-docs` sessions on the
   exact T0 CLI identity and restored post-fix user-facing entry are documented;
-  each session records a completed, valid `initialize` (`jsonrpc` 2.0, correlated
-  id, no error, `result.protocolVersion`) with no OS error 232, and correlates
-  the production config hash/file identity with the Copilot-spawned server startup
-  event. `/mcp show` advertised tools are recorded as supporting evidence; a
-  direct T1 production driver separately confirms expected tools and one
-  side-effect-free `get_status` as a server control (not proof of Copilot UI
-  invocation). T0's wrapper or any executable substitution is invalid production
-  evidence.
+  each session proves the server connected and initialized with no OS error 232
+  using ONLY the fields `/mcp show` surfaces (connection/initialization status and
+  advertised tool list/count when shown), and correlates the production config
+  hash/file identity with the Copilot-spawned server startup event. The correlated
+  JSON-RPC wire fields (`jsonrpc` 2.0, correlated id, no error,
+  `result.protocolVersion`) are proven SEPARATELY by the direct T1 (`056.002-T`)
+  production driver against the same production binary/workspace — not by
+  `/mcp show` — which also confirms the expected tools and one side-effect-free
+  `get_status` as a server control (not proof of Copilot UI invocation). T0's
+  wrapper or any executable substitution is invalid production evidence.
 
 ## Likely Surfaces (exact)
 
@@ -304,7 +306,8 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   evidence capture itself is impossible for an explicit non-H3-B reason) returns
   blocked with the captured evidence. Downstream causal tasks (including
   `056.019-T` for any `H3-B-candidate`) are visited once in the authoritative
-  forward-chain order.
+  release-unit order (evidence foundation, then selected remediation units, then
+  acceptance) and are never reopened.
 * Preserve the unmodified duplex transaction, concurrent stderr, exit/still-alive
   state, locks, and Generation posture. Raw frames stay in wrapper memory
   (`056.022-T`/`056.023-T`); this runner reads only the redacted summary/digests
@@ -712,7 +715,11 @@ retry contract.
 
 * Select only when the child remains alive but T0's framed transaction never
   negotiates a protocol version. Own **only** transport types and rmcp/stdio
-  wiring, landing **after** `056.015-T`. Do NOT require persisted or
+  wiring. The transport wiring layers atop the `056.015-T` serve-orchestration
+  restructure ONLY when H1 and H3-A are co-selected in the same shipment unit
+  (a shipment-assembly-time co-selection edge per the Authoritative task
+  ordering) — it is NOT a standing backlog dependency; the standing edge is
+  `056.003 → 056.011` only. Do NOT require persisted or
   byte-identical raw frames: reacquire the exact-client transaction SEPARATELY
   before and after the fix through the `056.022-T` wrapper and the `056.023-T`
   in-wrapper observer, each validating semantic initialize correlation (exact
@@ -757,11 +764,15 @@ retry contract.
 * Verify with the exact T0 Copilot executable path/version/build across three
   exact-Copilot `/mcp show graphtor-docs` sessions (including one
   diagnostic-gate-off start). Acceptance for THIS bug is that each session shows a
-  healthy connected server completing a valid `initialize` negotiation
-  (`jsonrpc: "2.0"`, correlated id, no error, `result.protocolVersion`) with no OS
-  error 232, correlating the exact production config hash/file identity with the
-  Copilot-spawned server startup event (PID, executable/build, canonical cwd,
-  timestamp). If `/mcp show` reports advertised tools, record their list/count as
+  healthy connected, initialized server with no OS error 232 — using ONLY the
+  connection/initialization status the CLI surfaces (and advertised tool
+  list/count when shown), not raw JSON-RPC wire fields — correlating the exact
+  production config hash/file identity with the Copilot-spawned server startup
+  event (PID, executable/build, canonical cwd, timestamp). The correlated wire
+  fields (`jsonrpc: "2.0"`, correlated id, no error, `result.protocolVersion`)
+  are proven SEPARATELY by the direct T1 (`056.002-T`) production driver against
+  the same production binary/workspace, not by `/mcp show`. If `/mcp show`
+  reports advertised tools, record their list/count as
   supporting evidence, but do not require a tool invocation unrelated to the
   reported load bug and do not route a missing deterministic tool-call UI to
   H3-B2. A direct T1 production driver separately confirms the expected MCP tools
@@ -798,7 +809,8 @@ retry contract.
   hash/fields, timestamp, Copilot-spawned server pid, capture path, and
   `/mcp show` result. A separately launched server cannot satisfy evidence.
   `mcp_serve_ready` proves preflight only; the correlated `/mcp show` result
-  proves initialize completion.
+  proves actual-client connection/initialization completion (CLI-surfaced
+  status), while the direct T1 driver proves the JSON-RPC wire fields.
 * Dependency note: T4 depends on `056.003-T` (**non-conditional** cmd_serve
   diagnostics — loud exit-2 errors + `mcp_serve_ready`, always lands), on the
   always-land probe evidence chain `056.020-T → 056.022-T → 056.023-T →
@@ -811,7 +823,8 @@ retry contract.
   `056.008-T`, T2e existing-install migration (H0a/H3-B1) = `056.009-T`, T2b
   stale-lock harness/implementation (H0b) = `056.016-T`/`056.007-T`, T2c
   diagnosability = `056.006-T`, T2f H0c remediation = `056.010-T`, H1 resolver/
-  lifecycle/orchestration = `056.014-T`/`056.005-T`/`056.015-T`, H3-A transport
+  lifecycle/projection/orchestration =
+  `056.014-T`/`056.005-T`/`056.025-T`/`056.015-T`, H3-A transport
   = `056.011-T`, H3-B compatibility = `056.019-T`, typed config/recovery =
   `056.017-T`/`056.018-T`,   core transport = `056.020-T`,
   process spawning/teardown = `056.022-T`, observer seam/evidence = `056.023-T`,
@@ -820,7 +833,7 @@ retry contract.
   tasks `056.012-T`/`056.013-T`. T0 may activate an **ordered sequence**:
   **H0a → 056.017 + 056.008 + 056.024 + 056.018 +
   056.009**; **H0b → 056.016 + 056.007**; **H0c → 056.010** with 056.006
-  independently evidence-gated; **H1 → 056.014 + 056.005 + 056.015**;
+  independently evidence-gated; **H1 → 056.014 + 056.005 + 056.025 + 056.015**;
   **H3-A → 056.011**; **H3-B1 → 056.019 + managed-config tasks**;
   **H3-B2 → 056.019 and BLOCKED**. A cwd correction that advances to a later
   blocker retains H0a and adds the new cause. The
@@ -876,11 +889,25 @@ than restate every clause:
   emits typed `H3-B-candidate` and continues forward to `056.019-T` (never
   declaring H3-B2 itself). The repository-root `.mcp.json` is never assumed
   unread.
-* **One-shot classification, forward-only chain** — `056.001-T` runs exactly one
-  control/treatment pair and emits an ordered classification; every causal task
-  is visited once in the authoritative forward order and never reopens a
-  completed/not-needed sibling. Backward-pointing or unowned evidence blocks T4
-  and creates a new bounded Stage follow-up.
+* **Release-unit phases, not one total-order chain** — the work is delivered as
+  phased release units: PHASE 1 evidence foundation (shipment `049-S`), PHASE 2
+  selected remediation units (unshipped until T0 selects them, grouped by cause
+  family), PHASE 3 final acceptance/docs (unshipped, dependent on the selected
+  remedies). Remedy family entries depend on the evidence foundation
+  (`056.003-T`, or `056.019-T` for the H3-B-selected managed-config group);
+  intra-family order is a true dependency edge, but unrelated cause families are
+  NOT chained into a total order. Sequential single-shipment execution is
+  enforced by Orchestrator/Ship under P-001/P-016, not by fake cross-cause edges.
+* **One-shot classification** — `056.001-T` runs exactly one control/treatment
+  pair and emits an ordered classification; it never loops, reruns per
+  correction, or reopens a downstream task. Backward-pointing or unowned evidence
+  blocks T4 and creates a new bounded Stage follow-up rather than looping in
+  place.
+* **Shipment-interface re-probe** — every SHIPPING production-remediation release
+  unit owns exactly one exact-client re-probe after applying its correction;
+  characterization (`056.016-T`) and decision/PoC (`056.024-T`) tasks are not
+  corrections and perform no re-probe. This replaces any earlier "every selected
+  causal task implements and re-probes" rule.
 * **Probe-scoped user-config invariant** — control/treatment and the nested
   fixture live only inside the owned `logs/probe/<nonce>` workspace; the user
   `.mcp.json` is never read, mutated, backed up, restored, or substituted by the
@@ -916,7 +943,11 @@ with a probe-local std-only containment check, adds the projection task
 `.mcp.json` invariant to the probe/T0, and narrows T4 to handshake acceptance (no
 mandatory `tools/list`/`get_status` fingerprint, no missing-tool-UI H3-B2
 routing); `056.001-T` never declares H3-B2 and emits `H3-B-candidate` forward to
-`056.019-T`.
+`056.019-T`. A subsequent Stage re-decomposition (2026-08-23) then replaced the
+single forward-only total order with release-unit phases — an evidence-foundation
+shipment (`049-S`) plus unshipped cause-family remediation units and an unshipped
+final acceptance/docs unit — and replaced the global re-probe rule with the
+shipment-interface re-probe rule; see the Authoritative task ordering above.
 
 ### Removed nodes (do not reintroduce)
 
@@ -980,43 +1011,74 @@ routing); `056.001-T` never declares H3-B2 and emits `H3-B-candidate` forward to
   `src/mcp/server.rs` (moved out of `056.005-T`/`056.015-T`); red-first
   projection/tool-contract tests only, no `cmd_serve`/background sync. In the
   chain after `056.005`, before `056.015`.
-* Every causal node is re-wired into one authoritative forward chain (see
-  ordering below). `056.005-T` narrows to the embedding lifecycle state machine;
-  `056.025-T` owns the MCP availability projection; `056.015-T` owns
-  `cmd_serve`/background-sync orchestration; `056.011-T` owns transport
-  types/wiring after `056.015-T` and reacquires the exact-client transaction
-  separately before/after through the wrapper (not raw replay); `056.006-T`
-  composes last after `056.011-T`; `056.010-T` owns one H0c repair; `056.008-T`
-  reconciles the generator `type`/`transport` discriminator unconditionally and
-  generates the evidence-selected `cwd`; `056.018-T` implements only the
-  `056.024-T` decision; `056.019-T` is the sole H3-B terminal, adjudicating both
-  isolated-config and cwd mechanisms with at most one deferred contrast. T4's
-  direct fan-in is all tasks `056.001`..`056.025` except `056.004`, with explicit
-  evidence-chain edges to `056.001-T`, `056.002-T`, `056.021-T`, `056.022-T`,
-  `056.023-T`, `056.024-T`, and `056.025-T`.
+* Every causal node is wired into cause-family branches off the evidence
+  foundation (see phased ordering below), not one total-order chain. `056.005-T`
+  narrows to the embedding lifecycle state machine; `056.025-T` owns the MCP
+  availability projection; `056.015-T` owns `cmd_serve`/background-sync
+  orchestration; `056.011-T` owns transport types/wiring and reacquires the
+  exact-client transaction separately before/after through the wrapper (not raw
+  replay) — when H1 and H3-A are co-selected in one unit, transport wiring lands
+  after the `056.015-T` serve-orchestration restructure, applied at
+  shipment-assembly time rather than as a standing cross-family backlog edge;
+  `056.006-T` is the optional diagnostic sink, selected only when stderr is
+  unavailable; `056.010-T` owns one H0c repair; `056.008-T` reconciles the
+  generator `type`/`transport` discriminator unconditionally and generates the
+  evidence-selected `cwd`; `056.018-T` implements only the `056.024-T` decision;
+  `056.019-T` is the sole H3-B terminal, adjudicating both isolated-config and cwd
+  mechanisms with at most one deferred contrast. T4's direct fan-in is all tasks
+  `056.001`..`056.025` except `056.004`, with explicit evidence-chain edges to
+  `056.001-T`, `056.002-T`, `056.021-T`, `056.022-T`, `056.023-T`, `056.024-T`,
+  and `056.025-T`.
 
-### Authoritative task ordering
+### Authoritative task ordering (release-unit phases)
 
-The single authoritative forward sequence — each task depends only on its
-immediate predecessor, and T4 additionally gates on all tasks directly. This
-intentionally serializes every shared runtime/docs surface under P-001/P-016 and
-prevents reopen/merge races:
+The authoritative structure is a set of release-unit phases with cause-family
+branches off a shared evidence spine, not a single 25-task total order. Each edge
+`X → Y` is a backlog dependency (Y depends on X; X runs first). Sequential
+single-shipment execution is enforced by Orchestrator/Ship under P-001/P-016, so
+unrelated cause families are deliberately NOT chained into a total order.
 
-`056.020 → 056.022 → 056.023 → 056.021 → 056.001 → 056.002 → 056.003 →
-056.019 → 056.017 → 056.024 → 056.008 → 056.018 → 056.009 → 056.016 →
-056.007 → 056.010 → 056.014 → 056.005 → 056.025 → 056.015 → 056.011 →
-056.006 → 056.012 → 056.013 → 056.004`
+**PHASE 1 — Evidence foundation (shipment `049-S`, the only queued shipment):**
 
-* Each conditional task may close as `not-needed` at its turn and pass evidence
-  unchanged; a selected task implements exactly its one owned correction and runs
-  one exact-client re-probe before passing evidence forward. No task reopens a
-  completed/not-needed sibling; backward-pointing or unowned evidence blocks T4
-  and creates a new bounded Stage follow-up.
-* T4 `056.004` keeps direct dependencies on every other task (`056.001`,
-  `056.002`, `056.003`, `056.005`..`056.025`) — all of `056.001`..`056.025`
-  except `056.004` itself (the chain is also transitive) — with explicit
-  evidence-chain edges to `056.001`, `056.002`, `056.021`, `056.022`, `056.023`,
-  `056.024`, and `056.025`.
+`056.020 → 056.022 → 056.023 → 056.021 → 056.001 → 056.002 → 056.003 → 056.019`
+
+The probe sub-chain `056.020 → 056.022 → 056.023 → 056.021` precedes T0
+(`056.001`); the driver (`056.002`), diagnostics (`056.003`), and the sole H3-B
+terminal (`056.019`) complete the foundation. This unit's acceptance is the
+trusted exact-Copilot classification/cause-selection record and does NOT require
+the restored-production T4. The umbrella feature `056-F` is excluded from the
+manifest (protected covering feature per P-015).
+
+**PHASE 2 — Selected remediation units (unshipped follow-ups; NOT queued for
+Ship until T0 evidence selects them; each family entry depends on the evidence
+foundation):**
+
+* managed-config/discriminator: `056.019 → 056.017 → 056.024 → 056.008 →
+  056.018 → 056.009` (internally complete — activates as one unit when a
+  discriminator-only or H3-B1 selection is made)
+* lock recovery: `056.003 → 056.016 → 056.007`
+* H0c state repair: `056.003 → 056.010`
+* H1 model lifecycle: `056.003 → 056.014 → 056.005 → 056.025 → 056.015`
+* H3-A transport compatibility: `056.003 → 056.011`
+* diagnostic sink (optional): `056.003 → 056.006`
+
+Each SHIPPING remediation unit owns exactly one exact-client re-probe after its
+correction (shipment-interface rule); characterization (`056.016`) and
+decision/PoC (`056.024`) are not corrections and do not re-probe. Conditional
+families not selected by T0 close `not-needed` and pass evidence unchanged;
+`056.010-T` owns exactly one H0c repair and a second gate is a new bounded
+follow-up.
+
+**PHASE 3 — Final acceptance and documentation (unshipped; dependent on all
+selected remedies; not prematurely Ship-ready):**
+
+* docs: `056.012 → 056.013`, where `056.012` depends on every remedy-family leaf
+  (`056.006`, `056.007`, `056.009`, `056.010`, `056.011`, `056.015`) so it is not
+  ready until every family resolves (done or not-needed).
+* `056.004` (T4) keeps direct dependencies on every other task
+  `056.001`..`056.025` except `056.004` itself — with explicit evidence-chain
+  edges to `056.001`, `056.002`, `056.021`, `056.022`, `056.023`, `056.024`, and
+  `056.025` — and is the sole restored-production actual-client acceptance node.
 
 ### Explicit residual risks
 
@@ -1649,8 +1711,93 @@ and posture-classification context.
 #106 `## Local Review Readiness` block** — reviewed HEAD, outcome, and P0/P1
 counts live there. This plan document does not assert its own current review
 outcome and does not independently authorize Ship or merge; consult the PR
-block for the live decision. The current artifact additionally reflects the
-**correction round 2** holistic graph rewrite (2026-08-23): the probe becomes a
+block for the live decision.
+
+**Latest structure (2026-08-23 Stage re-decomposition):** the earlier single
+forward-only chain is superseded by release-unit phases — PHASE 1 evidence
+foundation (shipment `049-S`, task-only manifest of
+`056.020`/`056.022`/`056.023`/`056.021`/`056.001`/`056.002`/`056.003`/`056.019`;
+`056-F` excluded as protected covering feature per P-015), PHASE 2 unshipped
+cause-family remediation units grouped by `phase:`/`cause:` labels, and PHASE 3
+unshipped final acceptance/docs (`056.012`/`056.013`/`056.004`) — as defined in
+the `## Issue and Dependency Graph` section above. The global "every selected
+causal task re-probes" rule is replaced by the shipment-interface re-probe rule.
+PR #106 is staging/planning-only and its dynamic readiness remains BLOCKED
+pending a fresh current-HEAD local review after this pass.
+
+### Report-only review — 2026-08-23 Stage re-decomposition
+
+**Gate: ADVISORY** (report-only; the backlog already exists, so this does not
+gate harvest). Four reviewer personas — Constitution, Scope Boundary Auditor,
+Architecture Strategist, and Agent-Native Parity — reviewed the re-decomposition.
+**No P0 or P1 findings.** The phased graph is acyclic, evidence-first ordering is
+intact, the P-015 covering-feature protection (`056-F` excluded from the `049-S`
+manifest) is correct and required, and the no-kill test-only teardown split in
+`056.020-T` is safe.
+
+**Remediated P2 findings (fixed in this pass):**
+
+* T4 (`056.004-T`) description and implementation-notes still conflated
+  `/mcp show` with the JSON-RPC wire fields — reworded so the wire fields
+  (`jsonrpc`/id/`result.protocolVersion`) are proven by the direct T1 driver
+  (`056.002-T`), not by `/mcp show`.
+* The T-H3-A plan section (`056.011-T`) stated "landing after `056.015-T`"
+  unconditionally, contradicting the removed cross-family edge — qualified as a
+  co-selection-only shipment-assembly edge; the standing edge is
+  `056.003 → 056.011` only.
+* H3-B2/inconclusive closability — clarified in the `056-F` DoD that an
+  H3-B1 / H3-B2 / inconclusive verdict is each a valid terminal evidence
+  classification that closes `056.019-T` and lets `049-S` close; the
+  "blocks shipment" semantics apply to the downstream production-remediation
+  units and T4, not the evidence unit.
+* managed-config block-scope — clarified that `056.024-T` blocks only
+  `056.018`/shipment, never `056.008-T`'s unconditional discriminator
+  reconciliation.
+* Added an explicit `056.019-T ← 056.001-T` evidence-chain edge (mirrors T4's
+  explicit-edge robustness; `056.019-T` reuses the `056.001-T` runner).
+
+**Deferred P2 advisories (Ship-phase; recorded, not gate-blocking):**
+
+* The T4 driver "server control" and the `/mcp show` sessions can contend on the
+  Generation/Workspace advisory lock against the shared production workspace —
+  sequence them with verified lock quiescence (no overlapping `serve`).
+* Require the `/mcp show` advertised tool list to MATCH the direct-driver
+  expected tool set as an explicit agent-visible ↔ server-registered parity check.
+* Ground the "INITIALIZED" claim in T0's recorded exact `/mcp show` output; where
+  the build has no distinct init label, treat the advertised tool list/count
+  (which requires an initialized session) as mandatory init-completion evidence.
+* `056.002-T` does not yet own an explicit read-only production-workspace
+  "server control" mode that T4 depends on — enumerate it in its contract.
+* The managed-config chain is modeled as a total order `017 → 024 → 008 → 018`;
+  the true DAG is `017 → 008` in parallel with `017 → 024 → 018`. The settled
+  chain is retained for sequential-execution simplicity, and the added 024
+  block-scope clause resolves the block-scope conflict.
+
+**P3 advisories (awareness):**
+
+* The plan's `## Constitution Check` section still frames the work as a causal
+  chain and lacks explicit P-001/P-015/P-016/IX/X mapping of the phased structure.
+* `dependencies` frontmatter lists on `056.004-T` and `056.012-T` are not
+  stable-sorted (backlogit appends), adding minor merge-diff noise (Principle IX).
+* The plan retains superseded historical Plan Review DAGs and round narratives
+  (Principle X context cost); consider pruning to a history artifact.
+* Operational-only tasks (`056.010-T` H0c, `056.019-T` H3-B) green via runtime
+  before/after transcripts, not a failing `cargo test`; the P-002/P-004
+  red-phase waiver-with-rationale is documented in the decision's Constitution
+  Check.
+* `056.012-T`'s fan-in includes `056.009`/`056.011`, whose docs surfaces it does
+  not own (transitively harmless; docs ship as one PHASE 3 unit).
+* Require `056.012-T` operator-facing tool retry/fallback docs to mirror
+  `056.025-T`'s exact Loading/Failed (no fallback) vs terminal-Disabled (keyword
+  fallback) semantics.
+* Cross-family sequential execution relies on runtime Orchestrator/Ship
+  P-001/P-016 enforcement (by design); the acyclic graph alone permits two remedy
+  families to become Ready simultaneously.
+
+PR #106 dynamic readiness remains BLOCKED pending a fresh current-HEAD local
+review after this pass.
+
+The historical **correction round 2** holistic graph rewrite (2026-08-23): the probe becomes a
 **standalone, non-published** `tools/mcp-probe/` crate split by width —
 `056.020-T` core synchronous transport, the new `056.023-T` copy-only observer
 seam plus in-memory evidence, `056.021-T` isolated workspace and config fixtures
@@ -1709,17 +1856,21 @@ current artifact state — see the current-status note above.
   report-only gate **PENDING** against the next committed HEAD — explicitly
   **not** a PASS.
 * Linked deliberation: `docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md`.
-* Backlog scope: shipment `049-S` / feature `056-F`, tasks
-  `056.001-T`..`056.024-T`: T0/T1 `056.001-T`/`056.002-T`; T2 diagnostics
-  `056.003-T`; T4 `056.004-T`; H1 lifecycle/resolver/wiring
-  `056.005-T`/`056.014-T`/`056.015-T`; diagnostic sink `056.006-T`; H0b
-  characterization/implementation `056.016-T`/`056.007-T`; managed
-  generation/delivery `056.008-T`/`056.009-T`; H0c `056.010-T`; H3-A
-  `056.011-T`; docs `056.012-T`/`056.013-T`; typed config + recovery
-  `056.017-T`/`056.018-T`; H3-B `056.019-T`; standalone probe crate
-  transport/teardown/observer-evidence/workspace/exact-CLI
-  `056.020-T`/`056.022-T`/`056.023-T`/`056.021-T`/`056.001-T`; and safe
-  no-follow primitive decision `056.024-T`.
+* Backlog scope: feature `056-F`, tasks `056.001-T`..`056.025-T` (25 tasks).
+  **PHASE 1 evidence shipment `049-S`** (task-only manifest; `056-F` excluded):
+  standalone probe crate transport/teardown/observer-evidence/workspace
+  `056.020-T`/`056.022-T`/`056.023-T`/`056.021-T`, exact-CLI T0 `056.001-T`,
+  out-of-process driver `056.002-T`, T2 diagnostics `056.003-T`, and the sole
+  H3-B terminal `056.019-T`. **PHASE 2 unshipped remediation families:**
+  managed-config/discriminator `056.017-T`/`056.024-T`/`056.008-T`/`056.018-T`/`056.009-T`;
+  H0b lock characterization/implementation `056.016-T`/`056.007-T`; H0c
+  `056.010-T`; H1 lifecycle/resolver/projection/wiring
+  `056.014-T`/`056.005-T`/`056.025-T`/`056.015-T`; H3-A `056.011-T`; optional
+  diagnostic sink `056.006-T`; and the safe no-follow primitive decision
+  `056.024-T`. **PHASE 3 unshipped final:** docs `056.012-T`/`056.013-T` and T4
+  restored-production acceptance `056.004-T`. The projection task `056.025-T`
+  (versioned Loading/Failed/Disabled MCP availability projection) is explicitly
+  in scope.
 
 ### Personas and criteria
 
@@ -1740,8 +1891,8 @@ III/IV containment trust boundary).
 * **Current status:** the standard report-only review of exact HEAD
   `41adf77f1767aaec1b7b588b03fb6ea41d2a67fc` was `BLOCKED` with the
   deduplicated counts above. Correction round 2 (the current holistic rewrite)
-  supersedes those blockers with the standalone probe crate and forward-only
-  chain named in the current-status paragraph.
+  supersedes those blockers with the standalone probe crate and release-unit
+  phases named in the current-status paragraph.
   A fresh current-HEAD review must establish `P0=0, P1=0`, followed by the
   mandatory adversarial re-review.
 * **Consensus review (2026-08-21, HEAD `22d18f1`):** a 3-model adversarial

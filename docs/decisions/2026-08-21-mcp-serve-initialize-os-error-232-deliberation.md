@@ -277,6 +277,20 @@ The latest exact-HEAD standard review of
 reflects the final user-authorized correction round 3. A fresh current-HEAD
 review is still required, so no PASS is claimed.
 
+A subsequent Stage re-decomposition (2026-08-23) organizes this remediation
+ordering into phased release units without changing the causal analysis above:
+PHASE 1 evidence foundation is the only queued shipment (`049-S`, a task-only
+manifest of `056.020`/`056.022`/`056.023`/`056.021`/`056.001`/`056.002`/`056.003`/`056.019`
+that excludes the protected umbrella `056-F`); the remedy families become
+unshipped follow-ups selected by T0 evidence and grouped by cause family; and
+final acceptance/docs (`056.012`/`056.013`/`056.004`) is a later dependent unit.
+Sequential single-shipment execution holds under P-001/P-016, and the global
+"every selected task re-probes" rule is replaced by a shipment-interface rule
+(each shipping production-remediation unit owns exactly one exact-client re-probe;
+characterization `056.016-T` and decision/PoC `056.024-T` tasks do not). The
+settled removed designs (custom Cargo target/DACL hardening, user-config
+substitution, raw-frame persistence) are not reopened.
+
 ## Constitution Check
 
 * **I Safety-First Rust** — no `unsafe`; all new paths return `Result`; changes
