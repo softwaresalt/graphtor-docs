@@ -1040,6 +1040,12 @@ prevents reopen/merge races:
 * If `056.024-T` finds no MSRV-safe no-follow primitive, `056.018-T` and the
   shipment stay blocked rather than accepting an unsafe check-then-open recovery.
 * T4 remains the sole restored-production actual-client acceptance node.
+* **Scope boundary (round 3):** unrelated learnings about direct-`main`/closure
+  lifetimes, post-merge closure, or cargo-process TOCTOU are NOT changes to this
+  feature plan; this plan does not expand into install-binary overwrite,
+  database-open, or unrelated production TOCTOU findings. `056.024-T` and
+  `056.018-T` are scoped only to the managed-config recovery selected by this
+  feature.
 
 ## Verification Commands
 
