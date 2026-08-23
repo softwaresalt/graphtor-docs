@@ -146,12 +146,17 @@ linked deliberation. This plan restores connectivity **evidence-first** and
      `056.023-T`); with an absent or slow delivery target the pump forwards bytes
      byte-for-byte unchanged and never blocks.
 * This task owns no observer, evidence, redaction, workspace, config,
-  process-identity, or exact-CLI concern. It holds only the direct
-  `std::process::Child` handle needed to wire stdio for transport self-tests and
-  adds no `sysinfo`/process-tree ownership, no kill/wait teardown authority
-  (`056.022-T`), no Tokio, and no `unsafe`. The observer seam and evidence are
-  `056.023-T`; process spawning/teardown are `056.022-T`; the isolated workspace
-  and config fixtures are `056.021-T`; the exact-CLI run is `056.001-T`.
+  process-identity, or exact-CLI concern. It holds the direct
+  `std::process::Child` handles needed to wire stdio for transport self-tests and
+  OWNS bounded, test-only reaping of those self-test fixture `Child` handles on
+  every outcome (success, assertion failure, panic/unwind, or deadline/timeout)
+  through the owned direct handle (`kill()` then a bounded `wait()`) so no helper
+  process leaks — scoped strictly to its own transport self-test fixtures via a
+  platform-portable in-crate helper. It adds no `sysinfo`/process-tree ownership
+  and no PID-scan or process-name-wide kills; PRODUCTION and WRAPPER process
+  lifecycle/teardown authority remain `056.022-T`. No Tokio and no `unsafe`. The
+  observer seam and evidence are `056.023-T`; the isolated workspace and config
+  fixtures are `056.021-T`; the exact-CLI run is `056.001-T`.
 * Verify via `cargo +1.75.0 check|test|build|clippy --manifest-path
   tools/mcp-probe/Cargo.toml` (clippy `-D warnings -D clippy::pedantic`). The
   crate is never installed or committed as a binary and is invalid for T4.
@@ -1064,8 +1069,12 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
 * `056.020-T` (retained, narrowed) — core synchronous transport of the
   standalone `tools/mcp-probe/` crate (`src/main.rs` + `src/transport.rs`): raw
   std-process/std-thread duplex pumps, half-close, bounded stderr drain,
-  deadlines, and a post-write bounded non-blocking copy-delivery seam. No
-  observer/evidence, workspace/config, teardown, Tokio, or `unsafe`.
+  deadlines, a post-write bounded non-blocking copy-delivery seam, and a
+  platform-portable in-crate helper-child self-test mechanism whose fixture
+  `Child` handles it reaps (kill + bounded wait on every outcome incl.
+  panic/timeout) — test-fixture cleanup ONLY. No observer/evidence,
+  workspace/config, production/wrapper teardown (that is `056.022-T`), Tokio, or
+  `unsafe`.
 * `056.022-T` (retained, corrected) — probe process spawning, teardown by
   direct `Child` handles only, and the versioned `wrapper` subcommand (argv
   `--inner-exe`/`--inner-arg`/`--evidence-output`/`--run-nonce`, byte-identical
@@ -2107,21 +2116,23 @@ current artifact state — see the current-status note above.
   report-only gate **PENDING** against the next committed HEAD — explicitly
   **not** a PASS.
 * Linked deliberation: `docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md`.
-* Backlog scope: feature `056-F`, tasks `056.001-T`..`056.025-T` (25 tasks).
-  **PHASE 1 evidence shipment `049-S`** (task-only manifest; `056-F` excluded):
-  standalone probe crate transport/teardown/observer-evidence/workspace
+* Backlog scope: feature `056-F`, tasks `056.001-T`..`056.028-T` (28 tasks).
+  **PHASE 1 evidence shipment `049-S`** (eight-task task-only manifest; `056-F`
+  excluded): standalone probe crate transport/teardown/observer-evidence/workspace
   `056.020-T`/`056.022-T`/`056.023-T`/`056.021-T`, exact-CLI T0 `056.001-T`,
   out-of-process driver `056.002-T`, T2 diagnostics `056.003-T`, and the sole
   H3-B terminal `056.019-T`. **PHASE 2 unshipped remediation families:**
-  managed-config/discriminator `056.017-T`/`056.024-T`/`056.008-T`/`056.018-T`/`056.009-T`;
-  H0b lock characterization/implementation `056.016-T`/`056.007-T`; H0c
+  managed-config cwd/recovery `056.017-T`/`056.024-T`/`056.008-T`/`056.018-T`/`056.009-T`;
+  type/transport discriminator `056.026-T` (generation)/`056.027-T` (existing-install
+  delivery); H0b lock characterization/implementation `056.016-T`/`056.007-T`; H0c
   `056.010-T`; H1 lifecycle/resolver/projection/wiring
   `056.014-T`/`056.005-T`/`056.025-T`/`056.015-T`; H3-A `056.011-T`; optional
   diagnostic sink `056.006-T`; and the safe no-follow primitive decision
   `056.024-T`. **PHASE 3 unshipped final:** docs `056.012-T`/`056.013-T` and T4
   restored-production acceptance `056.004-T`. The projection task `056.025-T`
-  (versioned Loading/Failed/Disabled MCP availability projection) is explicitly
-  in scope.
+  (versioned Loading/Failed/Disabled MCP availability projection), the
+  discriminator split (`056.026-T`/`056.027-T`), and the standalone-probe CI job
+  (`056.028-T`) are explicitly in scope.
 
 ### Personas and criteria
 

@@ -63,18 +63,31 @@ P2s remediated: `056.027` approval gate (+Constitution VII/Plan Hardening),
 `056.028` implement-vs-plan-only contradiction (+stale duplicate description
 repair). Residual = P3 advisories only. No unresolved P0/P1.
 
-## Six current Copilot PR-thread mapping (read-only; PR/threads NOT edited)
-1. H3-B inconclusive closability -> RESOLVED by content (fail-closed everywhere).
-2. Managed-config/discriminator coupling -> RESOLVED (split `056.026`/`056.027`,
-   corrected DAG, activation broadening).
-3. Selection vs P-001 claim -> RESOLVED (explicit selection-gate labels + required
-   query; plan stops claiming P-001 selects).
-4. `/mcp show` vs wire-field parity -> RESOLVED (CLI-visible only; wire fields via
-   `056.002` control; Verification step 5 + decision section 6 aligned).
-5. Stale monolithic strings (halt/return-to-T0, raw-frame replay) -> RESOLVED.
-6. Duplicate hook events (`hooks_queue.jsonl`) -> OUTSTANDING BY DESIGN: append-only
-   benign history, no supported removal; NOT "fixed" by deleting history. Operator
-   note retained; disposition stated. Never hand-edited.
+## Current Copilot PR #106 thread mapping (read-only; PR/threads NOT edited)
+Live PR #106 shows 9 unresolved Copilot threads. 6 are resolved-by-content by
+this commit; 3 remain outstanding (1 benign-by-design + 2 PR-body/readiness Ship
+concerns):
+1. `056.020-T` forbids kill/wait teardown -> RESOLVED (056.020 now owns
+   test-fixture reaping; plan T00A + retained-node fixed).
+2. `056.004-T` `/mcp show` must record wire fields -> RESOLVED (CLI-visible only;
+   wire fields via 056.002 control; Verification step 5 + decision 6 aligned).
+3. `056-F` global re-probe rule vs characterization/decision -> RESOLVED
+   (shipment-interface re-probe rule excludes 056.016/056.024).
+4. reviewed-artifact scope stale (056.024/056.025 range) -> RESOLVED (scope now
+   056.028 / 28 tasks; projection + discriminator + probe-CI listed).
+5. `056.008-T` unconditional discriminator has no delivery path -> RESOLVED
+   (split into 056.026 gen + 056.027 delivery with executable path).
+6. plan line ~154 forbids 056.020 kill/wait (contradiction) -> RESOLVED (T00A
+   clarified: test-fixture reaping only; production/wrapper teardown is 056.022).
+7. `hooks_queue.jsonl` duplicate create_artifact (seq 994/995) -> OUTSTANDING BY
+   DESIGN: append-only benign history, no supported removal; NOT "fixed" by
+   deleting history; never hand-edited. Operator note/disposition stated.
+8. stale current-HEAD readiness gate (PR block covers old HEAD) -> OUTSTANDING:
+   Ship/PR-lifecycle concern (PR Local Review Readiness is Ship's gate); this
+   commit advances HEAD; plan defers to a fresh current-HEAD review by Ship.
+9. `049-S` PR DESCRIPTION says 056.001..056.024 (manifest is 8 tasks) ->
+   OUTSTANDING: requires a PR-body edit (out of Stage scope; must not edit PR
+   body). The 049-S.md manifest itself is correct (8 tasks).
 
 ## Validation
 metadata/WIT confirmed (statuses queued/active/done/blocked; shipment blocks deps
