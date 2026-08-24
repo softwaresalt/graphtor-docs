@@ -286,10 +286,11 @@ A `get_info` protocol-echo change remains excluded as a no-op on rmcp 1.5.
 H3-A and H3-B are taken only when T0 selects their distinct evidence and are
 owned by `056.011-T` and `056.019-T`, respectively.
 
-The latest exact-HEAD standard review of
-`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc` was `BLOCKED`; this decision now
-reflects the final user-authorized correction round 3. A fresh current-HEAD
-review is still required, so no PASS is claimed.
+This decision reflects the final user-authorized correction round 3. The sole
+current-HEAD review authority is the PR #106 `## Local Review Readiness` block;
+this durable decision asserts no static "latest reviewed HEAD/outcome" (prior
+outcomes and their historical SHAs live in the plan's historical audit trail).
+No PASS is claimed here.
 
 A subsequent Stage re-decomposition (2026-08-23) organizes this remediation
 ordering into phased release units without changing the causal analysis above:
@@ -380,7 +381,7 @@ lockfile. Task count is 28 (`056.001-T`..`056.028-T`).
   yet captured; T0 must record it along with the child exit code and stderr.
 * The exact Copilot CLI MCP config schema (does the stdio entry use `type` vs
   `transport`; does it honor `cwd`/`env`?) is not yet confirmed for the failing
-  build; T0 (`056.001-T`) must record it and `056.008-T` emits the evidenced
+  build; T0 (`056.001-T`) must record it and `056.026-T` emits the evidenced
   field while preserving legacy recognition. Local `.mcp.json` siblings use
   `type: "stdio"` + `env`, but this is not asserted as the root cause without
   evidence (F7).

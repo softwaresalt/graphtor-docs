@@ -104,10 +104,12 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 | Isolated probe workspace + config fixtures (T00B, standalone crate) | `tools/mcp-probe/src/workspace.rs` creating `logs/probe/<nonce>` + temporary in-workspace `.mcp.json` | Exclusive-create isolated workspace validated by a probe-local std-only `canonicalize`/`symlink_metadata` check (no `graphtor_core` import); generate in-workspace control/treatment entries with identical wrapper args on both legs (treatment alone adds `cwd`) and an owned nested ancestor/child config fixture; owned-workspace-only cleanup. Owns no observer/evidence module; never touches the user `.mcp.json` → `056.021-T` |
 | Serve startup diagnostics (T2, non-conditional, parity-safe) | `src/main.rs::cmd_serve`, duplicate-intake and database-open preflight | Route every pre-transport normal exit through an exhaustive typed seam, including pre-v4 and duplicate-intake exits. Preserve unconditional stderr and add structured events; emit `mcp_serve_ready` immediately before `serve_server` → `056.003-T` |
 | Managed config outcome contract (conditional H0a/H3-B1) | `src/workspace/mcp_config.rs` | Distinguish typed create/update/no-change/collision outcomes from fail-closed `PathViolation`; forbid message sniffing → `056.017-T` |
-| Managed MCP launch fields (T2d, conditional H0a/H3-B1) | `src/workspace/mcp_config.rs::managed_server_value` | Reconcile the generator `type`/`transport` discriminator UNCONDITIONALLY when exact-CLI evidence shows a mismatch (else not-needed); generate the evidence-selected canonical project-root `cwd` after T0/H3-B capability proof; align legacy-shape recognition/tests → `056.008-T` |
-| Safe no-follow primitive decision (conditional H0a/H3-B1) | NEW `docs/decisions/YYYY-MM-DD-safe-no-follow-config-mutation-primitive.md` (chain `056.017 → 056.024 → 056.008`) | Close `not-needed` when no managed-config mutation/recovery is selected; otherwise decide an MSRV-1.75, safe-call-site, no-follow/capability-based mutation primitive without relaxing `#![forbid(unsafe_code)]`; evaluate a narrowly justified safe dependency vs a std-only contract, prove with a minimal PoC, and record the decision in the NEW artifact (do not rewrite the OS-232 deliberation) or block 056.018/shipment → `056.024-T` |
+| Managed MCP launch cwd field (T2d, conditional H0a/H3-B1) | `src/workspace/mcp_config.rs::managed_server_value` | Generate ONLY the evidence-selected canonical project-root `cwd` after T0/H3-B capability proof and align the cwd legacy-shape recognition/tests. The generator `type`/`transport` discriminator reconciliation is split out to `056.026-T` (generation)/`056.027-T` (delivery), not this task → `056.008-T` |
+| Managed MCP config discriminator (T2g, conditional on discriminator mismatch) | `src/workspace/mcp_config.rs::managed_server_value` | Reconcile the generator `type`/`transport` stdio discriminator to the exact CLI-honored field UNCONDITIONALLY when exact-CLI evidence shows a mismatch (else `not-needed`); own ONLY the discriminator field + legacy-shape recognition (`is_exact_legacy_shape`); depend only on `056.019-T` → `056.026-T` |
+| Existing-install discriminator delivery (T2h, conditional on discriminator mismatch) | `src/main.rs::cmd_upgrade`, managed-config typed APIs | Compose `056.017-T` typed actions + `056.018-T` recovery handles to refresh ONLY the marked entry's stdio discriminator field; depend on `056.026-T`/`056.018-T`, not on `056.008-T`/`056.009-T` → `056.027-T` |
+| Safe no-follow primitive decision (conditional H0a/H3-B1) | NEW `docs/decisions/YYYY-MM-DD-safe-no-follow-config-mutation-primitive.md` (parallel decision `056.017 → 056.024 → 056.018`, parallel to `056.017 → 056.008`) | Close `not-needed` when no managed-config mutation/recovery is selected; otherwise decide an MSRV-1.75, safe-call-site, no-follow/capability-based mutation primitive without relaxing `#![forbid(unsafe_code)]`; evaluate a narrowly justified safe dependency vs a std-only contract, prove with a minimal PoC, and record the decision in the NEW artifact (do not rewrite the OS-232 deliberation) or block 056.018/shipment → `056.024-T` |
 | Contained recovery primitive (conditional H0a/H3-B1) | selected primitive in `graphtor_core::path` (e.g. `src/path/handle.rs`) + lazy accessor in `src/workspace/paths.rs` | Implement ONLY the `056.024-T`-selected no-follow/reparse-safe primitive for I/O, exclusive owner-protected artifacts, and exact restore; assert no std handle-level no-follow, take no `unsafe` exemption, make no managed-config/install/uninstall/doctor edits → `056.018-T` |
-| Existing-install refresh (T2e, conditional H0a/H3-B1) | `src/main.rs::cmd_upgrade`, managed-config typed APIs | Refresh marked/exact-legacy entries and expose typed text/JSON action + recovery metadata; preserve collision/non-JSON bytes and Minimal footprint → `056.009-T` |
+| Existing-install cwd/recovery delivery (T2e, conditional H0a/H3-B1) | `src/main.rs::cmd_upgrade`, managed-config typed APIs | Deliver the cwd/recovery refresh to existing installs: refresh marked/exact-legacy entries and expose typed text/JSON action + recovery metadata; preserve collision/non-JSON bytes and Minimal footprint. Discriminator existing-install delivery is `056.027-T`, not this task → `056.009-T` |
 | Advisory lock characterization + implementation (conditional H0b) | `src/lock.rs` shared `AdvisoryLock` used by Database and Workspace locks | Passing characterization → `056.016-T`; one conservative high-resolution/boot-aware policy plus task-local red/green and legacy recovery → `056.007-T` |
 | Diagnostic logging sink (T2c, conditional/optional) | `src/logging/init.rs`, serve path in `src/main.rs` | Only if stderr is unavailable and CLI env inheritance works: unique exclusive absolute per-attempt sink consuming typed T2 events. No shared/relative sink or production-entry env field → `056.006-T` |
 | H0c operational remediation (T2f, H0c-only — conditional) | evidenced fail-closed surface (registry / explicit `--config` / pre-v4 schema / duplicate-intake) + operational recipe | Repair exactly ONE evidenced gate with fresh approval and backup, then one confirming re-probe; retain rollback through T4. A second H0c gate, backward-pointing, or unowned evidence blocks T4 and becomes a NEW bounded Stage follow-up (no in-place loop or sibling reactivation). Pre-v4 rebuild uses `sync`, never `upgrade` → `056.010-T` |
@@ -116,7 +118,7 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 | Serve/background-sync orchestration (conditional H1) | `src/main.rs::cmd_serve`, `spawn_background_sync` | Inject one shared lazy owner into `DocServer` and Generation sync; neither eager load nor background sync may block initialize; consume the 056.025-T availability projection → `056.015-T` |
 | MCP availability projection (conditional H1) | `src/mcp/server.rs` | Own the versioned Loading/Failed/Disabled MCP availability projection and `search_semantic`/`research_topic` fallback metadata (moved from `056.005-T`/`056.015-T`); red-first projection/tool-contract tests; no `cmd_serve`/background sync → `056.025-T` |
 | Server transport compatibility (conditional H3-A) | rmcp pin + STDIO wiring; standing dep `056.003-T`, after `056.015-T` ONLY when H1+H3-A co-selected | Own transport types/wiring only; reacquire the exact-client transaction SEPARATELY before and after the fix through the `056.022-T` wrapper (semantic initialize correlation plus redacted transcript digest, not raw replay or persistence), red/green and Rust 1.75 proof; T4 owns production acceptance → `056.011-T` |
-| Client isolated-config + cwd compatibility (conditional H3-B) | actual Copilot CLI capability evidence | Sole H3-B terminal: consume T0's `H3-B-candidate` and adjudicate BOTH a documented explicit isolated-config discovery mechanism (owning the one bounded attempt, plus one deferred control/treatment contrast through the `056.001-T` runner when isolation becomes possible) and a distinct working-directory mechanism; H3-B1 is forward evidence, H3-B2 blocks, inconclusive blocks with evidence (not Unsupported); never reads/mutates the user root config; temporary proof only activates managed-config tasks and never satisfies T4 → `056.019-T` |
+| Client isolated-config + cwd compatibility (conditional H3-B) | actual Copilot CLI capability evidence | Sole H3-B terminal: consume T0's `H3-B-candidate` and adjudicate BOTH a documented explicit isolated-config discovery mechanism (owning the one bounded attempt, plus one deferred control/treatment contrast through the `056.001-T` runner when isolation becomes possible) and a distinct working-directory mechanism; H3-B1 is forward evidence, H3-B2 blocks, inconclusive blocks with evidence (not Unsupported); never reads/mutates the user root config; temporary proof only activates the managed-cwd/recovery tasks (the discriminator tasks `056.026-T`/`056.027-T` are gated separately on an evidenced `type`/`transport` mismatch) and never satisfies T4 → `056.019-T` |
 | Operator documentation (documentation-only) | `056.012-T`: `docs/troubleshooting.md` + the `### search_semantic`/`### research_topic`/`### get_status` headings and a `Runtime diagnostics and recovery` subsection in `docs/mcp-tools.md`. `056.013-T`: the `### 2. Configure your MCP client` managed-launch content in `docs/mcp-tools.md` + `### serve`/`### install`/`### upgrade`/`### uninstall` in `docs/cli-reference/graphtor-docs.md` | Diagnostics plus selected H0b/H0c/H1 contracts (no CLI-reference) → `056.012-T`; managed launch/recovery and H3, reconciling the `type`/`transport` discriminator → `056.013-T` |
 | Tests | `tests/common/mcp_driver.rs`, `tests/mcp_serve_handshake_test.rs`, and colocated focused tests | T1 owns the shared driver module; each production task owns at most three grouped scenarios. Actual-client acceptance remains the final H3/T4 gate |
 
@@ -769,7 +771,8 @@ consumed by both `DocServer` and Generation background sync:
    `056.025-T` and (transitively) on T2 before editing `cmd_serve`.
 
 DB open, lock acquisition, pre-v4, and duplicate-intake remain fail-closed
-pre-serve gates. If H1 is not evidenced, all three tasks complete `done` with
+pre-serve gates. If H1 is not evidenced, all four tasks (`056.014-T`, `056.005-T`,
+`056.025-T`, `056.015-T`) complete `done` with
 `not-needed: H1 not evidenced`. `056.012-T` owns the operator-facing tool
 retry contract.
 
@@ -788,7 +791,9 @@ retry contract.
   request id → `jsonrpc: "2.0"` non-error `result.protocolVersion`) plus the
   redacted transcript digest; add/observe the H3-A red from the before-run, then
   green it with the minimal fix and re-validate from the after-run. No raw bytes
-  on disk; a generic direct initialize is insufficient.
+  on disk; a generic direct initialize is insufficient. `056.011-T` closes on its
+  own once these before/after reacquisitions validate; it does not depend on T4 or
+  production acceptance (no `056.011`↔T4 cycle), and T4 separately accepts production.
 * Inspect candidate crate metadata before implementation. rmcp 1.8.x uses
   edition 2024 and is excluded by Rust 1.75. Prefer a minimal framing
   adaptation around pinned 1.5.x; use another release only after recording
@@ -805,11 +810,13 @@ retry contract.
   documented explicit isolated-config discovery mechanism; if it exists and
   isolates config, perform exactly ONE deferred control/treatment contrast through
   the `056.001-T` runner and emit the same ordered cause classification
-  (activating managed-config tasks). Separately, when the exact CLI
+  (activating the managed-cwd/recovery tasks). Separately, when the exact CLI
   ignores/rejects T0's original `cwd` field, **B1** requires that same executable
   to pass a second foreign-directory contrast using a different documented field
-  placement or working-directory mechanism (activates managed-config tasks, cannot
-  satisfy T4). Never deliberately read or mutate the user root config.
+  placement or working-directory mechanism (activates the managed-cwd/recovery
+  tasks 056.017/056.024/056.008/056.018/056.009, cannot satisfy T4; the
+  discriminator tasks 056.026/056.027 are gated separately on an evidenced
+  `type`/`transport` mismatch). Never deliberately read or mutate the user root config.
 * **B2** means the exact identity supports no safe isolated-config or
   working-directory mechanism: mark `056.019-T` `done` with the recorded H3-B2
   classification and block shipment/T4 as `unsupported-client`. The managed-config
@@ -851,9 +858,11 @@ retry contract.
   binary/workspace as a server control (not proof of Copilot UI invocation); this
   does not expand into a get_status workspace-fingerprint product feature. Capture
   `mcp_serve_ready` separately as preflight evidence only.
-* On a managed-config branch, first require `056.009-T` evidence that the
-  delivered upgrade refreshed the target workspace and record the post-refresh
-  production config hash.
+* On a managed-cwd branch, first require `056.009-T` cwd/recovery delivery
+  evidence that the delivered upgrade refreshed the target workspace; on a
+  discriminator branch, require `056.027-T` discriminator delivery evidence (the
+  analog of `056.009-T`). Record the post-refresh production config hash; when
+  both branches are selected, require both.
 * Record branch-aware rollback: revert commits in reverse dependency order,
   restore prior client config for H3-B, re-pin rmcp if bumped, and restore H0c
   workspace state from `056.010-T`'s recorded backups. Observe the next 3 serve starts, with a
@@ -964,7 +973,9 @@ than restate every clause:
   declaring H3-B2 itself). The repository-root `.mcp.json` is never assumed
   unread.
 * **Release-unit phases, not one total-order chain** — the work is delivered as
-  phased release units: PHASE 1 evidence foundation (shipment `049-S`), PHASE 2
+  phased release units: PHASE 1 evidence foundation (shipment `049-S`), PHASE 1.5
+  the unconditional evidence-infrastructure unit (`056.028` standalone-probe CI,
+  assembled by Stage after `049-S` closes and before any remedy shipment), PHASE 2
   selected remediation units (unshipped until T0 selects them, grouped by cause
   family), PHASE 3 final acceptance/docs (unshipped, dependent on the selected
   remedies). Remedy family entries depend on the evidence foundation
@@ -1178,6 +1189,27 @@ Stage follow-up. The eight-task manifest is `056.020`/`056.022`/`056.023`/
 `056.021`/`056.001`/`056.002`/`056.003`/`056.019`; the umbrella feature `056-F`
 is excluded (protected covering feature per P-015).
 
+**PHASE 1.5 — Evidence-infrastructure release unit (unconditional; assembled by
+Stage after `049-S` closes and BEFORE any selected remedy shipment):**
+
+* `056.028` (dedicated standalone-probe CI job) is the sole member. It is
+  deliberately NOT in `049-S` because its `.github/workflows` job depends on the
+  standalone `tools/mcp-probe/` crate delivered by the `049-S` tasks
+  (`056.020`/`056.022`/`056.023`/`056.021`), so it cannot be authored until that
+  crate lands. It is NOT cause-selected — it carries no remedy `selection:` gate
+  (`cause:probe-ci` is a categorization label, not a remedy selection) and is
+  always assembled.
+* **Assembly owner:** Stage. After `049-S` closes, Stage assembles this PHASE 1.5
+  unit — a task-only manifest containing `056.028`, excluding the protected
+  covering feature `056-F` per P-015 — as the immediate next release unit, before
+  flipping any remedy family to `selection:selected` or creating any remedy
+  shipment. No shipment manifest is created at plan time.
+* **Ordering + readiness gate:** PHASE 1.5 executes after PHASE 1 (`049-S`) and
+  before any PHASE 2 remedy shipment; its readiness gate is the standalone-probe
+  CI job green against the probe manifest/lockfile. `056.028` remains in the T4
+  (`056.004`) fan-in, so restored-production acceptance cannot pass until the
+  probe CI job is green.
+
 **PHASE 2 — Selected remediation units (unshipped follow-ups; NOT queued for
 Ship until the selection gate flips them to `selection:selected`; each family
 entry depends on the evidence foundation):**
@@ -1274,7 +1306,10 @@ selected remedies; not prematurely Ship-ready):**
   platform-portable and within-width.
 * `056.028-T` owns a dedicated standalone-probe CI job because the probe crate
   has a separate manifest/lockfile the root pipeline does not cover; it is an
-  evidence-infrastructure follow-up outside `049-S`, gated into T4 fan-in.
+  evidence-infrastructure follow-up outside `049-S`, gated into T4 fan-in. Stage
+  assembles it as the unconditional PHASE 1.5 evidence-infrastructure release unit
+  immediately after `049-S` closes and before any selected remedy shipment (owner:
+  Stage; readiness gate: standalone-probe CI green); it is not cause-selected.
 * **Scope boundary (round 3, extended 2026-08-23):** unrelated learnings about
   direct-`main`/closure lifetimes, post-merge closure, or cargo-process TOCTOU are
   NOT changes to this feature plan; this plan does not expand into install-binary
@@ -1282,6 +1317,14 @@ selected remedies; not prematurely Ship-ready):**
   and `056.018-T` are scoped only to the managed-config recovery selected by this
   feature; `056.026-T`/`056.027-T` are scoped only to the `type`/`transport`
   discriminator; `056.028-T` only to the standalone-probe CI job.
+* **Hook-stream duplicate (benign; no repair attempted):** the append-only
+  backlogit hook queue (`.backlogit/hooks_queue.jsonl`) holds two consecutive
+  `create_artifact` events for `056.021-T` (seq 994 and 995) with no intervening
+  delete/recreate. This is benign duplicate create noise: the artifact
+  `056.021-T` is singular (one queue file, one identity), no supported
+  removal/supersede operation exists for the append-only stream, so the stream is
+  left intact and NO destructive repair was attempted. Hook consumers MUST dedupe
+  by item/event identity (`item_id` + `event_type`), not by raw sequence count.
 
 ## Verification Commands
 
@@ -1383,11 +1426,22 @@ if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
 #    get_status) against the same production binary/workspace. Provide the exact
 #    recorded T0 invocation as a STRUCTURED argv array (never split a command
 #    string on spaces, which loses quoting/argument boundaries):
+# 056.004-T (T4) OWNS the concrete runtime-verification runner
+# scripts/verify_copilot_mcp_show.ps1 (test-first; Ship implements it when
+# 056.004-T lands — NOT implemented at plan time). The script invokes the exact
+# STRUCTURED Copilot argv normally (no wrapper/temp config/substitution), captures
+# CLI-visible output for each of the three sessions WITHOUT treating exit 0 alone
+# as pass, FAILS on OS error 232 / failed-connection or a missing
+# CONNECTED/INITIALIZED status for the recorded build, records advertised tools
+# when shown, correlates each run with the production config hash/file identity and
+# a NAMED non-substituting server-start evidence source (inherited stderr, the
+# selected 056.006-T sink, or OS tracing; the one gate-off run may NOT rely on the
+# sink), consumes 056.002-T's read-only production-control mode for the JSON-RPC
+# id/protocolVersion/expected-tools/get_status wire evidence, and emits a redacted
+# structured result. Immediate native exit checking is preserved.
 $McpShowArgs = $env:GRAPHTOR_MCP_SHOW_INVOCATION | ConvertFrom-Json  # persisted argv array, e.g. ["mcp","show","graphtor-docs"]
-for ($i = 1; $i -le 3; $i++) {
-  & $CopilotExe @McpShowArgs
-  if ($LASTEXITCODE -ne 0) { throw "T4 session $i restored-production /mcp show failed (exit $LASTEXITCODE)" }
-}
+& scripts/verify_copilot_mcp_show.ps1 -CopilotExe $CopilotExe -McpShowArgs $McpShowArgs -Sessions 3
+if ($LASTEXITCODE -ne 0) { throw "T4 restored-production /mcp show verification failed (exit $LASTEXITCODE)" }
 Get-ChildItem .graphtor -Filter *.lock
 
 # Manual runtime check against the newest Copilot CLI:
@@ -1739,7 +1793,7 @@ and posture-classification context.
     commit. approval_required: **yes** for the schema rebuild / registry
     replacement; ActionResult: **planned** (or **abandoned** if H0c is not
     evidenced).
-* ProposedAction (conditional, T2g safe no-follow primitive decision): decide an
+* ProposedAction (conditional, T2i safe no-follow primitive decision — `056.024-T`): decide an
   MSRV-1.75, safe-call-site, no-follow/capability-based file-mutation primitive
   for the sensitive recovery path without relaxing `#![forbid(unsafe_code)]`;
   compare a narrowly justified safe dependency against a std-only contract and
@@ -1918,8 +1972,8 @@ cause-family remediation units grouped by `phase:`/`cause:` labels, and PHASE 3
 unshipped final acceptance/docs (`056.012`/`056.013`/`056.004`) — as defined in
 the `## Issue and Dependency Graph` section above. The global "every selected
 causal task re-probes" rule is replaced by the shipment-interface re-probe rule.
-PR #106 is staging/planning-only and its dynamic readiness remains BLOCKED
-pending a fresh current-HEAD local review after this pass.
+PR #106 is staging/planning-only; its current-HEAD readiness is authoritative
+only in the PR #106 `## Local Review Readiness` block, which this plan does not restate.
 
 ### Report-only review — 2026-08-23 narrow remediation (fresh cycle)
 
@@ -1979,8 +2033,9 @@ relies on Stage/Orchestrator running it (runtime enforcement is a
 Ship/Orchestrator concern, out of Stage's planning scope).
 
 **Verdict: no unresolved P0/P1** after in-pass remediation; residual items are P3
-advisories. PR #106 dynamic readiness remains BLOCKED pending a fresh
-current-HEAD local review by Ship after this Stage commit.
+advisories. PR #106's current-HEAD readiness is authoritative only in its
+`## Local Review Readiness` block (a fresh Ship local review follows this Stage
+commit); this plan does not restate that dynamic value.
 
 ### Report-only review — 2026-08-23 Stage re-decomposition
 
@@ -2054,8 +2109,8 @@ manifest) is correct and required, and the no-kill test-only teardown split in
   P-001/P-016 enforcement (by design); the acyclic graph alone permits two remedy
   families to become Ready simultaneously.
 
-PR #106 dynamic readiness remains BLOCKED pending a fresh current-HEAD local
-review after this pass.
+PR #106 `## Local Review Readiness` is the sole dynamic current-HEAD authority
+for readiness; consult it (not this plan) for the current outcome.
 
 The historical **correction round 2** holistic graph rewrite (2026-08-23): the probe becomes a
 **standalone, non-published** `tools/mcp-probe/` crate split by width —
@@ -2110,11 +2165,11 @@ current artifact state — see the current-status note above.
 ### Reviewed artifact identity
 
 * Plan: `docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md`
-  (this file), on branch `chore/stage-049-S`. **Latest reviewed input:**
-  committed HEAD **`41adf77f1767aaec1b7b588b03fb6ea41d2a67fc`**, outcome
-  **BLOCKED**. **Review status of the correction-round-2 corrected artifacts:**
-  report-only gate **PENDING** against the next committed HEAD — explicitly
-  **not** a PASS.
+  (this file), on branch `chore/stage-049-S`. The sole current-HEAD review
+  authority is the PR #106 `## Local Review Readiness` block; this plan asserts no
+  static "latest reviewed HEAD/outcome" (such a claim would stale on every push).
+  Prior review outcomes, with their historical SHAs, are recorded in the
+  historical audit trail below.
 * Linked deliberation: `docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md`.
 * Backlog scope: feature `056-F`, tasks `056.001-T`..`056.028-T` (28 tasks).
   **PHASE 1 evidence shipment `049-S`** (eight-task task-only manifest; `056-F`
@@ -2129,10 +2184,13 @@ current artifact state — see the current-status note above.
   `056.014-T`/`056.005-T`/`056.025-T`/`056.015-T`; H3-A `056.011-T`; optional
   diagnostic sink `056.006-T`; and the safe no-follow primitive decision
   `056.024-T`. **PHASE 3 unshipped final:** docs `056.012-T`/`056.013-T` and T4
-  restored-production acceptance `056.004-T`. The projection task `056.025-T`
-  (versioned Loading/Failed/Disabled MCP availability projection), the
-  discriminator split (`056.026-T`/`056.027-T`), and the standalone-probe CI job
-  (`056.028-T`) are explicitly in scope.
+  restored-production acceptance `056.004-T`. **PHASE 1.5 unshipped
+  evidence-infrastructure unit:** the standalone-probe CI job `056.028-T`, which
+  Stage assembles after `049-S` closes and before any remedy shipment (in T4
+  fan-in, not cause-selected). The projection task `056.025-T` (versioned
+  Loading/Failed/Disabled MCP availability projection) and the discriminator split
+  (`056.026-T` generation / `056.027-T` delivery) are also explicitly in scope.
+  This review identity covers all 28 tasks `056.001-T`..`056.028-T`.
 
 ### Personas and criteria
 
