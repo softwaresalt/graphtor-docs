@@ -89,3 +89,22 @@ commit messages, and this memory record.
 Did not broaden into `049-S` implementation. Did not claim shipment `049-S`.
 Did not merge, did not checkout `main`. PR #106 remains ready for operator
 review and merge-commit approval at HEAD `102728f0453a9445b458648e98be8bca0632cd32`.
+
+## Correction (same-day follow-up, appended — not a rewrite)
+
+The verification claim above ("every parallel reference in the exec-plan")
+was **incomplete**. A subsequent automated review round on `102728f` found
+the sweep had missed: `056-F.md`'s DoD (two occurrences — this file had not
+been touched at all by `755139a` or `102728f`), the deliberation's detailed
+T0 decision-narrative (one occurrence beyond the post-table paragraph
+already fixed), and two further exec-plan sections (the top-of-file Goal/DoD
+summary and the Risky-actions/`ProposedAction` narrative). Commit `d979994`
+fixed all five. The manual `grep`-equivalent sweep method itself was sound;
+the earlier passes used narrower search patterns that did not cover every
+file/section actually referencing T0's run count. Future sessions checking
+whether this correction is complete should search for `control/treatment
+pair` and `control/treatment contrast` (not just `one control` or `single
+pair`) across `056-F.md`, `056.001-T.md`, the deliberation, and the
+exec-plan, and confirm every match is followed by the bounded
+"affected-build ... plus ... stable-build" qualifier. Final HEAD after this
+correction: `d97999483d0cde2f1106ed8b5db86ddad2f387ed`.
