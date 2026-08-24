@@ -72,7 +72,7 @@ sections; no `dependencies:`/label/status state changed.
    no intervening delete/recreate, no supported removal/supersede op → stream left intact,
    NO destructive repair attempted). Consumers dedupe by item/event identity, not raw seq.
 
-## Files changed (8)
+## Files changed (9)
 - `.backlogit/queue/056-F.md`, `056.004-T.md`, `056.013-T.md`, `056.019-T.md`,
   `056.023-T.md`, `056.028-T.md`
 - `docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md`

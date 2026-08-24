@@ -1350,7 +1350,7 @@ cargo +1.75.0 fmt --manifest-path tools/mcp-probe/Cargo.toml --all -- --check
 if ($LASTEXITCODE -ne 0) { throw "probe fmt failed (exit $LASTEXITCODE)" }
 cargo +1.75.0 check --manifest-path tools/mcp-probe/Cargo.toml
 if ($LASTEXITCODE -ne 0) { throw "probe check failed (exit $LASTEXITCODE)" }
-cargo +1.75.0 clippy --manifest-path tools/mcp-probe/Cargo.toml -- -D warnings -D clippy::pedantic
+cargo +1.75.0 clippy --manifest-path tools/mcp-probe/Cargo.toml --all-targets -- -D warnings -D clippy::pedantic
 if ($LASTEXITCODE -ne 0) { throw "probe clippy pedantic failed (exit $LASTEXITCODE)" }
 cargo +1.75.0 test --manifest-path tools/mcp-probe/Cargo.toml
 if ($LASTEXITCODE -ne 0) { throw "probe self-tests failed (exit $LASTEXITCODE)" }
