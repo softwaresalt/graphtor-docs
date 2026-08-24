@@ -574,6 +574,17 @@ impl DocServer {
 
 // ── ServerHandler ─────────────────────────────────────────────────────────────
 
+// The `#[tool_handler]` macro (rmcp-macros) generates `ServerHandler::call_tool`
+// as an async trait method to satisfy the `ServerHandler` trait's async
+// signature; its generated body dispatches synchronously through the tool
+// router without ever reaching an `.await` point, which a newer clippy
+// pedantic lint (added after this crate's original clippy baseline) flags on
+// the macro-expanded code. The async signature is required by the trait
+// contract, not chosen by this crate. `clippy::unused_async_trait_impl` postdates
+// this crate's MSRV (1.75); `unknown_lints` keeps the allow itself from failing
+// `-D warnings` on toolchains that do not yet recognize the lint name.
+#[allow(unknown_lints)]
+#[allow(clippy::unused_async_trait_impl)]
 #[tool_handler]
 impl ServerHandler for DocServer {
     fn get_info(&self) -> ServerInfo {
