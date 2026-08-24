@@ -83,11 +83,17 @@ classified as unsupported.
   regress purely from a change in *how* the client launches it.
 * rmcp 1.5 **negotiates `protocolVersion` inside the SDK**: the service layer
   overwrites the value returned by `get_info` with either the client's offer
-  (when the client's version is lower) or the server's `LATEST`
-  (`2025-11-25`, already the newest published MCP revision). `partial_cmp`
-  over `ProtocolVersion` is total, so `UnsupportedProtocolVersion` is
-  unreachable and a `get_info` change **cannot** alter the wire response. A
-  protocol-version mismatch is therefore not a credible cause on rmcp 1.5.
+  (when the client's version is lower) or the server's `LATEST` (`2025-11-25`
+  at the time this SDK version shipped). `partial_cmp` over `ProtocolVersion`
+  is total, so `UnsupportedProtocolVersion` is unreachable and a `get_info`
+  code change **cannot** alter the wire response — but this is evidence
+  against `get_info` being a *fix*, not evidence that the client and server
+  actually negotiate compatibly today. Whether the affected CLI build
+  requests or expects a newer MCP protocol version than rmcp 1.5's `LATEST`
+  is exactly what T0/T4 evidence capture must confirm (H3-A); do not assume
+  `2025-11-25` remains the newest published MCP revision, or that any single
+  protocol version is the only valid negotiated outcome, without re-checking
+  the current MCP spec and the exact-CLI evidence.
 * `resolve_embedding_model` (`src/embed/resolver.rs`) loads the candle
   all-MiniLM-L6-v2 model synchronously before the transport binds (seconds on
   a cold cache / Hub fetch). This can delay the handshake, but on its own
@@ -110,15 +116,22 @@ classified as unsupported.
 
 | # | Hypothesis | Supporting signal | In our control | Confidence |
 |---|---|---|---|---|
-| H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** on a Generation target when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; multiple pre-serve exit paths; discovery + Generation-lock handling are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | **High** |
+| H0 | **Server process exits before/at `initialize` via a pre-serve early-exit or fail-closed path**, so the client's next write hits a closed pipe → OS error 232. Sub-causes: (H0a) client launches the child with a different **cwd**, so cwd-relative `.graphtor/*.db` discovery finds nothing → "no databases found to serve" exit 2; (H0b) **lock contention / stale-lock pid reuse** on a Generation target when the CLI spawns probe/restart/hard-kill children → `DatabaseLocked`; (H0c) fail-closed gate: a **malformed** `sources.yaml` or a missing **explicit** `--config` target, pre-v4 schema, duplicate-intake, or DB open failure (an **absent default** registry is not a gate — it falls through to `.graphtor/*.db` auto-discovery). | 232 = write to a closed pipe = server gone; multiple pre-serve exit paths; discovery + Generation-lock handling are cwd-/lifecycle-sensitive; unchanged binary regressed on CLI change; troubleshooting "exits within seconds" class | Yes — robustness + diagnosability | Medium — pending T0 evidence; an operator-reported stable-vs-affected Copilot CLI differential (see H3) does not by itself discriminate H0 from H3 |
 | H1 | **Initialize latency from eager model load.** Cold-cache candle model load before the transport binds delays the handshake enough to trip a client connect timeout, after which the client teardown surfaces as 232. Secondary/contributing, not the primary 232 mechanism. | Heavy synchronous pre-transport model load | Yes — lazy-load model only | Medium |
-| H2 | Protocol-version negotiation mismatch via `get_info`. | — | — | **Ruled out** — rmcp 1.5 negotiates in-SDK; `get_info` change is a no-op; `LATEST` 2025-11-25 already newest |
-| H3 | **Client/transport incompatibility (two independently owned modes).** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion`. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary secure diagnostic entry invoked through the exact real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same executable honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B) | Partly — **(A)** minimal Rust-1.75-compatible framing fix (`056.011-T`; rmcp 1.8.x excluded because it requires edition 2024); **(B1)** the same exact CLI passes a second contrast through a different documented working-directory mechanism, activating managed-config work, or **(B2)** that exact CLI has no safe mechanism and blocks shipment as unsupported-client (`056.019-T`); **no** server-side external-path fallback | Low |
+| H2 | Protocol-version negotiation mismatch fixable via a `get_info` code change. | — | — | **Ruled out for this narrow framing only** — rmcp 1.5 negotiates in-SDK, so a `get_info` change is a no-op. This does NOT rule out a broader client-side protocol-version negotiation mismatch (e.g. a newer MCP protocol version the affected CLI build may request/expect); that broader question is a client/toolchain hypothesis covered under H3-A |
+| H3 | **Client/transport incompatibility (two independently owned modes), including a client/toolchain protocol-version-negotiation mismatch.** **(A)** rmcp 1.5 vs newest CLI framing/transport incompatibility: the child is **alive** but the framed `initialize` never negotiates a `protocolVersion` — INCLUDING the possibility that the affected CLI build requests or expects a newer MCP protocol version than rmcp 1.5's negotiated `LATEST`, which would be a client/toolchain-side version-negotiation mismatch, not a `graphtor-docs` implementation defect, unless controlled evidence shows the server's own negotiation contract must change. **(B)** the CLI **ignores/rejects configured `cwd`**, proven by a temporary secure diagnostic entry invoked through the exact real CLI, so the child starts in a **foreign cwd** and **early-exits** — distinct from H0a, where the same executable honors the requested cwd. | Regression tracks CLI builds; rmcp pinned old (A); real-client cwd probe not honored (B); **operator-reported (2026-08-24):** reverting the local Copilot CLI (`Copilot.exe`) to the last stable build removes the failure entirely, and a newer MCP protocol version is reported in play on the affected build — strong but not yet conclusive differential evidence for a CLI-side version/protocol-negotiation regression, pending the controlled exact-CLI stable-vs-affected comparison T0 (`056.001-T`) now records | Partly — **(A)** minimal Rust-1.75-compatible framing fix (`056.011-T`; rmcp 1.8.x excluded because it requires edition 2024); **(B1)** the same exact CLI passes a second contrast through a different documented working-directory mechanism, activating managed-config work, or **(B2)** that exact CLI has no safe mechanism and blocks shipment as unsupported-client (`056.019-T`); **no** server-side external-path fallback | Medium — elevated by the operator-reported stable-vs-affected differential signal above; pending controlled confirmation |
 | H4 | Startup panic/early-exit writing to stdout. | — | — | Ruled out (stderr logging, no pre-serve stdout) |
 
-H0 is the leading hypothesis. T0 runs one controlled control/treatment contrast
-that captures the server child's exit code and stderr under the exact cwd/env the
-CLI uses, then emits an ordered classification: if a cwd correction advances to a
+T0 tests H0a first because a cwd-based control/treatment contrast is the
+cheapest, most bounded experiment available — not because H0 is presumed more
+likely than the client-side hypotheses (H3), which now carry their own
+operator-reported supporting signal (see H3 above). H3-A (protocol/framing) is
+classified by T0 itself and reacquired/validated by `056.011-T` if selected;
+H3-B (isolated-config/cwd) is adjudicated by `056.019-T`, the sole H3-B
+terminal — both remain open, evidence-driven outcomes within this
+evidence-gathering unit. T0 runs one controlled
+control/treatment contrast that captures the server child's exit code and stderr
+under the exact cwd/env the CLI uses, then emits an ordered classification: if a cwd correction advances to a
 later blocker, H0a remains a proven prerequisite while the new H0b/H0c/H1/H3-A
 cause is ordered after it. Downstream causal tasks are then visited once in the
 authoritative forward chain; evidence, not static reading, orders them, and no
@@ -126,8 +139,10 @@ task reopens a completed sibling.
 
 ## Decision
 
-Proceed **evidence-first**, because the leading hypothesis (H0) can be ordered
-by bounded contrasts and the remaining fixes are individually small and
+Proceed **evidence-first**, because H0a can be ordered first by a bounded,
+cheap contrast and the remaining fixes — for whichever hypothesis the
+evidence ultimately selects, including the CLI-side H3 hypotheses — are
+individually small and
 bounded:
 
 1. **Validate the standalone probe crate, then capture T0.**
@@ -379,6 +394,13 @@ lockfile. Task count is 28 (`056.001-T`..`056.028-T`).
 
 * The exact cwd/env/lifecycle the newest CLI uses to launch the child is not
   yet captured; T0 must record it along with the child exit code and stderr.
+* **(added 2026-08-24, operator-reported)** The exact Copilot CLI executable
+  version/build/path/hash for both a last-known-stable build and the affected
+  build, and the client-offered vs. server-negotiated MCP `protocolVersion`
+  and capabilities on both legs of the handshake, are not yet captured; T0
+  (`056.001-T`) must record all of this for a genuine stable-vs-affected
+  differential. No single MCP protocol version is asserted as the only valid
+  negotiated outcome without that evidence.
 * The exact Copilot CLI MCP config schema (does the stdio entry use `type` vs
   `transport`; does it honor `cwd`/`env`?) is not yet confirmed for the failing
   build; T0 (`056.001-T`) must record it and `056.026-T` emits the evidenced

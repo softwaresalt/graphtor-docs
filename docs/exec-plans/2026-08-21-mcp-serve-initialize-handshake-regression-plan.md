@@ -280,8 +280,15 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 * Own `tools/mcp-probe/src/exact_cli.rs` and the exact-cli subcommand plus the
   ONE final subcommand-wiring edit in the thin `tools/mcp-probe/src/main.rs` (the
   diagnostic `wrapper` subcommand is `056.022-T`). Record the **exact** newest
-  failing Copilot executable path, version/build, and `/mcp show graphtor-docs`
-  invocation. T4 must use the same identity.
+  failing Copilot executable path, version/build, content hash, and `/mcp show
+  graphtor-docs` invocation. T4 must use the same identity. When a
+  last-known-stable Copilot executable is available for comparison, run this
+  same classification against it too and record its path/version/build/hash
+  alongside the affected build's for a genuine stable-vs-affected differential.
+  Record the client-offered and server-negotiated MCP `protocolVersion` and
+  capabilities on both legs from the wrapper's redacted evidence; no single
+  protocol version is presumed correct unless the server's own negotiation
+  contract requires it.
 * Run inside `056.021-T`'s isolated `logs/probe/<nonce>` workspace using its
   temporary in-workspace control/treatment `.mcp.json`, the `056.020-T`
   transport, the `056.022-T` process guards and wrapper, and the `056.023-T`
