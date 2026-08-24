@@ -59,7 +59,9 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   `exact_cli.rs` and the exact-cli subcommand, records the exact newest failing
   CLI executable/version/build and `/mcp show graphtor-docs` invocation, **first
   proves ancestor config-isolation** against the nested fixture, then runs ONE
-  control/treatment pair through the `056.022-T` wrapper handoff (child
+  control/treatment pair against the affected build (plus one bounded
+  additional pair against a last-known-stable build when available) through
+  the `056.022-T` wrapper handoff (child
   `.mcp.json` uses the wrapper as `command`; byte-identical wrapper args encode
   the exact absolute production inner executable plus original args;
   control/treatment differ only by treatment `cwd`), emits the ordered cause
@@ -1690,7 +1692,9 @@ and posture-classification context.
   `056.021-T` creates a fresh isolated `logs/probe/<nonce>` workspace, generates
   temporary in-workspace control/treatment `.mcp.json` plus an owned nested
   ancestor/child fixture, and `056.001-T` proves ancestor config-isolation
-  before running the one-shot exact-CLI control/treatment pair inside it through
+  before running the bounded exact-CLI control/treatment pair(s) (one against
+  the affected build, plus one against a last-known-stable build when
+  available) inside it through
   the transport.
   * targets: the isolated `logs/probe/<nonce>` workspace and its temporary
     `.mcp.json`, plus the probe-owned Copilot/wrapper/inner-server processes held

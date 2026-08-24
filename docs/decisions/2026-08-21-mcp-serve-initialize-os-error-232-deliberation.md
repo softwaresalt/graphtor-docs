@@ -130,7 +130,9 @@ classified by T0 itself and reacquired/validated by `056.011-T` if selected;
 H3-B (isolated-config/cwd) is adjudicated by `056.019-T`, the sole H3-B
 terminal — both remain open, evidence-driven outcomes within this
 evidence-gathering unit. T0 runs one controlled
-control/treatment contrast that captures the server child's exit code and stderr
+control/treatment contrast against the affected build (plus one bounded
+additional contrast against a last-known-stable build when available) that
+captures the server child's exit code and stderr
 under the exact cwd/env the CLI uses, then emits an ordered classification: if a cwd correction advances to a
 later blocker, H0a remains a proven prerequisite while the new H0b/H0c/H1/H3-A
 cause is ordered after it. Downstream causal tasks are then visited once in the
@@ -186,7 +188,9 @@ bounded:
    continues forward to `056.019-T`, never assuming the repository-root
    `.mcp.json` is unread and never declaring H3-B2 itself. Only after isolation is
    proven does it run ONE control/treatment pair through the `056.022-T` wrapper
-   handoff — the child `.mcp.json` uses the wrapper as `command`, the byte-identical
+   handoff — plus, when a last-known-stable Copilot executable is available for
+   comparison, one bounded additional control/treatment pair against that
+   stable build (at most two pairs total, never more) — the child `.mcp.json` uses the wrapper as `command`, the byte-identical
    wrapper args encode the exact absolute production inner executable plus its
    original args, and control/treatment differ only by the treatment
    canonical-project-root `cwd`. It then emits the ordered cause classification and
