@@ -396,10 +396,15 @@ lockfile. Task count is 28 (`056.001-T`..`056.028-T`).
   yet captured; T0 must record it along with the child exit code and stderr.
 * **(added 2026-08-24, operator-reported)** The exact Copilot CLI executable
   version/build/path/hash for both a last-known-stable build and the affected
-  build, and the client-offered vs. server-negotiated MCP `protocolVersion`
-  and capabilities on both legs of the handshake, are not yet captured; T0
-  (`056.001-T`) must record all of this for a genuine stable-vs-affected
-  differential. No single MCP protocol version is asserted as the only valid
+  build are not yet captured, nor is the client-offered MCP `protocolVersion`/
+  capabilities on both legs of the handshake, nor the server-negotiated
+  `protocolVersion`/capabilities on whichever legs actually receive an
+  `initialize` response (the affected leg may exit before any response
+  exists — an absent negotiated value is itself a captured outcome, not a
+  gap to force). T0 (`056.001-T`) must record all of this, bounded to at
+  most one affected-build pair plus at most one stable-build pair, for a
+  genuine stable-vs-affected differential. No single MCP protocol version is
+  asserted as the only valid
   negotiated outcome without that evidence.
 * The exact Copilot CLI MCP config schema (does the stdio entry use `type` vs
   `transport`; does it honor `cwd`/`env`?) is not yet confirmed for the failing

@@ -282,13 +282,17 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   diagnostic `wrapper` subcommand is `056.022-T`). Record the **exact** newest
   failing Copilot executable path, version/build, content hash, and `/mcp show
   graphtor-docs` invocation. T4 must use the same identity. When a
-  last-known-stable Copilot executable is available for comparison, run this
-  same classification against it too and record its path/version/build/hash
-  alongside the affected build's for a genuine stable-vs-affected differential.
-  Record the client-offered and server-negotiated MCP `protocolVersion` and
-  capabilities on both legs from the wrapper's redacted evidence; no single
-  protocol version is presumed correct unless the server's own negotiation
-  contract requires it.
+  last-known-stable Copilot executable is available for comparison, run one
+  additional bounded classification pass against it (at most one affected-build
+  pair plus at most one stable-build pair total) and record its
+  path/version/build/hash alongside the affected build's for a genuine
+  stable-vs-affected differential. On each leg of each pass, record the
+  client-offered MCP `protocolVersion`/capabilities, and the server-negotiated
+  `protocolVersion`/capabilities WHEN an `initialize` response exists; an
+  absent negotiated value (the leg's child exits or the pipe closes before any
+  response) is a first-class captured outcome, never an unmet requirement. No
+  single protocol version is presumed correct unless the server's own
+  negotiation contract requires it.
 * Run inside `056.021-T`'s isolated `logs/probe/<nonce>` workspace using its
   temporary in-workspace control/treatment `.mcp.json`, the `056.020-T`
   transport, the `056.022-T` process guards and wrapper, and the `056.023-T`
@@ -303,19 +307,24 @@ linked deliberation. This plan restores connectivity **evidence-first** and
   Record and hash the exact inner executable path and version.
 * **Gate 1 (ancestor config-isolation, first):** using the exact target CLI
   against `056.021-T`'s nested fixture, prove the nearest child `.mcp.json`
-  shadows and does not merge the sentinel ancestor. Only then may the single
-  control/treatment contrast run. If the exact CLI reads or merges the ancestor
-  config, stop the causal H0 comparison, emit typed `H3-B-candidate`, and continue
+  shadows and does not merge the sentinel ancestor. Only then may the bounded
+  control/treatment contrast(s) below run. If the exact CLI reads or merges
+  the ancestor config, stop the causal H0 comparison, emit typed
+  `H3-B-candidate`, and continue
   forward to `056.019-T` (never declaring H3-B2 here); never assume the
   repository-root `.mcp.json` is unread.
 * **One-shot classification:** run exactly one control (no `cwd`) / treatment
-  (canonical project-root `cwd`) pair through the shared runner, then emit the
+  (canonical project-root `cwd`) pair against the affected build through the
+  shared runner — plus, when a last-known-stable build is available per the
+  identity bullet above, exactly one additional control/treatment pair against
+  that stable build (at most two pairs total, never more) — then emit the
   current **ordered** cause classification (proven prerequisites first — H0a is
   retained when a cwd correction exposes a later blocker) from child
   exit/liveness/framing/lock/Generation evidence. No implementation loop runs
   inside T0; it never reruns per correction, waits for production health, or
   reopens a downstream task.
-* Terminal outcome: this task NEVER declares H3-B2. After the single pair it
+* Terminal outcome: this task NEVER declares H3-B2. After the bounded pair(s)
+  above it
   emits the ordered downstream classification and moves to `done`, or (only when
   evidence capture itself is impossible for an explicit non-H3-B reason) returns
   blocked with the captured evidence. Downstream causal tasks (including
@@ -1009,7 +1018,9 @@ than restate every clause:
   authority. Unselected remedy tasks are NOT set to backlog status `blocked`;
   they stay `queued` + `selection:pending`.
 * **One-shot classification** — `056.001-T` runs exactly one control/treatment
-  pair and emits an ordered classification; it never loops, reruns per
+  pair against the affected build (plus one bounded additional pair against a
+  last-known-stable build when available) and emits an ordered classification;
+  it never loops, reruns per
   correction, or reopens a downstream task. Backward-pointing or unowned evidence
   blocks T4 and creates a new bounded Stage follow-up rather than looping in
   place.
@@ -1112,7 +1123,8 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
   both legs and the treatment leg alone adding `cwd`. Owns no observer/evidence
   module. Depends on `056.023-T`.
 * `056.001-T` (retained, one-shot) — owns `exact_cli.rs`; runs one control/
-  treatment pair inside `056.021-T`'s workspace, proves ancestor
+  treatment pair against the affected build (plus one bounded additional pair
+  against a last-known-stable build when available) inside `056.021-T`'s workspace, proves ancestor
   config-isolation first, and emits the ordered classification. Depends on
   `056.021-T`.
 * `056.024-T` (retained, moved) — bounded decision/spike that closes
