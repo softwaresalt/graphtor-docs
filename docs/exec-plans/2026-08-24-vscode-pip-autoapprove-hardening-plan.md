@@ -115,7 +115,7 @@ mapped below.
 | V. Structured Observability | PASS | Change is git-tracked and diff-reviewable; the single-entry edit is fully traceable in the commit. |
 | VI. Single Responsibility | PASS | No dependency graph change; removes an over-broad grant without adding any speculative capability. |
 | VII. Destructive Command Approval | PASS (risk-reducing) | The change is the security improvement itself — it removes a blanket `"pip": true` substring grant that auto-approved arbitrary `pip ...` (RCE-at-install) command lines, restoring least-privilege to the auto-approve allow-list. The edit is non-destructive and fully reversible. |
-| VIII. Safety Modes | PASS | Careful-mode risk enumeration present in `## Plan Hardening` (ProposedAction at `ActionRisk: low`, rollback via git revert). |
+| VIII. Safety Modes | PASS | Careful-mode risk enumeration present in `## Plan Hardening` (ProposedAction at `ActionRisk: low`, fail-closed rollback). |
 | IX. Git-Friendly Persistence | PASS | `.vscode/settings.json` remains valid, human-readable, Git-mergeable JSON; only the `pip` entry changes. |
 | X. Context Efficiency | N/A | No agent-facing data-access or tool-contract change. |
 | XI. Merge Commit History | N/A | Enforced by Ship at merge time. |
@@ -123,8 +123,9 @@ mapped below.
 **Config-only risk / rollback (explicit):** `ActionRisk: low`. The sole target is
 one developer-environment config file; the change is risk-*reducing* (narrows an
 over-broad auto-approval grant). No runtime service, data, schema, or shared
-contract is touched. **Rollback:** `git revert` / checkout of the single-file
-change. **Validation window:** the next agent session that exercises the
+contract is touched. **Rollback:** keep blanket `pip` approval denied and use
+manual approval; if automation is required, add one separately reviewed exact
+anchored command entry. Never restore the blanket grant. **Validation window:** the next agent session that exercises the
 documented `.scripts/*.py` clone workflow. No monitoring system applies; closure
 is a manual inspection item (see Runtime Verification and Closure).
 
@@ -136,10 +137,10 @@ is a manual inspection item (see Runtime Verification and Closure).
   command execution in agent sessions; the whole point is a security posture
   improvement.
 * Migration, backfill, destructive data/config action, or irreversible step —
-  **absent**. The edit is a small, fully reversible config change (revert via git).
+  **absent**. The edit is a small config change with a fail-closed rollback.
 * External integration, operator checkpoint, or external dependency — **absent**.
 * High runtime, rollout, or rollback risk — **absent**. Editor-only config; no
-  runtime service, no deploy, trivial git revert.
+  runtime service or deploy; manual approval preserves functionality.
 
 `Requires plan hardening: yes` (security-sensitive signal present).
 
@@ -154,8 +155,10 @@ is a manual inspection item (see Runtime Verification and Closure).
   patterns still auto-approve as before. This is an inspection-level check on the
   resulting JSON, not a build/test run.
 * **Operational closure:** rollback trigger = any documented clone workflow
-  breaks due to an unexpected approval prompt → revert the single-file change via
-  git. Ownership: the single developer/operator. Validation window: next agent
+  encounters an unexpected approval prompt → keep `pip` denied and approve the
+  command manually. If repeated automation is justified, add one separately
+  reviewed exact anchored command-line entry; never restore blanket `pip`
+  approval. Ownership: the single developer/operator. Validation window: next agent
   session that exercises the `.scripts/*.py` clone workflow. No monitoring
   system applies; record the closure check as a manual inspection item.
 
@@ -191,10 +194,11 @@ without a human in the loop during AI agent sessions.
   anchored pip regex or leave it removed.
   * `targets`: `.vscode/settings.json` (single developer-environment config file)
   * `change_kind`: local config edit
-  * `ActionRisk`: **low** — non-destructive, fully reversible via `git revert` /
-    checkout; no runtime service, data, or shared contract touched. The change is
+  * `ActionRisk`: **low** — non-destructive and fail-closed; no runtime service,
+    data, or shared contract touched. The change is
     risk-*reducing* (tightens an over-broad grant).
-  * `rollback`: revert the single-file change in git.
+  * `rollback`: retain blanket `pip` denial and use manual approval; add one
+    separately reviewed exact anchored entry only if automation is required.
   * `approval_required`: the staging step is operator-approved; the code/config
     edit itself is performed and reviewed by Ship under its normal review gate.
   * `ActionResult`: `planned` (execution deferred to Ship).
@@ -208,8 +212,9 @@ without a human in the loop during AI agent sessions.
 
 **Reinforced closure (carried into Ship operational closure):**
 
-* Rollback trigger: any documented `.scripts/*.py` clone workflow breaks due to
-  an unexpected approval prompt → git-revert the change.
+* Rollback trigger: any documented `.scripts/*.py` clone workflow encounters an
+  unexpected approval prompt → keep `pip` denied and use manual approval; add a
+  separately reviewed exact anchored entry only if automation is required.
 * Owner: single developer/operator. Validation window: next agent session that
   exercises the clone workflow. No monitoring system applies; closure is a manual
   inspection item.
@@ -262,12 +267,11 @@ by plan acceptance criteria).
 
 **Runtime verification & closure:** Present and adequate for a config-only
 change — JSON validity, byte-for-byte preservation of existing patterns, and a
-negative auto-approval check; git-revert rollback trigger with owner and
+negative auto-approval check; fail-closed rollback trigger with owner and
 validation window recorded.
 
 No P0/P1/P2 findings — proceed to harvest.
 
 <!-- plan-review-attempt: 1 -->
 <!-- plan-review-verdict: PASS -->
-
 

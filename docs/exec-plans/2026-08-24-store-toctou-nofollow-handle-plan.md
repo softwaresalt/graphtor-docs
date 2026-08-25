@@ -56,124 +56,53 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 | `#![forbid(unsafe_code)]`, MSRV 1.75 | U1/U2 use only safe std + `OpenOptionsExt::custom_flags` + platform flag constants. |
 | Preserve exact-permission and sidecar-content safety | U3/U4 keep capture/restore exact (handle-bound), preserve non-empty sidecars, and replace racy empty-sidecar deletion with fail-closed retention unless same-identity deletion is proven; U5 re-verifies. |
 | Test-first swap-resistance + platform behavior | U3/U4 add test-first swap-resistance cases; U5 adds the cross-platform matrix and Windows handle-mode validation. |
-| Intermediate-directory (parent) swap containment, not just final component (PR #107 review, 2026-08-25) | U6 adds a candidate `cap-std` beneath-root directory-handle-relative boundary (feasibility/MSRV proven by U7 before use); U2's `open_no_follow` is invoked through it and the authority must survive WAL configuration plus the actual SQLite/Cozo engine open; U2–U5 depend on U6. |
-| Prove the capability design is achievable with safe APIs under MSRV 1.75 before building on it (PR #107 review, 2026-08-25) | U7 (059.007-T) is a bounded test-first feasibility/evidence gate proving the root-handle bootstrap (explicit threat model), `cap_std` Dir/File conversion + File boundary, intermediate-swap-refusing walk, in-bounds leaf refusal, and capability- or identity-bound SQLite/Cozo engine open, or returning BLOCKED; U7 gates U6, which gates U2–U5. |
+| Intermediate-directory (parent) swap containment, not just final component (PR #107 review, 2026-08-25) | U7 proves the root/API/MSRV capability foundation; U8 separately proves the SQLite/Cozo engine boundary; U1 adopts only the proven dependencies; U6 integrates the beneath-root permission boundary; U9 integrates the actual engine open. U2–U5 depend on both U6 and U9. |
+| Prove the capability design is achievable with safe APIs under MSRV 1.75 before building on it (PR #107 review, 2026-08-25) | U7 (059.007-T) has three bounded root/API/MSRV scenarios and no dependency on U1. U8 (059.008-T) has three bounded engine-boundary scenarios and depends on U7. Either gate may return BLOCKED before U1 changes the product manifest. |
 | Prevent transient-sidecar check/use deletion races (PR #107 review, 2026-08-25) | U3 prohibits separate metadata-check + name-based unlink. Unless U7 proves a same-identity deletion API, cleanup fails closed by leaving transient sidecars in place. |
 
 ## Implementation Units
 
-### U1 — Add platform-gated no-follow flag dependencies (config)
+### U7 — Prove capability root/API/MSRV feasibility (test-first; gates U8/U1/U6)
 
-* **Changes**: In `Cargo.toml`, add `libc` under `[target.'cfg(unix)'.dependencies]`
-  (for `O_NOFOLLOW`) and `windows-sys` under `[target.'cfg(windows)'.dependencies]`,
-  pinned to an already-present lock version to avoid adding a new copy:
-  `windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }`.
-  That feature exposes every constant the design needs:
-  `FILE_FLAG_OPEN_REPARSE_POINT`, `FILE_FLAG_BACKUP_SEMANTICS`,
-  `FILE_ATTRIBUTE_REPARSE_POINT`, `FILE_READ_ATTRIBUTES`, `FILE_WRITE_ATTRIBUTES`,
-  and `FILE_SHARE_READ|WRITE|DELETE`. Add a justification comment (both crates are
-  already transitive; Principle VI). **Also add `cap-std`** as a workspace-level
-  *candidate* dependency for the **U6** containment-safe beneath-root directory walk,
-  pinned to the newest version that builds under MSRV 1.75. Its MSRV-1.75 build **and**
-  the required root/intermediate/leaf beneath-root semantics are **authoritatively
-  proven in U7 (`059.007-T`), not assumed here** — U1 only declares/pins the candidate
-  (the Tests row runs a first-pass `cargo +1.75.0 check --all-targets`). `cap-std`
-  layers on the already-transitive
-  `rustix` (1.1.4 in `Cargo.lock`) on Unix and wraps the Windows handle-relative
-  primitives safely, so the supply-chain delta is the `cap-std`/`cap-primitives`
-  family only; carry the same Principle VI justification comment. (If U7 records
-  `cap-std` BLOCKED because no MSRV-1.75-compatible release delivers the needed
-  semantics, do not keep it; the documented Unix-only `rustix` fallback + a separate
-  safe Windows design is pursued only after its own feasibility evidence, recorded in
-  the PR.)
-* **Files**: `Cargo.toml` (and `Cargo.lock` refresh).
-* **Tests**: pinned-MSRV verification is **required** for these new direct
-  dependencies — run `cargo +1.75.0 check --all-targets` (equivalently
-  `rustup run 1.75.0 cargo check --all-targets`) and confirm it succeeds, so the
-  added `libc`/`windows-sys` edges and their feature set are proven to build on
-  the declared MSRV (1.75), not merely on the host toolchain. Also run
-  `cargo build` / `cargo check --all-targets` on the host platform. **Duplicate
-  impact must be verified by an explicit before/after comparison:** capture
-  `cargo tree -d` (and `cargo tree -i windows-sys` / `cargo tree -i libc` /
-  `cargo tree -i cap-std`) output **before** the dependency edit and **after**, then
-  diff the two captures to prove no new `windows-sys`/`libc`/`cap-std` version (no
-  second copy) was introduced — a post-edit-only snapshot is insufficient. The pinned
-  MSRV check MUST also cover `cap-std` (the U6 dependency) so the added edge is proven
-  to build on 1.75 (the authoritative cap-std feasibility/semantics proof is **U7**).
-  **Continuous MSRV evidence is required:** a dedicated Rust 1.75 CI check (a
-  `cargo +1.75.0 check --all-targets` job) MUST be added during implementation, or an
-  equivalent already-present repository MSRV gate MUST be explicitly identified as
-  continuously covering these new deps — a one-off local `+1.75.0` run is not
-  sufficient by itself. (Do not alter the workflow during Stage; this is an
-  implementation-time obligation.) `cargo audit` clean.
-* **Posture**: config-first. **Domain**: config.
-* **Acceptance**: Both platform deps **and `cap-std`** declared, pinned, and
-  justified; workspace compiles on the host **and** under the pinned MSRV toolchain
-  via `cargo +1.75.0 check --all-targets` (including the `cap-std` edge); a continuous
-  Rust 1.75 CI check is added (or an equivalent repository MSRV gate identified) so the
-  MSRV holds beyond a single local run; the before/after `cargo tree -d` diff shows no
-  new duplicate crate copy; no new `cargo audit` advisory. (Authoritative cap-std
-  feasibility/semantics evidence is produced by U7, which U6 consumes.)
+* **Why**: a possibly-failing Rust 1.75 candidate probe must be schedulable before
+  the product manifest changes. U7 therefore has **no dependency on U1**.
+* **Changes / three scenarios**: in an isolated throwaway harness, test-first:
+  1. discover the newest candidate version that compiles under Rust 1.75;
+  2. bootstrap and retain the workspace-root handle no-follow/no-reparse, document
+     the trusted-parent threat model, and prove the selected `Dir`/`File` boundary;
+  3. run a table-driven refusal matrix for absolute/`..` escape, intermediate
+     symlink/junction swap, and an in-bounds leaf symlink/reparse.
+* **Outcome**: PASS records exact versions, APIs, File boundary, threat model, and
+  test output. BLOCKED records the failed scenario and keeps U8/U1/U6/U9/U2–U5
+  gated. No product dependency, in-crate `unsafe`, or path fallback is added.
+* **Backlog**: `059.007-T`; no dependencies; gates U8.
 
-### U7 — Capability containment, engine-open, and MSRV-1.75 evidence gate (test-first; gates U6→U2–U5)
+### U8 — Prove contained SQLite/Cozo engine-open feasibility (test-first)
 
-* **Why (added 2026-08-25, PR #107 review)**: the `cap-std` beneath-root design is a
-  *candidate*, not a proven mechanism. Nothing downstream may assume it delivers the
-  exact root/intermediate/leaf containment semantics, compiles under MSRV 1.75, or
-  survives the actual SQLite/Cozo engine open until this gate records a PASS. This
-  removes the prior overclaim.
-* **Changes**: author an evidence harness (throwaway example / narrowly-scoped `tests/`
-  file / temporary gated module) **test-first**, then minimal proof code, proving with
-  **safe APIs only** under `#![forbid(unsafe_code)]` and MSRV 1.75:
-  1. **Atomic workspace-root directory-handle bootstrap** with no-follow/no-reparse
-     semantics, retained for the `DataStore` lifetime — **Unix**: `OpenOptions` with
-     read access + `custom_flags(O_DIRECTORY | O_NOFOLLOW)` (a symlinked root fails
-     closed); **Windows**: `OpenOptions` directory handle with
-     `custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)`,
-     explicit `access_mode` (≥ `FILE_READ_ATTRIBUTES`) and `share_mode`
-     (`FILE_SHARE_READ|WRITE|DELETE`), then an explicit post-open
-     `FILE_ATTRIBUTE_REPARSE_POINT` attribute rejection of the root. **Threat model
-     (state explicitly)**: an attacker may create/write/swap entries **inside** the
-     workspace root but **not** its trusted parent; the root handle is bootstrapped
-     once from the trusted parent and retained, so the root identity cannot be
-     redirected post-bootstrap.
-  2. **Conversion to/from `cap_std::fs::Dir`/`cap_std::fs::File`** (e.g.
-     `Dir::from_std_file`, `File` into/from std) — or whichever safe capability API is
-     selected — round-tripping the retained root handle into the capability authority
-     with **no in-crate `unsafe`**.
-  3. A **component walk** that prevents escape (`..`/absolute/out-of-root) **and
-     refuses an intermediate symlink/junction swap** of a parent directory.
-  4. A **final, in-bounds leaf** symlink/reparse is **refused** (fail-closed), not
-     merely prevented from escaping.
-  5. The `cap-std` candidate **compiles under Rust 1.75** (`cargo +1.75.0 check` /
-     `rustup run 1.75.0 cargo check` on the harness), **and the
-     `cap_std::fs::File` vs `std::fs::File` boundary is to be decided and proven here
-     (PENDING U7 PASS)** — either `into_std` conversion or explicit capability-file
-     helper signatures, with the exact chosen APIs recorded on PASS. The boundary is
-     **not decided until U7 records PASS**; on PASS the recorded evidence is what U6/U2
-     carry in, so no ambiguity is handed to them.
-  6. The capability/identity boundary survives **`configure_sqlite_wal` and the actual
-     `open_sqlite_instance`/`DbInstance::new` call**, including SQLite-created
-     WAL/SHM/journal files. Passing the original `safe_path` to a path-only engine API
-     after guarded preparation does not satisfy this obligation. The harness must
-     demonstrate that an intermediate-directory swap in this window is refused and
-     cannot open/create anything outside the retained root. If the engine exposes no
-     safe MSRV-1.75-compatible binding under `#![forbid(unsafe_code)]`, U7 is BLOCKED.
-* **Outcome contract**: **PASS** → record the evidence (API names, pinned versions,
-  test results, chosen File boundary, threat model) in this plan/PR and **unblock U6**.
-  **BLOCKED** (any obligation fails under safe-API / MSRV-1.75 constraints) → record
-  the specific failing obligation, keep U6/U2–U5 gated, and **Constitution
-  Principles III/IV remain NOT-PASSED**. No vague `unsafe` and no path-based
-  `chmod`/re-canonicalization is an acceptable substitute for the proof.
-* **Files**: a throwaway/gated feasibility harness (superseded by U6's real
-  `open_beneath`).
-* **Posture**: test-first (feasibility spike). **Domain**: code (bounded evidence).
-  **Backlog**: `059.007-T` (depends on `059.001-T`; gates `059.006-T`).
-* **Acceptance**: all six obligations demonstrated with safe APIs (or a recorded
-  BLOCKED naming the failing obligation); `cargo +1.75.0 check` succeeds on the harness
-  with `cap-std` pinned; the File-vs-std boundary and threat model are recorded; no
-  in-crate `unsafe`; no `.unwrap()`/`.expect()`; result recorded in the plan/PR and, on
-  BLOCKED, III/IV marked NOT-PASSED with U6/U2–U5 gated.
+* **Why**: engine binding is a distinct uncertainty and execution domain from the
+  root/API/MSRV proof. It must fit a bounded task before production integration.
+* **Changes / three scenarios**: using U7's candidate in an isolated harness:
+  1. prove `configure_sqlite_wal` and `open_sqlite_instance`/`DbInstance::new`
+     consume a capability- or same-identity-bound mechanism without `safe_path`;
+  2. swap an intermediate directory before engine open and prove refusal with no
+     external database or WAL/SHM/journal creation or mutation;
+  3. compile the harness under Rust 1.75 with safe APIs only, or record BLOCKED
+     naming the unavailable engine API.
+* **Outcome**: PASS records exact engine APIs/versions/results. BLOCKED keeps
+  U1/U6/U9/U2–U5 gated and Principles III/IV NOT-PASSED.
+* **Backlog**: `059.008-T`; depends on U7; gates U1 and U6.
+
+### U1 — Add proven platform-gated dependencies (config)
+
+* **Changes**: only after U7 and U8 PASS, add `libc`,
+  `windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }`,
+  and the exact `cap-std` version proven by U7/U8. U1 does not discover or test an
+  unproven candidate in the product manifest.
+* **Tests**: host build/check; `cargo +1.75.0 check --all-targets`; continuous Rust
+  1.75 CI coverage; before/after `cargo tree -d` plus inverse trees; `cargo audit`.
+* **Outcome**: if either feasibility task is BLOCKED, U1 does not run and no
+  `cap-std` edge is retained.
+* **Backlog**: `059.001-T`; depends on U7 and U8.
 
 ### U2 — Safe no-follow handle helper + handle-bound permission primitives (code, test-first)
 
@@ -278,97 +207,36 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   `clippy::pedantic -D warnings`; contain no `.unwrap()`/`.expect()`; the NEW unit
   tests pass; symlink/junction open fails closed on both platforms.
 
-### U6 — Containment-safe beneath-root boundary through SQLite engine open (gates U2–U5) (code, test-first)
+### U6 — Integrate beneath-root opener and permission boundary (gates U9/U2–U5)
 
-* **Why (added 2026-08-25)**: final-component `O_NOFOLLOW` /
-  `FILE_FLAG_OPEN_REPARSE_POINT` (U2) does **not** prevent an **intermediate-directory
-  swap**: after `validate_path`/canonicalization, a workspace writer can replace a
-  parent directory of the db/sidecar with a symlink/junction and redirect a permission
-  mutation or the later path-based SQLite engine open outside the workspace.
-  Constitution III/IV cannot be claimed complete while either race remains, so U2–U5
-  are gated on this unit. **U6 is itself
-  gated on U7 (`059.007-T`)** — the test-first feasibility/evidence gate that must
-  record a PASS before U6 begins; if U7 is BLOCKED, U6 stays blocked and III/IV remain
-  NOT-PASSED.
-* **Candidate design (cross-platform, safe API — pending the U7 feasibility gate, not
-  yet proven)**: a **`cap-std` capability-based `cap_std::fs::Dir` beneath-root walk**.
-  `cap-std` is the **leading candidate** for a *safe* (no in-crate `unsafe`) capability
-  filesystem: it resolves paths component-by-component **relative to an open directory
-  handle** and is **intended to refuse** symlink/reparse/`..`/absolute escapes on
-  **both** platforms — Unix via `openat`/`openat2`
-  (`RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`) over the already-transitive `rustix`
-  (1.1.4), Windows via handle-relative `NtCreateFile` wrapped safely. Whether `cap-std`
-  actually delivers the exact root/intermediate/leaf semantics **and** compiles under
-  Rust 1.75 is **the specific claim U7 must prove or return BLOCKED** — it is not
-  assumed here. Because any `unsafe` FFI lives inside the dependency,
-  `#![forbid(unsafe_code)]` in this crate is preserved (Principle I unchanged;
-  `cap-std` is a *justified safe dependency/API*).
-* **Changes**: Add an internal opener that (1) bootstraps the caller-validated
-  workspace root **once** into a retained directory-handle authority (per U7's
-  no-follow/no-reparse bootstrap from the trusted parent) and converts it to a
-  `cap_std::fs::Dir` via the File boundary (**PENDING U7 PASS**; the exact APIs come
-  from U7's recorded evidence), and (2) re-expresses U2's
-  `open_no_follow(path)` as `open_beneath(root: &Dir, relative: &Path) ->
-  Result<File, GraphtorError>` that resolves the db (index 0) and each
-  `-wal/-shm/-journal` sidecar **relative to that Dir handle**, so every intermediate
-  component is opened via handle-relative resolution and a post-validation swap of a
-  parent directory is refused. Retain, on the returned final-component handle, the
-  Unix `O_NOFOLLOW` `ELOOP` leaf refusal and the Windows broader
-  `FILE_ATTRIBUTE_REPARSE_POINT` fail-closed refusal from U2. This same retained root
-  `Dir` authority is also the basis of the **engine-open boundary proven by U7**.
-  `configure_sqlite_wal` and `open_sqlite_instance`/`DbInstance::new` must consume a
-  capability- or identity-bound mechanism for the same beneath-root database identity;
-  converting back to the original path string after the guarded open is forbidden
-  unless U7 proves that the engine remains bound to the same identity. Transient
-  sidecars are retained unless U7 proves same-identity deletion; root-relative
-  metadata plus name-based unlink is not accepted. **Fail closed** (return the
-  existing refusal `GraphtorError`) when the root `Dir` cannot be opened, any component
-  escapes containment, the leaf is a reparse/symlink, or the engine cannot consume the
-  safe bound open. **No** path-based `chmod` or engine-open fallback; **no** in-crate
-  `unsafe`.
-* **Platform-asymmetry fallback (documented, reachable only if U7 records `cap-std`
-  BLOCKED under MSRV 1.75)**: Unix — a hand-rolled *safe* `rustix` `openat` component
-  walk (`OFlags::NOFOLLOW | OFlags::DIRECTORY` per intermediate component; `openat2`
-  `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` where the kernel supports it); Windows — a
-  separately-specified safe handle-relative design. This fallback is **not** a silent
-  substitute — it must clear its own feasibility evidence (a follow-on U7-style gate)
-  before adoption, and is never a vague `unsafe` or path-based fallback. `cap-std` is
-  **preferred** to avoid maintaining two hand-rolled walks; the final dependency
-  decision (cap-std vs fallback) is recorded in the PR with the U7 evidence.
-* **Files**: `src/db/store.rs` (+ colocated `#[cfg(test)]`; a single narrowly-scoped
-  `tests/` file only if a full workspace-root `Dir` + engine open is required).
-* **Tests (test-first)**: (a) `open_beneath` round-trips exact `Permissions` on a real
-  regular db/sidecar beneath the root `Dir`; (b) **intermediate-directory swap
-  resistance** — after the root `Dir` is established, replace an intermediate parent
-  directory with a symlink/junction to an external target; `open_beneath` **refuses**
-  (returns the refusal error) and the external target is neither opened nor
-  permission-mutated (assert the refusal, not merely an unchanged bit); (c) the leaf
-  symlink/reparse still fails closed (Unix `ELOOP` / Windows
-  `FILE_ATTRIBUTE_REPARSE_POINT`). Skip **gracefully** (skip, not fail) where
-  unprivileged CI cannot create the intermediate link; add a **Windows junction
-  variant** so the Windows refusal executes where symlink creation is denied; report
-  executed-vs-skipped.
-  (d) After guarded preparation but before WAL configuration/engine open, swap an
-  intermediate directory. All persistent open paths refuse; no external database or
-  SQLite sidecar is opened, created, or modified.
-* **Posture**: test-first. **Domain**: code (incl. doc-comment updates). **Backlog**:
-  `059.006-T` (depends on `059.001-T` **and `059.007-T`/U7**; gates
-  `059.002-T`/`059.003-T`/`059.004-T`/`059.005-T`).
-* **Acceptance**: U7 recorded a PASS before this unit starts (the File boundary —
-  **PENDING U7 PASS** until U7 records the exact APIs — and the root-handle bootstrap
-  are carried in from U7's recorded evidence); `open_beneath` compiles under
-  `#![forbid(unsafe_code)]`; passes
-  `clippy::pedantic -D warnings`; no `.unwrap()`/`.expect()`; intermediate-directory
-  swap is refused fail-closed (or the case skips gracefully with executed/skipped
-  reported); the leaf no-follow/reparse refusal breadth from U2 is preserved; the
-  actual SQLite/Cozo engine open remains capability- or identity-bound.
-  **MSRV re-verification on the integrated implementation (not only the U7 harness):**
-  rerun `cargo +1.75.0 check --all-targets` (equivalently `rustup run 1.75.0 cargo
-  check --all-targets`) against the **real, integrated `src/db/store.rs`
-  `open_beneath` implementation** with the `cap-std` edge, and record the successful
-  result — the U7 feasibility-harness evidence is **necessary but not sufficient**,
-  because the production integration in `store.rs` must independently compile under the
-  pinned MSRV toolchain.
+* **Changes**: implement the production `open_beneath` boundary proven by U7,
+  after U8 proves that a safe engine boundary exists and U1 adopts the exact
+  dependencies. Resolve the main database and sidecars relative to the retained
+  root capability and return identity-bound handles for permission operations.
+  U6 ends at this opener/permission boundary; it does not integrate the engine.
+* **Three test-first scenarios**:
+  1. a normal contained database/sidecar opens and round-trips exact permissions;
+  2. an intermediate parent swap is refused with no external open or mutation;
+  3. a table-driven refusal matrix covers unavailable root authority, absolute/`..`
+     escape, and final-component symlink/reparse without a path fallback.
+* **Acceptance**: integrated `src/db/store.rs` passes Rust 1.75 check, clippy
+  pedantic, and targeted tests; no in-crate `unsafe` or unwrap/expect.
+* **Backlog**: `059.006-T`; depends on U7, U8, and U1; gates U9 and U2–U5.
+
+### U9 — Integrate capability-bound SQLite/Cozo engine open (code, test-first)
+
+* **Changes**: implement U8's proven engine boundary through
+  `configure_sqlite_wal` and `open_sqlite_instance`/`DbInstance::new`. Never
+  convert back to the original `safe_path` for an unbound engine open.
+* **Three test-first scenarios**:
+  1. a normal database opens and creates any WAL/SHM/journal only beneath root;
+  2. an intermediate swap after permission preparation but before engine open is
+     refused with no external database or sidecar creation/mutation;
+  3. `open_sqlite`, `open_sqlite_readonly`, and `open_engine_readonly` preserve
+     expected behavior through the proven bound mechanism.
+* **Acceptance**: Rust 1.75, clippy pedantic, and targeted tests pass; no in-crate
+  `unsafe`, original-path engine reopen, or success-shaped fallback.
+* **Backlog**: `059.009-T`; depends on U6 and U8; U2–U5 also depend on U9.
 
 ### U3 — Bind EngineReadonlyGuard lock/rollback/Drop to retained handles (code, test-first)
 
@@ -516,26 +384,23 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 ## Dependency Graph
 
 ```text
-U1 (deps: libc + windows-sys + cap-std) ─▶ U7 (feasibility/evidence gate) ─▶ U6 (beneath-root walk) ─▶ U2 (helper) ─┬─▶ U3 (guard lock/Drop) ─┐
-                                                       │                            │                              └─▶ U4 (clear_stale)      ─┴─▶ U5 (matrix)
-                                                       │                            └────────────▶ U3, U4, U5 (each gated on U6)
-                                                       └▶ (BLOCKED ⇒ U6–U5 do not start; III/IV NOT-PASSED)
+U7 root/API/MSRV proof
+  └─▶ U8 engine-boundary proof
+       └─▶ U1 adopt proven dependencies
+            └─▶ U6 integrate contained opener/permissions
+                 └─▶ U9 integrate contained engine open
+                      └─▶ U2 helper ─┬─▶ U3 guard lock/Drop ─┐
+                                     └─▶ U4 clear-stale      ─┴─▶ U5 matrix
 ```
 
-* U7 depends on U1 (needs the candidate `cap-std` pin + platform flag constants to
-  compile the feasibility probes). **U7 is the gate**: it must record a PASS before U6
-  starts. A U7 **BLOCKED** halts the chain and returns to Stage — U6–U5 do not begin
-  and Principles III/IV remain NOT-PASSED. No vague `unsafe` or path-based fallback.
-* U6 depends on U1 **and U7** (needs the U7-proven safe root-handle bootstrap, the
-  cap-std Dir/File conversion, and the decided File-vs-std boundary).
-* U2 depends on U1 **and U6** (final-component helper is invoked through the
-  beneath-root opener).
-* U3 depends on U2 **and U6**; U4 depends on U2 **and U6** (both consume the
-  identity-bound, containment-checked handle).
-* U5 depends on U3, U4 **and U6** (validates both paths plus the intermediate-dir
-  swap delta).
-* Every code unit (U2–U5) is gated on U6, which is itself gated on the U7 evidence
-  PASS, so none can complete without proven full-path containment.
+* U7 has no dependency and may return BLOCKED before the product manifest changes.
+* U8 depends on U7 and may independently return BLOCKED on the engine API.
+* U1 depends on U7 and U8 and adopts only their proven versions.
+* U6 depends on U7, U8, and U1; U9 depends on U6 and U8.
+* U2 depends on U1, U6, and U9. U3/U4 depend on U2, U6, and U9.
+  U5 depends on U3, U4, U6, and U9.
+* Every production unit is gated on both feasibility results and on the split
+  permission plus engine integrations.
 * No cycles.
 
 ## Decisions and Rationale
@@ -543,7 +408,7 @@ U1 (deps: libc + windows-sys + cap-std) ─▶ U7 (feasibility/evidence gate) �
 * **Retained handle over re-check (Option A)** — only a handle bound to the file
   identity removes the check→use gap; a repeated path re-check (Option B) still races.
 * **Beneath-root walk via a safe capability API (candidate: `cap-std`) for
-  intermediate-directory containment (U6, gated on U7)** — a final-component
+  intermediate-directory containment (U6, gated on U7/U8)** — a final-component
   `O_NOFOLLOW`/`OPEN_REPARSE_POINT` leaves an intermediate parent-dir swap after
   `validate_path` unguarded. Resolving every component relative to a retained
   workspace-root directory handle closes it. `cap-std` is the **candidate** *safe*
@@ -554,7 +419,8 @@ U1 (deps: libc + windows-sys + cap-std) ─▶ U7 (feasibility/evidence gate) �
   directory-handle bootstrap with the required no-follow/no-reparse semantics, (c)
   refuses intermediate symlink/junction swaps during the component walk, and (d)
   refuses an in-bounds leaf reparse/symlink is the exact question **U7** proves
-  test-first before U6 starts. If U7 records BLOCKED, the documented fallback is a
+  test-first before U1/U6 start. U8 separately proves the actual engine boundary.
+  If either records BLOCKED, the documented fallback is a
   hand-rolled *safe* `rustix` `openat` walk (Unix) + a separately-specified safe
   Windows handle-relative design — each requiring its own evidence gate — chosen over
   an in-crate `unsafe` `openat`/`O_PATH` walk or a path-based re-canonicalization
@@ -579,12 +445,13 @@ U1 (deps: libc + windows-sys + cap-std) ─▶ U7 (feasibility/evidence gate) �
 | Regressing exact-permission / sidecar-content behavior | Capture/restore stays exact (handle-bound); non-empty content tests remain unchanged; empty transient cleanup changes deliberately to fail-closed retention unless same-identity deletion is proven. |
 | Dangling-symlink self-heal edge case | Explicit absent-vs-link disambiguation before the no-follow open (U4). |
 | Dependency friction (Principle VI) | Both crates already transitive; platform-gated with justification comment (U1). |
-| `cap-std` MSRV incompatibility, missing beneath-root semantics, or path-only engine API (U6) | **U7 proves feasibility test-first before U6 starts** (`cargo +1.75.0 check --all-targets` on the candidate pin + six proof obligations: safe root-handle bootstrap, Dir/File conversion, intermediate-swap refusal, in-bounds leaf-reparse refusal, decided File boundary, capability- or identity-bound SQLite/Cozo engine open). If any obligation fails, U7 returns **BLOCKED** to Stage; the documented fallback requires its own evidence gate. No vague `unsafe`/path-based fallback. |
+| `cap-std` MSRV incompatibility or missing beneath-root semantics | U7 proves three bounded root/API/MSRV scenarios before U1 changes the product manifest. |
+| Path-only SQLite/Cozo engine API | U8 proves three bounded engine scenarios before U1/U6; BLOCKED leaves III/IV NOT-PASSED. |
 | Empty-sidecar cleanup deletes a replacement live sidecar | U3 forbids metadata-check + name-based unlink and leaves transient sidecars unless the same observed file identity can be deleted safely. |
-| Permission guarding is safe but the engine reopens `safe_path` | U7/U6 carry the capability or verified identity through WAL configuration and the actual SQLite/Cozo open; otherwise the gate is BLOCKED. |
+| Permission guarding is safe but the engine reopens `safe_path` | U8 must prove the bound API and U9 must integrate it; otherwise the gate is BLOCKED. |
 | `cap-std` adds a new crate family to the graph | Layers on the already-transitive `rustix`; before/after `cargo tree -d` in U1 proves no unexpected duplicate; `cargo audit` clean. |
-| U7 feasibility gate slips or returns BLOCKED | U6–U5 are dependency-gated on the U7 evidence PASS and do not start; Principles III/IV remain **NOT-PASSED** and the shipment cannot claim intermediate-directory containment until U7 PASSES and U6 lands. |
-| Intermediate-dir swap still open if U6 slips | U2–U5 are dependency-gated on U6 (itself gated on U7); Constitution III/IV completeness is claimed only with U7 PASS **and** U6 landed. |
+| U7 or U8 feasibility gate slips or returns BLOCKED | U1/U6/U9/U2–U5 do not start; Principles III/IV remain **NOT-PASSED**. |
+| U6 or U9 integration slips | U2–U5 remain gated; completeness requires U7/U8 PASS plus U6/U9 landed. |
 
 ## Constitution Check
 
@@ -592,7 +459,7 @@ U1 (deps: libc + windows-sys + cap-std) ─▶ U7 (feasibility/evidence gate) �
 |---|---|---|
 | I. Safety-First Rust | PASS | Entirely safe std (`OpenOptionsExt::custom_flags`, `File::set_permissions`, `File::metadata`, Windows `access_mode`/`share_mode`); `#![forbid(unsafe_code)]` preserved; all new helpers return `Result` with no `.unwrap()`/`.expect()`; each code unit gates on `clippy::pedantic -D warnings`. |
 | II. Test-First Development | PASS | U2/U3/U4 author NEW failing tests before implementation; U5 characterization; all existing tests re-run unchanged. |
-| III. Workspace Isolation / IV. CLI Containment | **NOT-PASSED (provisional; gated on U7 PASS + U6)** | Full-path containment depends on U6's beneath-root directory-handle-relative boundary, which in turn depends on the **U7 feasibility/evidence gate proving** — test-first, safe APIs only, Rust 1.75 — a safe atomic workspace-root handle bootstrap, safe `cap_std::fs::Dir/File` conversion, intermediate symlink/junction swap refusal, in-bounds leaf refusal, and a capability- or identity-bound route through `configure_sqlite_wal` plus the actual SQLite/Cozo engine open. Until U7 records PASS **and** U6 lands, III/IV are **NOT claimed complete**: final-component no-follow and safe permission handles still leave the path-only engine reopen race. Root-relative metadata plus name-based transient-sidecar unlink is also rejected because it does not bind the emptiness check to the deleted identity; unsupported cleanup leaves the sidecar. Threat model: an attacker may write/swap inside the workspace root but not its trusted parent. If U7 returns BLOCKED, these principles stay NOT-PASSED and no vague unsafe/path-based fallback is adopted. |
+| III. Workspace Isolation / IV. CLI Containment | **NOT-PASSED (provisional; gated on U7/U8 PASS + U6/U9)** | U7 proves the root/API/MSRV capability foundation, U8 proves the bound engine API, U6 integrates the contained opener/permission boundary, and U9 integrates the actual WAL/SQLite/Cozo open. Until both proofs PASS and both integrations land, III/IV are not complete. Unsupported sidecar cleanup retains the sidecar. |
 | V. Structured Observability | PASS | Each fail-closed refusal returns a traceable `GraphtorError`, not a silent early return. |
 | VI. Single Responsibility | PASS | `libc`/`windows-sys` are platform-gated, pinned to an already-transitive lock version, justified; `cap-std` (U6) is the **candidate** single safe capability API for beneath-root containment, layered on the already-transitive `rustix`, with its pin/MSRV/semantics **proven by the U7 evidence gate before adoption**; no speculative abstraction (helpers consumed by both paths). |
 | VII. Destructive Command Approval | PASS | No destructive actions; permission changes are transient and restored (see Plan Hardening risky-actions table). |
@@ -668,9 +535,9 @@ and `.github/instructions/strict-safety.instructions.md`.
 | ProposedAction | change_kind | targets | ActionRisk | rollback | approval | ActionResult |
 |---|---|---|---|---|---|---|
 | Add `libc` + `windows-sys` as platform-gated direct deps (U1) | config change | `Cargo.toml`, `Cargo.lock` | moderate | revert Cargo.toml/lock; both already transitive | not required (non-destructive, justified) | planned |
-| Add `cap-std` as a direct dep for the beneath-root walk (U1/U6) | config change | `Cargo.toml`, `Cargo.lock` | moderate | revert Cargo.toml/lock; falls back to Unix-only `rustix` walk + separate Windows design | not required (non-destructive, MSRV-verified, justified) | planned |
+| Add the U7/U8-proven `cap-std` version as a direct dep (U1) | config change | `Cargo.toml`, `Cargo.lock` | moderate | revert Cargo.toml/lock; no candidate is adopted before both proofs PASS | not required (non-destructive, MSRV-verified, justified) | planned |
 | Resolve guarded entries relative to a retained workspace-root `Dir` handle (U6) | local code change | `src/db/store.rs` | high | revert to final-component-only `open_no_follow`; the intermediate-dir race re-opens (documented regression) | prefer approval if `cap-std` MSRV/Windows behavior forces the fallback design | planned |
-| Carry containment through WAL configuration and SQLite/Cozo open (U6/U7) | local code change | `src/db/store.rs`, engine boundary | high | block the release if no safe bound-open mechanism exists | prefer approval if a new engine/VFS integration is required | planned |
+| Carry containment through WAL configuration and SQLite/Cozo open (U8/U9) | local code change | `src/db/store.rs`, engine boundary | high | block the release if no safe bound-open mechanism exists | prefer approval if a new engine/VFS integration is required | planned |
 | Replace racy empty-sidecar deletion with fail-closed retention (U3) | local behavior change | `src/db/store.rs` cleanup | moderate | restore cleanup only after same-identity deletion is proven | not required (security-preserving, test-guarded) | planned |
 | Retain a `File` handle on the main db for the `DataStore` lifetime (U3) | local code change | `src/db/store.rs` | high | Option C identity-verified re-open (Windows) | prefer approval if Windows engine-open conflict is observed | planned |
 | Remove the per-sidecar `is_reparse_point` re-check (U3/U4) | local code change | `src/db/store.rs` | moderate | restore the re-check alongside a no-follow open | not required (superseded, test-guarded) | planned |
@@ -689,7 +556,7 @@ destructive action.
 * **Target scenarios**: main-db(index 0) post-lock swap on Drop (U3); sidecar
   swap-between-check-and-clear on the write path (U4); **intermediate parent-directory
   swap after guarded preparation refused through WAL configuration and actual engine
-  open (U6)**; empty-sidecar observation followed by a live replacement never unlinks
+  open (U9)**; empty-sidecar observation followed by a live replacement never unlinks
   the replacement (U3); dangling-symlink fail-closed; stale-lock self-heal; exact-mode
   and non-empty-sidecar preservation; Windows retained handle does not block the engine
   db/WAL open (U5).
@@ -699,9 +566,10 @@ destructive action.
   sidecar.
 * **Rollback trigger**: any failing store test, a `cargo audit` advisory from U1, a
   Windows engine-open blocked by the retained handle, or a `cap-std` MSRV-1.75 /
-  Windows-behavior incompatibility surfaced in U1/U6. **Rollback procedure**: for the
+  Windows-behavior incompatibility surfaced in U7/U8. **Rollback procedure**: for the
   Windows-open case, switch that platform to Option C (identity-verified re-open) and
-  re-run U5; for a `cap-std` MSRV/Windows incompatibility, switch U6 to the documented
+  re-run U5; for a `cap-std` MSRV/Windows incompatibility, keep U1 blocked and return
+  to Stage to define the documented
   Unix-only `rustix` `openat` walk plus the separate safe Windows design (recording the
   decision in the PR); for a broader failure, revert the guard/clear-stale changes (the
   functions are self-contained) while keeping U1's deps. **Owner**: Ship agent.
@@ -882,8 +750,33 @@ until U7 proves all six obligations and U6 lands. Gate: **PASS** (advisory).
 
 <!-- plan-review-attempt: 6 -->
 <!-- plan-review-verdict: PASS -->
+* **Superseded by attempt 7 below.** Attempt 6's seven-task U1-U7 structure
+  exceeded the task-scenario heuristic and made U7's BLOCKED path unschedulable.
 * Sidecar cleanup now fails closed on identity ambiguity instead of relying on a
   directory-relative check/use sequence.
 * The capability boundary now includes WAL configuration and the actual SQLite/Cozo
   engine open; no guarded-then-path-reopen claim remains.
 * The durable Stage handoff matches the current U1-U7 DAG and `051-S` manifest.
+
+### Report-only staging-review addendum — 2026-08-25 (PR #107 pass 5: schedulable feasibility and bounded integrations)
+
+**Gate: ADVISORY** (report-only; backlog `059-F`/`051-S` already exists). The
+current-head review identified four security-DAG defects plus one duplicate
+rollback finding. All are resolved in the active plan and backlog.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| F1 | P1 | U7 depended on U1 even though U1 required U7's possibly-failing Rust 1.75 proof, so U7 could never record BLOCKED. | **Resolved.** U7 now has no dependency and runs candidate discovery in an isolated harness. U8 depends on U7; U1 depends on both proofs and adopts only proven versions. |
+| F2 | P1 | U7 combined six cross-platform and engine scenarios, violating the fewer-than-four-scenarios task heuristic. | **Resolved.** U7 owns three root/API/MSRV scenarios. New U8 (`059.008-T`) owns three engine-boundary feasibility scenarios. |
+| F3 | P1 | U6 combined five opener, permission, and engine scenarios. | **Resolved.** U6 owns three contained opener/permission scenarios. New U9 (`059.009-T`) owns three production engine-integration scenarios. U2–U5 depend on U6 and U9. |
+| F4 | P1 | The pip-hardening plan rollback restored the blanket `pip` grant on an approval prompt. | **Resolved in the sibling 050-S plan.** Rollback keeps `pip` denied/manual and permits only a separately reviewed exact anchored entry. |
+| F5 | P1 | Task `057.001-T` repeated the insecure rollback. | **Resolved.** Its acceptance and implementation notes now prohibit restoring blanket approval. |
+
+**Current authority:** nine-task U1–U9 DAG:
+U7 → U8 → U1 → U6 → U9 → U2 → U3/U4 → U5, with explicit
+fan-in dependencies recorded in backlog. Shipment `051-S` contains `059-F` plus
+`059.001-T` through `059.009-T`. Principles III/IV remain NOT-PASSED until
+U7/U8 PASS and U6/U9 land.
+
+<!-- plan-review-attempt: 7 -->
+<!-- plan-review-verdict: PASS -->

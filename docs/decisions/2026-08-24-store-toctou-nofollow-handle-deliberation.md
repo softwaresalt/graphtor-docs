@@ -251,7 +251,8 @@ existing tests protect.
    Windows and record the decision in the plan/PR.
 2. **Handle for transient sidecars** — resolved by the PR #107 addendum below. A
    separate emptiness check and name-based unlink cannot prove same identity. Leave
-   transient sidecars unless U7 proves an identity-bound deletion API.
+   transient sidecars unless the U3 implementation independently proves an
+   identity-bound deletion API.
 3. **`clear_stale_readonly_lock` non-existent candidates** — a candidate that does
    not exist must remain a skip (not a failure), but a *dangling symlink* must still
    fail closed (the existing `open_sqlite_refuses_a_dangling_symlinked_wal_sidecar`
@@ -362,3 +363,19 @@ Until **U7 records PASS and U6 lands**, Principles III (Workspace Isolation) and
 leaves the intermediate-directory swap race open. Continuous MSRV evidence (a dedicated
 Rust 1.75 CI check, or a proven equivalent repository gate) is required on U1 during
 implementation; Stage does not alter the workflow now.
+
+## Final PR #107 correction — bounded U7/U8 feasibility and U6/U9 integration
+
+The preceding addendum is historical where it describes one six-obligation U7 or
+one U6 carrying both permission and engine work. Current authority is:
+
+* U7 has no dependency and proves three root/API/MSRV scenarios in an isolated
+  harness, including candidate-version discovery before the product manifest changes.
+* U8 depends on U7 and proves three SQLite/Cozo engine-boundary scenarios.
+* U1 depends on U7 and U8 and adopts only their proven dependency versions.
+* U6 integrates the beneath-root opener and permission boundary in three scenarios.
+* U9 integrates the actual WAL/SQLite/Cozo engine open in three scenarios.
+* U2–U5 depend on both U6 and U9.
+
+Either feasibility gate may return BLOCKED before U1 runs. Principles III/IV remain
+NOT-PASSED until U7/U8 PASS and U6/U9 land.
