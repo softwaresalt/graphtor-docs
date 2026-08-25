@@ -1978,6 +1978,71 @@ and posture-classification context.
   If H1 changes handler signatures, update server unit tests to equivalent
   async tests or preserve a typed sync-compatible adapter.
 
+## Stage Readiness Evidence (durable — 2026-08-25)
+
+This section is a **durable, in-repo Stage staging-review record** for shipment
+`049-S`. It exists so that Ship can verify the eight-task manifest and the
+current plan-review state **without depending on external PR text**. PR #106 is
+now **MERGED** (frozen at headRefOid
+`6003e02978762e4b97045c9737009d960292ddf4`), so the prior "PR #106
+`## Local Review Readiness` block is the sole dynamic authority" framing below is
+**stale for a live decision** — its text no longer updates. Consult this durable
+block (and a fresh Ship current-HEAD local review) instead of the frozen PR body.
+
+**Scope of this record:** Stage staging/planning readiness only. It does **not**
+authorize Ship or merge and is **not** a Ship merge-readiness gate — Ship still
+runs its own fresh current-HEAD local review before merging the eventual
+implementation PR (per the GitHub PR automation §1.9 gate).
+
+* **Staging branch:** `chore/stage-dark-security-pipeline`.
+* **Stage-review snapshot HEAD:** `a5503919003996285eeeb4a7beafaf98da2ff2c0`
+  (2026-08-25). This is the Stage plan/backlog HEAD at which the manifest and
+  review state below were verified; it is a staging snapshot, not a Ship-reviewed
+  implementation HEAD.
+* **Shipment `commit` field:** intentionally **empty/cleared**. The premature
+  `commit: 642c3e4` (a Stage docs-reconciliation commit, not a 049-S
+  implementation) was removed on 2026-08-25 with the rationale preserved in the
+  `049-S` backlog log. Ship populates the `commit` field with the real
+  implementation/merge commit at execution time.
+
+**Eight-task manifest (verified queued 2026-08-25; covering feature `056-F`
+excluded per P-015):**
+
+| Task | Status | Role |
+|---|---|---|
+| `056.020-T` | queued | Build transparent MCP byte proxy |
+| `056.022-T` | queued | Own probe process identities and teardown |
+| `056.023-T` | queued | Non-interfering probe observation + evidence capture |
+| `056.021-T` | queued | Isolated probe workspace and config fixtures |
+| `056.001-T` | queued | Exact-CLI differential serve probe + cause ordering (T0) |
+| `056.002-T` | queued | Out-of-process serve handshake test driver |
+| `056.003-T` | queued | Harden `cmd_serve` diagnostics + preflight-complete event |
+| `056.019-T` | queued | Conditional H3-B isolated-config/cwd adjudication (sole terminal) |
+
+* **Covering feature `056-F`** (queued) is the P-015 protected covering feature
+  and is **excluded** from the shipment manifest (verified present, not a member).
+* Manifest is **unchanged** by this staging-review pass.
+
+**Plan-review state (durable):** No unresolved P0/P1 in this plan for the `049-S`
+release unit. The most recent Stage-run report-only reviews (2026-08-23 narrow
+remediation and 2026-08-23 re-decomposition, recorded in `## Plan Review` below)
+closed all consensus P1/P2 findings in-artifact; residual items are P3 advisories
+carried for Ship execution. **Counts (durable snapshot): P0 = 0, P1 = 0, P2 = 0
+(all prior P2 remediated), P3 = several advisories** (prefer targeted diagnostics
+over broad logging; keep the standalone probe crate out of the production
+dependency graph; preserve MSRV `cargo +1.75.0` on any dependency change). The
+fail-closed H3-B rule stands: an inconclusive `056.019-T` verdict moves it to
+`blocked` and blocks `049-S` closure pending a named bounded Stage follow-up.
+
+**Ship verification checklist (from this durable record):**
+
+1. Confirm the eight manifest members above are all present and `queued` (SQL:
+   `SELECT id,status FROM items WHERE id IN (…)`); `056-F` must be excluded.
+2. Run a fresh current-HEAD local review at the implementation HEAD (do not reuse
+   this staging snapshot or the frozen PR #106 body).
+3. Populate the shipment `commit` field only from the real implementation/merge
+   commit.
+
 ## Plan Review
 
 **Current status: the authoritative review state is tracked solely by the PR

@@ -1,4 +1,5 @@
 ---
+title: "Stage session — store.rs TOCTOU no-follow handle fix staged as queued shipment 051-S"
 type: session-memory
 agent: stage
 date: 2026-08-25

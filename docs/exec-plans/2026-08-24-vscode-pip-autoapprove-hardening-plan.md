@@ -1,7 +1,7 @@
 ---
 title: "Implementation Plan: Harden .vscode/settings.json pip auto-approval (9CEC208C)"
 description: "Replace the blanket chat.tools.terminal.autoApprove pip:true entry with a narrowly-scoped anchored regex (matchCommandLine:true), or remove it if no concrete pip command is required, restoring least-privilege for the terminal auto-approve allow-list"
-doc_type: "exec-plan"
+doc_type: "plan"
 source: "docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md"
 stash_ids:
   - "9CEC208C"
@@ -100,6 +100,33 @@ and unrelated stash entries.
   acceptance criteria.
 * **Scope creep** into other settings/security items. Mitigation: scope frozen
   to 9CEC208C.
+
+## Constitution Check
+
+This is a config-only change to `.vscode/settings.json` (a developer-environment
+file); no Rust source, tests, or product runtime are touched. Principles are
+mapped below.
+
+| Principle | Status | Notes |
+|---|---|---|
+| I. Safety-First Rust | N/A | No Rust source, type signatures, or error handling in scope; config-only edit. `#![forbid(unsafe_code)]` unaffected. |
+| II. Test-First Development | N/A (adapted) | No production code path; verification is JSON validity + byte-for-byte preservation of the three anchored patterns + a negative auto-approval check (see Runtime Verification), not a `cargo test` red/green. |
+| III. Workspace Isolation / IV. CLI Containment | PASS | Edit is confined to the in-workspace `.vscode/settings.json`; no path traversal, no writes outside the cwd tree. The change tightens (never widens) the terminal auto-approval trust boundary. |
+| V. Structured Observability | PASS | Change is git-tracked and diff-reviewable; the single-entry edit is fully traceable in the commit. |
+| VI. Single Responsibility | PASS | No dependency graph change; removes an over-broad grant without adding any speculative capability. |
+| VII. Destructive Command Approval | PASS (risk-reducing) | The change is the security improvement itself — it removes a blanket `"pip": true` substring grant that auto-approved arbitrary `pip ...` (RCE-at-install) command lines, restoring least-privilege to the auto-approve allow-list. The edit is non-destructive and fully reversible. |
+| VIII. Safety Modes | PASS | Careful-mode risk enumeration present in `## Plan Hardening` (ProposedAction at `ActionRisk: low`, rollback via git revert). |
+| IX. Git-Friendly Persistence | PASS | `.vscode/settings.json` remains valid, human-readable, Git-mergeable JSON; only the `pip` entry changes. |
+| X. Context Efficiency | N/A | No agent-facing data-access or tool-contract change. |
+| XI. Merge Commit History | N/A | Enforced by Ship at merge time. |
+
+**Config-only risk / rollback (explicit):** `ActionRisk: low`. The sole target is
+one developer-environment config file; the change is risk-*reducing* (narrows an
+over-broad auto-approval grant). No runtime service, data, schema, or shared
+contract is touched. **Rollback:** `git revert` / checkout of the single-file
+change. **Validation window:** the next agent session that exercises the
+documented `.scripts/*.py` clone workflow. No monitoring system applies; closure
+is a manual inspection item (see Runtime Verification and Closure).
 
 ## Plan Hardening Signals (REQUIRED)
 

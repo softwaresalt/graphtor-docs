@@ -1,6 +1,7 @@
 ---
 title: "Identity-bound no-follow handle for store.rs read-only permission ops"
 description: "Close the sibling symlink-swap TOCTOU races in EngineReadonlyGuard (lock/rollback/Drop) and clear_stale_readonly_lock by binding every permission mutation to a retained no-follow file handle, fail-closed, with no path-based chmod fallback"
+doc_type: "plan"
 source: "docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md"
 stash_ids:
   - "E86A6E56"
@@ -70,20 +71,36 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   and `FILE_SHARE_READ|WRITE|DELETE`. Add a justification comment (both crates are
   already transitive; Principle VI).
 * **Files**: `Cargo.toml` (and `Cargo.lock` refresh).
-* **Tests**: `cargo build` / `cargo check --all-targets` compile on the host
-  platform; `cargo tree -d` adds no new `windows-sys`/`libc` version; `cargo audit`
-  clean.
+* **Tests**: pinned-MSRV verification is **required** for these new direct
+  dependencies — run `cargo +1.75.0 check --all-targets` (equivalently
+  `rustup run 1.75.0 cargo check --all-targets`) and confirm it succeeds, so the
+  added `libc`/`windows-sys` edges and their feature set are proven to build on
+  the declared MSRV (1.75), not merely on the host toolchain. Also run
+  `cargo build` / `cargo check --all-targets` on the host platform. **Duplicate
+  impact must be verified by an explicit before/after comparison:** capture
+  `cargo tree -d` (and `cargo tree -i windows-sys` / `cargo tree -i libc`) output
+  **before** the dependency edit and **after**, then diff the two captures to
+  prove no new `windows-sys`/`libc` version (no second copy) was introduced — a
+  post-edit-only snapshot is insufficient. `cargo audit` clean.
 * **Posture**: config-first. **Domain**: config.
 * **Acceptance**: Both platform deps declared, pinned to an existing lock version,
-  and justified; workspace compiles; no new duplicate crate copy; no new `cargo
-  audit` advisory.
+  and justified; workspace compiles on the host **and** under the pinned MSRV
+  toolchain via `cargo +1.75.0 check --all-targets`; the before/after `cargo tree
+  -d` diff shows no new duplicate crate copy; no new `cargo audit` advisory.
 
 ### U2 — Safe no-follow handle helper + handle-bound permission primitives (code, test-first)
 
 * **Changes**: Add internal helpers in `src/db/store.rs` (or a small sibling module):
   * `open_no_follow(path: &Path) -> Result<File, GraphtorError>`:
-    * **Unix**: `OpenOptions` with `custom_flags(libc::O_NOFOLLOW)`. A symlink final
-      component fails the open with `ELOOP`; map to the existing refusal error.
+    * **Unix**: `OpenOptions` with `.read(true)` **explicitly set** and
+      `custom_flags(libc::O_NOFOLLOW)`. `O_NOFOLLOW` is only a modifier; an
+      access mode is still mandatory, so read access MUST be requested alongside
+      the flag or the open fails with `EINVAL` on some libc/kernel combinations.
+      Read (attribute/metadata) access is sufficient for `File::metadata()` and
+      the handle-bound `File::set_permissions` (fchmod) restore; write access is
+      not required and is deliberately not requested (least privilege, and it
+      avoids denying an already-read-only file). A symlink final component fails
+      the open with `ELOOP`; map to the existing refusal error.
     * **Windows**: `OpenOptions` with
       `custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)`,
       `access_mode(FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES)`, and
@@ -95,6 +112,30 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
       explicit code step on Windows, not a byproduct of the open. Attribute-level
       access (not `GENERIC_WRITE`) is required so an already-read-only file can be
       opened without `ERROR_ACCESS_DENIED`.
+      * **Reparse-breadth decision (ADOPTED: broader fail-closed policy).**
+        `FILE_ATTRIBUTE_REPARSE_POINT` is set for *any* reparse point, which is
+        strictly broader than the name-surrogate class (symlink /
+        junction/mount-point) that Unix `O_NOFOLLOW` refuses: it also flags
+        non-redirecting reparse points such as OneDrive/cloud placeholders,
+        dedup/HSM stubs, WSL interop sockets, and app-execution aliases. This
+        plan **deliberately adopts the broader policy — refuse the guarded open
+        for ANY entry carrying `FILE_ATTRIBUTE_REPARSE_POINT`** — rather than
+        attempting a narrower name-surrogate-only refusal. **Justification:**
+        (1) a precise name-surrogate test requires reading the reparse tag and
+        evaluating `IsReparseTagNameSurrogate`, which is only obtainable via
+        `DeviceIoControl(FSCTL_GET_REPARSE_POINT)` — an `unsafe` FFI call
+        precluded by `#![forbid(unsafe_code)]` at MSRV 1.75; and
+        `std::fs::FileType::is_symlink()` (which does classify name-surrogates)
+        is **path-based** (derived from `symlink_metadata`, not the retained
+        handle) and so would re-introduce the very TOCTOU this change closes.
+        (2) The guarded targets (main db `+ -wal/-shm/-journal` sidecars) are
+        expected to be plain regular files; a reparse point of *any* tag on
+        these paths is anomalous, so a blanket refusal is the containment-correct,
+        fail-closed choice. The resulting Unix/Windows asymmetry (Unix refuses
+        name-surrogates via `O_NOFOLLOW`; Windows refuses the broader reparse
+        class) is intentional and documented — Windows is simply stricter. This
+        breadth MUST be regression-tested for a legitimate non-redirecting
+        reparse file (see U5 delta (e)) and for the junction refusal path (U4).
   * `capture_perms(&File) -> Result<fs::Permissions>` via `File::metadata()`.
   * `set_readonly_via_handle(&File, bool) -> Result<()>` via `File::set_permissions`
     (fchmod on Unix; `SetFileInformationByHandle(FileBasicInfo)` on the Windows
@@ -166,9 +207,10 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 * **Changes**: Rewrite `clear_stale_readonly_lock` to, for each candidate:
   disambiguate genuinely-absent from present-but-link using `symlink_metadata`
   (`NotFound` → **skip**; present) — then decide fail-closed vs open. A present entry
-  whose link/reparse status is set (keyed off the reparse attribute, matching
-  `is_reparse_point` breadth so Windows **junctions** are caught, not just Unix
-  symlinks) is **refused** (fail closed), preserving
+  whose link/reparse status is set (keyed off the reparse attribute, i.e. the
+  **adopted broader fail-closed policy from U2** — any `FILE_ATTRIBUTE_REPARSE_POINT`
+  entry is refused, catching Windows **junctions** and non-name-surrogate reparse
+  points, not just Unix symlinks) is **refused** (fail closed), preserving
   `open_sqlite_refuses_a_dangling_symlinked_wal_sidecar`. Otherwise `open_no_follow`
   the candidate, probe read-only via the handle, and clear via the handle. Remove the
   standalone `is_reparse_point` + path-based `exists()`/`metadata`/`set_readonly`
@@ -203,17 +245,28 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   where possible; (d) validate the Windows retained handle
   (`FILE_READ_ATTRIBUTES|FILE_WRITE_ATTRIBUTES`, full share mode) does **not** block
   the engine's own db/WAL open — scoped to that single assertion (Option A vs the
-  documented Option C fallback decision — record the outcome in the PR).
+  documented Option C fallback decision — record the outcome in the PR); (e)
+  **broader-fail-closed-policy regression (Windows):** create a legitimate
+  **non-redirecting** reparse file — one whose reparse tag is NOT a name
+  surrogate (e.g. a non-name-surrogate reparse point creatable without the
+  symlink privilege where feasible) — and assert the guarded `open_no_follow`
+  path **refuses it** (consistent with the adopted broader policy in U2), so the
+  intentional Windows/Unix breadth asymmetry is pinned by a test rather than left
+  implicit. If a non-redirecting reparse file cannot be created on unprivileged
+  CI, the test skips (not fails) and the doc-comment's accepted-breadth statement
+  stands as the recorded behavior; report executed-vs-skipped.
 * **Files**: `src/db/store.rs` tests (and/or a single narrowly-scoped `tests/`
   integration file only if a full engine open is required for assertion (d)).
 * **Tests**: the delta matrix above (skips gracefully when the platform refuses
-  unprivileged symlink creation; junction variant runs where symlink creation is
-  denied).
+  unprivileged symlink/reparse creation; junction variant runs where symlink
+  creation is denied).
 * **Posture**: test-first / characterization. **Domain**: tests.
 * **Acceptance**: Suite passes on the host platform; skips (not fails) where symlink
-  creation is unprivileged, with the junction variant covering the Windows refusal
-  where possible; the Windows handle-mode decision (Option A vs C) is recorded in the
-  PR; whether the Windows refusal test executed or skipped is reported.
+  or non-redirecting-reparse creation is unprivileged, with the junction variant
+  covering the Windows name-surrogate refusal and delta (e) covering the broader
+  non-name-surrogate refusal where possible; the Windows handle-mode decision
+  (Option A vs C) is recorded in the PR; whether each Windows refusal test executed
+  or skipped is reported.
 
 ## Dependency Graph
 
@@ -258,7 +311,7 @@ U1 (deps) ─▶ U2 (helper) ─┬─▶ U3 (guard lock/Drop) ─┐
 |---|---|---|
 | I. Safety-First Rust | PASS | Entirely safe std (`OpenOptionsExt::custom_flags`, `File::set_permissions`, `File::metadata`, Windows `access_mode`/`share_mode`); `#![forbid(unsafe_code)]` preserved; all new helpers return `Result` with no `.unwrap()`/`.expect()`; each code unit gates on `clippy::pedantic -D warnings`. |
 | II. Test-First Development | PASS | U2/U3/U4 author NEW failing tests before implementation; U5 characterization; all existing tests re-run unchanged. |
-| III. Workspace Isolation / IV. CLI Containment | PASS (core intent) | Every permission mutation bound to a no-follow, identity-bound handle; explicit Windows reparse-attribute refusal; no path-based `chmod` fallback; fail-closed on link/reparse/unobtainable handle; previously-uncovered main db (index 0) swap now covered. Final-component-only scope stated (U2); parent-dir containment relies on caller `validate_path`. |
+| III. Workspace Isolation / IV. CLI Containment | PASS (core intent) | Every permission mutation bound to a no-follow, identity-bound handle; explicit Windows reparse-attribute refusal adopting a **broader fail-closed policy** (refuse ANY `FILE_ATTRIBUTE_REPARSE_POINT` entry — see U2 decision — because a precise name-surrogate test needs `unsafe` `DeviceIoControl` precluded at MSRV 1.75, and DB paths expect plain files); no path-based `chmod` fallback; fail-closed on link/reparse/unobtainable handle; previously-uncovered main db (index 0) swap now covered. Final-component-only scope stated (U2); parent-dir containment relies on caller `validate_path`. |
 | V. Structured Observability | PASS | Each fail-closed refusal returns a traceable `GraphtorError`, not a silent early return. |
 | VI. Single Responsibility | PASS | `libc`/`windows-sys` are platform-gated, pinned to an already-transitive lock version, justified; no speculative abstraction (helpers consumed by both paths). |
 | VII. Destructive Command Approval | PASS | No destructive actions; permission changes are transient and restored (see Plan Hardening risky-actions table). |
@@ -389,3 +442,26 @@ Reviewer, Constitution Reviewer, Scope Boundary Auditor. **Initial gate: FAIL**
   `## Constitution Check`; per-unit `clippy::pedantic`/no-`unwrap` acceptance;
   refusal-branch observability.
 * **No P0/P1 remain.** Gate: **PASS** (attempt 1). Cleared for harvest.
+
+### Report-only staging-review addendum — 2026-08-25 (Stage plan-review remediation)
+
+**Gate: ADVISORY** (report-only; backlog `059-F`/`051-S` already exists, so this
+pass does not re-gate harvest). This Stage staging-review pass strengthened the
+plan and the corresponding task acceptance criteria (`059.001-T`, `059.002-T`,
+`059.004-T`) to close four scope-ambiguity findings; no source or config was
+changed.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| A1 | P2 | Windows `FILE_ATTRIBUTE_REPARSE_POINT` breadth was ambiguous vs the narrower Unix `O_NOFOLLOW` name-surrogate class (symlink/junction). A blanket attribute check also refuses non-redirecting reparse points (OneDrive/dedup/HSM/WSL/app-alias). | **Resolved (U2/U4/U5).** Explicitly **adopted the broader fail-closed policy** — refuse ANY reparse-point entry — and justified it: a precise name-surrogate test needs the reparse tag via `unsafe` `DeviceIoControl(FSCTL_GET_REPARSE_POINT)` (precluded by `#![forbid(unsafe_code)]` at MSRV 1.75), and `FileType::is_symlink()` is path-based (re-introduces TOCTOU). Added U5 delta (e) regression for a legitimate non-redirecting reparse file (refused; skips unprivileged). Intentional Unix/Windows breadth asymmetry documented. |
+| A2 | P2 | New direct deps (`libc`, `windows-sys`) were verified only on the host toolchain, not the declared MSRV. | **Resolved (U1).** Acceptance now **requires** explicit pinned-MSRV verification `cargo +1.75.0 check --all-targets` (or `rustup run 1.75.0 …`). |
+| A3 | P2 | Unix `open_no_follow` specified only `custom_flags(libc::O_NOFOLLOW)` without an access mode; `O_NOFOLLOW` is a modifier and needs an access mode. | **Resolved (U2).** Unix `OpenOptions` now **explicitly sets `.read(true)`** alongside `O_NOFOLLOW` (least-privilege; sufficient for metadata + fchmod restore; avoids denying an already-read-only file). |
+| A4 | P2 | Duplicate-crate impact was asserted with a post-edit-only `cargo tree -d` snapshot. | **Resolved (U1).** Acceptance now **requires a before/after `cargo tree -d` (and `-i windows-sys`/`-i libc`) comparison** proving no new version copy. |
+
+**Findings summary:** P0 = 0, P1 = 0, P2 = 4 (all resolved in-artifact this pass),
+P3 = 0. Task acceptance criteria for `059.001-T`/`059.002-T`/`059.004-T` updated
+to match. Gate: **PASS** (advisory). No manifest change; shipment `051-S` remains
+queued.
+
+<!-- plan-review-attempt: 2 -->
+<!-- plan-review-verdict: PASS -->
