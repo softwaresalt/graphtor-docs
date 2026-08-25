@@ -950,11 +950,12 @@ retry contract.
 
 This section is the authoritative task-ordering and issue graph for the current
 artifact. It supersedes every DAG in the historical Plan Review sections below.
-Current staging authority is the `## Stage Readiness Evidence (durable —
-2026-08-25)` section below; consult it (not the frozen PR body) for the current
-staging-review state. PR #106 is now MERGED (frozen at headRefOid
-`6003e02978762e4b97045c9737009d960292ddf4`) and is no longer a live readiness
-authority; this plan claims no current READY and does not authorize Ship or merge.
+For the current staging-review state, the `## Stage Readiness Evidence (durable —
+2026-08-25)` section below is a manifest/disposition cross-check only — it is **NOT
+a review-currency authority or merge gate**. The **authoritative dynamic gate** is
+the live PR #107 `## Local Review Readiness` current-HEAD record plus Ship's
+mandatory fresh current-HEAD local review. PR #106 is merged and historical; this
+plan claims no current READY and does not authorize Ship or merge.
 
 ### Authoritative invariants (single source of truth)
 
@@ -1041,11 +1042,12 @@ than restate every clause:
   managed-config tasks (`056.008-T`/`056.009-T`/`056.018-T`/`056.027-T`) may read,
   mutate, back up, and recover the configured workspace `.mcp.json` with typed
   ownership and approval where destructive.
-* **Current staging authority is the durable in-repo record** — the
-  `## Stage Readiness Evidence (durable — 2026-08-25)` section is the current
-  staging-review authority. PR #106 is now MERGED (frozen at headRefOid
-  `6003e02978762e4b97045c9737009d960292ddf4`) and is no longer a live readiness
-  authority; this plan claims no current READY and does not authorize Ship or merge.
+* **The authoritative dynamic gate is the live PR + Ship's fresh review** — the
+  `## Stage Readiness Evidence (durable — 2026-08-25)` section is a manifest/
+  disposition cross-check only, **NOT a review-currency authority or merge gate**.
+  The gate is the live PR #107 `## Local Review Readiness` current-HEAD record plus
+  Ship's mandatory fresh current-HEAD local review. PR #106 is merged and historical;
+  this plan claims no current READY and does not authorize Ship or merge.
 
 ### Root cause of the prior P1s
 
@@ -1986,13 +1988,15 @@ and posture-classification context.
 ## Stage Readiness Evidence (durable — 2026-08-25)
 
 This section is a **durable, in-repo Stage staging-review record** for shipment
-`049-S`. It exists so that Ship can verify the eight-task manifest and the
-current plan-review state **without depending on external PR text**. PR #106 is
-now **MERGED** (frozen at headRefOid
-`6003e02978762e4b97045c9737009d960292ddf4`), so the prior "PR #106
-`## Local Review Readiness` block is the sole dynamic authority" framing below is
-**stale for a live decision** — its text no longer updates. Consult this durable
-block (and a fresh Ship current-HEAD local review) instead of the frozen PR body.
+`049-S`. It exists only so Ship can cross-check the eight-task manifest membership
+and the plan-review disposition; it is **explicitly NOT a review-currency authority
+and NOT a merge-readiness gate**. The **authoritative dynamic gate** is the live
+PR #107 `## Local Review Readiness` current-HEAD record **plus Ship's mandatory
+fresh current-HEAD local review** (GitHub PR automation §1.9) at the implementation
+HEAD. **No commit SHA in this document is authoritative** — any SHA here is
+historical evidence only and goes stale the moment new commits land (including this
+edit). The earlier "PR #106 `## Local Review Readiness` block is the sole dynamic
+authority" framing is superseded: PR #106 is merged and historical.
 
 **Scope of this record:** Stage staging/planning readiness only. It does **not**
 authorize Ship or merge and is **not** a Ship merge-readiness gate — Ship still
@@ -2000,10 +2004,12 @@ runs its own fresh current-HEAD local review before merging the eventual
 implementation PR (per the GitHub PR automation §1.9 gate).
 
 * **Staging branch:** `chore/stage-dark-security-pipeline`.
-* **Stage-review snapshot HEAD:** `a5503919003996285eeeb4a7beafaf98da2ff2c0`
-  (2026-08-25). This is the Stage plan/backlog HEAD at which the manifest and
-  review state below were verified; it is a staging snapshot, not a Ship-reviewed
-  implementation HEAD.
+* **Stage-review snapshot (HISTORICAL — non-authoritative):** the manifest and
+  review disposition below were last cross-checked at a Stage plan/backlog snapshot
+  on 2026-08-25. A specific commit SHA is deliberately **not pinned here**: a pinned
+  staging SHA goes stale on the next commit and must not be mistaken for a gate. The
+  authoritative current HEAD is whatever the live PR #107 `## Local Review Readiness`
+  record and Ship's fresh current-HEAD local review report at execution time.
 * **Shipment `commit` field:** intentionally **empty/cleared**. The premature
   `commit: 642c3e4` (a Stage docs-reconciliation commit, not a 049-S
   implementation) was removed on 2026-08-25 with the rationale preserved in the
@@ -2043,18 +2049,21 @@ fail-closed H3-B rule stands: an inconclusive `056.019-T` verdict moves it to
 
 1. Confirm the eight manifest members above are all present and `queued` (SQL:
    `SELECT id,status FROM items WHERE id IN (…)`); `056-F` must be excluded.
-2. Run a fresh current-HEAD local review at the implementation HEAD (do not reuse
-   this staging snapshot or the frozen PR #106 body).
+2. Run a fresh current-HEAD local review at the implementation HEAD and record it
+   in the live PR #107 `## Local Review Readiness` block (do not reuse this
+   historical staging snapshot or the frozen PR #106 body).
 3. Populate the shipment `commit` field only from the real implementation/merge
    commit.
 
 ## Plan Review
 
-**Current status: PR #106 is now MERGED (frozen at headRefOid
-`6003e02978762e4b97045c9737009d960292ddf4`) and is no longer a live readiness
-authority.** The current staging-review authority is the `## Stage Readiness
-Evidence (durable — 2026-08-25)` section above — reviewed staging HEAD, the
-eight-task manifest, and durable P0/P1/P2 counts live there. This plan document
+**Current status: PR #106 is merged and historical; it is no longer a live
+readiness authority.** The **authoritative dynamic gate** is the live PR #107
+`## Local Review Readiness` current-HEAD record plus Ship's mandatory fresh
+current-HEAD local review. The `## Stage Readiness Evidence (durable — 2026-08-25)`
+section above is a manifest/disposition cross-check only — its eight-task manifest
+and durable P0/P1/P2 counts are advisory staging evidence, **not** a
+review-currency authority and **not** pinned to any commit SHA. This plan document
 does not assert its own current review outcome and does not independently
 authorize Ship or merge; Ship still runs a fresh current-HEAD local review before
 merging the eventual implementation PR. The frozen PR #106 body is retained only
@@ -2069,10 +2078,12 @@ cause-family remediation units grouped by `phase:`/`cause:` labels, and PHASE 3
 unshipped final acceptance/docs (`056.012`/`056.013`/`056.004`) — as defined in
 the `## Issue and Dependency Graph` section above. The global "every selected
 causal task re-probes" rule is replaced by the shipment-interface re-probe rule.
-PR #106 is now MERGED and staging/planning-only; its frozen
+PR #106 is merged and staging/planning-only; its frozen
 `## Local Review Readiness` block is historical and no longer a live authority.
-Current staging authority is the `## Stage Readiness Evidence (durable —
-2026-08-25)` section above.
+The authoritative dynamic gate is the live PR #107 `## Local Review Readiness`
+current-HEAD record plus Ship's mandatory fresh current-HEAD local review; the
+`## Stage Readiness Evidence (durable — 2026-08-25)` section above is a
+manifest/disposition cross-check only.
 
 ### Report-only review — 2026-08-23 narrow remediation (fresh cycle)
 
@@ -2132,12 +2143,12 @@ relies on Stage/Orchestrator running it (runtime enforcement is a
 Ship/Orchestrator concern, out of Stage's planning scope).
 
 **Verdict: no unresolved P0/P1** after in-pass remediation; residual items are P3
-advisories. PR #106 is now MERGED (frozen at headRefOid
-`6003e02978762e4b97045c9737009d960292ddf4`); its `## Local Review Readiness`
-block is historical and no longer a live authority. Current staging authority is
-the `## Stage Readiness Evidence (durable — 2026-08-25)` section above, and a
-fresh Ship current-HEAD local review still precedes any merge; this plan does not
-restate a dynamic readiness value.
+advisories. PR #106 is merged and historical; its `## Local Review Readiness`
+block is no longer a live authority. The **authoritative dynamic gate** is the
+live PR #107 `## Local Review Readiness` current-HEAD record plus Ship's mandatory
+fresh current-HEAD local review; the `## Stage Readiness Evidence (durable —
+2026-08-25)` section above is a manifest/disposition cross-check only, pinned to no
+commit SHA. This plan does not restate a dynamic readiness value.
 
 ### Report-only review — 2026-08-23 Stage re-decomposition
 
@@ -2273,12 +2284,14 @@ current artifact state — see the current-status note above.
   record was written on branch `chore/stage-049-S`, which is a HISTORICAL staging
   branch — do NOT read it as the current branch state. Current Stage work is on
   `chore/stage-dark-security-pipeline` (see the `## Stage Readiness Evidence
-  (durable — 2026-08-25)` section). PR #106 is now MERGED and its
+  (durable — 2026-08-25)` section). PR #106 is merged and its
   `## Local Review Readiness` block is historical/frozen, no longer a live
-  authority; current staging authority is that durable section. This plan asserts no
-  static "latest reviewed HEAD/outcome" (such a claim would stale on every push).
-  Prior review outcomes, with their historical SHAs, are recorded in the
-  historical audit trail below.
+  authority; the authoritative dynamic gate is the live PR #107 `## Local Review
+  Readiness` current-HEAD record plus Ship's mandatory fresh current-HEAD local
+  review (the durable section is a manifest/disposition cross-check only). This
+  plan asserts no static "latest reviewed HEAD/outcome" (such a claim would stale
+  on every push). Prior review outcomes, with their historical SHAs, are recorded
+  in the historical audit trail below.
 * Linked deliberation: `docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md`.
 * Backlog scope: feature `056-F`, tasks `056.001-T`..`056.028-T` (28 tasks).
   **PHASE 1 evidence shipment `049-S`** (eight-task task-only manifest; `056-F`
@@ -2339,10 +2352,12 @@ III/IV containment trust boundary).
 All prior Plan Review DAGs, dependency orderings, and per-cycle remediation
 bodies are **superseded** by the current `## Issue and Dependency Graph` section
 and its authoritative forward chain. They are retained only as audit metadata;
-none of their task-ordering or dependency prose is normative. PR #106 is now
-MERGED and its `## Local Review Readiness` block is historical/frozen; the current
-staging authority is the `## Stage Readiness Evidence (durable — 2026-08-25)`
-section above.
+none of their task-ordering or dependency prose is normative. PR #106 is merged
+and its `## Local Review Readiness` block is historical/frozen; the authoritative
+dynamic gate is the live PR #107 `## Local Review Readiness` current-HEAD record
+plus Ship's mandatory fresh current-HEAD local review (the `## Stage Readiness
+Evidence (durable — 2026-08-25)` section above is a manifest/disposition
+cross-check only).
 
 | Reviewed HEAD | Date | Outcome | Notes |
 |---|---|---|---|

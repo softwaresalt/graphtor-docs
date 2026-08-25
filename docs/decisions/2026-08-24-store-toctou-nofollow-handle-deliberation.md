@@ -3,6 +3,8 @@ title: "Identity-bound no-follow handle for store.rs read-only permission ops (s
 description: "Establish a fail-closed, identity-bound no-follow handle design that closes the sibling symlink-swap TOCTOU races in EngineReadonlyGuard and clear_stale_readonly_lock without any path-based chmod fallback"
 topic: "Filesystem-security hardening of src/db/store.rs read-only lock/clear permission mutations"
 depth: "deep"
+doc_type: "decision"
+source: "stash:5905CDEE"
 decision_status: "decided"
 promoted_to: "plan"
 linked_artifacts:
@@ -269,3 +271,83 @@ existing tests protect.
 | Regression in exact-permission / sidecar-content behavior | Capture/restore stays exact, just handle-bound; all existing tests retained and must pass unchanged. |
 | Dependency addition friction (Principle VI) | Both crates already transitive; add platform-gated with a justification comment; no new supply-chain surface. |
 | Dangling-symlink self-heal edge case | Explicit existence-vs-link disambiguation before the no-follow open (Unresolved Question 3). |
+
+## Addendum — PR #107 review (2026-08-25): intermediate-directory threat, U7 feasibility gate, honest Principles III/IV
+
+This decided deliberation is amended (not reopened) to record the PR #107 Copilot
+review outcome and the corresponding plan/backlog changes. The original decision
+(identity-bound, fail-closed, no-follow, no path-based `chmod` fallback) stands; the
+amendments below strengthen it and correct earlier overclaims.
+
+### Intermediate-directory threat (new)
+
+The original design bound permission mutations to a final-component no-follow handle.
+Review established that a **final-component** `O_NOFOLLOW`/`OPEN_REPARSE_POINT` does
+**not** stop an **intermediate parent-directory swap** performed after `validate_path`
+but before the mutation. Full containment requires resolving **every path component**
+relative to a retained **workspace-root directory handle**, not just refusing a leaf
+link. This is added as unit **U6** (containment-safe beneath-root, directory-handle-
+relative opener) which gates the code units U2–U5.
+
+**Threat model (explicit):** an attacker may create/write/swap entries **inside** the
+workspace root but **not** its trusted parent. The workspace-root directory handle is
+bootstrapped **once** from the trusted parent and **retained for the `DataStore`
+lifetime**; every subsequent open walks components relative to that handle.
+
+### `cap-std` is a candidate, not a proven solution — U7 feasibility/evidence gate (new)
+
+Earlier drafts **overclaimed** that `cap-std` already provides the exact
+root/intermediate/leaf beneath-root semantics and compiles under Rust 1.75. That is
+**not yet proven**. A bounded, test-first feasibility/evidence gate **U7**
+(`059.007-T`) is introduced to prove, using **safe APIs only** under MSRV 1.75:
+
+1. Atomic workspace-root directory-handle bootstrap with no-follow/no-reparse
+   semantics — Unix safe `OpenOptions` `O_DIRECTORY|O_NOFOLLOW` with read access;
+   Windows safe `OpenOptions` directory handle using
+   `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, reparse-attribute
+   rejection, and explicit sharing/access flags — retained for the `DataStore`
+   lifetime.
+2. Conversion to/from `cap_std::fs::Dir`/`File` (or whichever safe capability API is
+   selected), including the **`cap_std::fs::File` vs `std::fs::File` boundary**
+   decision (either `into_std` conversion or capability-file helper signatures) —
+   **PENDING U7 PASS**; the boundary is **not decided until U7 records PASS**, at which
+   point U7 records the exact APIs so no ambiguity remains for U6/U2.
+3. A component walk that prevents escape and **refuses intermediate symlink/junction
+   swaps**.
+4. A final in-bounds leaf symlink/reparse that is **refused, not merely prevented from
+   escaping**.
+5. The `cap-std` candidate **compiles with Rust 1.75**.
+
+If any required API/semantics fail, **U7 returns BLOCKED to Stage** and Principles
+III/IV remain **not-passed**. No vague `unsafe` and no path-based fallback is accepted;
+any hand-rolled `rustix`/Windows fallback would require its own separate evidence gate.
+Dependencies: **U7 depends on U1; U6 depends on U7**; U2–U5 remain gated transitively.
+U7 is added to the `051-S` shipment manifest.
+
+### Transient sidecar cleanup bound to the retained root handle (clarified)
+
+Unresolved Question 2 is tightened: the empty-only cleanup of transient
+`-wal`/`-shm`/`-journal` sidecars MUST use the **retained workspace-root capability
+`Dir` handle** for the relative `symlink_metadata` emptiness probe and the relative
+`remove_file` unlink, so an intermediate-directory swap between probe and unlink cannot
+redirect the deletion. A path-based cleanup residual is **no longer accepted**.
+
+### Deterministic Windows reparse predicate (clarified)
+
+The broader fail-closed reparse policy is pinned by a **module-private, target-independent
+literal bit constant `0x0000_0400`** and a pure predicate (`should_refuse_reparse`)
+compiled/tested on **Linux CI**; the predicate is the **single source of truth** — the
+production Windows refusal branch MUST call it (never an inline reparse-bit mask, and
+the literal occurs exactly once, inside the predicate), plus a Windows-only assertion
+that the literal equals windows-sys `FILE_ATTRIBUTE_REPARSE_POINT` and that the
+production branch drives the predicate (so it cannot be a decorative unused helper).
+The policy is the **intentionally broader any-reparse-point** refusal (refuse ANY
+`FILE_ATTRIBUTE_REPARSE_POINT` entry), not merely matching `is_reparse_point` breadth.
+
+### Honest Principles III/IV status
+
+Until **U7 records PASS and U6 lands**, Principles III (Workspace Isolation) and IV
+(CLI Containment) are **NOT-PASSED (provisional)**: final-component no-follow alone
+leaves the intermediate-directory swap race open. Continuous MSRV evidence (a dedicated
+Rust 1.75 CI check, or a proven equivalent repository gate) is required on U1 during
+implementation; Stage does not alter the workflow now.
