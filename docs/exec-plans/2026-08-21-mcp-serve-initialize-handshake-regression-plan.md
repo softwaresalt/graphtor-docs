@@ -950,8 +950,11 @@ retry contract.
 
 This section is the authoritative task-ordering and issue graph for the current
 artifact. It supersedes every DAG in the historical Plan Review sections below.
-The live review decision remains the PR #106 `## Local Review Readiness` block;
-this plan claims no current READY.
+Current staging authority is the `## Stage Readiness Evidence (durable —
+2026-08-25)` section below; consult it (not the frozen PR body) for the current
+staging-review state. PR #106 is now MERGED (frozen at headRefOid
+`6003e02978762e4b97045c9737009d960292ddf4`) and is no longer a live readiness
+authority; this plan claims no current READY and does not authorize Ship or merge.
 
 ### Authoritative invariants (single source of truth)
 
@@ -1038,9 +1041,11 @@ than restate every clause:
   managed-config tasks (`056.008-T`/`056.009-T`/`056.018-T`/`056.027-T`) may read,
   mutate, back up, and recover the configured workspace `.mcp.json` with typed
   ownership and approval where destructive.
-* **PR readiness is the sole dynamic authority** — the PR #106
-  `## Local Review Readiness` block is authoritative; this plan claims no
-  current READY.
+* **Current staging authority is the durable in-repo record** — the
+  `## Stage Readiness Evidence (durable — 2026-08-25)` section is the current
+  staging-review authority. PR #106 is now MERGED (frozen at headRefOid
+  `6003e02978762e4b97045c9737009d960292ddf4`) and is no longer a live readiness
+  authority; this plan claims no current READY and does not authorize Ship or merge.
 
 ### Root cause of the prior P1s
 
@@ -2045,11 +2050,15 @@ fail-closed H3-B rule stands: an inconclusive `056.019-T` verdict moves it to
 
 ## Plan Review
 
-**Current status: the authoritative review state is tracked solely by the PR
-#106 `## Local Review Readiness` block** — reviewed HEAD, outcome, and P0/P1
-counts live there. This plan document does not assert its own current review
-outcome and does not independently authorize Ship or merge; consult the PR
-block for the live decision.
+**Current status: PR #106 is now MERGED (frozen at headRefOid
+`6003e02978762e4b97045c9737009d960292ddf4`) and is no longer a live readiness
+authority.** The current staging-review authority is the `## Stage Readiness
+Evidence (durable — 2026-08-25)` section above — reviewed staging HEAD, the
+eight-task manifest, and durable P0/P1/P2 counts live there. This plan document
+does not assert its own current review outcome and does not independently
+authorize Ship or merge; Ship still runs a fresh current-HEAD local review before
+merging the eventual implementation PR. The frozen PR #106 body is retained only
+as historical evidence.
 
 **Latest structure (2026-08-23 Stage re-decomposition):** the earlier single
 forward-only chain is superseded by release-unit phases — PHASE 1 evidence
@@ -2060,8 +2069,10 @@ cause-family remediation units grouped by `phase:`/`cause:` labels, and PHASE 3
 unshipped final acceptance/docs (`056.012`/`056.013`/`056.004`) — as defined in
 the `## Issue and Dependency Graph` section above. The global "every selected
 causal task re-probes" rule is replaced by the shipment-interface re-probe rule.
-PR #106 is staging/planning-only; its current-HEAD readiness is authoritative
-only in the PR #106 `## Local Review Readiness` block, which this plan does not restate.
+PR #106 is now MERGED and staging/planning-only; its frozen
+`## Local Review Readiness` block is historical and no longer a live authority.
+Current staging authority is the `## Stage Readiness Evidence (durable —
+2026-08-25)` section above.
 
 ### Report-only review — 2026-08-23 narrow remediation (fresh cycle)
 
@@ -2121,9 +2132,12 @@ relies on Stage/Orchestrator running it (runtime enforcement is a
 Ship/Orchestrator concern, out of Stage's planning scope).
 
 **Verdict: no unresolved P0/P1** after in-pass remediation; residual items are P3
-advisories. PR #106's current-HEAD readiness is authoritative only in its
-`## Local Review Readiness` block (a fresh Ship local review follows this Stage
-commit); this plan does not restate that dynamic value.
+advisories. PR #106 is now MERGED (frozen at headRefOid
+`6003e02978762e4b97045c9737009d960292ddf4`); its `## Local Review Readiness`
+block is historical and no longer a live authority. Current staging authority is
+the `## Stage Readiness Evidence (durable — 2026-08-25)` section above, and a
+fresh Ship current-HEAD local review still precedes any merge; this plan does not
+restate a dynamic readiness value.
 
 ### Report-only review — 2026-08-23 Stage re-decomposition
 
@@ -2197,8 +2211,10 @@ manifest) is correct and required, and the no-kill test-only teardown split in
   P-001/P-016 enforcement (by design); the acyclic graph alone permits two remedy
   families to become Ready simultaneously.
 
-PR #106 `## Local Review Readiness` is the sole dynamic current-HEAD authority
-for readiness; consult it (not this plan) for the current outcome.
+PR #106 is now MERGED and its `## Local Review Readiness` block is historical
+(frozen), no longer a live authority. Consult the `## Stage Readiness Evidence
+(durable — 2026-08-25)` section above for the current staging-review state; Ship
+runs a fresh current-HEAD local review before merge.
 
 The historical **correction round 2** holistic graph rewrite (2026-08-23): the probe becomes a
 **standalone, non-published** `tools/mcp-probe/` crate split by width —
@@ -2253,8 +2269,13 @@ current artifact state — see the current-status note above.
 ### Reviewed artifact identity
 
 * Plan: `docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md`
-  (this file), on branch `chore/stage-049-S`. The sole current-HEAD review
-  authority is the PR #106 `## Local Review Readiness` block; this plan asserts no
+  (this file). **Historical branch caveat:** this reviewed-artifact-identity
+  record was written on branch `chore/stage-049-S`, which is a HISTORICAL staging
+  branch — do NOT read it as the current branch state. Current Stage work is on
+  `chore/stage-dark-security-pipeline` (see the `## Stage Readiness Evidence
+  (durable — 2026-08-25)` section). PR #106 is now MERGED and its
+  `## Local Review Readiness` block is historical/frozen, no longer a live
+  authority; current staging authority is that durable section. This plan asserts no
   static "latest reviewed HEAD/outcome" (such a claim would stale on every push).
   Prior review outcomes, with their historical SHAs, are recorded in the
   historical audit trail below.
@@ -2318,8 +2339,10 @@ III/IV containment trust boundary).
 All prior Plan Review DAGs, dependency orderings, and per-cycle remediation
 bodies are **superseded** by the current `## Issue and Dependency Graph` section
 and its authoritative forward chain. They are retained only as audit metadata;
-none of their task-ordering or dependency prose is normative. The live decision
-is the PR #106 `## Local Review Readiness` block.
+none of their task-ordering or dependency prose is normative. PR #106 is now
+MERGED and its `## Local Review Readiness` block is historical/frozen; the current
+staging authority is the `## Stage Readiness Evidence (durable — 2026-08-25)`
+section above.
 
 | Reviewed HEAD | Date | Outcome | Notes |
 |---|---|---|---|
