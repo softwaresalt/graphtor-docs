@@ -29,16 +29,18 @@ Ship invocation.
   * 059.002-T — U2 safe no-follow handle helper + handle-bound perm primitives (code, test-first)
   * 059.003-T — U3 bind EngineReadonlyGuard lock/rollback/Drop to retained handles (from stash 5905CDEE)
   * 059.004-T — U4 bind clear_stale_readonly_lock probe/clear to no-follow handles (from stash E86A6E56)
-  * 059.005-T — U5 cross-platform swap-resistance deltas + Windows handle-mode validation (tests)
+  * 059.005-T — U5 cross-platform sidecar swap-resistance matrix + per-platform fail-closed signal + junction refusal, deltas (a)-(c) (tests)
   * 059.006-T — U6 integrate the beneath-root opener and permission boundary
   * 059.007-T — U7 prove the capability root/API/MSRV foundation
   * 059.008-T — U8 prove the contained SQLite/Cozo engine boundary
   * 059.009-T — U9 integrate the capability-bound SQLite/Cozo engine open
-* **Shipment manifest:** [059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
-  059.005-T, 059.006-T, 059.007-T, 059.008-T, 059.009-T].
+  * 059.010-T — U10 Windows retained-handle engine non-interference + broader non-name-surrogate reparse regression, deltas (d)-(e) (tests; added by PR #107 review)
+  * 059.011-T — U11 deterministic should_refuse_reparse predicate + Windows literal-equality + single-source structural proof, deltas (f)-(g) (tests; added by PR #107 review)
+* **Shipment manifest (12 items):** [059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
+  059.005-T, 059.006-T, 059.007-T, 059.008-T, 059.009-T, 059.010-T, 059.011-T].
 * **Dependencies:** U8←U7; U1←U7+U8; U6←U1+U7+U8; U9←U6+U8;
-  U2←U1+U6+U9; U3/U4←U2+U6+U9; U5←U3+U4+U6+U9 (`blocks`).
-  U7 or U8 BLOCKED halts all production work.
+  U2←U1+U6+U9; U3/U4←U2+U6+U9; U5←U3+U4+U6+U9; U10←U3+U4+U6+U9; U11←U2 (`blocks`).
+  U7 or U8 BLOCKED halts all production work. U5/U10/U11 are terminal test units (nothing depends on them), so the split is acyclic.
 * **Semantic links:** 059.004-T related_to 059.003-T (sibling same-mechanism);
   059-F related_to 052-F (reparse-point guards prior art); 059-F related_to 056.024-T
   (no-follow config mutation sibling).
@@ -51,7 +53,7 @@ Ship invocation.
   (Option A retained no-follow handle CHOSEN; B path re-check REJECTED; C identity-verified
   re-open documented fallback). Windows feasibility rows corrected during remediation.
 * Impl plan: `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`
-  (units U1–U9, dependency graph, `## Constitution Check`, `## Plan Hardening`,
+  (units U1–U11, dependency graph, `## Constitution Check`, `## Plan Hardening`,
   `## Plan Review`).
 
 ## Review outcome
@@ -83,7 +85,7 @@ already transitive in Cargo.lock; added as platform-gated direct deps (Principle
 ## Deferred decision (to Ship / implementation, test-first)
 
 Windows retained-handle share/access mode (Option A retained handle vs Option C
-identity-verified re-open) — resolved via U5 test evidence during implementation, recorded
+identity-verified re-open) — resolved via U10 test evidence (delta d) during implementation, recorded
 in the release PR. Not a Stage blocker.
 
 ## Changed artifacts
@@ -121,3 +123,28 @@ commits, PRs, and Ship. No blockers.
 
 None. Shipment 051-S is queued and NOT executed. 050-S and its uncommitted artifacts
 preserved. Do not execute the shipment (Ship's responsibility).
+
+
+## Update - PR #107 U5 test-scenario split (2026-08-25)
+
+Current-head Copilot review flagged that U5 (`059.005-T`) still carried seven test deltas
+(a)-(g), violating the fewer-than-four-scenarios task heuristic. U5 was split into three
+bounded test tasks and the current-state bullets above were updated to match:
+
+* U5 (`059.005-T`) keeps deltas (a)-(c): sidecar matrix, per-platform fail-closed signal,
+  junction refusal (at most three scenarios).
+* U10 (`059.010-T`, NEW) owns deltas (d)-(e): Windows retained-handle engine
+  non-interference and broader non-name-surrogate reparse regression (at most two).
+* U11 (`059.011-T`, NEW) owns deltas (f)-(g): deterministic `should_refuse_reparse`
+  predicate, Windows literal-equality, and single-source structural proof (at most three).
+* Dependencies: U5 and U10 depend on U3+U4+U6+U9; U11 depends on U2. Nothing depends on
+  U5/U10/U11, so the split stays acyclic.
+
+The shipment `051-S` manifest is now 12 items (`059-F` plus `059.001-T` through
+`059.011-T`). Authority: the eleven-task U1-U11 DAG in
+`docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md` (pass 6 addendum) and
+the matching section in
+`docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md`. The historical
+session-narrative sections above (which created `059.001-T` through `059.009-T`) are left
+as written; only the live current-state bullets were updated. Principles III/IV remain
+NOT-PASSED until U7/U8 PASS and U6/U9 land.

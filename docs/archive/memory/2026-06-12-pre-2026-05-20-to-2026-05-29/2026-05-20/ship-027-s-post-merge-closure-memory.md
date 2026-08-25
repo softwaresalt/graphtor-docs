@@ -27,7 +27,7 @@ phase: post-merge-closure
 * `.backlogit/hooks_queue.jsonl`
 * `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-20-027-s-runtime-verification.md`
 * `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-20-027-s-post-merge-closure.md`
-* `docs/memory/2026-05-20/ship-027-s-post-merge-closure-memory.md`
+* `docs/archive/memory/2026-06-12-pre-2026-05-20-to-2026-05-29/2026-05-20/ship-027-s-post-merge-closure-memory.md`
 
 ## Decisions
 

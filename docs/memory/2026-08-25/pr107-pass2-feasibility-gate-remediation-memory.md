@@ -4,10 +4,24 @@ title: "Stage — PR #107 pass-2 remediation (cap-std overclaims → U7 feasibil
 source: stage-agent-session
 date: 2026-08-25
 branch: chore/stage-dark-security-pipeline
-status: complete
+status: superseded
 ---
 
 # Stage Checkpoint — PR #107 Pass-2 Feasibility-Gate Remediation
+
+> **SUPERSEDED (2026-08-25).** This entire pass-2 record is obsolete and is retained
+> for history only. Everything below is superseded, including: its shipment manifest
+> ending at U7 (`U1`-`U7`), its `U1`-before-`U7` ordering, its "U1-U7 final authority"
+> claim, its five-obligation U7 model, and any name-based or directory-relative
+> transient-sidecar **deletion** claim. Do NOT rely on anything in this file. Current
+> authority is the durable handoff
+> `docs/memory/2026-08-25/stage-store-toctou-nofollow-memory.md`, together with the
+> eleven-task U1-U11 DAG in
+> `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md` (pass 6 addendum)
+> and `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md`. U7 and
+> U8 are now separate three-scenario feasibility gates with U7 depending on nothing;
+> fail-closed transient-sidecar **retention** (U3) stands unless same-identity deletion
+> is proven.
 
 Report-only, Stage-phase remediation of a second round of PR #107 reviewer
 blockers on the `src/db/store.rs` TOCTOU feature (`059-F` / shipment `051-S`).

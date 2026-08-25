@@ -375,7 +375,38 @@ one U6 carrying both permission and engine work. Current authority is:
 * U1 depends on U7 and U8 and adopts only their proven dependency versions.
 * U6 integrates the beneath-root opener and permission boundary in three scenarios.
 * U9 integrates the actual WAL/SQLite/Cozo engine open in three scenarios.
-* U2–U5 depend on both U6 and U9.
+* U2–U5 and U10 depend on both U6 and U9; U11 depends on U2.
 
 Either feasibility gate may return BLOCKED before U1 runs. Principles III/IV remain
 NOT-PASSED until U7/U8 PASS and U6/U9 land.
+
+
+## PR #107 U5 test-scenario split (2026-08-25)
+
+Current-head Copilot review flagged that U5 (`059.005-T`) still carried seven
+independently countable test deltas (a)-(g), violating the fewer-than-four-scenarios
+task heuristic. The "Final PR #107 correction" section above remains authoritative for
+the U7/U8 feasibility and U6/U9 integration structure, but its single U5 test unit is
+now split into three bounded test tasks. This section is the current authority for the
+test-unit shape.
+
+* U5 (`059.005-T`) keeps at most three cross-platform deltas: (a) the sidecar-type
+  matrix fail-closed refusal on both open paths, (b) the per-platform fail-closed signal
+  (Unix `ELOOP` versus Windows explicit reparse refusal), and (c) the junction-variant
+  refusal on unprivileged CI.
+* U10 (`059.010-T`) owns (d) the Windows retained-handle engine non-interference
+  assertion and (e) the broader non-name-surrogate reparse regression; at most two
+  scenarios.
+* U11 (`059.011-T`) owns (f) the deterministic target-independent `should_refuse_reparse`
+  predicate unit test, (g) the Windows literal-equality assertion, and the structural
+  single-source proof; at most three scenarios.
+* Dependencies: U5 and U10 depend on U3, U4, U6, and U9 (identical gating); U11 depends
+  on U2 and is therefore transitively feasibility- and integration-gated. Nothing depends
+  on U5, U10, or U11, so the split is acyclic.
+
+**Current authority:** eleven-task U1-U11 DAG
+(U7 -> U8 -> U1 -> U6 -> U9 -> U2 -> U3/U4 -> U5, with U10 sharing U5's U3+U4+U6+U9 gating
+and U11 gated after U2). Shipment `051-S` contains `059-F` plus `059.001-T` through
+`059.011-T` (12 items). Principles III/IV remain NOT-PASSED until U7/U8 PASS and U6/U9
+land. Wherever this deliberation earlier writes the shorthand `U2-U5`, read it as
+`U2-U5 plus U10, with U11 gated after U2`.

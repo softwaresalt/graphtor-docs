@@ -56,7 +56,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 | `#![forbid(unsafe_code)]`, MSRV 1.75 | U1/U2 use only safe std + `OpenOptionsExt::custom_flags` + platform flag constants. |
 | Preserve exact-permission and sidecar-content safety | U3/U4 keep capture/restore exact (handle-bound), preserve non-empty sidecars, and replace racy empty-sidecar deletion with fail-closed retention unless same-identity deletion is proven; U5 re-verifies. |
 | Test-first swap-resistance + platform behavior | U3/U4 add test-first swap-resistance cases; U5 adds the cross-platform matrix and Windows handle-mode validation. |
-| Intermediate-directory (parent) swap containment, not just final component (PR #107 review, 2026-08-25) | U7 proves the root/API/MSRV capability foundation; U8 separately proves the SQLite/Cozo engine boundary; U1 adopts only the proven dependencies; U6 integrates the beneath-root permission boundary; U9 integrates the actual engine open. U2–U5 depend on both U6 and U9. |
+| Intermediate-directory (parent) swap containment, not just final component (PR #107 review, 2026-08-25) | U7 proves the root/API/MSRV capability foundation; U8 separately proves the SQLite/Cozo engine boundary; U1 adopts only the proven dependencies; U6 integrates the beneath-root permission boundary; U9 integrates the actual engine open. U2–U5 and U10 depend on both U6 and U9; U11 depends on U2. |
 | Prove the capability design is achievable with safe APIs under MSRV 1.75 before building on it (PR #107 review, 2026-08-25) | U7 (059.007-T) has three bounded root/API/MSRV scenarios and no dependency on U1. U8 (059.008-T) has three bounded engine-boundary scenarios and depends on U7. Either gate may return BLOCKED before U1 changes the product manifest. |
 | Prevent transient-sidecar check/use deletion races (PR #107 review, 2026-08-25) | U3 prohibits separate metadata-check + name-based unlink. Unless U7 proves a same-identity deletion API, cleanup fails closed by leaving transient sidecars in place. |
 
@@ -73,7 +73,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   3. run a table-driven refusal matrix for absolute/`..` escape, intermediate
      symlink/junction swap, and an in-bounds leaf symlink/reparse.
 * **Outcome**: PASS records exact versions, APIs, File boundary, threat model, and
-  test output. BLOCKED records the failed scenario and keeps U8/U1/U6/U9/U2–U5
+  test output. BLOCKED records the failed scenario and keeps U8/U1/U6/U9/U2–U5/U10/U11
   gated. No product dependency, in-crate `unsafe`, or path fallback is added.
 * **Backlog**: `059.007-T`; no dependencies; gates U8.
 
@@ -89,7 +89,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   3. compile the harness under Rust 1.75 with safe APIs only, or record BLOCKED
      naming the unavailable engine API.
 * **Outcome**: PASS records exact engine APIs/versions/results. BLOCKED keeps
-  U1/U6/U9/U2–U5 gated and Principles III/IV NOT-PASSED.
+  U1/U6/U9/U2–U5/U10/U11 gated and Principles III/IV NOT-PASSED.
 * **Backlog**: `059.008-T`; depends on U7; gates U1 and U6.
 
 ### U1 — Add proven platform-gated dependencies (config)
@@ -207,7 +207,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   `clippy::pedantic -D warnings`; contain no `.unwrap()`/`.expect()`; the NEW unit
   tests pass; symlink/junction open fails closed on both platforms.
 
-### U6 — Integrate beneath-root opener and permission boundary (gates U9/U2–U5)
+### U6 — Integrate beneath-root opener and permission boundary (gates U9/U2–U5/U10/U11)
 
 * **Changes**: implement the production `open_beneath` boundary proven by U7,
   after U8 proves that a safe engine boundary exists and U1 adopts the exact
@@ -221,7 +221,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
      escape, and final-component symlink/reparse without a path fallback.
 * **Acceptance**: integrated `src/db/store.rs` passes Rust 1.75 check, clippy
   pedantic, and targeted tests; no in-crate `unsafe` or unwrap/expect.
-* **Backlog**: `059.006-T`; depends on U7, U8, and U1; gates U9 and U2–U5.
+* **Backlog**: `059.006-T`; depends on U7, U8, and U1; gates U9 and U2–U5/U10/U11.
 
 ### U9 — Integrate capability-bound SQLite/Cozo engine open (code, test-first)
 
@@ -236,7 +236,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
      expected behavior through the proven bound mechanism.
 * **Acceptance**: Rust 1.75, clippy pedantic, and targeted tests pass; no in-crate
   `unsafe`, original-path engine reopen, or success-shaped fallback.
-* **Backlog**: `059.009-T`; depends on U6 and U8; U2–U5 also depend on U9.
+* **Backlog**: `059.009-T`; depends on U6 and U8; U2–U5 and U10 also depend on U9; U11 depends on U2.
 
 ### U3 — Bind EngineReadonlyGuard lock/rollback/Drop to retained handles (code, test-first)
 
@@ -312,85 +312,116 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   `set_readonly` remains in the function; passes `clippy::pedantic -D warnings`; no
   `.unwrap()`/`.expect()`.
 
-### U5 — Cross-platform swap-resistance deltas + Windows handle-mode validation (tests)
+### U5 - Cross-platform sidecar swap-resistance matrix, per-platform fail-closed signal, and junction refusal (tests)
 
 * **Changes**: Add colocated tests covering only the **deltas** U3/U4 do not already
   assert (reference, do not re-implement, the U3/U4 cases): (a) the full sidecar-type
   matrix (`-wal`/`-shm`/`-journal`) fail-closed refusal on both open paths; (b) the
-  platform fail-closed signal is asserted correctly per platform (Unix `O_NOFOLLOW` →
-  `ELOOP` open failure; Windows reparse open → explicit `FILE_ATTRIBUTE_REPARSE_POINT`
-  refusal); (c) reuse the `try_symlink_file` unprivileged-skip pattern and add a
-  Windows junction variant so the Windows refusal path executes on unprivileged CI
-  where possible; (d) validate the Windows retained handle
+  platform fail-closed signal is asserted correctly per platform (Unix `O_NOFOLLOW`
+  produces an `ELOOP` open failure; Windows reparse open produces an explicit
+  `FILE_ATTRIBUTE_REPARSE_POINT` refusal); (c) reuse the `try_symlink_file`
+  unprivileged-skip pattern and add a Windows junction variant so the Windows refusal
+  path executes on unprivileged CI where possible. The Windows retained-handle
+  engine-non-interference delta and the broader non-name-surrogate reparse regression
+  move to **U10** (`059.010-T`); the deterministic `should_refuse_reparse` predicate
+  unit test and the Windows literal-equality / single-source structural proof move to
+  **U11** (`059.011-T`). This keeps U5 bounded to at most three independently countable
+  scenarios.
+* **Files**: `src/db/store.rs` tests.
+* **Tests**: the (a)/(b)/(c) delta matrix above (skips gracefully when the platform
+  refuses unprivileged symlink/reparse creation; the junction variant runs where
+  symlink creation is denied).
+* **Posture**: test-first / characterization. **Domain**: tests.
+* **Acceptance**: Suite passes on the host platform; the full sidecar-type matrix
+  fail-closed refusal holds on both open paths; the per-platform fail-closed signal is
+  asserted correctly (Unix `ELOOP`, Windows explicit reparse refusal); the junction
+  variant covers the Windows name-surrogate refusal where symlink creation is denied;
+  filesystem deltas skip (not fail) where symlink or reparse creation is unprivileged,
+  with executed-vs-skipped reported; the intermediate-directory swap delta from U6 is
+  referenced (not re-implemented). The Windows retained-handle non-interference and
+  broader-policy deltas are validated in U10; the deterministic predicate and
+  literal-equality / single-source structural proof are validated in U11.
+* **Backlog**: `059.005-T`; depends on U3, U4, U6, and U9.
+
+### U10 - Windows retained-handle engine non-interference and broader non-name-surrogate reparse regression (tests)
+
+* **Changes**: Add colocated tests for the two Windows breadth deltas split out of U5:
+  (d) validate the Windows retained attribute-access handle
   (`FILE_READ_ATTRIBUTES|FILE_WRITE_ATTRIBUTES`, full share mode) does **not** block
-  the engine's own db/WAL open — scoped to that single assertion (Option A vs the
-  documented Option C fallback decision — record the outcome in the PR); (e)
+  the engine's own db/WAL open, scoped to that single assertion (Option A versus the
+  documented Option C fallback decision - record the outcome in the PR); (e)
   **broader-fail-closed-policy regression (Windows):** create a legitimate
-  **non-redirecting** reparse file — one whose reparse tag is NOT a name
-  surrogate (e.g. a non-name-surrogate reparse point creatable without the
-  symlink privilege where feasible) — and assert the guarded `open_no_follow`
-  path **refuses it** (consistent with the adopted broader policy in U2), so the
-  intentional Windows/Unix breadth asymmetry is pinned by a test rather than left
-  implicit. If a non-redirecting reparse file cannot be created on unprivileged
-  CI, the test skips (not fails) and the doc-comment's accepted-breadth statement
-  stands as the recorded behavior; report executed-vs-skipped. **(f)
-  deterministic normal-CI predicate unit test (REQUIRED, always executes on Linux
-  CI):** extract the Windows reparse-bit refusal decision into a **pure,
-  target-independent safe predicate** —
-  `pub(crate) fn should_refuse_reparse(file_attributes: u32) -> bool` returning
-  `file_attributes & REPARSE_ATTR != 0` against a **module-private** literal bit
-  constant `const REPARSE_ATTR: u32 = 0x0000_0400` (the numeric value of
-  `FILE_ATTRIBUTE_REPARSE_POINT`; not `pub`/`pub(crate)`, referenced only inside the
-  predicate) — and test it with **fabricated attribute-bit
-  inputs** (reparse bit `0x0000_0400` set → refuse; clear → allow; combined with
-  unrelated attributes such as `FILE_ATTRIBUTE_READONLY`/`FILE_ATTRIBUTE_HIDDEN` →
-  still refuse). Because the predicate and its literal are target-independent, this
-  test **compiles and runs on Linux CI** with **no filesystem, no privilege, no
-  reparse fixture, and no `windows-sys`**, so it runs deterministically on every
-  normal-CI job and pins the broader fail-closed policy even when the real fixture in
-  delta (e) skips. **(g) Windows-only literal-equality assertion (REQUIRED,
-  `#[cfg(windows)]`):** assert `0x0000_0400 ==
-  windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT` (via
-  `const_assert` or a `#[cfg(windows)]` `#[test]`), proving the cross-platform literal
-  can never drift from the real Win32 constant, **and structurally proving the
-  production Windows refusal branch calls `should_refuse_reparse`** — a
-  `#[cfg(windows)]` test drives the production branch through the predicate so it
-  cannot be a decorative unused helper, and the module contains exactly one occurrence
-  of the `0x0000_0400`/`REPARSE_ATTR` literal (inside the predicate) so no duplicated
-  inline mask can exist. Delta (e)'s real reparse-file
-  fixture is thereby **optional integration coverage** layered on top of the
-  always-on (f) unit test, with explicit executed/skipped reporting.
+  **non-redirecting** reparse file whose reparse tag is NOT a name surrogate (for
+  example, a non-name-surrogate reparse point creatable without the symlink privilege
+  where feasible) and assert the guarded `open_no_follow` path **refuses it**
+  (consistent with the adopted broader policy in U2), so the intentional Windows/Unix
+  breadth asymmetry is pinned by a test rather than left implicit. If a non-redirecting
+  reparse file cannot be created on unprivileged CI, the test skips (not fails) and the
+  doc-comment's accepted-breadth statement stands as the recorded behavior.
 * **Files**: `src/db/store.rs` tests (and/or a single narrowly-scoped `tests/`
   integration file only if a full engine open is required for assertion (d)).
-* **Tests**: the delta matrix above (skips gracefully when the platform refuses
-  unprivileged symlink/reparse creation; junction variant runs where symlink
-  creation is denied).
+* **Tests**: the (d)/(e) deltas above; the (d) non-interference assertion executes
+  where a full engine open is available; the (e) reparse regression skips gracefully
+  when unprivileged CI cannot create a non-redirecting reparse file.
 * **Posture**: test-first / characterization. **Domain**: tests.
-* **Acceptance**: Suite passes on the host platform; the **deterministic
-  `should_refuse_reparse` predicate unit test (delta (f)) executes on every normal-CI
-  job** (no filesystem/privilege) and proves the broader fail-closed policy; **the
-  `#[cfg(windows)]` delta (g) assertion proves the production Windows refusal branch
-  calls `should_refuse_reparse` (single source of truth) with the `REPARSE_ATTR`
-  literal defined module-private and occurring exactly once, so there is no decorative
-  unused helper and no duplicated inline mask**; the
-  filesystem deltas skip (not fail) where symlink or non-redirecting-reparse creation
-  is unprivileged, with the junction variant covering the Windows name-surrogate
-  refusal and delta (e) covering the broader non-name-surrogate refusal where
-  possible; the Windows handle-mode decision (Option A vs C) is recorded in the PR;
-  whether each filesystem-dependent Windows refusal test executed or skipped is
-  reported; the intermediate-directory swap delta from U6 is referenced (not
-  re-implemented).
+* **Acceptance**: The Windows retained-handle non-interference assertion (d) passes and
+  the handle-mode decision (Option A versus C) is recorded in the PR; the broader
+  non-name-surrogate reparse regression (e) refuses the non-redirecting reparse file
+  where creatable and otherwise skips (not fails); whether each filesystem-dependent
+  Windows test executed or skipped is reported; passes `clippy::pedantic -D warnings`;
+  no `.unwrap()`/`.expect()`. At most two independently countable scenarios.
+* **Backlog**: `059.010-T`; depends on U3, U4, U6, and U9 (same gating as U5).
 
+### U11 - Deterministic reparse predicate, Windows literal-equality, and single-source structural proof (tests)
+
+* **Changes**: Add the target-independent predicate coverage split out of U5:
+  (f) **deterministic normal-CI predicate unit test (always executes on Linux CI):**
+  test the pure, target-independent safe predicate
+  `pub(crate) fn should_refuse_reparse(file_attributes: u32) -> bool` (returning
+  `file_attributes & REPARSE_ATTR != 0` against a **module-private** literal bit
+  constant `const REPARSE_ATTR: u32 = 0x0000_0400`, the numeric value of
+  `FILE_ATTRIBUTE_REPARSE_POINT`) with **fabricated attribute-bit inputs** (reparse bit
+  `0x0000_0400` set produces refuse; clear produces allow; combined with unrelated
+  attributes such as `FILE_ATTRIBUTE_READONLY`/`FILE_ATTRIBUTE_HIDDEN` still refuses).
+  Because the predicate and its literal are target-independent, this test **compiles
+  and runs on Linux CI** with no filesystem, no privilege, no reparse fixture, and no
+  `windows-sys`. (g) **Windows-only literal-equality assertion (`#[cfg(windows)]`):**
+  assert `0x0000_0400 == windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT`
+  (via `const_assert` or a `#[cfg(windows)]` `#[test]`), proving the cross-platform
+  literal can never drift from the real Win32 constant, **and structurally prove the
+  production Windows refusal branch calls `should_refuse_reparse`** - a `#[cfg(windows)]`
+  test drives the production branch through the predicate so it cannot be a decorative
+  unused helper, and the module contains exactly one occurrence of the
+  `0x0000_0400`/`REPARSE_ATTR` literal (inside the predicate) so no duplicated inline
+  mask can exist.
+* **Files**: `src/db/store.rs` tests.
+* **Tests**: the (f) deterministic predicate unit test (fabricated-bit inputs, always
+  on Linux CI) and the (g) `#[cfg(windows)]` literal-equality plus single-source
+  structural assertions.
+* **Posture**: test-first. **Domain**: tests.
+* **Acceptance**: The deterministic `should_refuse_reparse` predicate unit test (f)
+  executes on every normal-CI job (no filesystem/privilege) and proves the broader
+  fail-closed policy; the `#[cfg(windows)]` assertion (g) proves the production Windows
+  refusal branch calls `should_refuse_reparse` (single source of truth) with the
+  `REPARSE_ATTR` literal defined module-private and occurring exactly once, so there is
+  no decorative unused helper and no duplicated inline mask; passes
+  `clippy::pedantic -D warnings`; no `.unwrap()`/`.expect()`. At most three
+  independently countable scenarios (fabricated-bit predicate, Windows literal
+  equality, structural single-source proof).
+* **Backlog**: `059.011-T`; depends on U2 (transitively feasibility/integration gated).
 ## Dependency Graph
 
 ```text
 U7 root/API/MSRV proof
-  └─▶ U8 engine-boundary proof
-       └─▶ U1 adopt proven dependencies
-            └─▶ U6 integrate contained opener/permissions
-                 └─▶ U9 integrate contained engine open
-                      └─▶ U2 helper ─┬─▶ U3 guard lock/Drop ─┐
-                                     └─▶ U4 clear-stale      ─┴─▶ U5 matrix
+  --> U8 engine-boundary proof
+      --> U1 adopt proven dependencies
+          --> U6 integrate contained opener/permissions
+              --> U9 integrate contained engine open
+                  --> U2 helper
+                      --> U3 guard lock/Drop --+
+                      --> U4 clear-stale ------+--> U5 sidecar matrix (deltas a-c)
+                      |                        +--> U10 Windows breadth (deltas d-e)
+                      --> U11 predicate + literal + single-source proof (deltas f-g)
 ```
 
 * U7 has no dependency and may return BLOCKED before the product manifest changes.
@@ -398,7 +429,9 @@ U7 root/API/MSRV proof
 * U1 depends on U7 and U8 and adopts only their proven versions.
 * U6 depends on U7, U8, and U1; U9 depends on U6 and U8.
 * U2 depends on U1, U6, and U9. U3/U4 depend on U2, U6, and U9.
-  U5 depends on U3, U4, U6, and U9.
+  U5 and U10 depend on U3, U4, U6, and U9. U11 depends on U2 (transitively
+  feasibility- and integration-gated). Nothing depends on U5, U10, or U11; all
+  three are terminal test units, so the split adds no cycles.
 * Every production unit is gated on both feasibility results and on the split
   permission plus engine integrations.
 * No cycles.
@@ -450,8 +483,8 @@ U7 root/API/MSRV proof
 | Empty-sidecar cleanup deletes a replacement live sidecar | U3 forbids metadata-check + name-based unlink and leaves transient sidecars unless the same observed file identity can be deleted safely. |
 | Permission guarding is safe but the engine reopens `safe_path` | U8 must prove the bound API and U9 must integrate it; otherwise the gate is BLOCKED. |
 | `cap-std` adds a new crate family to the graph | Layers on the already-transitive `rustix`; before/after `cargo tree -d` in U1 proves no unexpected duplicate; `cargo audit` clean. |
-| U7 or U8 feasibility gate slips or returns BLOCKED | U1/U6/U9/U2–U5 do not start; Principles III/IV remain **NOT-PASSED**. |
-| U6 or U9 integration slips | U2–U5 remain gated; completeness requires U7/U8 PASS plus U6/U9 landed. |
+| U7 or U8 feasibility gate slips or returns BLOCKED | U1/U6/U9/U2–U5/U10/U11 do not start; Principles III/IV remain **NOT-PASSED**. |
+| U6 or U9 integration slips | U2–U5 and U10 remain gated (U11 after U2); completeness requires U7/U8 PASS plus U6/U9 landed. |
 
 ## Constitution Check
 
@@ -772,7 +805,7 @@ rollback finding. All are resolved in the active plan and backlog.
 | F4 | P1 | The pip-hardening plan rollback restored the blanket `pip` grant on an approval prompt. | **Resolved in the sibling 050-S plan.** Rollback keeps `pip` denied/manual and permits only a separately reviewed exact anchored entry. |
 | F5 | P1 | Task `057.001-T` repeated the insecure rollback. | **Resolved.** Its acceptance and implementation notes now prohibit restoring blanket approval. |
 
-**Current authority:** nine-task U1–U9 DAG:
+**Authority at pass 5 (superseded by pass 6 below):** nine-task U1–U9 DAG:
 U7 → U8 → U1 → U6 → U9 → U2 → U3/U4 → U5, with explicit
 fan-in dependencies recorded in backlog. Shipment `051-S` contains `059-F` plus
 `059.001-T` through `059.009-T`. Principles III/IV remain NOT-PASSED until
@@ -780,3 +813,28 @@ U7/U8 PASS and U6/U9 land.
 
 <!-- plan-review-attempt: 7 -->
 <!-- plan-review-verdict: PASS -->
+
+
+### Report-only staging-review addendum - 2026-08-25 (PR #107 pass 6: U5 test-scenario split)
+
+**Gate: ADVISORY** (report-only; backlog `059-F`/`051-S` already exists). Current-head
+Copilot review flagged that U5 (`059.005-T`) still carried seven test deltas (a)-(g),
+violating the fewer-than-four-test-scenarios task heuristic. U5 is split into three
+bounded test tasks with no new cycles.
+
+| # | Severity | Finding | Disposition |
+|---|----------|---------|-------------|
+| G1 | P1 | U5 (`059.005-T`) defined seven independently countable test deltas (a)-(g), exceeding the fewer-than-four-scenarios heuristic. | **Resolved.** U5 keeps at most three cross-platform deltas: (a) sidecar-type matrix fail-closed refusal, (b) per-platform fail-closed signal, (c) junction-variant refusal. New U10 (`059.010-T`) owns (d) Windows retained-handle engine non-interference and (e) broader non-name-surrogate reparse regression (at most two scenarios). New U11 (`059.011-T`) owns (f) the deterministic `should_refuse_reparse` predicate unit test, (g) the Windows literal-equality assertion, and the structural single-source proof (at most three scenarios). |
+| G2 | P2 | Shipment `051-S`, feature `059-F` DoD, sibling task gating prose, the dependency graph, and durable Stage memory still described a nine-task U1-U9 DAG. | **Resolved.** `051-S` manifest is 12 items (`059-F` plus `059.001-T` through `059.011-T`); `059-F`, the sibling tasks, the Dependency Graph, structured `.backlogit/memories.json`, and the durable handoff now describe the eleven-task U1-U11 DAG. |
+
+**Split dependency wiring:** U5 and U10 depend on U3, U4, U6, and U9 (identical gating);
+U11 depends on U2 and is therefore transitively feasibility- and integration-gated.
+Nothing depends on U5, U10, or U11; all three are terminal test units, so the split is
+acyclic. Wherever earlier passes of this plan use the collective shorthand `U2-U5`, read
+it under the current authority as `U2-U5 plus U10, with U11 gated after U2`.
+
+**Current authority:** eleven-task U1-U11 DAG:
+U7 -> U8 -> U1 -> U6 -> U9 -> U2 -> U3/U4 -> U5, with U10 sharing U5's U3+U4+U6+U9 gating
+and U11 gated after U2; explicit fan-in dependencies are recorded in backlog. Shipment
+`051-S` contains `059-F` plus `059.001-T` through `059.011-T` (12 items). Principles
+III/IV remain NOT-PASSED until U7/U8 PASS and U6/U9 land.
