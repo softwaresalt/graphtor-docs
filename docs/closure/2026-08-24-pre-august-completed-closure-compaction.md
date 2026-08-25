@@ -27,6 +27,14 @@ These records are older than the 14-day threshold and belong to completed work.
 * 2026-08-17 048-S closure records
 * later 2026-08-17 onward closure artifacts for queued follow-up work
 
+## Link Integrity
+
+All tracked inbound references, including links between paired post-merge and
+runtime-verification records, were rewritten to the corresponding
+`docs/archive/closure/2026-08-24-pre-august-compaction/` paths. A post-rewrite scan
+across tracked text files found zero references to the removed `docs/closure/`
+locations listed below.
+
 ## Archived Originals
 
 | Original file | Archived to |

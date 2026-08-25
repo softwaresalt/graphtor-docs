@@ -11,7 +11,7 @@ message: "file '<path>' is not within source root '<root>'"
 file_path: "src/sync/reingest.rs"
 citations:
   - ".backlogit/queue/036.001-T.md"
-  - "docs/exec-plans/2026-05-21-backlogit-operator-experience-plan.md"
+  - "docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-21-backlogit-operator-experience-plan.md"
 tags:
   - "sync"
   - "windows"

@@ -23,8 +23,8 @@ session: multi-db-and-source-registry-staging
 
 ### Plans (hardened)
 
-* `docs/exec-plans/2026-05-23-multi-db-runtime-hardening-plan.md`
-* `docs/exec-plans/2026-05-23-source-registry-normalization-plan.md`
+* `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-23-multi-db-runtime-hardening-plan.md`
+* `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-23-source-registry-normalization-plan.md`
 
 ### Backlog Items
 

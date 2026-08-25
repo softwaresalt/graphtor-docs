@@ -4,7 +4,7 @@ date: 2026-05-29
 agent: stage
 status: complete
 stash_id: 3848CFD7
-plan_path: docs/exec-plans/2026-05-29-release-sync-hardening-plan.md
+plan_path: docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-29-release-sync-hardening-plan.md
 deliberation_path: docs/decisions/2026-05-29-release-sync-hardening-deliberation.md
 feature_id: 041-F
 shipment_id: 032-S

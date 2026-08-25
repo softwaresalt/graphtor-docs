@@ -30,7 +30,7 @@ phase: shipment-staged
 ## Artifacts Created
 
 - `docs/decisions/2026-05-21-mcp-config-install-path-deliberation.md`
-- `docs/exec-plans/2026-05-21-mcp-config-install-path-plan.md`
+- `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-21-mcp-config-install-path-plan.md`
 - Feature: 035-F "Remove non-functional Editor::Copilot MCP config path"
 - Task: 035.001-T "Remove Editor::Copilot variant and update mcp_config.rs"
 - Task: 035.002-T "Update CLI --editor help text to remove copilot"

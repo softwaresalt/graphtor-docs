@@ -2,7 +2,7 @@
 title: Release sync hardening plan review memory
 date: 2026-05-29
 task: plan-review
-artifact: docs/exec-plans/2026-05-29-release-sync-hardening-plan.md
+artifact: docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-29-release-sync-hardening-plan.md
 ---
 
 ## Completed
@@ -12,7 +12,7 @@ artifact: docs/exec-plans/2026-05-29-release-sync-hardening-plan.md
 
 ## Files modified
 
-* `docs/exec-plans/2026-05-29-release-sync-hardening-plan.md`
+* `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-29-release-sync-hardening-plan.md`
 
 ## Decision
 

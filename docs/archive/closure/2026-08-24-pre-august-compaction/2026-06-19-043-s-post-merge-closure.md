@@ -80,7 +80,7 @@ human-readable suppression record only.
 ## Knowledge Gardening
 
 * `compound-refresh` (mode=apply) — see
-  `docs/closure/2026-06-19-043-s-compound-refresh.md`
+  `docs/archive/closure/2026-08-24-pre-august-compaction/2026-06-19-043-s-compound-refresh.md`
   * `docs/compound/cargo-audit-workspace-config-limitation.md` → **update**:
     added the `--deny warnings` allowlist-hardening pattern, the `^0.22` install
     pin, corrected the stale git2 `RUSTSEC-2026-0008` entry (resolved/dropped),

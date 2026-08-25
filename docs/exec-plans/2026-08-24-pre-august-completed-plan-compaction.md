@@ -28,6 +28,13 @@ These records are older than the 14-day threshold and belong to completed work.
 * 2026-08-21 MCP serve initialize-handshake regression plan
 * 2026-08-24 store TOCTOU and VS Code pip hardening plans
 
+## Link Integrity
+
+All tracked inbound references to the archived plan paths were rewritten to the
+corresponding `docs/archive/plans/2026-08-24-pre-august-compaction/` paths. A
+post-rewrite scan across tracked text files found zero references to the removed
+`docs/exec-plans/` locations listed below.
+
 ## Archived Originals
 
 | Original file | Archived to |

@@ -30,7 +30,7 @@ status: complete
 - [x] Step 2 — Deliberation  
   Wrote `docs/decisions/2026-06-12-docline-markdown-ingestion-pivot-deliberation.md`.
 - [x] Step 3 — Implementation planning  
-  Wrote `docs/exec-plans/2026-06-12-docline-markdown-ingestion-pivot-plan.md`.
+  Wrote `docs/archive/plans/2026-08-24-pre-august-compaction/2026-06-12-docline-markdown-ingestion-pivot-plan.md`.
 - [x] Step 4 — Plan review gating  
   Multi-persona review converged on **PASS** after iterating the plan to resolve
   identity, migration, parity, and staging concerns.
@@ -52,7 +52,7 @@ status: complete
 ## Source of Truth
 
 * Deliberation artifact: `docs/decisions/2026-06-12-docline-markdown-ingestion-pivot-deliberation.md`
-* Plan artifact: `docs/exec-plans/2026-06-12-docline-markdown-ingestion-pivot-plan.md`
+* Plan artifact: `docs/archive/plans/2026-08-24-pre-august-compaction/2026-06-12-docline-markdown-ingestion-pivot-plan.md`
 * Preserved stash alias: `stash@{0}`
 * Preserved stash commit: `ba79092af64a4a4b16b63e76b094e6a4bbad4214`
 * Pinned untracked-tree commit used for contract restoration tasks: `2eba8c73284ae75ba2d11340f3b80ac71ec50fed`

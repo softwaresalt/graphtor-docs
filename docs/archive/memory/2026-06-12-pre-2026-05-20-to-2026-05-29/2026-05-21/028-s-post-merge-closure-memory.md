@@ -28,8 +28,8 @@ branch: post-merge/037-prewarm-sync-progress-telemetry
 * `.backlogit/archive/stash.jsonl`
 * `.backlogit/stash.jsonl`
 * `.backlogit/hooks_queue.jsonl`
-* `docs/closure/2026-05-21-028-s-runtime-verification.md`
-* `docs/closure/2026-05-21-028-s-post-merge-closure.md`
+* `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-21-028-s-runtime-verification.md`
+* `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-21-028-s-post-merge-closure.md`
 * `docs/memory/2026-05-21/028-s-post-merge-closure-memory.md`
 
 ## Decisions

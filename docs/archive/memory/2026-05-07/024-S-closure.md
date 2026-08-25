@@ -26,7 +26,7 @@ the result (or `null` if absent) as a `$embedding` parameter, replacing the hard
 |------|--------|
 | `src/db/chunks.rs` | Added `get_vector` import; two-step embedding preservation in `upsert_chunk` |
 | `tests/db_chunks_test.rs` | Added `upsert_chunk_preserves_existing_embedding` test; added `vectors::` imports |
-| `docs/exec-plans/2026-05-07-upsert-chunk-preserve-embedding-plan.md` | Implementation plan + plan-review results |
+| `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-07-upsert-chunk-preserve-embedding-plan.md` | Implementation plan + plan-review results |
 | `.backlogit/queue/033-F.md` | Feature moved to archived |
 | `.backlogit/queue/033.001-T.md` | Red-phase task archived |
 | `.backlogit/queue/033.002-T.md` | Green-phase task archived |

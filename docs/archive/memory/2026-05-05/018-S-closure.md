@@ -28,7 +28,7 @@ committed to `main` in a prior session under feature 026-F (commits `8abe141`,
 4. **Committed backlog closure** on branch `docs/comprehensive-graphtor-docs` (commit `274233d`)
 
 5. **Fixed Copilot review issues** — commit `2ac853c` added YAML frontmatter:
-   - `docs/exec-plans/2026-05-04-comprehensive-docs-plan.md`: added title + description
+   - `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-04-comprehensive-docs-plan.md`: added title + description
    - `docs/compound/best-practices/pdf-pass2-output-doc-page-loop-2026-05-05.md`: added description
 
 6. **PR #29** — CI passed (5m36s), Copilot review addressed, merged with `--admin --merge`

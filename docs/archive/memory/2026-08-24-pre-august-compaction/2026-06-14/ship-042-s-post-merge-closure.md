@@ -28,9 +28,9 @@ and closure evidence, and captured audit follow-up work for later planning.
 | `.backlogit/queue/042-S.md` and `042*` task/feature queue items | Removed from active queue |
 | `.backlogit/hooks_queue.jsonl` | Recorded `ship_shipment` hook event for `042-S` |
 | `.backlogit/stash.jsonl` | Added follow-up stash `964597B1` for unmaintained dependency triage |
-| `docs/closure/2026-06-14-042-s-runtime-verification.md` | Added runtime verification record |
-| `docs/closure/2026-06-14-042-s-post-merge-closure.md` | Added operational closure record |
-| `docs/memory/2026-06-14/ship-042-s-post-merge-closure.md` | Added this session memory |
+| `docs/archive/closure/2026-08-24-pre-august-compaction/2026-06-14-042-s-runtime-verification.md` | Added runtime verification record |
+| `docs/archive/closure/2026-08-24-pre-august-compaction/2026-06-14-042-s-post-merge-closure.md` | Added operational closure record |
+| `docs/archive/memory/2026-08-24-pre-august-compaction/2026-06-14/ship-042-s-post-merge-closure.md` | Added this session memory |
 
 ## Key Decisions
 

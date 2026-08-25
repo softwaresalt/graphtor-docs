@@ -84,7 +84,7 @@ alongside the pre-existing maintenance warnings for `adler`, `bincode`,
 
 ## Runtime Verification Handoff
 
-See `docs/closure/2026-05-22-029-s-runtime-verification.md`.
+See `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-22-029-s-runtime-verification.md`.
 
 Runtime verification is **PASS** for the shipped multi-database CLI surfaces.
 

@@ -33,8 +33,8 @@ threads. Post-merge closure complete.
   `051-F`, and the `045-S` record individually; 25 tasks were pre-archived.
   No cascade, no archive deletions. Reports in `.backlogit/reconcile/`.
 * Runtime verification (release build + install/doctor/uninstall smoke) = PASS.
-* Wrote closure docs: `docs/closure/2026-07-16-045-s-runtime-verification.md`,
-  `docs/closure/2026-07-16-045-s-post-merge-closure.md`.
+* Wrote closure docs: `docs/archive/closure/2026-08-24-pre-august-compaction/2026-07-16-045-s-runtime-verification.md`,
+  `docs/archive/closure/2026-08-24-pre-august-compaction/2026-07-16-045-s-post-merge-closure.md`.
 
 ## Key Facts / Decisions
 

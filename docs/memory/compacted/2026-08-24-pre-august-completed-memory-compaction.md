@@ -27,6 +27,13 @@ These records are older than the 14-day threshold and belong to completed work.
 * 2026-08-17 047-S and 048-S closure memories
 * 2026-08-21 to 2026-08-25 active 049-S / 050-S / 051-S / 056-F / 057-F / 058-F / 059-F checkpoints
 
+## Link Integrity
+
+All tracked inbound references to the archived memory paths were rewritten to the
+corresponding `docs/archive/memory/2026-08-24-pre-august-compaction/` paths. A
+post-rewrite scan across tracked text files found zero references to the removed
+`docs/memory/` locations listed below.
+
 ## Archived Originals
 
 | Original file | Archived to |

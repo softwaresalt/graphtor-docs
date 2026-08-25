@@ -19,7 +19,7 @@ Staged Grouping A from stash: pre-warm sync mode with progress + backlogit telem
 | Type | ID | Title |
 |---|---|---|
 | Deliberation | — | `docs/decisions/2026-05-21-prewarm-sync-progress-reporting.md` |
-| Plan | — | `docs/exec-plans/2026-05-21-prewarm-sync-progress-plan.md` |
+| Plan | — | `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-21-prewarm-sync-progress-plan.md` |
 | Feature | `037-F` | Pre-warm sync mode with progress reporting and backlogit telemetry |
 | Task | `037.001-T` | Add optional progress callback parameter to sync_source |
 | Task | `037.002-T` | Implement prewarm CLI subcommand with stderr progress |

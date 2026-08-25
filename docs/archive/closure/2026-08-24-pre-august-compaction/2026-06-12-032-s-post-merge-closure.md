@@ -76,7 +76,7 @@ Closure verification on the post-merge branch produced:
 
 ## Runtime Verification Handoff
 
-See `docs/closure/2026-06-12-032-s-runtime-verification.md`.
+See `docs/archive/closure/2026-08-24-pre-august-compaction/2026-06-12-032-s-runtime-verification.md`.
 
 Runtime verification is **PASS** for the shipped CLI resolver, progress, and
 incremental filtering surfaces.

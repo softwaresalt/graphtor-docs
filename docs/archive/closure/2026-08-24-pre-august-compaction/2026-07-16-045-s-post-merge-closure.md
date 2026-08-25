@@ -93,7 +93,7 @@ verification on the closure branch:
 
 ## Runtime Verification Handoff
 
-See `docs/closure/2026-07-16-045-s-runtime-verification.md`. Runtime
+See `docs/archive/closure/2026-08-24-pre-august-compaction/2026-07-16-045-s-runtime-verification.md`. Runtime
 verification is **PASS** for the install-footprint, doctor-classification, and
 uninstall surfaces, and for the Phase-1 trust-boundary surfaces
 (dropped-database auto-discovery, read-only posture classification, and

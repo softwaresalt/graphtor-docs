@@ -12,7 +12,7 @@ file_path: "src/parse/pdf.rs"
 citations:
   - "docs/decisions/2026-05-04-pdfium-dual-backend-spike.md"
   - "docs/decisions/2026-05-04-pdfium-dual-backend-deliberation.md"
-  - "docs/exec-plans/2026-05-04-pdfium-dual-backend-plan.md"
+  - "docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-04-pdfium-dual-backend-plan.md"
   - "PR #25"
 tags:
   - "pdf"

@@ -6,7 +6,7 @@ depth: "standard"
 decision_status: "decided"
 promoted_to: "plan"
 linked_artifacts:
-  - "docs/exec-plans/2026-05-26-serve-sources-stub-plan.md"
+  - "docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-26-serve-sources-stub-plan.md"
 tags:
   - "config"
   - "serve"

@@ -10,7 +10,7 @@ severity: "critical"
 message: "SourceRecord with kind=local and url=source_id registered for Git repository"
 file_path: "src/pipeline/mod.rs"
 citations:
-  - "docs/exec-plans/2026-04-29-pipeline-orchestration-plan.md"
+  - "docs/archive/plans/2026-08-24-pre-august-compaction/2026-04-29-pipeline-orchestration-plan.md"
   - "https://github.com/softwaresalt/graphtor-docs/pull/7"
 tags:
   - "pipeline"

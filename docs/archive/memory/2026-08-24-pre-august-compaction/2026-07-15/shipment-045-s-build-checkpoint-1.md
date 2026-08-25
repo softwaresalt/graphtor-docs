@@ -12,7 +12,7 @@ phase: Phase 1 build loop (in progress)
 
 Shipment 045-S: "Consumption-first graphtor: read-only serve auto-discovery
 + minimal install" — 27 manifest items (050-F + 14 tasks, 051-F + 11 tasks),
-25 executable tasks. Plan: `docs/exec-plans/2026-07-14-consumption-first-graphtor-plan.md`.
+25 executable tasks. Plan: `docs/archive/plans/2026-08-24-pre-august-compaction/2026-07-14-consumption-first-graphtor-plan.md`.
 
 ## Completed so far (5 of 25 tasks)
 

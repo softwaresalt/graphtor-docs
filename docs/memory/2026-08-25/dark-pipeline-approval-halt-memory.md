@@ -55,6 +55,13 @@ did not pre-authorize merge or admin fallback. Ship cannot claim
 * The PR body is the authoritative current-HEAD readiness record for
   halt-memory-only commits after the reviewed staging HEAD above
 
+## Readiness Authority Correction
+
+The PR body previously contained a malformed expansion of the short commit prefix.
+That value was removed. Current readiness is intentionally dynamic: before merge, the
+PR body's exact `Reviewed HEAD` must equal GitHub's live `headRefOid`, and every new
+commit requires the readiness block to be refreshed.
+
 ## Remaining Work
 
 * Obtain operator approval and merge PR #107 using a merge commit

@@ -48,4 +48,4 @@ Shipped 021-S (CLI JSON-RPC 2.0 Output Mode & Manifest Command) via PR #36.
 ## Next Steps
 
 - Queue is now clear of 021-S. Check for new queued shipments.
-- `docs/exec-plans/2026-05-05-source-agnostic-bootstrap-plan.md` exists untracked — may need staging.
+- `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-05-source-agnostic-bootstrap-plan.md` exists untracked — may need staging.

@@ -62,7 +62,7 @@ schema, or runtime rollout step is introduced by the closure commit itself.
 
 ## Runtime Verification Handoff
 
-See `docs/closure/2026-05-20-026-s-runtime-verification.md`.
+See `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-20-026-s-runtime-verification.md`.
 
 Runtime verification is **BLOCKED** by a baseline compile failure in
 `src/acquire/url.rs`, which is outside shipment `026-S`.

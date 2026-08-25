@@ -6,7 +6,7 @@ depth: "standard"
 decision_status: "decided"
 promoted_to: "plan"
 linked_artifacts:
-  - "docs/exec-plans/2026-06-18-unmaintained-transitive-audit-advisories-plan.md"
+  - "docs/archive/plans/2026-08-24-pre-august-compaction/2026-06-18-unmaintained-transitive-audit-advisories-plan.md"
 source_stash_id: "964597B1"
 tags:
   - "ci"

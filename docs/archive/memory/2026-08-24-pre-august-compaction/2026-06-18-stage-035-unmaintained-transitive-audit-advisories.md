@@ -45,7 +45,7 @@ status: complete
   `--ignore` enforces; cargo audit 0.22 does not read audit.toml). Folded into plan.
 - [x] Step 2 — Deliberation  `002-DL` + `docs/decisions/2026-06-18-unmaintained-transitive-audit-advisories-deliberation.md`.
   Decided Option B.
-- [x] Step 3 — Planning  `docs/exec-plans/2026-06-18-unmaintained-transitive-audit-advisories-plan.md`.
+- [x] Step 3 — Planning  `docs/archive/plans/2026-08-24-pre-august-compaction/2026-06-18-unmaintained-transitive-audit-advisories-plan.md`.
   Step 3.2: `Requires plan hardening: yes` (CI security-audit gate) → plan-harden
   appended `## Plan Hardening`.
 - [x] Step 4 — Plan review  Scope Boundary Auditor (independent) + inline persona

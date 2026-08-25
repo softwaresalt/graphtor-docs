@@ -48,7 +48,7 @@ Archived IDs:
 
 ## Verification outcome
 
-See `docs/closure/2026-05-28-041-s-runtime-verification.md`.
+See `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-28-041-s-runtime-verification.md`.
 
 Quality gate summary:
 
