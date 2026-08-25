@@ -18,7 +18,8 @@ reviewed_staging_head: f165460aa746b8564759eced894fbac2fea55c23
 * Visibility: local-only because agent-intercom was unavailable
 * Stop conditions: scope expansion, unavailable required tools,
   unresolved P0/P1, failed checks, unsafe destructive action, ambiguous
-  merge authority, or P-001/P-009/P-014/P-016/P-017 violation
+  merge authority, secrets exposure risk, role-boundary/P-010 breach,
+  or P-001/P-009/P-014/P-016/P-017 violation
 
 ## Completed
 
