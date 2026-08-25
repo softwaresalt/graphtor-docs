@@ -30,8 +30,12 @@ Ship invocation.
   * 059.003-T — U3 bind EngineReadonlyGuard lock/rollback/Drop to retained handles (from stash 5905CDEE)
   * 059.004-T — U4 bind clear_stale_readonly_lock probe/clear to no-follow handles (from stash E86A6E56)
   * 059.005-T — U5 cross-platform swap-resistance deltas + Windows handle-mode validation (tests)
-* **Shipment manifest:** [059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T, 059.005-T].
-* **Dependencies:** U2←U1; U3←U2; U4←U2; U5←U3; U5←U4 (`blocks`).
+  * 059.006-T — U6 beneath-root boundary through permission and SQLite engine opens
+  * 059.007-T — U7 safe-API/MSRV/engine-open feasibility evidence gate
+* **Shipment manifest:** [059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
+  059.005-T, 059.006-T, 059.007-T].
+* **Dependencies:** U7←U1; U6←U1+U7; U2←U1+U6; U3←U2+U6; U4←U2+U6;
+  U5←U3+U4+U6 (`blocks`). U7 BLOCKED halts U6 and all U2-U5 work.
 * **Semantic links:** 059.004-T related_to 059.003-T (sibling same-mechanism);
   059-F related_to 052-F (reparse-point guards prior art); 059-F related_to 056.024-T
   (no-follow config mutation sibling).
@@ -44,7 +48,7 @@ Ship invocation.
   (Option A retained no-follow handle CHOSEN; B path re-check REJECTED; C identity-verified
   re-open documented fallback). Windows feasibility rows corrected during remediation.
 * Impl plan: `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`
-  (units U1–U5, dependency graph, `## Constitution Check`, `## Plan Hardening`,
+  (units U1–U7, dependency graph, `## Constitution Check`, `## Plan Hardening`,
   `## Plan Review`).
 
 ## Review outcome
@@ -81,7 +85,7 @@ in the release PR. Not a Stage blocker.
 
 ## Changed artifacts
 
-* Created: 059-F, 059.001-T…059.005-T, shipment 051-S.
+* Created: 059-F, 059.001-T...059.007-T, shipment 051-S.
 * Created docs: deliberation + impl-plan (dated 2026-08-24).
 * Modified docs: plan file (remediation edits, Constitution Check, Plan Review); deliberation
   (Windows feasibility rows).
@@ -92,8 +96,9 @@ in the release PR. Not a Stage blocker.
 Post-staging verification found an **abandoned intermediate feature 058-F** left queued
 with the exact canonical title of 059-F. Root cause: during triage the feature counter
 produced 058-F first (created `06:15:15Z`), then canonical 059-F was created 17s later
-(`06:15:32Z`) and received the full DoD/goals sections, the harvested task hierarchy
-(059.001-T…059.005-T), dependencies, semantic links, and shipment 051-S. 058-F was never
+(`06:15:32Z`) and received the full DoD/goals sections, the initial harvested task
+hierarchy (059.001-T...059.005-T, later expanded by PR review to 059.006-T and
+059.007-T), dependencies, semantic links, and shipment 051-S. 058-F was never
 completed — no DoD/goals sections, zero tasks, zero dependencies, zero links, and
 referenced by no shipment.
 
@@ -103,7 +108,7 @@ referenced by no shipment.
 * Appended a reconciliation comment to 058-F's log documenting root cause and evidence.
 * **Archived** `058-F` (queued → archived; moved to `.backlogit/archive/058-F.md`) — not deleted.
 * Verified 051-S remains **queued** and references only the canonical 059 hierarchy
-  ([059-F, 059.001-T…059.005-T]); covering_feature = 059-F. No manifest change was needed.
+  ([059-F, 059.001-T...059.007-T]); covering_feature = 059-F.
 * Synced index (501 items). Exactly one queued feature now carries the canonical title (059-F).
 
 **Untouched:** 050-S, 049-S, all stash entries, source/config, unrelated plans, branches,

@@ -249,10 +249,9 @@ existing tests protect.
    that an attribute-only, full-share retained handle on the main db does not block
    Cozo/SQLite's own open of the db or WAL. If it does, fall back to Option C for
    Windows and record the decision in the plan/PR.
-2. **Handle for transient sidecars** — the guard must still support the empty-only
-   cleanup of transient sidecars it *created*. Those are opened/created no-follow at
-   the point they come into existence; confirm the empty-only removal path stays
-   handle-consistent (`File::metadata().len()` via handle before `remove_file`).
+2. **Handle for transient sidecars** — resolved by the PR #107 addendum below. A
+   separate emptiness check and name-based unlink cannot prove same identity. Leave
+   transient sidecars unless U7 proves an identity-bound deletion API.
 3. **`clear_stale_readonly_lock` non-existent candidates** — a candidate that does
    not exist must remain a skip (not a failure), but a *dangling symlink* must still
    fail closed (the existing `open_sqlite_refuses_a_dangling_symlinked_wal_sidecar`
@@ -268,7 +267,7 @@ existing tests protect.
 |---|---|
 | Windows retained handle blocks the engine open | Open attribute-only + full share mode; test-first validation; Option C fallback documented. |
 | Introducing `unsafe` via a raw-handle path | Design uses only safe std (`OpenOptionsExt::custom_flags`, `File::set_permissions`, `File::metadata`); CI `#![forbid(unsafe_code)]` enforces this. |
-| Regression in exact-permission / sidecar-content behavior | Capture/restore stays exact, just handle-bound; all existing tests retained and must pass unchanged. |
+| Regression in exact-permission / sidecar-content behavior | Capture/restore stays exact and non-empty content tests stay unchanged. Empty-sidecar cleanup changes deliberately to fail-closed retention unless same-identity deletion is proven. |
 | Dependency addition friction (Principle VI) | Both crates already transitive; add platform-gated with a justification comment; no new supply-chain surface. |
 | Dangling-symlink self-heal edge case | Explicit existence-vs-link disambiguation before the no-follow open (Unresolved Question 3). |
 
@@ -324,13 +323,25 @@ any hand-rolled `rustix`/Windows fallback would require its own separate evidenc
 Dependencies: **U7 depends on U1; U6 depends on U7**; U2–U5 remain gated transitively.
 U7 is added to the `051-S` shipment manifest.
 
-### Transient sidecar cleanup bound to the retained root handle (clarified)
+### Transient sidecar cleanup fails closed on identity ambiguity
 
-Unresolved Question 2 is tightened: the empty-only cleanup of transient
-`-wal`/`-shm`/`-journal` sidecars MUST use the **retained workspace-root capability
-`Dir` handle** for the relative `symlink_metadata` emptiness probe and the relative
-`remove_file` unlink, so an intermediate-directory swap between probe and unlink cannot
-redirect the deletion. A path-based cleanup residual is **no longer accepted**.
+The retained workspace-root capability `Dir` contains lookup, but a relative
+`symlink_metadata` emptiness probe followed by relative `remove_file` is still a
+check/use race at the final name. A writer can replace an observed empty sidecar with a
+non-empty live WAL/SHM before unlink. U3 therefore leaves transient sidecars in place
+unless U7 proves a safe API that binds the emptiness observation and deletion to the
+same file identity. A separate metadata-check + name-based unlink is not accepted.
+
+### Capability authority must survive the SQLite engine open
+
+Protecting permission mutations is insufficient if `DataStore::open_sqlite` later
+passes the original `safe_path` to `configure_sqlite_wal` and
+`open_sqlite_instance`/`DbInstance::new`. An intermediate directory can be swapped in
+that window and redirect the engine outside the retained root. U7 must prove a safe,
+MSRV-1.75-compatible capability- or identity-bound SQLite/Cozo open, including engine
+sidecar creation. U6 must carry that mechanism through the production open paths. If
+the engine only accepts a re-resolved path and no safe binding exists under
+`#![forbid(unsafe_code)]`, U7 returns BLOCKED and Principles III/IV remain not-passed.
 
 ### Deterministic Windows reparse predicate (clarified)
 
