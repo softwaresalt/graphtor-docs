@@ -1082,3 +1082,5 @@
 {"seq":1083,"timestamp":"2026-08-25T07:11:18.7540353Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"059.002-T","schema_version":1}}
 {"seq":1084,"timestamp":"2026-08-25T07:11:34.7331244Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"059.004-T","schema_version":1}}
 {"seq":1085,"timestamp":"2026-08-25T07:32:01.6189484Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"task","item_id":"059.005-T","schema_version":1}}
+{"seq":1086,"timestamp":"2026-08-25T07:48:06.2641237Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"shipment","changed_fields":["priority"],"item_id":"049-S","schema_version":1}}
+{"seq":1087,"timestamp":"2026-08-25T07:48:17.5150716Z","event_type":"update_artifact","payload":{"actor":"backlogit","artifact_type":"feature","changed_fields":["priority"],"item_id":"056-F","schema_version":1}}
