@@ -66,7 +66,7 @@ Ship invocation.
   `FILE_ATTRIBUTE_REPARSE_POINT` refusal is a mandated code step (U2). (F2) An
   already-read-only file cannot open `GENERIC_WRITE` on Windows (`ERROR_ACCESS_DENIED`);
   handle must use `FILE_READ_ATTRIBUTES|FILE_WRITE_ATTRIBUTES` (U2/U4).
-* **P2 (fixed):** explicit `access_mode`/`share_mode` (U2/U5); transient sidecar cleanup
+* **P2 (fixed):** explicit `access_mode`/`share_mode` (U2/U10); transient sidecar cleanup
   is path-level link-safe not handle-bound (U3); junction-aware disambiguation via reparse
   attribute (U4); added `## Constitution Check`; pinned `windows-sys = 0.61` no-duplicate (U1).
 * **P3 advisories** folded into per-unit acceptance (clippy::pedantic/no-unwrap, scenario

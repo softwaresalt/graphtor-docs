@@ -4,10 +4,28 @@ title: "Stage — PR #107 Copilot review remediation (4 comments)"
 source: stage-agent-session
 date: 2026-08-25
 branch: chore/stage-dark-security-pipeline
-status: complete
+status: superseded
 ---
 
 # Stage Checkpoint — PR #107 Copilot Review Remediation
+
+> [!WARNING]
+> **SUPERSEDED (2026-08-25).** This entire PR #107 Copilot-review remediation
+> checkpoint is retained for history only. Do NOT rely on anything below. It presents
+> `cap-std` Windows / beneath-root behavior as **proven** and recommends a
+> **path-based / Unix-only rustix fallback**, and it scores Principles III/IV as
+> **PASS (gated on U6)** — all of these are obsolete overclaims. Under current
+> authority, `cap-std`'s exact root / intermediate / leaf beneath-root semantics and
+> its Rust-1.75 MSRV compatibility are **UNPROVEN and gated**: any unproven safe-API
+> or MSRV claim MUST produce a **BLOCKED** feasibility outcome (U7 `059.007-T` /
+> U8 `059.008-T`), keeping Principles III/IV **NOT-PASSED**. There is **no silent
+> fallback, no path-based chmod/deletion fallback, and no in-crate `unsafe`
+> fallback** — a BLOCKED gate halts production work rather than degrading to an
+> unsafe or path-based substitute. Authority is exclusively the U7/U8 feasibility
+> gates and the eleven-task U1-U11 DAG in
+> `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`, the deliberation
+> `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md`, and the
+> durable handoff `docs/memory/2026-08-25/stage-store-toctou-nofollow-memory.md`.
 
 Report-only Stage remediation of four Copilot review comments on PR #107, using
 **planning/backlog artifacts only**. No product source/config edits, no builds,

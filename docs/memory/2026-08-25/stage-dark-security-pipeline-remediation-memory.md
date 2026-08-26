@@ -8,7 +8,7 @@ shipments:
   - 050-S
   - 051-S
   - 049-S
-status: complete
+status: superseded
 tags:
   - stage
   - staging-review
@@ -17,6 +17,21 @@ tags:
   - security
   - residual-risk
 ---
+
+> [!WARNING]
+> **SUPERSEDED (2026-08-25).** This entire staging-review remediation record is
+> retained for history only. Do NOT rely on any remediation, ordering, rollback, or
+> readiness claim below. In particular, the **050-S rollback is no longer a
+> `git-revert`**: the current fail-closed rollback for the vscode pip auto-approve
+> hardening is to **never restore blanket `"pip": true` terminal auto-approval**.
+> Rollback retains the denial / manual per-invocation approval posture; only a
+> **separately reviewed, exact anchored command entry** may be added, and only when
+> automation is demonstrably required. Current authority is the durable handoff
+> `docs/memory/2026-08-25/stage-store-toctou-nofollow-memory.md`, the eleven-task
+> U1-U11 DAG in `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`,
+> the 050-S hardening plan
+> `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`, and the live
+> PR #107 `## Local Review Readiness` current-HEAD record.
 
 ## Task
 
@@ -31,7 +46,11 @@ shipment claim, no PR/Ship invocation. All unrelated/untracked files preserved.
    `## Constitution Check` to
    `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md` mapping
    Principles I–XI, with an explicit config-only risk (`ActionRisk: low`) and
-   git-revert rollback note. No other change to that plan.
+   git-revert rollback note. No other change to that plan. **(Superseded — the
+   git-revert rollback note is obsolete; see the superseded warning at the top of
+   this file. 050-S rollback is now fail-closed and MUST never restore blanket
+   `"pip": true` auto-approval; only a separately reviewed exact anchored command
+   entry may be added when automation is demonstrably required.)**
 2. **051-S memory Markdown conformance.** Added a frontmatter `title:` field to
    `docs/memory/2026-08-25/stage-store-toctou-nofollow-memory.md` (repo memory
    convention: `title:` in frontmatter, no H1) to satisfy the first-heading

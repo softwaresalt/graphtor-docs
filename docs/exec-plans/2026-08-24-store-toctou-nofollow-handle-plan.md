@@ -160,19 +160,23 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
     (the numeric value of `FILE_ATTRIBUTE_REPARSE_POINT`; **not** `pub`/`pub(crate)`,
     **not** re-exported) — i.e. `file_attributes & REPARSE_ATTR != 0`. `REPARSE_ATTR`
     is referenced **only** inside `should_refuse_reparse`, which is the single source of
-    truth for the reparse-bit decision. The predicate and its literal compile and
-    unit-test on **Linux CI** (no `windows-sys`, no filesystem, no privilege). The
-    **production Windows refusal branch MUST call
+    truth for the reparse-bit decision. The predicate and its literal are pure and
+    target-independent, so they compile with no `windows-sys`, no filesystem, and no
+    privilege — which is what lets **U11** unit-test the predicate deterministically on
+    **Linux CI**. The **production Windows refusal branch MUST call
     `should_refuse_reparse(file_attributes())`** and MUST NOT inline a separate
-    reparse-bit mask or duplicate the literal. To prevent a **decorative unused helper**
-    or a **duplicated inline mask**, acceptance **structurally requires** (i) the
-    literal `0x0000_0400`/`REPARSE_ATTR` appears exactly once in the module — inside the
-    predicate — and (ii) a `#[cfg(windows)]` test drives the production refusal branch
-    through `should_refuse_reparse`, so the helper cannot be dead code and no inline
-    mask can diverge from it. A **`#[cfg(windows)]` assertion/test MUST also prove
-    `0x0000_0400 == windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT`**
-    so the cross-platform literal can never drift from the real Win32 constant (see U5
-    deltas (f)/(g)).
+    reparse-bit mask or duplicate the literal. U2's **implementation** acceptance is
+    limited to building these properties: (i) the numeric literal `0x0000_0400` appears
+    exactly once in the module — inside the `REPARSE_ATTR` constant — with every other
+    reference (production branch and any test) using `REPARSE_ATTR`; and (ii) the
+    production Windows refusal branch calls `should_refuse_reparse`, so the helper cannot
+    be dead code and no inline mask can diverge from it. The **tests** that prove these
+    properties belong to **U11 (`059.011-T`)**, not U2, and are not U2 completion
+    criteria: (f) the deterministic fabricated-bit predicate unit test on Linux CI;
+    (g1) the `#[cfg(windows)]` assertion that
+    `REPARSE_ATTR == windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT`
+    (referencing `REPARSE_ATTR`, not repeating the numeric literal); and (g2) the
+    `#[cfg(windows)]` structural single-source / production-branch proof.
   * `capture_perms(&File) -> Result<fs::Permissions>` via `File::metadata()`.
   * `set_readonly_via_handle(&File, bool) -> Result<()>` via `File::set_permissions`
     (fchmod on Unix; `SetFileInformationByHandle(FileBasicInfo)` on the Windows
@@ -380,20 +384,22 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   `pub(crate) fn should_refuse_reparse(file_attributes: u32) -> bool` (returning
   `file_attributes & REPARSE_ATTR != 0` against a **module-private** literal bit
   constant `const REPARSE_ATTR: u32 = 0x0000_0400`, the numeric value of
-  `FILE_ATTRIBUTE_REPARSE_POINT`) with **fabricated attribute-bit inputs** (reparse bit
-  `0x0000_0400` set produces refuse; clear produces allow; combined with unrelated
-  attributes such as `FILE_ATTRIBUTE_READONLY`/`FILE_ATTRIBUTE_HIDDEN` still refuses).
+  `FILE_ATTRIBUTE_REPARSE_POINT`) with **fabricated attribute-bit inputs** built from
+  `REPARSE_ATTR` (`REPARSE_ATTR` set produces refuse; clear produces allow; combined
+  with unrelated fabricated bits standing in for `FILE_ATTRIBUTE_READONLY`/`FILE_ATTRIBUTE_HIDDEN`
+  still refuses).
   Because the predicate and its literal are target-independent, this test **compiles
   and runs on Linux CI** with no filesystem, no privilege, no reparse fixture, and no
-  `windows-sys`. (g) **Windows-only literal-equality assertion (`#[cfg(windows)]`):**
-  assert `0x0000_0400 == windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT`
-  (via `const_assert` or a `#[cfg(windows)]` `#[test]`), proving the cross-platform
-  literal can never drift from the real Win32 constant, **and structurally prove the
+  `windows-sys`. (g) **Windows-only equality assertion (`#[cfg(windows)]`):**
+  assert `REPARSE_ATTR == windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT`
+  (via `const_assert` or a `#[cfg(windows)]` `#[test]`), referencing `REPARSE_ATTR` so the
+  assertion never repeats the numeric literal and the cross-platform constant can never
+  drift from the real Win32 constant, **and structurally prove the
   production Windows refusal branch calls `should_refuse_reparse`** - a `#[cfg(windows)]`
   test drives the production branch through the predicate so it cannot be a decorative
-  unused helper, and the module contains exactly one occurrence of the
-  `0x0000_0400`/`REPARSE_ATTR` literal (inside the predicate) so no duplicated inline
-  mask can exist.
+  unused helper, and the module contains exactly one occurrence of the numeric literal
+  `0x0000_0400` (inside the `REPARSE_ATTR` constant), with production and tests
+  referencing `REPARSE_ATTR`, so no duplicated inline mask can exist.
 * **Files**: `src/db/store.rs` tests.
 * **Tests**: the (f) deterministic predicate unit test (fabricated-bit inputs, always
   on Linux CI) and the (g) `#[cfg(windows)]` literal-equality plus single-source
@@ -625,7 +631,7 @@ Reviewer, Constitution Reviewer, Scope Boundary Auditor. **Initial gate: FAIL**
 |---|---|---|---|---|
 | F1 | P1 | Security Lens, Correctness | Plan assumed Windows `FILE_FLAG_OPEN_REPARSE_POINT` fails closed like Unix `O_NOFOLLOW`. It does not — the open **succeeds on the reparse point**, so the guard would silently operate on the link and SQLite would then follow the path to the external target. | **Fixed (U2).** Windows path now requires an explicit post-open `file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT` refusal as a mandated code step; deliberation Windows-feasibility table corrected. |
 | F2 | P1 | Correctness | `clear_stale_readonly_lock` opening an **already read-only** file with write access would fail with `ERROR_ACCESS_DENIED` on Windows, breaking the self-heal. | **Fixed (U2/U4).** Handle uses attribute-level access (`FILE_READ_ATTRIBUTES|FILE_WRITE_ATTRIBUTES`), not `GENERIC_WRITE`; U4 adds an already-read-only-clear test. |
-| F3 | P2 | Rust | Windows handle needs explicit `access_mode` + `share_mode`; unspecified share mode risks sharing violations against the engine's own open. | **Fixed (U2/U5).** Full share mode (`READ|WRITE|DELETE`) specified; U5 validates the engine db/WAL open is not blocked. |
+| F3 | P2 | Rust | Windows handle needs explicit `access_mode` + `share_mode`; unspecified share mode risks sharing violations against the engine's own open. | **Fixed (U2/U10).** Full share mode (`READ|WRITE|DELETE`) specified; U10 validates the engine db/WAL open is not blocked. |
 | F4 | P2 | Correctness | Transient sidecars are created by the engine, not the guard, so cleanup **cannot** be handle-bound; the plan implied otherwise. | **Fixed (U3).** Cleanup is performed **relative to the retained U6 root `Dir` handle** (directory-handle-relative `symlink_metadata` emptiness + `remove_file` unlinks the link, never the target), so it is contained through the root handle — not a path-based residual (updated further in the PR #107 pass). |
 | F5 | P2 | Correctness, Scope | U4 absent-vs-dangling disambiguation keyed on `is_symlink()` would miss Windows **junctions**. | **Fixed (U4).** Disambiguation keys off the reparse attribute under the **intentionally broader any-reparse-point policy** (refuse ANY `FILE_ATTRIBUTE_REPARSE_POINT` entry), catching junctions and non-name-surrogate reparse points. |
 | F6 | P2 | Constitution | Governance requires an explicit `## Constitution Check` section. | **Fixed.** Section added mapping Principles I–XI. |
@@ -655,7 +661,7 @@ changed.
 
 | # | Severity | Finding | Disposition |
 |---|---|---|---|
-| A1 | P2 | Windows `FILE_ATTRIBUTE_REPARSE_POINT` breadth was ambiguous vs the narrower Unix `O_NOFOLLOW` name-surrogate class (symlink/junction). A blanket attribute check also refuses non-redirecting reparse points (OneDrive/dedup/HSM/WSL/app-alias). | **Resolved (U2/U4/U5).** Explicitly **adopted the broader fail-closed policy** — refuse ANY reparse-point entry — and justified it: a precise name-surrogate test needs the reparse tag via `unsafe` `DeviceIoControl(FSCTL_GET_REPARSE_POINT)` (precluded by `#![forbid(unsafe_code)]` at MSRV 1.75), and `FileType::is_symlink()` is path-based (re-introduces TOCTOU). Added U5 delta (e) regression for a legitimate non-redirecting reparse file (refused; skips unprivileged). Intentional Unix/Windows breadth asymmetry documented. |
+| A1 | P2 | Windows `FILE_ATTRIBUTE_REPARSE_POINT` breadth was ambiguous vs the narrower Unix `O_NOFOLLOW` name-surrogate class (symlink/junction). A blanket attribute check also refuses non-redirecting reparse points (OneDrive/dedup/HSM/WSL/app-alias). | **Resolved (U2/U4/U10).** Explicitly **adopted the broader fail-closed policy** — refuse ANY reparse-point entry — and justified it: a precise name-surrogate test needs the reparse tag via `unsafe` `DeviceIoControl(FSCTL_GET_REPARSE_POINT)` (precluded by `#![forbid(unsafe_code)]` at MSRV 1.75), and `FileType::is_symlink()` is path-based (re-introduces TOCTOU). Added U10 delta (e) regression for a legitimate non-redirecting reparse file (refused; skips unprivileged). Intentional Unix/Windows breadth asymmetry documented. |
 | A2 | P2 | New direct deps (`libc`, `windows-sys`) were verified only on the host toolchain, not the declared MSRV. | **Resolved (U1).** Acceptance now **requires** explicit pinned-MSRV verification `cargo +1.75.0 check --all-targets` (or `rustup run 1.75.0 …`). |
 | A3 | P2 | Unix `open_no_follow` specified only `custom_flags(libc::O_NOFOLLOW)` without an access mode; `O_NOFOLLOW` is a modifier and needs an access mode. | **Resolved (U2).** Unix `OpenOptions` now **explicitly sets `.read(true)`** alongside `O_NOFOLLOW` (least-privilege; sufficient for metadata + fchmod restore; avoids denying an already-read-only file). |
 | A4 | P2 | Duplicate-crate impact was asserted with a post-edit-only `cargo tree -d` snapshot. | **Resolved (U1).** Acceptance now **requires a before/after `cargo tree -d` (and `-i windows-sys`/`-i libc`) comparison** proving no new version copy. |
@@ -676,7 +682,7 @@ or config was changed by Stage.
 | # | Severity | Finding | Disposition |
 |---|---|---|---|
 | B1 | P1 | Final-component `O_NOFOLLOW`/`OPEN_REPARSE_POINT` (U2) does **not** prevent an **intermediate-directory swap** after `validate_path`; the plan claimed Principles III/IV essentially complete while this race remained. | **Resolved (U6, NEW).** Added a directory-identity/containment-safe **beneath-root walk** (selected design: `cap-std` capability `Dir`, safe API atop already-transitive `rustix` on Unix + safe handle-relative `NtCreateFile` on Windows; no in-crate `unsafe`, no path-based `chmod` fallback). U2's `open_no_follow` is invoked through it. Constitution III/IV re-scored **PASS (gated on U6)**; U2–U5 dependency-gated on `059.006-T`. Requirements Trace, Dependency Graph, Decisions, Risks, Plan Hardening (signals + risky-actions), Runtime Verification, and Rollback updated. Platform-asymmetry fallback (Unix-only `rustix` walk + separate safe Windows design) documented for the `cap-std`-MSRV-incompatible case; `cap-std` added to U1 with pinned-MSRV `cargo +1.75.0` and before/after `cargo tree -d` verification. **(Superseded by C1, pass 2 below: this pass's `cap-std`/MSRV assumption was an overclaim; III/IV are now honestly scored `NOT-PASSED (provisional; gated on U7 PASS + U6)` and the U7 feasibility/evidence gate must prove the design test-first before U6 builds on it.)** |
-| B2 | P2 | The U5 Windows non-name-surrogate reparse **integration fixture may always skip** on unprivileged CI, leaving the broader fail-closed policy unproven in normal CI. | **Resolved (U5 delta (f), NEW).** Requires a **deterministic normal-CI predicate unit test** — extract the reparse-bit refusal into a pure `should_refuse_reparse(file_attributes: u32) -> bool` and test it with **fabricated attribute-bit inputs** (no filesystem/privilege), so the broader policy is pinned on every CI run; the real reparse-file fixture (delta (e)) remains **optional integration coverage** with explicit executed/skipped reporting. `059.005-T` acceptance updated to match. Safe Rust 1.75 / `#![forbid(unsafe_code)]` preserved. |
+| B2 | P2 | The U5 Windows non-name-surrogate reparse **integration fixture may always skip** on unprivileged CI, leaving the broader fail-closed policy unproven in normal CI. | **Resolved (U11 delta (f), NEW).** Requires a **deterministic normal-CI predicate unit test** — extract the reparse-bit refusal into a pure `should_refuse_reparse(file_attributes: u32) -> bool` and test it with **fabricated attribute-bit inputs** (no filesystem/privilege), so the broader policy is pinned on every CI run; the real reparse-file fixture (delta (e)) remains **optional integration coverage** with explicit executed/skipped reporting. `059.011-T` acceptance updated to match. Safe Rust 1.75 / `#![forbid(unsafe_code)]` preserved. |
 
 **Findings summary:** P0 = 0, P1 = 1 (B1, resolved in-artifact + new gating task),
 P2 = 1 (B2, resolved in-artifact). Backlog: `059.006-T` created and gating
@@ -710,7 +716,7 @@ config was changed by Stage.
 |---|---|---|---|
 | C1 | P1 | The plan and U6 **overclaimed** that `cap-std` already provides the exact root/intermediate/leaf beneath-root semantics and Rust-1.75 compatibility; Principles III/IV were scored **PASS (gated on U6)** on that unproven premise. | **Resolved (U7, NEW).** Added a bounded **test-first feasibility/evidence gate** `059.007-T` proving, safe APIs only under MSRV 1.75: (1) atomic workspace-root directory-handle bootstrap (Unix `O_DIRECTORY\|O_NOFOLLOW` read; Windows `FILE_FLAG_BACKUP_SEMANTICS\|FILE_FLAG_OPEN_REPARSE_POINT` + attribute rejection + share/access flags) retained for the `DataStore` lifetime, with an **explicit threat model** (attacker may write inside the workspace root but not its trusted parent); (2) conversion to/from `cap_std::fs::Dir`/`File`; (3) component walk refuses intermediate symlink/junction swaps; (4) in-bounds leaf reparse/symlink refused; (5) compiles under Rust 1.75. If any obligation fails, U7 returns **BLOCKED** to Stage and Principles III/IV remain **NOT-PASSED** — no vague `unsafe` or path-based fallback. U7 depends on U1; U6 depends on U7; U2–U5 gated transitively. Constitution III/IV re-scored **NOT-PASSED (provisional; gated on U7 PASS + U6)**. |
 | C2 | P2 | Transient sidecar (`-wal`/`-shm`/`-journal`) cleanup was described as an acceptable **path-based residual**, leaving an intermediate-directory swap able to redirect deletion. | **Resolved (U3).** Cleanup now performs emptiness probe (`symlink_metadata`) and unlink (`remove_file`) **relative to the retained U6 workspace-root `Dir` handle**, so a swap between probe and unlink cannot redirect the deletion; the path-based-residual claim is removed. |
-| C3 | P2 | The Windows reparse policy test risked being **target-gated** (needing `windows-sys`), so it could not run deterministically on Linux CI. | **Resolved (U2/U5).** Defined a **target-independent literal bit constant `0x0000_0400`** and a pure predicate `should_refuse_reparse(u32)` compiled/tested on Linux CI; production Windows code MUST call that predicate; added a `#[cfg(windows)]` assertion that `0x0000_0400 == FILE_ATTRIBUTE_REPARSE_POINT`. `059.002-T`/`059.005-T` updated. |
+| C3 | P2 | The Windows reparse policy test risked being **target-gated** (needing `windows-sys`), so it could not run deterministically on Linux CI. | **Resolved (U2 implements, U11 tests).** Defined a **module-private target-independent literal bit constant `REPARSE_ATTR = 0x0000_0400`** and a pure predicate `should_refuse_reparse(u32)` compiled/tested on Linux CI; production Windows code MUST call that predicate; the `#[cfg(windows)]` assertion proves `REPARSE_ATTR == FILE_ATTRIBUTE_REPARSE_POINT` (referencing `REPARSE_ATTR`, not repeating the numeric literal). `059.002-T` implements the predicate + production call; `059.011-T` owns the deterministic and `#[cfg(windows)]` tests. |
 | C4 | P2 | `cap_std::fs::File` vs `std::fs::File` boundary was left **ambiguous** for the handle-bound permission primitives. | **Resolved (U7).** U7 feasibility must choose and prove either `into_std` conversion or capability-file helper signatures; the boundary is **PENDING U7 PASS** until U7's evidence records the exact APIs, at which point U6/U2 carry it in — no wording implies it is already decided. |
 | C5 | P2 | U4 wording said the reparse disambiguation matched `is_reparse_point` **breadth**, understating intent. | **Resolved (U4).** Reworded to the **intentionally broader any-reparse-point policy** (refuse ANY `FILE_ATTRIBUTE_REPARSE_POINT` entry). |
 | C6 | P2 | U1 acceptance lacked **continuous** MSRV evidence (a one-shot local check can regress). | **Resolved (U1).** Acceptance now requires a dedicated **Rust 1.75 CI check** added during implementation (or explicit proof of an equivalent repository gate); Stage does not alter the workflow now. |
@@ -742,7 +748,7 @@ corresponding tasks.
 
 | # | Severity | Finding | Disposition |
 |---|---|---|---|
-| D1 | P2 | `should_refuse_reparse` was described as the decision point but nothing **structurally** prevented a decorative unused helper or a duplicated inline reparse-bit mask in the production Windows branch. | **Resolved (U2/U5).** The reparse-bit literal is now a **module-private** `const REPARSE_ATTR` (not `pub`/`pub(crate)`, referenced only inside the predicate); the predicate is the **single source of truth**; the production Windows refusal branch MUST call `should_refuse_reparse(file_attributes())`. Acceptance **structurally requires** the literal occurs exactly once (inside the predicate) and a `#[cfg(windows)]` test drives the production branch through the predicate, so the helper cannot be dead code and no inline mask can diverge. `059.002-T`/`059.005-T` updated. |
+| D1 | P2 | `should_refuse_reparse` was described as the decision point but nothing **structurally** prevented a decorative unused helper or a duplicated inline reparse-bit mask in the production Windows branch. | **Resolved (U2/U11).** The reparse-bit literal is now a **module-private** `const REPARSE_ATTR` (not `pub`/`pub(crate)`, referenced only inside the predicate); the predicate is the **single source of truth**; the production Windows refusal branch MUST call `should_refuse_reparse(file_attributes())`. Acceptance **structurally requires** the numeric literal occurs exactly once, inside the `REPARSE_ATTR` constant (the predicate references `REPARSE_ATTR`, it does not restate the literal), and a `#[cfg(windows)]` test drives the production branch through the predicate, so the helper cannot be dead code and no inline mask can diverge. `059.002-T`/`059.011-T` updated. |
 | D2 | P2 | U6 acceptance leaned only on U7's throwaway feasibility harness for MSRV evidence, so the **integrated** `src/db/store.rs` was never re-verified under Rust 1.75. | **Resolved (U6).** U6 acceptance now **reruns `cargo +1.75.0 check --all-targets` against the actual integrated `src/db/store.rs` `open_beneath` implementation** with the `cap-std` edge; U7 harness evidence is explicitly **necessary but not sufficient**. `059.006-T` updated. |
 | D3 | P2 | The `cap_std::fs::File` vs `std::fs::File` boundary was worded as **already decided/inherited** in several places, understating that it is unproven until U7 records evidence. | **Resolved (U7/U6/U2 + deliberation).** The boundary is now marked **`PENDING U7 PASS`** everywhere it is referenced (U7 obligation 5, U7 acceptance, U6 mechanics/acceptance, U2 scope note, plan C4, deliberation); "decided"/"inherited"/"no late ambiguity" wording that implied it was already settled is removed. It is decided and recorded only on U7 PASS. |
 | D4 | P3 | Plan-review **attempt 3**'s "all four findings / no unresolved P0/P1" statement could be mistaken for the final authority even though attempt 4 reopened the unit. | **Resolved.** Attempt 3 is now explicitly marked **superseded by attempt 4** (overclaim C1; III/IV `NOT-PASSED (provisional)`), pointing readers to attempt 4 for the authoritative status. |

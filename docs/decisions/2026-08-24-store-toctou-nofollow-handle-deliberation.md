@@ -347,11 +347,12 @@ the engine only accepts a re-resolved path and no safe binding exists under
 ### Deterministic Windows reparse predicate (clarified)
 
 The broader fail-closed reparse policy is pinned by a **module-private, target-independent
-literal bit constant `0x0000_0400`** and a pure predicate (`should_refuse_reparse`)
+literal bit constant `REPARSE_ATTR` (`0x0000_0400`)** and a pure predicate (`should_refuse_reparse`)
 compiled/tested on **Linux CI**; the predicate is the **single source of truth** — the
 production Windows refusal branch MUST call it (never an inline reparse-bit mask, and
-the literal occurs exactly once, inside the predicate), plus a Windows-only assertion
-that the literal equals windows-sys `FILE_ATTRIBUTE_REPARSE_POINT` and that the
+the numeric literal occurs exactly once, inside `REPARSE_ATTR`, with every other reference
+using `REPARSE_ATTR`), plus a Windows-only assertion
+that `REPARSE_ATTR` equals windows-sys `FILE_ATTRIBUTE_REPARSE_POINT` and that the
 production branch drives the predicate (so it cannot be a decorative unused helper).
 The policy is the **intentionally broader any-reparse-point** refusal (refuse ANY
 `FILE_ATTRIBUTE_REPARSE_POINT` entry), not merely matching `is_reparse_point` breadth.
