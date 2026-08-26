@@ -55,8 +55,8 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 | Fail closed when a no-follow handle cannot be obtained/retained (`5905CDEE`, `E86A6E56`) | U3/U4 return the existing refusal error rather than mutating via a re-resolved path. |
 | `#![forbid(unsafe_code)]`, MSRV 1.75 | U1/U2 use only safe std + `OpenOptionsExt::custom_flags` + platform flag constants. |
 | Preserve exact-permission and sidecar-content safety | U3/U4 keep capture/restore exact (handle-bound), preserve non-empty sidecars, and replace racy empty-sidecar deletion with fail-closed retention unless same-identity deletion is proven; U5 re-verifies. |
-| Test-first swap-resistance + platform behavior | U3/U4 add test-first swap-resistance cases; U5 adds the cross-platform matrix and Windows handle-mode validation. |
-| Intermediate-directory (parent) swap containment, not just final component (PR #107 review, 2026-08-25) | U7 proves the root/API/MSRV capability foundation; U8 separately proves the SQLite/Cozo engine boundary; U1 adopts only the proven dependencies; U6 integrates the beneath-root permission boundary; U9 integrates the actual engine open. U2–U5 and U10 depend on both U6 and U9; U11 depends on U2. |
+| Test-first swap-resistance + platform behavior | U3/U4 add test-first swap-resistance cases; U5 adds the cross-platform matrix; U10 adds the Windows handle-mode validation. |
+| Intermediate-directory (parent) swap containment, not just final component (PR #107 review, 2026-08-25) | U7 proves the root/API/MSRV capability foundation; U8 separately proves the SQLite/Cozo engine boundary; U1 adopts only the proven dependencies; U2 provides the leaf no-follow/permission primitives; U6 composes U2 and integrates the beneath-root permission boundary; U9 integrates the actual engine open. U3–U5 and U10 depend on both U6 and U9; U2 precedes U6; U11 depends on U2. |
 | Prove the capability design is achievable with safe APIs under MSRV 1.75 before building on it (PR #107 review, 2026-08-25) | U7 (059.007-T) has three bounded root/API/MSRV scenarios and no dependency on U1. U8 (059.008-T) has three bounded engine-boundary scenarios and depends on U7. Either gate may return BLOCKED before U1 changes the product manifest. |
 | Prevent transient-sidecar check/use deletion races (PR #107 review, 2026-08-25) | U3 prohibits separate metadata-check + name-based unlink. Unless U7 proves a same-identity deletion API, cleanup fails closed by leaving transient sidecars in place. |
 
@@ -73,7 +73,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   3. run a table-driven refusal matrix for absolute/`..` escape, intermediate
      symlink/junction swap, and an in-bounds leaf symlink/reparse.
 * **Outcome**: PASS records exact versions, APIs, File boundary, threat model, and
-  test output. BLOCKED records the failed scenario and keeps U8/U1/U6/U9/U2–U5/U10/U11
+  test output. BLOCKED records the failed scenario and keeps U8/U1/U2/U6/U9/U3–U5/U10/U11
   gated. No product dependency, in-crate `unsafe`, or path fallback is added.
 * **Backlog**: `059.007-T`; no dependencies; gates U8.
 
@@ -89,7 +89,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   3. compile the harness under Rust 1.75 with safe APIs only, or record BLOCKED
      naming the unavailable engine API.
 * **Outcome**: PASS records exact engine APIs/versions/results. BLOCKED keeps
-  U1/U6/U9/U2–U5/U10/U11 gated and Principles III/IV NOT-PASSED.
+  U1/U2/U6/U9/U3–U5/U10/U11 gated and Principles III/IV NOT-PASSED.
 * **Backlog**: `059.008-T`; depends on U7; gates U1 and U6.
 
 ### U1 — Add proven platform-gated dependencies (config)
@@ -152,7 +152,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
         name-surrogates via `O_NOFOLLOW`; Windows refuses the broader reparse
         class) is intentional and documented — Windows is simply stricter. This
         breadth MUST be regression-tested for a legitimate non-redirecting
-        reparse file (see U5 delta (e)) and for the junction refusal path (U4).
+        reparse file (see U10 delta (e)) and for the junction refusal path (U4).
   * **Deterministic refusal predicate (target-independent, Linux-testable; single
     source of truth)**: factor the reparse-bit refusal into a pure predicate
     `pub(crate) fn should_refuse_reparse(file_attributes: u32) -> bool` that tests a
@@ -186,13 +186,16 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
     to `GraphtorError` with a traceable message.
   * **Scope note (doc-comment)**: the final-component handle enforces **no-follow /
     no-reparse** on the leaf; **full-path (intermediate-directory) containment is
-    provided by U6's beneath-root directory-handle-relative walk** (U2's
-    `open_no_follow` is invoked through the U6 opener, never on a raw absolute path).
-    A bare `O_NOFOLLOW`/`OPEN_REPARSE_POINT` guards only the final component, so U2
-    alone does **not** close an intermediate parent-directory swap after
-    `validate_path`; U6 closes it via a safe capability API (`cap-std`) rather than an
-    in-crate `unsafe` `openat`/`O_PATH`. This unit therefore depends on U6 and MUST
-    NOT be considered complete on its own. The `cap_std::fs::File` vs `std::fs::File`
+    provided by U6's beneath-root directory-handle-relative walk**, which COMPOSES
+    U2's `open_no_follow` primitive (invoked through the U6 opener, never on a raw
+    absolute path). A bare `O_NOFOLLOW`/`OPEN_REPARSE_POINT` guards only the final
+    component, so U2 alone does **not** close an intermediate parent-directory swap
+    after `validate_path`; U6 closes it via a safe capability API (`cap-std`) rather
+    than an in-crate `unsafe` `openat`/`O_PATH`. **U2 depends only on U1 and is
+    scheduled BEFORE U6 — it does NOT depend on U6 or U9.** U2 is complete as the
+    leaf-primitive unit once its own three helper scenarios pass; complete
+    intermediate-directory containment is achieved downstream by U6 (which composes
+    U2) and U9 (which follows U6). The `cap_std::fs::File` vs `std::fs::File`
     boundary through which `open_no_follow` returns its handle is **PENDING U7 PASS**
     (U7 records the exact APIs — `into_std` conversion or a capability-file helper
     signature); it is **not decided here**. U2 carries in whichever boundary U7's
@@ -211,21 +214,26 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   `clippy::pedantic -D warnings`; contain no `.unwrap()`/`.expect()`; the NEW unit
   tests pass; symlink/junction open fails closed on both platforms.
 
-### U6 — Integrate beneath-root opener and permission boundary (gates U9/U2–U5/U10/U11)
+### U6 — Integrate beneath-root opener and permission boundary (composes U2; gates U9/U3–U5/U10)
 
 * **Changes**: implement the production `open_beneath` boundary proven by U7,
-  after U8 proves that a safe engine boundary exists and U1 adopts the exact
-  dependencies. Resolve the main database and sidecars relative to the retained
-  root capability and return identity-bound handles for permission operations.
+  after U8 proves that a safe engine boundary exists, U1 adopts the exact
+  dependencies, and U2 provides the leaf no-follow/permission primitives. Resolve
+  the main database and sidecars relative to the retained root capability, COMPOSE
+  U2's `open_no_follow` / `capture_perms` / `set_readonly_via_handle` primitives
+  (do not re-implement or duplicate them), and return identity-bound handles for
+  permission operations.
   U6 ends at this opener/permission boundary; it does not integrate the engine.
 * **Three test-first scenarios**:
-  1. a normal contained database/sidecar opens and round-trips exact permissions;
+  1. a normal contained database/sidecar opens and round-trips exact permissions
+     by composing U2's leaf primitives (not a duplicate implementation);
   2. an intermediate parent swap is refused with no external open or mutation;
   3. a table-driven refusal matrix covers unavailable root authority, absolute/`..`
-     escape, and final-component symlink/reparse without a path fallback.
+     escape, and final-component symlink/reparse (delegated to U2's leaf refusal
+     primitive) without a path fallback.
 * **Acceptance**: integrated `src/db/store.rs` passes Rust 1.75 check, clippy
   pedantic, and targeted tests; no in-crate `unsafe` or unwrap/expect.
-* **Backlog**: `059.006-T`; depends on U7, U8, and U1; gates U9 and U2–U5/U10/U11.
+* **Backlog**: `059.006-T`; depends on U1, U2, U7, and U8; composes U2; gates U9 and U3–U5/U10.
 
 ### U9 — Integrate capability-bound SQLite/Cozo engine open (code, test-first)
 
@@ -240,7 +248,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
      expected behavior through the proven bound mechanism.
 * **Acceptance**: Rust 1.75, clippy pedantic, and targeted tests pass; no in-crate
   `unsafe`, original-path engine reopen, or success-shaped fallback.
-* **Backlog**: `059.009-T`; depends on U6 and U8; U2–U5 and U10 also depend on U9; U11 depends on U2.
+* **Backlog**: `059.009-T`; depends on U6 and U8; U3–U5 and U10 also depend on U9; U2 precedes U6 and U11 depends on U2.
 
 ### U3 — Bind EngineReadonlyGuard lock/rollback/Drop to retained handles (code, test-first)
 
@@ -414,30 +422,31 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   `clippy::pedantic -D warnings`; no `.unwrap()`/`.expect()`. At most three
   independently countable scenarios (fabricated-bit predicate, Windows literal
   equality, structural single-source proof).
-* **Backlog**: `059.011-T`; depends on U2 (transitively feasibility/integration gated).
+* **Backlog**: `059.011-T`; depends on U2 (transitively feasibility-gated via U2 -> U1).
 ## Dependency Graph
 
 ```text
 U7 root/API/MSRV proof
   --> U8 engine-boundary proof
       --> U1 adopt proven dependencies
-          --> U6 integrate contained opener/permissions
-              --> U9 integrate contained engine open
-                  --> U2 helper
-                      --> U3 guard lock/Drop --+
-                      --> U4 clear-stale ------+--> U5 sidecar matrix (deltas a-c)
-                      |                        +--> U10 Windows breadth (deltas d-e)
-                      --> U11 predicate + literal + single-source proof (deltas f-g)
+          --> U2 leaf no-follow/permission primitives
+              --> U6 integrate contained opener/permissions (composes U2)
+              |   --> U9 integrate contained engine open
+              |       --> U3 guard lock/Drop --+
+              |       --> U4 clear-stale ------+--> U5 sidecar matrix (deltas a-c)
+              |                                +--> U10 Windows breadth (deltas d-e)
+              --> U11 predicate + literal + single-source proof (deltas f-g)
 ```
 
 * U7 has no dependency and may return BLOCKED before the product manifest changes.
 * U8 depends on U7 and may independently return BLOCKED on the engine API.
 * U1 depends on U7 and U8 and adopts only their proven versions.
-* U6 depends on U7, U8, and U1; U9 depends on U6 and U8.
-* U2 depends on U1, U6, and U9. U3/U4 depend on U2, U6, and U9.
-  U5 and U10 depend on U3, U4, U6, and U9. U11 depends on U2 (transitively
-  feasibility- and integration-gated). Nothing depends on U5, U10, or U11; all
-  three are terminal test units, so the split adds no cycles.
+* U2 depends only on U1 and precedes U6. U6 depends on U1, U2, U7, and U8 and
+  composes U2's primitives; U9 depends on U6 and U8.
+* U3/U4 depend on U2, U6, and U9. U5 and U10 depend on U3, U4, U6, and U9.
+  U11 depends on U2 (transitively feasibility-gated via U2 -> U1). Nothing
+  depends on U5, U10, or U11; all three are terminal test units, so the rewire
+  adds no cycles.
 * Every production unit is gated on both feasibility results and on the split
   permission plus engine integrations.
 * No cycles.
@@ -479,7 +488,7 @@ U7 root/API/MSRV proof
 
 | Risk | Mitigation |
 |---|---|
-| Windows retained handle blocks Cozo/SQLite db/WAL open | Open attribute-only + full share mode; U5 validates; Option C fallback documented. |
+| Windows retained handle blocks Cozo/SQLite db/WAL open | Open attribute-only + full share mode; U10 validates; Option C fallback documented. |
 | Accidental `unsafe` via raw handles | Safe std only; CI `#![forbid(unsafe_code)]` enforces. |
 | Regressing exact-permission / sidecar-content behavior | Capture/restore stays exact (handle-bound); non-empty content tests remain unchanged; empty transient cleanup changes deliberately to fail-closed retention unless same-identity deletion is proven. |
 | Dangling-symlink self-heal edge case | Explicit absent-vs-link disambiguation before the no-follow open (U4). |
@@ -489,8 +498,8 @@ U7 root/API/MSRV proof
 | Empty-sidecar cleanup deletes a replacement live sidecar | U3 forbids metadata-check + name-based unlink and leaves transient sidecars unless the same observed file identity can be deleted safely. |
 | Permission guarding is safe but the engine reopens `safe_path` | U8 must prove the bound API and U9 must integrate it; otherwise the gate is BLOCKED. |
 | `cap-std` adds a new crate family to the graph | Layers on the already-transitive `rustix`; before/after `cargo tree -d` in U1 proves no unexpected duplicate; `cargo audit` clean. |
-| U7 or U8 feasibility gate slips or returns BLOCKED | U1/U6/U9/U2–U5/U10/U11 do not start; Principles III/IV remain **NOT-PASSED**. |
-| U6 or U9 integration slips | U2–U5 and U10 remain gated (U11 after U2); completeness requires U7/U8 PASS plus U6/U9 landed. |
+| U7 or U8 feasibility gate slips or returns BLOCKED | U1/U2/U6/U9/U3–U5/U10/U11 do not start; Principles III/IV remain **NOT-PASSED**. |
+| U6 or U9 integration slips | U3–U5 and U10 remain gated; U2 precedes U6 and U11 follows U2; completeness requires U7/U8 PASS plus U6/U9 landed. |
 
 ## Constitution Check
 
@@ -523,7 +532,7 @@ U7 root/API/MSRV proof
   `rustix`) for beneath-root intermediate-directory containment.
 * **high runtime, rollout, or rollback risk** — **PRESENT (moderate)**. The guard is on
   the read-only serve hot path and the write-mode self-heal path; a Windows handle-mode
-  mistake could block engine opens. Mitigated by fail-closed design and U5 validation.
+  mistake could block engine opens. Mitigated by fail-closed design and U10 validation.
 
 **Requires plan hardening: yes**
 
@@ -598,7 +607,7 @@ destructive action.
   open (U9)**; empty-sidecar observation followed by a live replacement never unlinks
   the replacement (U3); dangling-symlink fail-closed; stale-lock self-heal; exact-mode
   and non-empty-sidecar preservation; Windows retained handle does not block the engine
-  db/WAL open (U5).
+  db/WAL open (U10).
 * **Blocked-path handling**: if the no-follow handle or capability-bound engine open
   cannot be established, refuse the open — never mutate or open the engine through a
   re-resolved path. If same-identity sidecar deletion cannot be established, leave the
@@ -607,14 +616,14 @@ destructive action.
   Windows engine-open blocked by the retained handle, or a `cap-std` MSRV-1.75 /
   Windows-behavior incompatibility surfaced in U7/U8. **Rollback procedure**: for the
   Windows-open case, switch that platform to Option C (identity-verified re-open) and
-  re-run U5; for a `cap-std` MSRV/Windows incompatibility, keep U1 blocked and return
+  re-run U10; for a `cap-std` MSRV/Windows incompatibility, keep U1 blocked and return
   to Stage to define the documented
   Unix-only `rustix` `openat` walk plus the separate safe Windows design (recording the
   decision in the PR); for a broader failure, revert the guard/clear-stale changes (the
   functions are self-contained) while keeping U1's deps. **Owner**: Ship agent.
   **Validation window**: the Ship runtime-verification + CI pass for the release PR.
 * **Unresolved operator decision blocking safe execution**: none. The Windows
-  handle-mode choice is resolvable in-implementation via U5 test evidence.
+  handle-mode choice is resolvable in-implementation via U10 test evidence.
 
 ## Plan Review
 
@@ -839,8 +848,31 @@ Nothing depends on U5, U10, or U11; all three are terminal test units, so the sp
 acyclic. Wherever earlier passes of this plan use the collective shorthand `U2-U5`, read
 it under the current authority as `U2-U5 plus U10, with U11 gated after U2`.
 
-**Current authority:** eleven-task U1-U11 DAG:
+**Authority at pass 6 (superseded by pass 7 below):** eleven-task U1-U11 DAG:
 U7 -> U8 -> U1 -> U6 -> U9 -> U2 -> U3/U4 -> U5, with U10 sharing U5's U3+U4+U6+U9 gating
 and U11 gated after U2; explicit fan-in dependencies are recorded in backlog. Shipment
 `051-S` contains `059-F` plus `059.001-T` through `059.011-T` (12 items). Principles
 III/IV remain NOT-PASSED until U7/U8 PASS and U6/U9 land.
+
+### Report-only staging-review addendum - 2026-08-25 (PR #107 pass 7: U2-before-U6 dependency rewire)
+
+**Gate: ADVISORY** (report-only; backlog `059-F`/`051-S` already exists). Current-head
+Copilot review flagged that U6's acceptance needs U2's leaf no-follow/permission
+primitives, yet U2 depended on U6 and U9 — an inverted build order. The dependency
+direction is corrected with no new cycles and all feasibility gates preserved.
+
+| # | Severity | Finding | Disposition |
+|---|----------|---------|-------------|
+| H1 | P1 | U2 (`059.002-T`) depended on U6 and U9 while U6's acceptance needs U2's `open_no_follow`/`capture_perms`/`set_readonly_via_handle` primitives, inverting the build order. | **Resolved.** U2 now depends only on U1 and is scheduled BEFORE U6. U6 (`059.006-T`) depends on U2 and COMPOSES its leaf primitives instead of duplicating them. U9 still follows U6. U3/U4 depend on U2+U6+U9; U5/U10 depend on U3+U4+U6+U9; U11 depends on U2. Frontmatter, unit definitions, Requirements Trace, Dependency Graph, Risks, deliberation, `.backlogit/memories.json`, and the durable handoff updated. |
+| H2 | P2 | Requirements Trace, implementation narrative, and rollback/runtime prose still assigned the Windows handle-mode / non-interference delta (d) validation to U5 after the pass-6 split moved it to U10. | **Resolved.** All live ownership of the Windows handle-mode validation and delta (d)/(e) breadth is corrected to U10; U5 retains only the sidecar-matrix deltas (a)-(c). |
+
+**Current authority:** eleven-task U1-U11 DAG:
+U7 -> U8 -> U1 -> U2 -> U6 -> U9 -> U3/U4 -> U5/U10, with U11 after U2. U2 depends only
+on U1; U6 composes U2 and depends on U1+U2+U7+U8; U9 depends on U6+U8; U3/U4 depend on
+U2+U6+U9; U5 and U10 depend on U3+U4+U6+U9 (U10 owns the Windows handle-mode /
+non-interference deltas d-e); U11 depends on U2. Explicit fan-in dependencies are
+recorded in backlog. Shipment `051-S` contains `059-F` plus `059.001-T` through
+`059.011-T` (12 items). Principles III/IV remain NOT-PASSED until U7/U8 PASS and U6/U9
+land. Wherever earlier passes use the shorthand `U2-U5`, read it under this authority
+as: U2 is a leaf primitive preceding U6; U3-U5 plus U10 are gated on U6+U9; U11 is
+gated after U2.

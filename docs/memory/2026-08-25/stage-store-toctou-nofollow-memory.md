@@ -38,9 +38,11 @@ Ship invocation.
   * 059.011-T — U11 deterministic should_refuse_reparse predicate + Windows literal-equality + single-source structural proof, deltas (f)-(g) (tests; added by PR #107 review)
 * **Shipment manifest (12 items):** [059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
   059.005-T, 059.006-T, 059.007-T, 059.008-T, 059.009-T, 059.010-T, 059.011-T].
-* **Dependencies:** U8←U7; U1←U7+U8; U6←U1+U7+U8; U9←U6+U8;
-  U2←U1+U6+U9; U3/U4←U2+U6+U9; U5←U3+U4+U6+U9; U10←U3+U4+U6+U9; U11←U2 (`blocks`).
-  U7 or U8 BLOCKED halts all production work. U5/U10/U11 are terminal test units (nothing depends on them), so the split is acyclic.
+* **Dependencies:** U8←U7; U1←U7+U8; U2←U1; U6←U1+U2+U7+U8; U9←U6+U8;
+  U3/U4←U2+U6+U9; U5←U3+U4+U6+U9; U10←U3+U4+U6+U9; U11←U2 (`blocks`).
+  U2 is a leaf primitive that precedes U6, which composes U2's primitives. U7 or U8
+  BLOCKED halts all production work. U5/U10/U11 are terminal test units (nothing depends
+  on them), so the DAG is acyclic.
 * **Semantic links:** 059.004-T related_to 059.003-T (sibling same-mechanism);
   059-F related_to 052-F (reparse-point guards prior art); 059-F related_to 056.024-T
   (no-follow config mutation sibling).
@@ -73,14 +75,20 @@ Ship invocation.
   new-vs-regression labels, refusal-branch observability, final-component-only scope,
   explicit rollback test, U5 delta focus).
 
-## Feasibility assessment (confirmed)
+## Feasibility assessment (PENDING U7/U8 evidence)
 
-All APIs safe std, unsafe-free, MSRV 1.75: `OpenOptionsExt::custom_flags` (1.10),
-`access_mode`/`share_mode` (1.35), `File::set_permissions` (1.16, handle-bound via
-fchmod/SetFileInformationByHandle), `File::metadata`. `File` is Send+Sync so retaining
-handles in `Arc<EngineReadonlyGuard>` preserves auto-traits. `libc` + `windows-sys 0.61`
-already transitive in Cargo.lock; added as platform-gated direct deps (Principle VI).
-`#![forbid(unsafe_code)]` preserved.
+These APIs and candidate versions are HYPOTHESES to be proven by the queued U7
+(`059.007-T`) and U8 (`059.008-T`) feasibility gates before any product-manifest change —
+they are NOT yet confirmed. Candidate safe-std, unsafe-free, MSRV-1.75 surface:
+`OpenOptionsExt::custom_flags` (1.10), `access_mode`/`share_mode` (1.35),
+`File::set_permissions` (1.16, handle-bound via fchmod/SetFileInformationByHandle),
+`File::metadata`; `File` is Send+Sync so retaining handles in `Arc<EngineReadonlyGuard>`
+should preserve auto-traits; `libc` + `windows-sys 0.61` are already transitive in
+Cargo.lock. **U1 (`059.001-T`) adds these as platform-gated DIRECT deps only after BOTH
+U7 and U8 record PASS** — the product manifest (`Cargo.toml`) is intentionally untouched
+until then. If either gate returns BLOCKED, production work halts and Principles III/IV
+remain NOT-PASSED with NO path-based or unsafe fallback. `#![forbid(unsafe_code)]` is
+preserved throughout.
 
 ## Deferred decision (to Ship / implementation, test-first)
 
@@ -142,9 +150,30 @@ bounded test tasks and the current-state bullets above were updated to match:
 
 The shipment `051-S` manifest is now 12 items (`059-F` plus `059.001-T` through
 `059.011-T`). Authority: the eleven-task U1-U11 DAG in
-`docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md` (pass 6 addendum) and
+`docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md` (pass 7 addendum) and
 the matching section in
 `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md`. The historical
 session-narrative sections above (which created `059.001-T` through `059.009-T`) are left
 as written; only the live current-state bullets were updated. Principles III/IV remain
 NOT-PASSED until U7/U8 PASS and U6/U9 land.
+
+## Update - PR #107 U2-before-U6 dependency rewire (2026-08-25)
+
+Current-head Copilot review flagged that U6's acceptance needs U2's leaf
+`open_no_follow`/`capture_perms`/`set_readonly_via_handle` primitives, yet U2 depended on
+U6 and U9 — an inverted build order. The dependency direction is corrected in the live
+current-state bullets above, the plan (pass 7 addendum), and the deliberation:
+
+* U2 (`059.002-T`) now depends ONLY on U1 and is scheduled BEFORE U6. Its former U6 and U9
+  dependencies are removed. U2 stays bounded to its three own helper-behavior scenarios
+  and implements REPARSE_ATTR / the shared predicate / the production call.
+* U6 (`059.006-T`) now depends on U2 (plus U1, U7, U8) and COMPOSES U2's leaf primitives
+  in its three integration scenarios instead of duplicating them. U9 still follows U6.
+* U3/U4 depend on U2+U6+U9; U5/U10 depend on U3+U4+U6+U9; U11 depends on U2. The current
+  DAG is U7 -> U8 -> U1 -> U2 -> U6 -> U9 -> U3/U4 -> U5/U10, with U11 after U2 — acyclic,
+  all feasibility gates preserved.
+* U6/U9 completion remains necessary for Principles III/IV; the U3 same-identity retention
+  posture is unchanged; no fallback to path-based or unsafe behavior. The `.backlogit`
+  index was re-synced after the frontmatter dependency edits.
+
+This handoff remains the CURRENT authority for the staging session; it is not superseded.

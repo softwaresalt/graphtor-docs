@@ -374,9 +374,12 @@ one U6 carrying both permission and engine work. Current authority is:
   harness, including candidate-version discovery before the product manifest changes.
 * U8 depends on U7 and proves three SQLite/Cozo engine-boundary scenarios.
 * U1 depends on U7 and U8 and adopts only their proven dependency versions.
-* U6 integrates the beneath-root opener and permission boundary in three scenarios.
+* U2 depends only on U1, extracts the leaf no-follow/permission primitives in three
+  scenarios, and precedes U6 — it does not depend on U6 or U9.
+* U6 depends on U1, U2, U7, and U8, composes U2's leaf primitives, and integrates the
+  beneath-root opener and permission boundary in three scenarios.
 * U9 integrates the actual WAL/SQLite/Cozo engine open in three scenarios.
-* U2–U5 and U10 depend on both U6 and U9; U11 depends on U2.
+* U3–U5 and U10 depend on both U6 and U9; U2 precedes U6 (which composes U2's primitives); U11 depends on U2.
 
 Either feasibility gate may return BLOCKED before U1 runs. Principles III/IV remain
 NOT-PASSED until U7/U8 PASS and U6/U9 land.
@@ -405,9 +408,12 @@ test-unit shape.
   on U2 and is therefore transitively feasibility- and integration-gated. Nothing depends
   on U5, U10, or U11, so the split is acyclic.
 
-**Current authority:** eleven-task U1-U11 DAG
-(U7 -> U8 -> U1 -> U6 -> U9 -> U2 -> U3/U4 -> U5, with U10 sharing U5's U3+U4+U6+U9 gating
-and U11 gated after U2). Shipment `051-S` contains `059-F` plus `059.001-T` through
-`059.011-T` (12 items). Principles III/IV remain NOT-PASSED until U7/U8 PASS and U6/U9
-land. Wherever this deliberation earlier writes the shorthand `U2-U5`, read it as
-`U2-U5 plus U10, with U11 gated after U2`.
+**Current authority (PR #107 U2-before-U6 rewire, 2026-08-25):** eleven-task U1-U11 DAG
+(U7 -> U8 -> U1 -> U2 -> U6 -> U9 -> U3/U4 -> U5/U10, with U11 after U2). U2 depends only
+on U1 and precedes U6; U6 composes U2 and depends on U1+U2+U7+U8; U9 depends on U6+U8;
+U3/U4 depend on U2+U6+U9; U5 and U10 depend on U3+U4+U6+U9 (U10 owns the Windows
+handle-mode / non-interference deltas d-e); U11 depends on U2. Shipment `051-S` contains
+`059-F` plus `059.001-T` through `059.011-T` (12 items). Principles III/IV remain
+NOT-PASSED until U7/U8 PASS and U6/U9 land. Wherever this deliberation earlier writes the
+shorthand `U2-U5`, read it as: U2 is a leaf primitive preceding U6; U3-U5 plus U10 are
+gated on U6+U9; U11 is gated after U2.
