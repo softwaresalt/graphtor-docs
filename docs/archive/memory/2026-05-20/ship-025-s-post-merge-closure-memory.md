@@ -13,7 +13,7 @@ phase: post-merge-closure
 * Preserved unrelated local edits by creating isolated worktree `tmp/post-merge-025-S`
 * Created closure branch `post-merge/034-autoharness-1-4-5-harness-upgrade`
 * Closed and archived shipment scope `025-S`, `034-C`, `034.001-T`, and `034.002-T`
-* Wrote closure artifact `docs/closure/2026-05-20-025-s-post-merge-closure.md`
+* Wrote closure artifact `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-20-025-s-post-merge-closure.md`
 
 ## Notable Issue
 
@@ -29,7 +29,7 @@ operations and normalizing archive metadata.
 * `.backlogit/archive/034.001-T.md`
 * `.backlogit/archive/034.002-T.md`
 * `.backlogit/hooks_queue.jsonl`
-* `docs/closure/2026-05-20-025-s-post-merge-closure.md`
+* `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-20-025-s-post-merge-closure.md`
 
 ## Next Step
 

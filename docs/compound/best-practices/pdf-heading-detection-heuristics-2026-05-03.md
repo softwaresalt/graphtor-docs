@@ -103,4 +103,4 @@ This imports the trait for method resolution without polluting the test namespac
 
 - `src/parse/pdf.rs` — `FontSizeHistogram`, `HeadingAwareOutput`, `sections_to_chunks`
 - `docs/decisions/2026-05-03-streaming-pdf-heading-aware-spike.md`
-- `docs/exec-plans/2026-05-03-streaming-pdf-heading-aware-plan.md`
+- `docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-03-streaming-pdf-heading-aware-plan.md`

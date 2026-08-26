@@ -8,8 +8,8 @@ status: completed
 
 ## Session Summary
 
-* Completed: fixed the rollback command in `docs/closure/2026-05-26-031-s-post-merge-closure.md` to use `git revert -m 1` for merge commit `295518da2bc131ec3c3a40915fe0282ea2e6f5ed`
-* Files modified: `docs/closure/2026-05-26-031-s-post-merge-closure.md`
+* Completed: fixed the rollback command in `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-26-031-s-post-merge-closure.md` to use `git revert -m 1` for merge commit `295518da2bc131ec3c3a40915fe0282ea2e6f5ed`
+* Files modified: `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-26-031-s-post-merge-closure.md`
 * Commit: `d3de7ee` — `docs(docs): fix merge rollback instructions`
 * PR actions: pushed `post-merge/040-source-registry-normalization`, replied to Copilot comment `3300821385`, and resolved thread `PRRT_kwDORiB5E86Eqfyu`
 * Decisions: kept the fix doc-only and minimal because PR #61 already had green CI and the Copilot finding targeted rollback correctness only

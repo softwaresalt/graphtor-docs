@@ -6,7 +6,7 @@ depth: "lightweight"
 decision_status: "decided"
 promoted_to: "plan"
 linked_artifacts:
-  - "docs/exec-plans/2026-05-21-prewarm-sync-progress-plan.md"
+  - "docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-21-prewarm-sync-progress-plan.md"
 source_stash_ids:
   - "3FE2DDFB"
   - "0D214027"

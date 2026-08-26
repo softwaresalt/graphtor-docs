@@ -32,8 +32,8 @@ pr: 58
 * `.backlogit/queue/030-S.md` (removed from queue)
 * `docs/architecture.md`
 * `docs/design-docs/2026-05-24-multi-database-runtime-hardening.md`
-* `docs/closure/2026-05-24-030-s-runtime-verification.md`
-* `docs/closure/2026-05-24-030-s-post-merge-closure.md`
+* `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-24-030-s-runtime-verification.md`
+* `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-24-030-s-post-merge-closure.md`
 
 ## Decisions
 

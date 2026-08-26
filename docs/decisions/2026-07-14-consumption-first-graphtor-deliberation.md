@@ -6,7 +6,7 @@ depth: "deep"
 decision_status: "decided"
 promoted_to: "plan"
 linked_artifacts:
-  - "docs/exec-plans/2026-07-14-consumption-first-graphtor-plan.md"
+  - "docs/archive/plans/2026-08-24-pre-august-compaction/2026-07-14-consumption-first-graphtor-plan.md"
 stash_ids:
   - "79B5A7BC"
   - "B333B9B8"

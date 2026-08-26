@@ -89,7 +89,7 @@ includes archived items, so this catches queue-vs-archive collisions.
 - `queue/035.001-T.md` and `archive/035.001-T.md` both present.
 - `.backlogit/config.yaml` — `queue_layout` level-1 types include `feature` and
   `chore`, both with `allowed_children: [task, review]`.
-- `docs/memory/2026-06-19-ship-043-S-audit-advisory-suppression.md`
+- `docs/archive/memory/2026-08-24-pre-august-compaction/2026-06-19-ship-043-S-audit-advisory-suppression.md`
 
 ## Resolution (confirmed 2026-06-19)
 

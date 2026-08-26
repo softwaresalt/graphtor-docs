@@ -15,8 +15,8 @@ branch: post-merge/040-source-registry-normalization
 * archived shipment `031-S`
 * archived feature `040-F`
 * archived tasks `040.001-T` through `040.006-T`
-* wrote closure artifact `docs/closure/2026-05-26-031-s-post-merge-closure.md`
-* wrote runtime verification artifact `docs/closure/2026-05-26-031-s-runtime-verification.md`
+* wrote closure artifact `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-26-031-s-post-merge-closure.md`
+* wrote runtime verification artifact `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-26-031-s-runtime-verification.md`
 
 ## Verification
 

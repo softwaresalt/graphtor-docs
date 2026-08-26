@@ -31,9 +31,9 @@ branch: post-merge/038-multi-database-file-support
 * `.backlogit/archive/038.004-T.md`
 * `.backlogit/archive/038.005-T.md`
 * `.backlogit/hooks_queue.jsonl`
-* `docs/closure/2026-05-22-029-s-runtime-verification.md`
-* `docs/closure/2026-05-22-029-s-post-merge-closure.md`
-* `docs/memory/2026-05-22/029-s-post-merge-closure-memory.md`
+* `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-22-029-s-runtime-verification.md`
+* `docs/archive/closure/2026-08-24-pre-august-compaction/2026-05-22-029-s-post-merge-closure.md`
+* `docs/archive/memory/2026-06-12-pre-2026-05-20-to-2026-05-29/2026-05-22/029-s-post-merge-closure-memory.md`
 
 ## Decisions
 

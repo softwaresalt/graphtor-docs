@@ -27,7 +27,7 @@ described specific implementation aspects. Processed as Pattern B (feature mode)
 | Type | ID | Title |
 |---|---|---|
 | Deliberation | — | docs/decisions/2026-05-22-multi-database-file-support-deliberation.md |
-| Plan | — | docs/exec-plans/2026-05-22-multi-database-file-support-plan.md |
+| Plan | — | docs/archive/plans/2026-08-24-pre-august-compaction/2026-05-22-multi-database-file-support-plan.md |
 | Feature | 038-F | Multi-database file support |
 | Task | 038.001-T | Add optional database field to source config structs |
 | Task | 038.002-T | Implement multi-database routing in sync pipeline |

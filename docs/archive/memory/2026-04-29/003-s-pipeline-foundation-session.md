@@ -39,7 +39,7 @@ Key design:
 | `tests/pipeline_idempotent_test.rs` | 2 tests |
 | `tests/pipeline_resilience_test.rs` | 1 test |
 | `tests/pipeline_sequencing_test.rs` | 1 test |
-| `docs/exec-plans/2026-04-29-pipeline-orchestration-plan.md` | Impl plan + ADVISORY review |
+| `docs/archive/plans/2026-08-24-pre-august-compaction/2026-04-29-pipeline-orchestration-plan.md` | Impl plan + ADVISORY review |
 | `docs/compound/best-practices/pipeline-source-metadata-lookup-2026-04-29.md` | Compound learning |
 | `docs/compound/best-practices/clippy-pedantic-u128-cast-pattern-2026-04-29.md` | Compound learning |
 | `docs/compound/runtime-errors/slice-chunks-zero-panic-2026-04-29.md` | Compound learning |
