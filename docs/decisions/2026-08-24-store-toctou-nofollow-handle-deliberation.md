@@ -80,10 +80,11 @@ carefully reviewed filesystem-security release.
   re-resolved path that can be swapped after the safety check.
 * A post-open symlink/junction swap of *any* guarded entry — including the main db
   (index 0), previously uncovered — cannot redirect a `chmod` outside the workspace.
-* All existing regression tests continue to pass unchanged: exact-permission
-  capture/restore, pre-existing-readonly preservation, byte-identical db/sidecars,
-  non-empty `-wal`/`-shm`/`-journal` preservation, empty-transient removal, stale-lock
-  self-heal, and the existing symlinked/dangling-symlinked-sidecar refusal tests.
+* Existing exact-permission capture/restore, pre-existing-readonly preservation,
+  byte-identical db/sidecars, non-empty `-wal`/`-shm`/`-journal` preservation,
+  stale-lock self-heal, and symlinked/dangling-symlinked-sidecar refusal tests
+  continue to pass unchanged. The empty-transient-removal expectation changes
+  explicitly to fail-closed retention unless U3 proves same-identity deletion.
 * Behavior is correct and fail-closed on both Unix and Windows.
 
 ### Out of Scope
@@ -168,9 +169,9 @@ fail closed.
 
 * **Pros**: Closes both races completely, including the previously-uncovered main
   db (index 0) swap; no residual check→use gap; expressible in safe std; reuses an
-  established in-repo pattern; preserves all existing semantics (exact-permission
-  restore, empty-only sidecar cleanup) because capture/restore is still exact — just
-  handle-bound.
+  established in-repo pattern; preserves exact-permission restore and non-empty
+  sidecar content. Empty-sidecar cleanup changes to fail-closed retention unless
+  U3 proves same-identity deletion.
 * **Cons**: Windows handle-lifetime interaction with the engine must be validated
   (share/access mode); adds two small platform-gated direct dependencies; the guard
   struct changes shape (`Vec<(PathBuf, Permissions)>` → handle-carrying entries).
@@ -329,9 +330,9 @@ U7 is added to the `051-S` shipment manifest.
 The retained workspace-root capability `Dir` contains lookup, but a relative
 `symlink_metadata` emptiness probe followed by relative `remove_file` is still a
 check/use race at the final name. A writer can replace an observed empty sidecar with a
-non-empty live WAL/SHM before unlink. U3 therefore leaves transient sidecars in place
-unless U7 proves a safe API that binds the emptiness observation and deletion to the
-same file identity. A separate metadata-check + name-based unlink is not accepted.
+non-empty live WAL/SHM before unlink. U3 therefore leaves transient sidecars in place unless U3 proves a safe API that
+binds the emptiness observation and deletion to the same file identity. A separate
+metadata-check + name-based unlink is not accepted.
 
 ### Capability authority must survive the SQLite engine open
 

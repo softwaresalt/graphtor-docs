@@ -58,7 +58,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 | Test-first swap-resistance + platform behavior | U3/U4 add test-first swap-resistance cases; U5 adds the cross-platform matrix; U10 adds the Windows handle-mode validation. |
 | Intermediate-directory (parent) swap containment, not just final component (PR #107 review, 2026-08-25) | U7 proves the root/API/MSRV capability foundation; U8 separately proves the SQLite/Cozo engine boundary; U1 adopts only the proven dependencies; U2 provides the leaf no-follow/permission primitives; U6 composes U2 and integrates the beneath-root permission boundary; U9 integrates the actual engine open. U3–U5 and U10 depend on both U6 and U9; U2 precedes U6; U11 depends on U2. |
 | Prove the capability design is achievable with safe APIs under MSRV 1.75 before building on it (PR #107 review, 2026-08-25) | U7 (059.007-T) has three bounded root/API/MSRV scenarios and no dependency on U1. U8 (059.008-T) has three bounded engine-boundary scenarios and depends on U7. Either gate may return BLOCKED before U1 changes the product manifest. |
-| Prevent transient-sidecar check/use deletion races (PR #107 review, 2026-08-25) | U3 prohibits separate metadata-check + name-based unlink. Unless U7 proves a same-identity deletion API, cleanup fails closed by leaving transient sidecars in place. |
+| Prevent transient-sidecar check/use deletion races (PR #107 review, 2026-08-25) | U3 prohibits separate metadata-check + name-based unlink. U3 must either prove a same-identity deletion API within its bounded implementation or fail closed by leaving transient sidecars in place. |
 
 ## Implementation Units
 
@@ -266,7 +266,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
     creates during the read cycle) have no retained identity-bound handle at `Drop`.
     A directory-relative `symlink_metadata` probe followed by `remove_file` is still a
     check/use race because the final name can be replaced between calls. U3 therefore
-    leaves transient sidecars in place unless U7 proves a safe API that binds the
+    leaves transient sidecars in place unless U3 proves a safe API that binds the
     emptiness observation and deletion to the same file identity. No separate
     metadata-check + name-based unlink is accepted.
 * **Files**: `src/db/store.rs`.
@@ -787,7 +787,7 @@ shipment membership.
 
 | # | Severity | Finding | Disposition |
 |---|---|---|---|
-| E1 | P1 | Directory-relative `symlink_metadata` followed by `remove_file` still permits a writer to replace an observed empty sidecar with live non-empty content before unlink. | **Resolved (U3/U7).** Separate metadata-check + name-based unlink is prohibited. U3 fails closed by leaving transient sidecars unless U7 proves a safe API that deletes the same identity whose emptiness was observed. Added a replacement-race test requirement. |
+| E1 | P1 | Directory-relative `symlink_metadata` followed by `remove_file` still permits a writer to replace an observed empty sidecar with live non-empty content before unlink. | **Resolved (U3).** Separate metadata-check + name-based unlink is prohibited. U3 must prove a safe API that deletes the same identity whose emptiness was observed or fail closed by leaving transient sidecars in place. Added a replacement-race test requirement. |
 | E2 | P1 | The capability-safe handle ended before `configure_sqlite_wal` and `open_sqlite_instance`; path-based engine open could still follow a swapped intermediate directory outside the root. | **Resolved (U7/U6).** U7 adds a sixth mandatory proof obligation for a capability- or identity-bound SQLite/Cozo open through WAL/sidecar creation. U6 carries the proven boundary through all persistent open paths and adds an engine-open swap test. A path-only engine API forces U7 BLOCKED. |
 | E3 | P2 | Durable Stage memory still described the obsolete U1-U5 manifest and dependency chain. | **Resolved.** The handoff now lists U1-U7, the current eight-item shipment manifest including `059-F`, and the authoritative U7 to U6 to U2-U5 dependency chain. |
 
