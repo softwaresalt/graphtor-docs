@@ -4,6 +4,8 @@ description: "Recovery record for the interrupted H3-A selection, MSRV, and revi
 doc_type: "memory"
 session_date: "2026-08-29"
 agent: "stage"
+status: "superseded"
+superseded_by: "docs/memory/2026-08-29/stage-056-011-h3a-pr108-reviewfix-cycle-2-memory.md"
 backlog_refs:
   - "049-S"
   - "052-S"
@@ -45,10 +47,11 @@ and pipe closure.
   above are historical. Cargo 1.75 predates edition 2024 (stable from
   Rust/Cargo 1.85) and cannot parse the resolved edition-2024 `rmcp 1.5.0`
   manifest, so the `+1.75.0` entry gate was a deterministic failure. `056.029-T`
-  was re-scoped into the declared-MSRV resolution task and is now the sole
-  member of shipment `053-S`, which runs before `052-S`; `056.011-T` validates
-  against the resolved declared floor instead. See
-  `docs/memory/2026-08-29/stage-056-011-h3a-pr108-reviewfix-memory.md`.
+  was re-scoped into the declared-MSRV resolution task and is now one of the
+  five members of shipment `053-S` (`056.029-T` through `056.033-T`), which
+  runs before `052-S`; `056.011-T` validates against the resolved declared
+  floor instead. See
+  `docs/memory/2026-08-29/stage-056-011-h3a-pr108-reviewfix-cycle-2-memory.md`.
 * The private binary adapter handles only pre-initialize `server/discover`;
   response shape remains exact-Copilot evidence, with `-32601` only a
   standards-informed candidate

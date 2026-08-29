@@ -48,9 +48,17 @@ rmcp underwent a major API revision between 0.x and 1.5:
 
 ## Resolution
 
-### Cargo.toml
+> [!IMPORTANT]
+> This is an API-shape reference for rmcp 1.5, not a dependency-selection
+> recommendation. The published rmcp 1.5.0 manifest uses edition 2024, which
+> Cargo 1.75 cannot parse. Workspaces that declare Rust 1.75 must select and pin
+> a compatible dependency strategy before applying these patterns, then verify
+> the selected strategy with the exact declared toolchain.
+
+### Historical rmcp 1.5 Cargo shape
 
 ```toml
+# Historical API-shape example only; do not copy this version as an MSRV choice.
 rmcp = { version = "1.5", features = ["server", "transport-io"] }
 # Do NOT add schemars separately — use rmcp::schemars (re-exported at version 1.x)
 ```
