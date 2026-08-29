@@ -1769,12 +1769,13 @@ Get-ChildItem .graphtor -Filter *.lock
   byte-for-byte recovery file created before a changing upgrade refresh (or
   regenerating/reverting); its sole launch-identity change pins `cwd` to the
   canonical project root and authorizes no generated target paths.
-* **H3 rollback covers both separately owned modes:** for **H3-A**
-  (`056.011-T` framing/version), keep an rmcp change isolated so
-  it can be pinned back independently, watching for transitive rmcp API changes
-  in its own review; for **H3-B** (`056.019-T`, client ignores/rejects `cwd`),
-  B1 requires the same exact CLI to prove a different documented
-  working-directory mechanism and may include the
+* **H3 rollback covers both separately owned modes:** for **H3-A**,
+  `056.029-T` owns dependency selection and pin rollback, including review of
+  transitive rmcp API changes. `056.011-T` owns only adapter rollback: remove
+  the compatibility adapter and restore direct `rmcp::serve_server` transport
+  composition without changing the selected dependency strategy. For **H3-B**
+  (`056.019-T`, client ignores/rejects `cwd`), B1 requires the same exact CLI
+  to prove a different documented working-directory mechanism and may include the
   `056.008-T`/`056.009-T` managed-contract commits. B2 means no safe mechanism
   exists and blocks shipment. Rollback reverts any B1 commits and restores the previous
   documented client configuration. No server-side external-path fallback exists.
