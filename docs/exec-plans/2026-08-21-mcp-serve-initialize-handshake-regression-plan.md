@@ -1192,17 +1192,19 @@ than restate every clause:
   phased release units: PHASE 1 evidence foundation (shipment `049-S`), PHASE 1.5
   the unconditional evidence-infrastructure unit (`056.028` standalone-probe CI,
   assembled by Stage after `049-S` closes and before any remedy shipment), PHASE
-  1.6 the declared-MSRV resolution unit (shipment `053-S`, sole member
-  `056.029`, queued now and ordered before `052-S`), PHASE 2
-  selected remediation units (unshipped until T0 selects them, grouped by cause
-  family), PHASE 3 final acceptance/docs (unshipped, dependent on the selected
-  remedies). Remedy family entries depend on the evidence foundation
-  (`056.003-T`, or `056.019-T` for the H3-B-selected managed-config/discriminator
-  groups; selected H3-A also depends on `056.028-T` and `056.029-T`); intra-family order is a true dependency edge, but unrelated cause
-  families are NOT chained into a total order. Sequential single-shipment
-  execution is enforced by the **explicit selection gate below plus** one
-  in-flight shipment at a time (P-001) and single-worktree topology (P-016), not
-  by fake cross-cause edges. Total task count is 29 (`056.001-T`..`056.029-T`).
+  1.6 the Rust 1.75 compatibility and declaration unit (shipment `053-S`, with
+  `056.029` followed by `056.030`/`056.031`/`056.032`/`056.033`, ordered before
+  `052-S`), PHASE 2 selected remediation units, and PHASE 3 final
+  acceptance/docs. The authoritative PHASE 1.5 edge is
+  `056.028-T -> 056.029-T`; its shipment remains uncreated until `049-S` closes.
+  Remedy family entries depend on the evidence foundation (`056.003-T`, or
+  `056.019-T` for the H3-B-selected managed-config/discriminator groups; selected
+  H3-A also depends on `056.028-T` and `056.029-T`). Intra-family order is a
+  true dependency edge, but unrelated cause families are not chained into a total
+  order. Sequential single-shipment execution is enforced by the explicit
+  selection gate plus one in-flight shipment at a time (P-001) and single-worktree
+  topology (P-016), not by fake cross-cause edges. Total task count is 33
+  (`056.001-T`..`056.033-T`).
 * **Explicit selection gate (dependency-ready ≠ selected)** — every PHASE 2
   (`phase:remedy`) task carries a machine-queryable `selection:pending` label plus
   its `cause:<family>` label. After `049-S` closes, Stage consumes the
@@ -1861,7 +1863,7 @@ Get-ChildItem .graphtor -Filter *.lock
 * **VIII Safety Modes** — investigate-first: T0 orders the causal chain; each
   selected curative task owns its red/green proof before implementation closes.
 * **XI Merge-commit history** — Ship enforces merge-commit-only at merge time.
-* **Phased release-unit structure (P-001/P-015/P-016, IX, X)** — the 29 tasks
+* **Phased release-unit structure (P-001/P-015/P-016, IX, X)** — the 33 tasks
   ship as phased release units, not one chain. **P-015**: the umbrella feature
   `056-F` is the protected covering feature, excluded from every task-only
   manifest (`049-S` and later remedy/acceptance units). **P-001**: exactly one
@@ -1871,9 +1873,11 @@ Get-ChildItem .graphtor -Filter *.lock
   `selection:pending → selection:selected` label + shipment-membership gate owned
   by Stage after `049-S` closes. **IX (Git-friendly persistence)**: backlog
   artifacts stay Markdown + YAML frontmatter and dependency edges are mutated only
-  through backlogit operations. **X (context efficiency)**: the authoritative
-  graph lives in this single `## Issue and Dependency Graph` section; superseded
-  historical Plan Review DAGs are retained only as audit metadata.
+  through backlogit operations. `056.028-T -> 056.029-T` and complete `053-S`
+  closure enforce PHASE 1.5 before `052-S` without creating the PHASE 1.5
+  shipment early. **X (context efficiency)**: the authoritative graph lives in
+  this single `## Issue and Dependency Graph` section; superseded historical Plan
+  Review DAGs are retained only as audit metadata.
 
 ## Plan Hardening Signals
 
@@ -2581,7 +2585,7 @@ current artifact state — see the current-status note above.
   on every push). Prior review outcomes, with their historical SHAs, are recorded
   in the historical audit trail below.
 * Linked deliberation: `docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md`.
-* Backlog scope: feature `056-F`, tasks `056.001-T`..`056.029-T` (29 tasks).
+* Backlog scope: feature `056-F`, tasks `056.001-T`..`056.033-T` (33 tasks).
   **PHASE 1 evidence shipment `049-S`** (eight-task task-only manifest; `056-F`
   excluded): standalone probe crate transport/teardown/observer-evidence/workspace
   `056.020-T`/`056.022-T`/`056.023-T`/`056.021-T`, exact-CLI T0 `056.001-T`,
@@ -2598,14 +2602,16 @@ current artifact state — see the current-status note above.
   restored-production acceptance `056.004-T`. **PHASE 1.5 unshipped
   evidence-infrastructure unit:** the standalone-probe CI job `056.028-T`, which
   Stage assembles after `049-S` closes and before any remedy shipment (in T4
-  fan-in, not cause-selected). **PHASE 1.6 declared-MSRV unit (shipment
-  `053-S`, queued):** `056.029-T` resolves the declared `rust-version` against
-  the edition-2024 `rmcp 1.5.0` pin, is not cause-selected, stays in T4 fan-in,
-  and is an explicit `blocks` prerequisite of `052-S`. The projection task
+  fan-in, not cause-selected). **PHASE 1.6 Rust 1.75 unit (shipment `053-S`,
+  queued):** `056.029-T` resolves the dependency graph at the fixed floor,
+  followed by `056.030-T` primary CI, `056.031-T` ordinary documentation,
+  `056.032-T` canonical agent declarations, and `056.033-T` generic Rust
+  authoring instructions. `056.028-T -> 056.029-T` is the enforceable PHASE 1.5
+  edge; all five tasks are in T4 fan-in and `053-S` blocks `052-S`. The projection task
   `056.025-T` (versioned
   Loading/Failed/Disabled MCP availability projection) and the discriminator split
   (`056.026-T` generation / `056.027-T` delivery) are also explicitly in scope.
-  This review identity covers all 29 tasks `056.001-T`..`056.029-T`.
+  This review identity covers all 33 tasks `056.001-T`..`056.033-T`.
 
 ### Personas and criteria
 
