@@ -43,8 +43,13 @@ in this pass:
    does not refuse a symlinked workspace root. Verified empirically and
    corrected: the root must be opened via `cap_primitives::fs::
    open_dir_nofollow` relative to an ambiently-opened parent, not via
-   `Dir::open_ambient_dir` on the root path directly. U7 remains PASS with
-   the corrected construction; full evidence is in
+   `Dir::open_ambient_dir` on the root path directly. Copilot further
+   pressed that the Unix side of this had only been inferred, not executed
+   (correctly — the initial correction was Windows-only); a Linux execution
+   environment (WSL2/Ubuntu 26.04) was provisioned specifically to close
+   that gap with real execution (`ENOTDIR` refusal), not inference. U7
+   remains PASS with the corrected, now dual-platform-executed
+   construction; full evidence is in
    `.backlogit/archive/059.007-T.md`.
 
 ---
@@ -101,15 +106,20 @@ in this pass:
      relative to that parent handle via `cap_primitives::fs::
      open_dir_nofollow` (public in `cap-primitives` 4.0.3, but not exposed as
      a `cap_std::fs::Dir` method — both crates are needed as direct
-     dependencies). Re-verified: a symlinked root is refused
-     (`ERROR_STOPPED_ON_SYMLINK`/os error 681 on Windows); an ordinary root
-     still succeeds. The trusted-parent threat model is now precise: only
-     the immediate parent of the root is trusted (the same single
-     ambient-authority step any `std::fs` ambient call already makes); the
-     root itself is verified, not assumed. `cap_std::fs::File::into_std()`
-     remains the selected `File` boundary. Full corrected evidence, including
-     the explicit U1/U2/U6 implementation note that **both** `cap-std` and
-     `cap-primitives` must be adopted, is in `.backlogit/archive/059.007-T.md`.
+     dependencies). Re-verified on **both** platforms with real execution: a
+     symlinked root is refused (`ERROR_STOPPED_ON_SYMLINK`/os error 681 on
+     Windows; `ENOTDIR`/os error 20 on Linux — installed via a minimal
+     `rustup` profile plus a `zig cc` linker wrapper in WSL2/Ubuntu 26.04
+     since no system C toolchain/`sudo` was available, both removed after
+     evidence capture); an ordinary root still succeeds on both. The
+     trusted-parent threat model is now precise: only the immediate parent
+     of the root is trusted (the same single ambient-authority step any
+     `std::fs` ambient call already makes); the root itself is verified by
+     actual execution on both platforms, not assumed. `cap_std::fs::
+     File::into_std()` remains the selected `File` boundary. Full corrected
+     evidence, including the explicit U1/U2/U6 implementation note that
+     **both** `cap-std` and `cap-primitives` must be adopted, is in
+     `.backlogit/archive/059.007-T.md`.
    - Scenario 3: table-driven refusal matrix — absolute path, `..` escape,
      intermediate-directory symlink swap, and in-bounds leaf symlink were all
      refused. The Windows leaf case required an **explicit post-open**
