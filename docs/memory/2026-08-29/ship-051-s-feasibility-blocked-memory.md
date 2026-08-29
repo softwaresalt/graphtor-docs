@@ -7,6 +7,39 @@ agent: "Ship"
 status: "blocked (feasibility gate)"
 ---
 
+## Update — PR #111 current-HEAD review remediation (this pass, HEAD `58e4204` base)
+
+Four review findings against the original checkpoint below were remediated
+in this pass:
+
+1. **P2 Constitution/Test-first** (`059.008-T` acceptance promised a
+   compiled test-first evidence harness; only source-tracing was persisted):
+   built and ran a compiled, test-first negative-proof harness (`trybuild`,
+   isolated/throwaway under `target/`, deleted after capture) that proves
+   `cozo::DbInstance::new`'s `path: impl AsRef<Path>` parameter structurally
+   rejects a capability/handle object (`std::fs::File` fails to compile with
+   `E0277`). Full test-first chronology (red: fixtures missing → green:
+   fixtures authored, baseline passes, negative fixture fails to compile
+   exactly as expected) and the scenario-by-scenario reconciliation are
+   persisted in `.backlogit/queue/059.008-T.md`'s `feasibility-evidence`
+   section.
+2. **P3 traceability** (generic `blocked_reason` boilerplate didn't
+   distinguish direct vs. transitive U8 dependents): corrected all 9 returned
+   tasks' `blocked_reason` to accurately name the direct dependency
+   (`059.001-T`/U1, `059.006-T`/U6, `059.009-T`/U9 each depend on `059.008-T`
+   directly) versus the transitive path for the rest.
+3. **P2 security advisory** (option (b) leaf-only narrowing under-specified):
+   the Recommendation section below now requires a new Stage `deliberate`
+   pass, an amended feature DoD/scope, and an explicit accepted-residual-risk
+   record with compensating controls before option (b) may be started, and
+   states plainly it is not a substitute for the original fail-closed DoD.
+4. **P3 forward-progress**: the Next Steps section below now names the
+   concrete downstream shipment (`049-S`) that is blocked by `051-S`
+   remaining open, and states explicitly that `051-S` must not be closed,
+   archived, or have its dependency dropped as a workaround.
+
+---
+
 ## Task IDs touched
 
 - `051-S` (shipment) — claimed, remains `active` (manifest narrowed to `059-F`,
@@ -122,15 +155,39 @@ resumes. Options surfaced for that deliberation:
   Option A/C decision at construction time is insufficient by itself.
 - (b) Narrow scope to a leaf-only no-follow fix (U2's primitives applied
   directly to `EngineReadonlyGuard`/`clear_stale_readonly_lock` without full
-  intermediate-directory containment), explicitly documenting the
-  intermediate-directory swap as an accepted residual risk.
+  intermediate-directory containment). **This option is NOT a drop-in
+  substitute for the original plan and must NOT be presented as satisfying
+  the original Constitution Principles III/IV fail-closed Definition of
+  Done.** Choosing it requires, at minimum, all of the following before any
+  implementation begins:
+  1. a **new Stage `deliberate` pass** documenting why the narrower scope is
+     acceptable, superseding or amending
+     `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md`;
+  2. an **amended feature Definition of Done / scope** for `059-F` (or a
+     replacement feature) that explicitly states Principles III/IV are met
+     only for the leaf (final-component) threat and NOT for the
+     intermediate-directory threat — the current DoD's fail-closed wording
+     cannot simply carry over unchanged;
+  3. an explicit **accepted-residual-risk record** naming the
+     intermediate-directory symlink/junction swap as a known, accepted gap,
+     with compensating controls (e.g., workspace-root permission hardening,
+     monitoring/alerting on unexpected reparse points beneath the workspace,
+     or a documented operational mitigation) — not silence;
+  4. sign-off that this residual risk is acceptable for the threat model in
+     `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`
+     (or successor) before implementation starts.
+  Without all four, option (b) must not be started — it would silently
+  narrow a security fix below its originally-approved bar.
 - (c) File an upstream `cozo` feature request (or maintain a fork) for a
   capability-/handle-bound SQLite open.
 
 ## Open questions
 
 - Should `059-F`'s scope be split so a leaf-only fix (option b above) can ship
-  independently of the engine-boundary question? This is a Stage decision.
+  independently of the engine-boundary question? This is a Stage decision,
+  and per option (b) above it requires a new deliberation pass, amended DoD,
+  and an explicit residual-risk record before it may proceed — it is not a
+  simple scope trim.
 - Is the `cozo` maintainer likely to accept a capability-open feature request
   in a reasonable timeframe? Not investigated in this session.
 
@@ -140,6 +197,15 @@ resumes. Options surfaced for that deliberation:
    diff for review.
 2. Once reviewed, the operator/Stage decides whether to re-run `deliberate`
    for `059-F`'s engine-boundary question, split scope, or shelve the feature.
-3. This shipment (`051-S`) remains `active` (not archived/closed) pending that
-   decision — it was NOT force-closed as "done" because its covering feature
-   did not reach its Definition of Done.
+3. **This shipment (`051-S`) intentionally remains `active` (not archived,
+   closed, or dependency-dropped) and, by design, BLOCKS downstream work
+   until Stage re-deliberates and selects a safe replacement path.**
+   Concretely, shipment `049-S` ("Fix MCP serve initialize-handshake
+   regression") already declares a `blocks` dependency on `051-S`
+   (`049-S → 051-S`) and cannot proceed while `051-S` remains unresolved.
+   `051-S` must NOT be treated as safe to close, archive, or have its
+   dependency silently dropped merely because its own feature work is
+   blocked — that would incorrectly unblock `049-S` (and any other future
+   dependent) without the underlying security question actually being
+   resolved. It stays open, visibly blocked, until Stage's re-deliberation
+   produces a decision per the Recommendation section above.
