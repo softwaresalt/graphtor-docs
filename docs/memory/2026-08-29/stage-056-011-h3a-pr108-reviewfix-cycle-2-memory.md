@@ -7,6 +7,8 @@ agent: "stage"
 status: "current"
 supersedes:
   - "docs/memory/2026-08-29/stage-056-011-h3a-selection-memory.md"
+  - "docs/memory/2026-08-29/stage-056-011-h3a-recovery-memory.md"
+  - "docs/memory/2026-08-29/stage-056-011-h3a-pr108-reviewfix-memory.md"
 current_backlog_memory_key: "stage-056-011-h3a-pr108-reviewfix-cycle-2-2026-08-29"
 backlog_refs:
   - "056-F"
@@ -74,7 +76,7 @@ members close. There is no direct Phase 1.5 shipment-to-`052-S` edge.
 
 * `056.029-T`: dependency decision and Cargo manifest/lock resolution only
 * `056.030-T`: `.github/workflows/ci.yml` only
-* `056.031-T`: `README.md` and `docs/ARCHITECTURE.md` only
+* `056.031-T`: `README.md` and `docs/architecture.md` only
 * `056.032-T`: `AGENTS.md`, `.github/copilot-instructions.md`, and the
   constitutional instruction only
 * `056.033-T`: three generic Rust authoring-instruction files only
@@ -85,11 +87,13 @@ has direct fan-in from the four newly split tasks as well as `056.029-T`.
 
 ## Supersession
 
-The earlier `stage-056-011-h3a-selection-memory.md` is preserved as historical
-truth but marked `status: superseded` and points here. The backlog memory key
-`stage-052-S-h3a-selection-2026-08-29` is superseded by the current key above.
-Neither old record is actionable for Phase 1.5 routing, a `052-S` Rust 1.75
-entry gate, or shipment placement of `056.029-T`.
+The earlier `stage-056-011-h3a-selection-memory.md`,
+`stage-056-011-h3a-recovery-memory.md`, and
+`stage-056-011-h3a-pr108-reviewfix-memory.md` records are preserved as
+historical truth but marked `status: superseded` and point here. The backlog
+memory key `stage-052-S-h3a-selection-2026-08-29` is superseded by the current
+key above. None of those records is actionable for Phase 1.5 routing, a
+`052-S` Rust 1.75 entry gate, or shipment placement of `056.029-T`.
 
 ## Search and PR Notes
 

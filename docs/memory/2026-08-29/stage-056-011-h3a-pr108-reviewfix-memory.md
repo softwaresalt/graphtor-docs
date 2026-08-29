@@ -1,9 +1,11 @@
 ---
-title: "Stage 056.011 H3-A — PR #108 review-fix cycle 2 (declared-MSRV DAG correction)"
+title: "Stage 056.011 H3-A — PR #108 review-fix cycle 1 (declared-MSRV DAG correction)"
 description: "Planning-only remediation of the five current PR #108 Copilot review threads: description markers, 29-task scope reconciliation, server/discover wording, and the dedicated 053-S declared-MSRV release unit ahead of 052-S"
 doc_type: "memory"
 date: "2026-08-29"
 agent: "stage"
+status: "superseded"
+superseded_by: "docs/memory/2026-08-29/stage-056-011-h3a-pr108-reviewfix-cycle-2-memory.md"
 branch: "chore/stage-056-011-h3a"
 base_head: "4750d3d6f076464ac266776ffa7674486522e310"
 backlog_refs:
@@ -15,8 +17,6 @@ backlog_refs:
   - "052-S"
   - "053-S"
 ---
-
-# Stage 056.011 H3-A — PR #108 review-fix cycle 2
 
 One narrow review-fix cycle. Planning and backlog only: no Rust, source,
 workflow, or build change; no push, PR body edit, GitHub reply, thread

@@ -190,8 +190,10 @@ are exactly what `056.011-T`'s before/after reacquisition must close.
 
 ## Remedy shape (constraints, not implementation)
 
-The remedy is a narrow, pinned-`rmcp`-1.5 transport adapter between
-`rmcp::transport::stdio()` and `rmcp::serve_server`. Constraints:
+The remedy is a narrow transport adapter between `rmcp::transport::stdio()` and
+`rmcp::serve_server`, built against the Rust-1.75-compatible rmcp dependency
+strategy selected and pinned by `056.029-T`. `056.011-T` consumes that strategy
+without changing it. Constraints:
 
 1. **Exact allowlist.** Intercept exactly one method, `server/discover`, and
    only while armed (pre-`initialize`). Nothing else is intercepted,
@@ -210,8 +212,8 @@ The remedy is a narrow, pinned-`rmcp`-1.5 transport adapter between
    only the before/after transaction may establish that it sends `initialize`
    after the correlated response. Returning a real `DiscoverResult` is
    **forbidden by default** because it would assert modern-era support this
-   server does not implement and could let a client skip `initialize`, which
-   rmcp 1.5 requires. If the candidate is rejected — no subsequent
+   server does not implement and could let a client skip the required
+   `initialize` handshake. If the candidate is rejected — no subsequent
    `initialize` within the evidence-based deadline — do **not** invent a
    discovery payload: halt 052-S for a bounded Stage amendment that defines the
    response shape.

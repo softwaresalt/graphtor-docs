@@ -64,7 +64,7 @@ backport, fork, or patch makes the existing floor parse and build.
 decision. If a compatible strategy requires a source or API migration, Stage
 creates a named bounded follow-up and blocks this prerequisite. `056.030-T`
 owns `.github/workflows/ci.yml`; `056.031-T` owns `README.md` and
-`docs/ARCHITECTURE.md`; `056.032-T` owns the three canonical agent-declaration
+`docs/architecture.md`; `056.032-T` owns the three canonical agent-declaration
 files; and `056.033-T` owns the three generic Rust authoring-instruction files.
 Each follows `056.029-T` and preserves the fixed floor.
 
@@ -916,10 +916,11 @@ constraints:
   feature the adapter or its harness needs (`time` for the deadline, `io-util`
   if the harness uses `duplex`) instead of relying on rmcp's feature graph, and
   update the "activated transitively by rmcp" comment in `Cargo.toml`.
-* **Sunset tripwire.** The adapter exists only because rmcp 1.5's
-  pre-`initialize` loop tolerates only `ping`. Name the native-support removal
-  condition in a comment and re-evaluate it whenever the pinned rmcp version
-  changes; do not add a speculative version assertion.
+* **Sunset tripwire.** The adapter exists only if the rmcp strategy selected by
+  `056.029-T` does not natively accept the required pre-`initialize`
+  `server/discover` fallback. Name that native-support removal condition in a
+  comment and re-evaluate it whenever the selected rmcp pin changes; do not add
+  a speculative version assertion.
 
 **Test tiers, honestly labelled:**
 
@@ -1371,7 +1372,7 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
 * `056.030-T` (new) — primary CI-only Rust 1.75 enforcement in
   `.github/workflows/ci.yml`. Depends on `056.029-T`.
 * `056.031-T` (new) — ordinary documentation-only Rust 1.75 declaration
-  alignment in `README.md` and `docs/ARCHITECTURE.md`. Depends on `056.029-T`.
+  alignment in `README.md` and `docs/architecture.md`. Depends on `056.029-T`.
 * `056.032-T` (new) — canonical agent-declaration alignment in `AGENTS.md`,
   `.github/copilot-instructions.md`, and
   `.github/instructions/constitution.instructions.md`. Depends on `056.029-T`.
@@ -1768,12 +1769,13 @@ Get-ChildItem .graphtor -Filter *.lock
   byte-for-byte recovery file created before a changing upgrade refresh (or
   regenerating/reverting); its sole launch-identity change pins `cwd` to the
   canonical project root and authorizes no generated target paths.
-* **H3 rollback covers both separately owned modes:** for **H3-A**
-  (`056.011-T` framing/version), keep an rmcp change isolated so
-  it can be pinned back independently, watching for transitive rmcp API changes
-  in its own review; for **H3-B** (`056.019-T`, client ignores/rejects `cwd`),
-  B1 requires the same exact CLI to prove a different documented
-  working-directory mechanism and may include the
+* **H3 rollback covers both separately owned modes:** for **H3-A**,
+  `056.029-T` owns dependency selection and pin rollback, including review of
+  transitive rmcp API changes. `056.011-T` owns only adapter rollback: remove
+  the compatibility adapter and restore direct `rmcp::serve_server` transport
+  composition without changing the selected dependency strategy. For **H3-B**
+  (`056.019-T`, client ignores/rejects `cwd`), B1 requires the same exact CLI
+  to prove a different documented working-directory mechanism and may include the
   `056.008-T`/`056.009-T` managed-contract commits. B2 means no safe mechanism
   exists and blocks shipment. Rollback reverts any B1 commits and restores the previous
   documented client configuration. No server-side external-path fallback exists.
@@ -2118,15 +2120,18 @@ and posture-classification context.
   accepts production.
   **H3-A** is the evidenced exit-2 `ExpectedInitializeRequest` after a
   pre-`initialize` custom request. It uses a narrow adapter around the
-  **pinned** rmcp 1.5.x; a dependency bump is out of scope. rmcp 1.8.x remains
-  excluded on corrected grounds — unproven MSRV parity, wider transitive API
-  surface, and rollback isolation — **not** edition, because vendored
-  `rmcp-1.5.0` is also `edition = "2024"` with no `rust-version`. The
-  declared-MSRV mismatch is resolved upstream by `056.029-T` in `053-S`, which
-  runs before `052-S`; this task then validates once against the RESOLVED
-  declared floor (never a hard-coded `+1.75.0`). A nonzero result makes this
-  ProposedAction **blocked**, returns 052-S to Stage for a new bounded MSRV
-  follow-up, and forbids an adapter MSRV claim.
+  Rust-1.75-compatible rmcp dependency strategy selected and pinned by
+  `056.029-T`; `056.011-T` consumes that strategy without changing it.
+  Selecting or bumping rmcp is out of scope for `056.011-T`. The current
+  rmcp 1.5.x baseline establishes the failure evidence, while rmcp 1.8.x
+  remains excluded as an automatic remedy on corrected grounds — unproven
+  MSRV parity, wider transitive API surface, and rollback isolation — **not**
+  edition, because vendored `rmcp-1.5.0` is also `edition = "2024"` with no
+  `rust-version`. The declared-MSRV mismatch is resolved upstream by
+  `056.029-T` in `053-S`, which runs before `052-S`; this task then validates
+  through its ordinary task gates at the unchanged Rust/Cargo 1.75 floor. It
+  consumes the completed `053-S` compatibility evidence and does not run a
+  separate MSRV entry gate or resolve a dynamic floor.
   **H3-B** (client ignores/rejects
   pinned `cwd` or merges ancestor config) uses `056.019-T` to choose **B1** (the
   same exact CLI passes a second contrast through a different documented
@@ -2134,13 +2139,14 @@ and posture-classification context.
   config mutation) or **B2** (that exact CLI supports no safe mechanism, blocking
   shipment with no repo code) — **no** server-side external-path fallback.
   * targets: **mode A** — the transport adapter plus `rmcp::serve_server` /
-    transport wiring in `src/main.rs` (an rmcp pin change in `Cargo.toml`
-    `[dependencies]` is out of scope and requires a separate deliberation);
+    transport wiring in `src/main.rs` against the strategy selected by
+    `056.029-T` (an rmcp pin change in `Cargo.toml` `[dependencies]` is out of
+    scope for `056.011-T`);
     **mode B1** — the documented client-launch capability in `056.019-T` plus the
     managed-config mutation tasks (`056.008-T`/`056.018-T`/`056.009-T`); **mode
     B2** — the client-capability classification in `056.019-T` only.
-  * change_kind: **mode A** scoped transport/wiring edit around the pinned
-    dependency; **mode B1**
+  * change_kind: **mode A** scoped transport/wiring edit around the
+    dependency selected by `056.029-T`; **mode B1**
     managed-config code/config mutation with rollback; **mode B2**
     operator/client-capability classification only (no repo code).
   * ActionRisk: **moderate** — mode A changes startup-critical transport wiring
@@ -2148,7 +2154,7 @@ and posture-classification context.
     declared-MSRV gates; no `get_info` change. Mode B1 mutates managed config
     (rolled back via the recovery primitive); mode B2 changes no repo code and
     adds no containment surface. rollback: **mode A** remove the adapter and
-    restore direct pinned-rmcp wiring; **mode B1** revert managed-config changes
+    restore direct selected-rmcp wiring; **mode B1** revert managed-config changes
     via the recovery backups; **mode B2** revert to the previously documented
     client configuration.
   * approval_required: mode B1 managed-config mutation follows the T2e/T2f
@@ -2712,8 +2718,8 @@ fallback action occurred.
   `056.029-T` dispositions the result. **SUPERSEDED 2026-08-29 (PR #108 cycle
   2):** the `+1.75.0` form of that gate is a deterministic failure, so
   `056.029-T` was re-scoped into the declared-MSRV resolution task and shipped
-  ahead of the remedy as the sole member of `053-S`. See the cycle-2 report
-  below.
+  ahead of the remedy as one of the five members of `053-S` (`056.029-T`
+  through `056.033-T`). See the cycle-2 report below.
 * The adapter is a private binary-owned module reachable from `src/main.rs`,
   not an inaccessible `pub(crate)` library type. Its task explicitly owns the
   narrow `src/mcp/mod.rs` rustdoc correction.
@@ -2791,11 +2797,13 @@ resolution was performed by this pass.
 * The exact-Copilot accepted error shape, full pre-initialize sequence, and
   re-probe cadence remain explicit execution evidence, not documentation or
   implementation assumptions. `-32601` is only a standards-informed candidate.
-* P2/P3 follow-ups remain non-blocking: validate the pinned rmcp transport
-  concurrency model before adding any synchronization test, add the PHASE 1.5
-  shipment dependency before 052-S claim, and compact historical review detail
-  after the active plan is shipped.
+* P2/P3 follow-ups remain non-blocking: validate the transport concurrency
+  model of the rmcp strategy selected by `056.029-T` before adding any
+  synchronization test, add the PHASE 1.5 shipment dependency before 052-S
+  claim, and compact historical review detail after the active plan is shipped.
 
-The review rejects the metadata-only assertion that the current declared MSRV
-has already failed. `edition = "2024"` and an absent dependency `rust-version`
-are risk signals; only the required actual check may determine the disposition.
+**SUPERSEDED 2026-08-29 (PR #108 cycle 2):** this prior review treated the
+declared-MSRV mismatch as unmeasured. Cargo 1.75 cannot parse the resolved
+edition-2024 `rmcp 1.5.0` manifest, so `056.029-T` resolves a compatible
+dependency strategy before `052-S`; it does not re-measure whether that known
+manifest incompatibility exists.
