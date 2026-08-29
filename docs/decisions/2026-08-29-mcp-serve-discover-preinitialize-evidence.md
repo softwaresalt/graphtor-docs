@@ -17,6 +17,10 @@ backlog_refs:
   - "052-S"
   - "053-S"
   - "056.029-T"
+  - "056.030-T"
+  - "056.031-T"
+  - "056.032-T"
+  - "056.033-T"
 source: "operator live actual-client stderr, 2026-08-29 (redacted)"
 tags:
   - mcp
@@ -238,89 +242,75 @@ The remedy is a narrow, pinned-`rmcp`-1.5 transport adapter between
    private compatibility composition. See the plan's `#### T-H3-A` "Adapter
    shape (BINDING)" block for the full contract.
 
-## MSRV / edition blocker and its resolution unit
+## MSRV / edition blocker and Rust 1.75 resolution unit
 
-E5 invalidates the plan's original exclusion discriminator **and** establishes a
-deterministic blocker rather than an open risk. The plan said "rmcp 1.8.x uses
-edition 2024 and is excluded by Rust 1.75"; in fact the **currently pinned rmcp
-1.5.0 is also edition 2024** and declares no `rust-version`. Stable Cargo did
-not accept `edition = "2024"` in any manifest until Rust/Cargo 1.85, so Cargo
-1.75 cannot parse the resolved `rmcp 1.5.0` manifest at all. The formerly
-mandatory `cargo +1.75.0 check --all-targets` entry gate on `052-S` was
-therefore a guaranteed failure rather than a measurement, and `052-S` could
-never have reached adapter implementation under that plan. No build was run in
-this Stage pass; the conclusion rests on the vendored manifest metadata in E5
-plus the published edition-2024 stabilization release.
+E5 establishes a deterministic incompatibility, not an unmeasured risk:
+stable Cargo 1.75 cannot parse any manifest with `edition = "2024"`, while the
+resolved `rmcp 1.5.0` manifest uses that edition and declares no
+`rust-version`. The former `052-S` `cargo +1.75.0 check --all-targets` entry
+gate could only fail. No build was run in this Stage pass; the established
+parse incompatibility follows from the vendored manifest metadata in E5 and the
+published edition-2024 stabilization release.
+
+The repository's Rust 2021 / `rust-version = "1.75"` floor remains
+NON-NEGOTIABLE. Raising that floor is not an implementation option in Feature
+056. Any future proposal to change it requires a separately approved
+constitutional-amendment decision outside this work.
+
+The unmeasured question is deliberately narrower: which compatible rmcp
+release, pin, or decision-approved narrow backport, fork, or patch will let the
+existing floor parse and build. `056.029-T` owns only `Cargo.toml`,
+`Cargo.lock`, and one dated dependency-decision record. If that bounded choice
+requires source or API migration, Stage creates a named follow-up and blocks
+`056.029-T` and `053-S`; it does not widen this task.
 
 Consequences:
 
-* The 1.8.x exclusion stands, but on corrected grounds: unproven MSRV parity,
-  wider transitive API surface, and rollback isolation — **not** edition, which
-  does not discriminate 1.5.0 from 1.8.0.
-* The DAG is corrected instead of deferring a known blocker to execution.
-  `056.029-T` is re-scoped from an unshipped evidence-consumer into the
-  declared-MSRV / dependency-compatibility resolution task, and becomes the sole
-  member of the dedicated queued shipment `053-S` (PHASE 1.6) that executes
-  **before** `052-S`.
-* `056.029-T` chooses exactly one bounded resolution at implementation time:
-  (a) raise the declared `rust-version` to a truthful floor that parses
-  edition-2024 dependency manifests and align `Cargo.toml`, the standalone probe
-  manifest, CI workflows, instruction files, and affected docs; or (b) select an
-  MSRV-compatible rmcp strategy through a bounded decision. Neither option is
-  preselected or implemented here. The mismatch is never silently waived, never
-  a silent `rust-version` relaxation, and never a silent rmcp bump; any rmcp
-  version change stays reviewed inside `056.029-T` or a named split if width
-  requires it.
-* Width isolation is preserved: `056.029-T` owns only the dependency/toolchain
-  declaration and the documentation/CI text that asserts it, and the transport
-  remedy stays entirely inside `052-S`.
-* `056.011-T` no longer adjudicates MSRV. Its first step validates once against
-  the **resolved** declared `rust-version` left by `056.029-T`
-  (`cargo +<resolved floor> check --all-targets`), never a hard-coded
-  `+1.75.0`. A nonzero result there blocks `052-S` and returns it to Stage for a
-  new bounded MSRV follow-up; it never permits adapter continuation or an
-  MSRV-compatibility claim.
-* A failed or unresolved declared-MSRV question **blocks** `052-S`. There is no
-  path in which it is merely advisory or deferrable to final acceptance.
+* The 1.8.x exclusion stands on corrected grounds: unproven MSRV parity, wider
+  transitive API surface, and rollback isolation -- not edition, which does not
+  discriminate 1.5.0 from 1.8.0
+* The authoritative task edge is `056.028-T -> 056.029-T`, so PHASE 1.5
+  precedence is enforceable now even though its shipment manifest remains
+  deliberately uncreated until `049-S` closes
+* `053-S` contains `056.029-T`, `056.030-T`, `056.031-T`, `056.032-T`, and
+  `056.033-T` in dependency-closed order. The latter four tasks respectively
+  own primary CI, ordinary documentation, canonical agent declarations, and
+  generic Rust authoring instructions, each after `056.029-T`
+* `052-S` remains after complete `053-S` closure. `056.011-T` has the direct
+  edge `056.029-T -> 056.011-T`, but it consumes completed Rust 1.75
+  compatibility evidence rather than running a separate MSRV entry gate
+* All subsequent Cargo and CI validation remains at Rust/Cargo 1.75. A
+  dynamically raised floor is never valid compatibility evidence
 
 ## Release-unit routing
 
-The smallest coherent path keeps the existing decomposition intact and inserts
-one prerequisite release unit:
+The dependency-closed path is:
 
 ```text
-050-S  ->  051-S  ->  049-S  ->  PHASE 1.5 (056.028-T)  ->  053-S (056.029-T)  ->  052-S
+050-S -> 051-S -> 049-S -> PHASE 1.5 (056.028-T) -> 053-S -> 052-S
 ```
 
-* `049-S` keeps its `blocks` dependency on `051-S`; `051-S` keeps its
-  dependency on `050-S`. Nothing is removed or reordered, and `049-S` keeps its
-  frozen eight-task manifest.
-* `053-S` is the PHASE 1.6 task-only declared-MSRV shipment whose sole member is
-  `056.029-T`, with a `blocks` dependency on `049-S`.
-* `052-S` is the task-only remedy shipment whose sole member is `056.011-T`,
-  with `blocks` dependencies on `049-S` **and** on `053-S`, so it transitively
-  waits for the evidence unit and the declared-MSRV unit. The covering feature
-  `056-F` is excluded per P-015.
-* Ordering rationale: `056.011-T`'s standing backlog dependencies are
-  `056.003-T`, `056.028-T`, and `056.029-T`, and its exact-client before/after
-  acceptance consumes the transparent `056.022-T` wrapper and `056.023-T`
-  observer. Their probe-owned temporary configuration is valid only for this
-  diagnostic before/after evidence, never for T4 restored-production acceptance.
-  All three of those evidence tasks are `049-S` members. The adapter's own
-  in-crate red/green unit tests do **not** need those assets, but the acceptance
-  does, so the unit cannot close ahead of `049-S`.
-* Naming the shipments now — rather than leaving `056.011-T` or `056.029-T`
-  selected but unshipped — is the point: it prevents required work from sitting
-  indefinitely outside any release unit.
-* PHASE 1.5 assembly gate: the `056.028-T` shipment manifest is deliberately
-  **not** created at plan time. Stage creates it only after `049-S` closes, and
-  when it does it adds that shipment as an explicit `053-S` dependency before
-  claim. Until then PHASE 1.5 precedence is carried by `056.011-T`'s standing
-  `blocks` dependency on `056.028-T`.
-* `056.029-T` carries no `selection:*` label, exactly like `056.028-T`: it is
-  not cause-selected, so the `phase:remedy` selection gate does not apply to its
-  `053-S` membership. It remains in T4 fan-in, and a failing MSRV gate can no
-  longer be bypassed in `052-S` because the resolution now precedes the remedy.
+* `049-S` retains its `051-S` prerequisite and exactly eight frozen members
+* The PHASE 1.5 manifest remains uncreated until `049-S` closes. Its future
+  shipment has only `056.028-T`; the existing task edge
+  `056.028-T -> 056.029-T` is the authority that already enforces the order
+* `053-S` retains its `049-S` shipment prerequisite and has five members:
+  `056.029-T`, followed by `056.030-T`, `056.031-T`, `056.032-T`, and
+  `056.033-T`. Before claim, its member-readiness check verifies
+  `056.028-T` is terminal and that the downstream member dependencies are
+  satisfied. It does not wait for a future manifest mutation
+* `052-S` has only `056.011-T` and retains its `049-S` and `053-S`
+  prerequisites. It has no direct PHASE 1.5 shipment edge; its task-level
+  prerequisite path is `056.028-T -> 056.029-T -> 056.011-T`
+* The complete standing H3-A edges are
+  `056.020-T -> 056.028-T -> 056.029-T`,
+  `056.029-T -> {056.030-T, 056.031-T, 056.032-T, 056.033-T, 056.011-T}`,
+  `056.003-T -> 056.011-T`, `056.028-T -> 056.011-T`,
+  `053-S -> 052-S`, and
+  `{056.011-T, 056.028-T, 056.029-T, 056.030-T, 056.031-T, 056.032-T,
+  056.033-T} -> 056.004-T`
+* The transparent wrapper and observer remain diagnostic evidence only; they
+  never substitute for T4 restored-production evidence
 
 ### Emergency hotfix considered and rejected
 
@@ -346,7 +336,8 @@ acceptance are all preserved unchanged.
    bounded-cap constraint above exists precisely because of this.
 4. Whether other cause families are *also* present is untouched by this note.
    `049-S` T0 still runs and may order additional causes.
-5. The MSRV/edition state is established from vendored manifest metadata plus
-   the published edition-2024 stabilization release, not from a build run in
-   this Stage pass. The exact resolved floor and the chosen remedy option are
-   decided by `056.029-T` in `053-S`, ahead of `052-S`.
+5. The MSRV/edition incompatibility is established from vendored manifest
+   metadata plus the published edition-2024 stabilization release, not from a
+   build run in this Stage pass. The remaining bounded decision is the
+   MSRV-compatible dependency strategy at the fixed Rust 1.75 floor, owned by
+   `056.029-T` in `053-S` ahead of `052-S`.

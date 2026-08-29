@@ -1,13 +1,24 @@
 ---
-title: "Stage session memory: H3-A selection and 052-S routing (2026-08-29)"
-description: "Session record for the narrow Stage pass that flipped 056.011-T to selection:selected on live actual-client evidence and routed it as shipment 052-S after 049-S"
+title: "SUPERSEDED: Stage session memory: H3-A selection and 052-S routing (2026-08-29)"
+description: "Historical H3-A selection snapshot superseded by the PR #108 review-fix cycle 2 dependency-closed Rust 1.75 routing record"
 doc_type: "memory"
 session_date: "2026-08-29"
 agent: "stage"
+status: "superseded"
+superseded_at: "2026-08-29"
+superseded_by: "docs/memory/2026-08-29/stage-056-011-h3a-pr108-reviewfix-cycle-2-memory.md"
+current_backlog_memory_key: "stage-056-011-h3a-pr108-reviewfix-cycle-2-2026-08-29"
 backlog_refs:
   - "056-F"
   - "056.011-T"
+  - "056.028-T"
+  - "056.029-T"
+  - "056.030-T"
+  - "056.031-T"
+  - "056.032-T"
+  - "056.033-T"
   - "049-S"
+  - "053-S"
   - "052-S"
 linked_artifacts:
   - "docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md"
@@ -23,7 +34,14 @@ tags:
   - selection-gate
 ---
 
-## Scope
+> [!IMPORTANT]
+> **SUPERSEDED.** This is a preserved historical selection record. The current
+> routing is `056.028-T -> 056.029-T -> 056.011-T`, with `056.029-T` and
+> `056.030-T` through `056.033-T` shipped in `053-S` before `052-S`. `052-S`
+> has no direct PHASE 1.5 shipment edge and no hard-coded Rust 1.75 entry gate.
+> Use the `superseded_by` record and `current_backlog_memory_key` above.
+
+## Historical Scope
 
 Narrow, evidence-driven Stage pass. Planning, backlog, shipment assembly, and
 PR preparation only. No source, test, workflow, or config code was written; no
