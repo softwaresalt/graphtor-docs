@@ -7,6 +7,27 @@ agent: "Ship"
 status: "blocked (feasibility gate)"
 ---
 
+## Circuit-breaker note (review-fix cycle limit reached)
+
+This PR went through significantly more than 3 review-fix cycles (the
+workspace's circuit-breaker cap) as successive Copilot shadow-review rounds
+raised progressively more specific findings about U7's evidence (root
+bootstrap correctness → Unix execution → pinned-1.75 Unix execution →
+cross-platform Scenario 3 execution → Scenario 3 mechanism specificity →
+red-phase rigor). Per `circuit-breaker.instructions.md`, remaining findings
+past the cycle cap are recorded as residual/backlog rather than chased
+indefinitely. Two P2/P3 methodology caveats about U7's Scenario 3 harness
+(it exercises `cap_std::fs::Dir::open`'s built-in containment rather than an
+explicit `custom_flags`-based no-follow primitive matching U2's planned
+design, and its red phase was a missing-source compile error rather than a
+compiling-but-failing assertion) are recorded as accepted residual findings
+in `.backlogit/archive/059.007-T.md`'s `feasibility-evidence` section rather
+than further re-executed. Neither caveat reverses the core Scenario 2
+conclusion (the root no-follow bootstrap, proven via an explicit, named,
+executed primitive on both platforms/toolchains).
+
+---
+
 ## Update — PR #111 current-HEAD review remediation (this pass, HEAD `58e4204` base)
 
 Four review findings against the original checkpoint below were remediated
