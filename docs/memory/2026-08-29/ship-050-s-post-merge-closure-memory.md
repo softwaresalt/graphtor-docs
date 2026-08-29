@@ -93,8 +93,13 @@ queued` and is now dependency-unblocked since `050-S` reached the terminal
 * `be789b2` — `chore(harness): archive 050-S shipment closure artifacts`
   (`.backlogit/` only: hooks log append, queue→archive rename, 3 reconcile
   reports). `.gitignore` and `docs/scratch/` excluded.
-* (pending) closure docs + compound learning commit — `docs/closure/`,
-  `docs/compound/`, this memory file.
+* `d6c120b` — `docs(harness): post-merge closure for 050-S pip auto-approve
+  hardening` (`docs/closure/`, `docs/compound/`, this memory file).
+* `6df2df7` — `chore(harness): compact 050-S memory checkpoint` (archived
+  the superseded recovery-memory checkpoint, added the compaction report).
+* Additional commit(s) addressing Copilot shadow-review comments on PR #110
+  (stale citation paths, stale pending-commit marker, missing fenced-code
+  language tags) — see PR #110 review thread replies for the fixing SHA(s).
 
 `.gitignore` remains dirty/unstaged/uncommitted throughout (verified
 byte-for-byte after every commit). `docs/scratch/` remains untracked and was

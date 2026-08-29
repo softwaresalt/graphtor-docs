@@ -10,7 +10,7 @@ severity: "low"
 message: "local branch behind origin/main; working tree has uncommitted edit that must remain untouched (M .gitignore)"
 file_path: ".github/agents/.ship.agent.md"
 citations:
-  - "docs/memory/2026-08-29/ship-050-s-recovery-memory.md"
+  - "docs/archive/memory/2026-08-29/ship-050-s-recovery-memory.md"
   - "https://github.com/softwaresalt/graphtor-docs/pull/109"
 tags:
   - "post-merge"
@@ -44,7 +44,7 @@ uncommitted local modifications that must be preserved exactly.
 Before switching branches, verify the *committed* blob for the sensitive
 file is identical between the current HEAD and the target ref:
 
-```
+```text
 git rev-parse HEAD:.gitignore
 git rev-parse origin/main:.gitignore
 ```

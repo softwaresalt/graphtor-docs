@@ -207,7 +207,7 @@ this counts as "not present → skip and log":
 
 * `docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md`
 * `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`
-* `docs/memory/2026-08-29/ship-050-s-recovery-memory.md`
+* `docs/archive/memory/2026-08-29/ship-050-s-recovery-memory.md`
 * `docs/compound/workflow-issues/post-merge-branch-preserve-dirty-file-2026-08-29.md`
 * Follow-up items stashed: none (see Stash Follow-Up Review below).
 
