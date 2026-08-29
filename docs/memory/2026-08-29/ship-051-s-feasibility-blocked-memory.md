@@ -95,46 +95,56 @@ in this pass:
    - Scenario 1: `cap-std 4.0.3` (newest stable release) compiles and its
      tests pass under Rust 1.75 (cap-primitives 4.0.3, rustix 1.1.4,
      io-lifetimes 2.0.4/3.0.1, io-extras 0.19.0, windows-sys 0.59.0/0.60.2/
-     0.61.2 all resolve cleanly).
+     0.61.2 on Windows; rustix 1.1.4 on Linux).
    - Scenario 2 (**corrected**): the originally-recorded bootstrap,
      `Dir::open_ambient_dir(root, ambient_authority())` alone, does **not**
      provide a no-follow/no-reparse root open — a Copilot review correctly
-     flagged this, and it was confirmed empirically in a follow-up harness: a
-     symlinked root was **followed**, not refused. The corrected
-     construction ambiently opens the workspace root's **parent** only
-     (`cap_primitives::fs::open_ambient_dir`), then opens the root itself
-     relative to that parent handle via `cap_primitives::fs::
-     open_dir_nofollow` (public in `cap-primitives` 4.0.3, but not exposed as
-     a `cap_std::fs::Dir` method — both crates are needed as direct
-     dependencies). Re-verified on **both** platforms with real execution: a
-     symlinked root is refused (`ERROR_STOPPED_ON_SYMLINK`/os error 681 on
-     Windows; `ENOTDIR`/os error 20 on Linux — installed via a minimal
-     `rustup` profile plus a `zig cc` linker wrapper in WSL2/Ubuntu 26.04
-     since no system C toolchain/`sudo` was available, both removed after
-     evidence capture) — **under both stable rustc and pinned rustc
-     +1.75.0 on Linux**, matching the same dual-toolchain coverage already
-     established on Windows (a Copilot review correctly pointed out that an
-     initial pass only exercised Linux under stable, which does not by
-     itself prove Rust-1.75 compatibility for the Unix-specific code path);
-     an ordinary root still succeeds on both. The trusted-parent threat
-     model is now precise: only the immediate parent of the root is trusted
-     (the same single ambient-authority step any `std::fs` ambient call
-     already makes); the root itself is verified by actual execution on
-     both platforms, under both toolchains, not assumed. `cap_std::fs::
-     File::into_std()` remains the selected `File` boundary. Full corrected
-     evidence, including persisted command/output snippets and the explicit
-     U1/U2/U6 implementation note that **both** `cap-std` and
-     `cap-primitives` must be adopted, is in
-     `.backlogit/archive/059.007-T.md`.
-   - Scenario 3: table-driven refusal matrix — absolute path, `..` escape,
-     intermediate-directory symlink swap, and in-bounds leaf symlink were all
-     refused. The Windows leaf case required an **explicit post-open**
-     `FILE_ATTRIBUTE_REPARSE_POINT` check via `MetadataExt::file_attributes()`
-     (the open itself succeeds on a reparse point on Windows), confirming
-     U2's planned `should_refuse_reparse` predicate is load-bearing, not
-     optional.
-   - Harness deleted after evidence capture (`target/` is git-ignored and the
-     plan explicitly frames U7's harness as throwaway).
+     flagged this, and it was confirmed empirically: a symlinked root was
+     **followed**, not refused. The corrected construction ambiently opens
+     the workspace root's **parent** only (`cap_primitives::fs::
+     open_ambient_dir`), then opens the root itself relative to that parent
+     handle via `cap_primitives::fs::open_dir_nofollow` (public in
+     `cap-primitives` 4.0.3, but not exposed as a `cap_std::fs::Dir` method
+     — both crates are needed as direct dependencies). The trusted-parent
+     threat model is now precise: only the immediate parent of the root is
+     trusted (the same single ambient-authority step any `std::fs` ambient
+     call already makes); the root itself is verified, not assumed.
+     `cap_std::fs::File::into_std()` remains the selected `File` boundary.
+   - Scenario 3: a table-driven capability-walk refusal matrix (absolute
+     path, `..` escape, intermediate-directory symlink swap, in-bounds leaf
+     symlink) exercised through the corrected Scenario 2 handle.
+   - **Test-first chronology and full dual-platform/dual-toolchain
+     execution** (added after two further Copilot review rounds correctly
+     pointed out that an earlier pass only exercised Scenario 3 on Windows
+     and never recorded an explicit red/green narrative): a `cargo
+     test`-based harness was authored **red-first** — `tests/scenarios.rs`
+     imported functions from a `src/lib.rs` that did not yet exist, and
+     `cargo test` failed to compile ("can't find lib ..."), confirmed red —
+     then `src/lib.rs` was implemented and the suite turned **green**: 6/6
+     tests pass (`scenario2a_symlinked_root_is_refused`,
+     `scenario2b_normal_root_succeeds`, `scenario3a_absolute_path_is_refused`,
+     `scenario3b_parent_escape_is_refused`,
+     `scenario3c_intermediate_symlink_swap_is_refused`,
+     `scenario3d_leaf_symlink_is_refused`). This exact 6/6 suite was then run
+     to completion on **all four** platform/toolchain combinations: Windows
+     stable, Windows `+1.75.0`, Linux stable, and Linux `+1.75.0` (Ubuntu
+     26.04 via WSL2 — a minimal `rustup` profile plus a `zig cc` linker
+     wrapper substituted for a system C toolchain since no `sudo`/system
+     compiler was available; both removed after evidence capture). Refusal
+     signal observed for a symlinked root: `ERROR_STOPPED_ON_SYMLINK`/os
+     error 681 on Windows; `ENOTDIR`/os error 20 on Linux (the
+     cap-primitives/kernel combination reports `ENOTDIR` rather than `ELOOP`
+     for this open shape — the open still fails and the symlink is never
+     followed either way).
+   - IMPLEMENTATION NOTE for U1/U2/U6: both `cap-std` (the `Dir`/`File`
+     capability-relative walk) **and** `cap-primitives` (the
+     `open_dir_nofollow` root-bootstrap primitive) must be adopted as direct
+     dependencies — `cap-std` alone is insufficient for a genuinely
+     no-follow root bootstrap. Full evidence, including persisted
+     command/output snippets and named test results per
+     platform/toolchain, is in `.backlogit/archive/059.007-T.md`.
+   - Harnesses deleted after each evidence-capture pass (`target/` is
+     git-ignored and the plan explicitly frames U7's harness as throwaway).
 
 2. **U8 (`059.008-T`) — BLOCKED.** Traced the actual engine-open code path
    this crate depends on: `cozo` 0.7 (`storage-sqlite` feature) →
