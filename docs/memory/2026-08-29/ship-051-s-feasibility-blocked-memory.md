@@ -111,14 +111,20 @@ in this pass:
      Windows; `ENOTDIR`/os error 20 on Linux — installed via a minimal
      `rustup` profile plus a `zig cc` linker wrapper in WSL2/Ubuntu 26.04
      since no system C toolchain/`sudo` was available, both removed after
-     evidence capture); an ordinary root still succeeds on both. The
-     trusted-parent threat model is now precise: only the immediate parent
-     of the root is trusted (the same single ambient-authority step any
-     `std::fs` ambient call already makes); the root itself is verified by
-     actual execution on both platforms, not assumed. `cap_std::fs::
+     evidence capture) — **under both stable rustc and pinned rustc
+     +1.75.0 on Linux**, matching the same dual-toolchain coverage already
+     established on Windows (a Copilot review correctly pointed out that an
+     initial pass only exercised Linux under stable, which does not by
+     itself prove Rust-1.75 compatibility for the Unix-specific code path);
+     an ordinary root still succeeds on both. The trusted-parent threat
+     model is now precise: only the immediate parent of the root is trusted
+     (the same single ambient-authority step any `std::fs` ambient call
+     already makes); the root itself is verified by actual execution on
+     both platforms, under both toolchains, not assumed. `cap_std::fs::
      File::into_std()` remains the selected `File` boundary. Full corrected
-     evidence, including the explicit U1/U2/U6 implementation note that
-     **both** `cap-std` and `cap-primitives` must be adopted, is in
+     evidence, including persisted command/output snippets and the explicit
+     U1/U2/U6 implementation note that **both** `cap-std` and
+     `cap-primitives` must be adopted, is in
      `.backlogit/archive/059.007-T.md`.
    - Scenario 3: table-driven refusal matrix — absolute path, `..` escape,
      intermediate-directory symlink swap, and in-bounds leaf symlink were all
