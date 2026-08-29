@@ -4,7 +4,6 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "pip": true,
         "/^python \\.scripts/clone_ms_docs_repos\\.py https://api\\.github\\.com/orgs/MicrosoftDocs ms-docs\\.txt$/": {
             "approve": true,
             "matchCommandLine": true
