@@ -10,8 +10,10 @@ stash_ids:
   - "7BF1961D"
 linked_artifacts:
   - "docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md"
+  - "docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md"
 backlog_refs:
   - "049-S"
+  - "052-S"
   - "056-F"
 source: "stash:7BF1961D"
 tags:
@@ -425,7 +427,10 @@ lockfile. Task count is 28 (`056.001-T`..`056.028-T`).
   locked until approval-gated exact-lock recovery.
 * If H3-A dominates, candidate rmcp metadata must be checked before coding;
   1.8.x is excluded by edition 2024 and a fork/patch requires a new
-  deliberation. H3-B preserves exact CLI identity; B1 proves a distinct
+  deliberation. **(SUPERSEDED 2026-08-29 — see the Addendum below: H3-A is
+  evidenced and selected, and the "excluded by edition 2024" discriminator is
+  wrong because pinned rmcp 1.5.0 is also edition 2024. The exclusion stands on
+  corrected grounds.)** H3-B preserves exact CLI identity; B1 proves a distinct
   documented mechanism, while B2 blocks shipment as unsupported-client. Both B1
   and a proven B2 are terminal (done) and close `056.019-T`/`049-S`; an
   INCONCLUSIVE H3-B verdict is fail-closed — it moves `056.019-T` to `blocked`,
@@ -434,3 +439,45 @@ lockfile. Task count is 28 (`056.001-T`..`056.028-T`).
 * If H1 is taken, one owner must preserve semantic-search and Generation
   embeddings. `research_topic` must not silently fall back while Loading or
   Failed; terminal Disabled preserves the established disabled behavior.
+
+## Addendum — H3-A confirmed and selected (2026-08-29)
+
+Two statements above are superseded by later evidence. Both are corrected here
+rather than edited in place, so the original reasoning stays auditable.
+
+* **"If H3-A dominates" is now resolved.** H3-A **is** evidenced. Live
+  actual-client stderr shows the server completing preflight and model load,
+  logging `starting MCP STDIO server`, then exiting `2` with rmcp's
+  `expect initialized request, but received: ... CustomRequest { method: "server/discover" }`
+  at request `id: 0`. Because rmcp `>= 1.4` no longer gates on
+  `notifications/initialized`, that message can only be produced before a
+  successful `InitializeResult`, so `server/discover` arrives **before or
+  instead of** `initialize`. `server/discover` is an MCP **draft**-specification
+  discovery method (2026-07-28 era draft) used by a dual-era client's
+  pre-`initialize` stdio backward-compatibility fallback probe: it is defined in
+  the public MCP draft rather than being a vendor-private extension, the draft
+  is not a finalized MCP release, and it is **not** in rmcp 1.5's accepted
+  pre-`initialize` request set, which admits only `ping`. The full redacted
+  record, the remedy constraints, and the
+  explicit residual uncertainty are in
+  `docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`.
+  `056.011-T` is `selection:selected` and routed as the sole member of the
+  task-only shipment `052-S`, ordered after `049-S` and after the PHASE 1.6
+  declared-MSRV shipment `053-S`. The evidence substitutes
+  for the T0 *cause-ordering* input for this family only.
+* **The rmcp 1.8.x exclusion rationale is corrected.** "1.8.x is excluded by
+  edition 2024" does not hold as a discriminator: vendored `rmcp-1.5.0` — the
+  crate this workspace already pins — also declares `edition = "2024"` and no
+  `rust-version`. The exclusion stands on corrected grounds (unproven MSRV
+  parity, wider transitive API surface, rollback isolation). The declared-MSRV
+  mismatch is a deterministic blocker rather than an open measurement — stable
+  Cargo accepted `edition = "2024"` only from Rust/Cargo 1.85, so `cargo
+  +1.75.0` cannot parse the resolved `rmcp 1.5.0` manifest — so it is resolved
+  by `056.029-T`, the sole member of the PHASE 1.6 shipment `053-S`, which runs
+  BEFORE `052-S`. `056.011-T` then validates once against the resolved declared
+  `rust-version`, never a hard-coded `+1.75.0`.
+
+The rest of this deliberation is unchanged. Other cause families remain
+unselected, `049-S` still runs T0, `049-S` keeps its dependency on the `051-S`
+security prerequisite, and `056.004-T` (T4) remains the sole owner of
+restored-production actual-client acceptance.

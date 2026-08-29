@@ -7,9 +7,18 @@ stash_ids:
   - "7BF1961D"
 linked_artifacts:
   - "docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md"
+  - "docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md"
 backlog_refs:
   - "049-S"
+  - "052-S"
+  - "053-S"
   - "056-F"
+  - "056.028-T"
+  - "056.029-T"
+  - "056.030-T"
+  - "056.031-T"
+  - "056.032-T"
+  - "056.033-T"
 status: "draft"
 source: "docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md"
 tags:
@@ -26,16 +35,50 @@ Recent GitHub Copilot CLI builds can no longer connect to the `graphtor-docs`
 MCP server: the STDIO transport pipe closes with Windows **OS error 232**
 (`ERROR_NO_DATA`, "pipe is being closed") while the client sends the
 `initialize` request. OS error 232 is a write to a **closed** pipe, so the
-signature is the **server process exiting before the handshake completes** —
-most plausibly one of `cmd_serve`'s pre-`serve_server` normal exits or
-fail-closed errors (cwd-relative `.graphtor/*.db` discovery, lock contention /
-stale-lock pid reuse, pre-v4 schema, duplicate intake, or another config/open
-gate), triggered by a change in *how* the new CLI launches the child
-(cwd / env / lifecycle) rather than by any graphtor-docs code change. The full
-differential diagnosis — and
-why an rmcp `get_info` protocol-echo change is a no-op on rmcp 1.5 — is in the
-linked deliberation. This plan restores connectivity **evidence-first** and
-**test-first**.
+signature is the **server process exiting before the handshake completes**.
+Live exact-client evidence now selects H3-A for this failure: preflight and
+model loading complete, `serve_server` is entered, then the first non-ping
+pre-`initialize` request (`server/discover`, id 0) produces rmcp's
+`ExpectedInitializeRequest` and exit 2. This does not dispose of H0/H1 or H3-B
+as residual cause families; `049-S` still classifies them without bypassing
+`051-S`. The full differential diagnosis — and why an rmcp `get_info`
+protocol-echo change is a no-op on rmcp 1.5 — is in the linked deliberation.
+This plan restores connectivity **evidence-first** and **test-first**.
+
+## Current H3-A and MSRV Amendment -- PR #108 Review-Fix Cycle 2
+
+This is the normative current H3-A/MSRV routing contract. It supersedes earlier
+current-looking wording that made PHASE 1.5 ordering depend on a future shipment
+mutation, made `053-S` a single-member unit, treated a dynamically raised Rust
+floor as an implementation option, or put a Rust 1.75 entry gate in `052-S`.
+Historical review records remain historical evidence only.
+
+Cargo 1.75 cannot parse the current edition-2024 `rmcp 1.5.0` manifest. That is
+an established incompatibility, not an unmeasured risk. The repository remains
+Rust 2021 with `rust-version = "1.75"`; raising the floor requires a separate
+approved constitutional amendment outside Feature 056. The bounded unmeasured
+question is which compatible rmcp release, pin, or decision-approved narrow
+backport, fork, or patch makes the existing floor parse and build.
+
+`056.029-T` owns only `Cargo.toml`, `Cargo.lock`, and one dated dependency
+decision. If a compatible strategy requires a source or API migration, Stage
+creates a named bounded follow-up and blocks this prerequisite. `056.030-T`
+owns `.github/workflows/ci.yml`; `056.031-T` owns `README.md` and
+`docs/ARCHITECTURE.md`; `056.032-T` owns the three canonical agent-declaration
+files; and `056.033-T` owns the three generic Rust authoring-instruction files.
+Each follows `056.029-T` and preserves the fixed floor.
+
+The feature contains 33 tasks, `056.001-T` through `056.033-T`. The authoritative
+H3-A edges are `056.020-T -> 056.028-T -> 056.029-T`,
+`056.029-T -> {056.030-T, 056.031-T, 056.032-T, 056.033-T, 056.011-T}`,
+`056.003-T -> 056.011-T`, `056.028-T -> 056.011-T`, `053-S -> 052-S`, and
+`{056.011-T, 056.028-T, 056.029-T, 056.030-T, 056.031-T, 056.032-T,
+056.033-T} -> 056.004-T`. `049-S` remains frozen with eight members and its
+`051-S` prerequisite. The PHASE 1.5 shipment remains uncreated until `049-S`
+closes, but `056.028-T -> 056.029-T` already enforces its order. Before
+`053-S` claim, member readiness verifies that `056.028-T` is terminal and that
+every `056.029-T` successor is dependency-ready; `052-S` starts only after all
+five `053-S` members close.
 
 ## Goal / Definition of Done
 
@@ -119,7 +162,7 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 | Shared lazy lifecycle (conditional H1) | `src/embed/lifecycle.rs` | Supervised clone-shared lifecycle state machine only; expose a stable typed lifecycle-state accessor; the versioned Loading/Failed/Disabled availability projection and `src/mcp/server.rs` consumers move to `056.025-T` → `056.005-T` |
 | Serve/background-sync orchestration (conditional H1) | `src/main.rs::cmd_serve`, `spawn_background_sync` | Inject one shared lazy owner into `DocServer` and Generation sync; neither eager load nor background sync may block initialize; consume the 056.025-T availability projection → `056.015-T` |
 | MCP availability projection (conditional H1) | `src/mcp/server.rs` | Own the versioned Loading/Failed/Disabled MCP availability projection and `search_semantic`/`research_topic` fallback metadata (moved from `056.005-T`/`056.015-T`); red-first projection/tool-contract tests; no `cmd_serve`/background sync → `056.025-T` |
-| Server transport compatibility (conditional H3-A) | rmcp pin + STDIO wiring; standing dep `056.003-T`, after `056.015-T` ONLY when H1+H3-A co-selected | Own transport types/wiring only; reacquire the exact-client transaction SEPARATELY before and after the fix through the `056.022-T` wrapper (semantic initialize correlation plus redacted transcript digest, not raw replay or persistence), red/green and Rust 1.75 proof; T4 owns production acceptance → `056.011-T` |
+| Server transport compatibility (SELECTED H3-A) | pre-`initialize` `server/discover` transport adapter after the Rust 1.75-compatible dependency strategy; standing deps `056.003-T`, `056.028-T`, and `056.029-T`, after `056.015-T` ONLY when H1+H3-A co-selected | Own transport types/wiring only; complete `053-S` resolves the dependency graph and declaration alignment before `052-S`, and this task consumes that fixed Rust/Cargo 1.75 evidence with no separate MSRV entry gate; reacquire the exact-client transaction SEPARATELY before and after the fix through the `056.022-T` wrapper (semantic initialize correlation plus redacted transcript digest, not raw replay or persistence); T4 owns production acceptance -> `056.011-T` |
 | Client isolated-config + cwd compatibility (conditional H3-B) | actual Copilot CLI capability evidence | Sole H3-B terminal: consume T0's `H3-B-candidate` and adjudicate BOTH a documented explicit isolated-config discovery mechanism (owning the one bounded attempt, plus one deferred control/treatment contrast through the `056.001-T` runner when isolation becomes possible) and a distinct working-directory mechanism; H3-B1 is forward evidence, H3-B2 blocks, inconclusive blocks with evidence (not Unsupported); never reads/mutates the user root config; temporary proof only activates the managed-cwd/recovery tasks (the discriminator tasks `056.026-T`/`056.027-T` are gated separately on an evidenced `type`/`transport` mismatch) and never satisfies T4 → `056.019-T` |
 | Operator documentation (documentation-only) | `056.012-T`: `docs/troubleshooting.md` + the `### search_semantic`/`### research_topic`/`### get_status` headings and a `Runtime diagnostics and recovery` subsection in `docs/mcp-tools.md`. `056.013-T`: the `### 2. Configure your MCP client` managed-launch content in `docs/mcp-tools.md` + `### serve`/`### install`/`### upgrade`/`### uninstall` in `docs/cli-reference/graphtor-docs.md` | Diagnostics plus selected H0b/H0c/H1 contracts (no CLI-reference) → `056.012-T`; managed launch/recovery and H3, reconciling the `type`/`transport` discriminator → `056.013-T` |
 | Tests | `tests/common/mcp_driver.rs`, `tests/mcp_serve_handshake_test.rs`, and colocated focused tests | T1 owns the shared driver module; each production task owns at most three grouped scenarios. Actual-client acceptance remains the final H3/T4 gate |
@@ -794,31 +837,181 @@ pre-serve gates. If H1 is not evidenced, all four tasks (`056.014-T`, `056.005-T
 `not-needed: H1 not evidenced`. `056.012-T` owns the operator-facing tool
 retry contract.
 
-#### T-H3-A — Server framing/version compatibility — backlog `056.011-T`
+#### T-H3-A — Pre-`initialize` `server/discover` transport adapter — backlog `056.011-T`
 
-* Select only when the child remains alive but T0's framed transaction never
-  negotiates a protocol version. Own **only** transport types and rmcp/stdio
+**SELECTED 2026-08-29 (`selection:selected`).** The H3-A family is no longer
+hypothetical. Live actual-client stderr, exact server source, exact rmcp 1.5.0
+source, and the upstream MCP draft specification jointly evidence the defect:
+the client's first **non-ping** request (`id: 0`) is `server/discover`, rmcp 1.5's
+pre-`initialize` loop tolerates only `ping`, so the custom request breaks the
+loop and returns `ServerInitializeError::ExpectedInitializeRequest`; `cmd_serve`
+propagates, the process exits `2`, and the client's pipe closes. Full redacted
+evidence, the substitution scope, and the explicit residual uncertainty are in
+`docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`. That
+evidence substitutes for the T0 *cause-ordering* input **for this family only**
+— it does not substitute for the exact-client before/after acceptance, for any
+other family's selection, for `049-S`, or for T4.
+
+**Proven defect (scope-limiting):** an unhandled **pre-`initialize`
+`server/discover`** request is fatal. That exact method, at that exact point in
+the lifecycle, is the whole defect. The remedy is a narrow transport adapter
+between `rmcp::transport::stdio()` and `rmcp::serve_server`, under these
+constraints:
+
+1. **Exact allowlist.** Intercept exactly `server/discover`, pre-`initialize`,
+   and nothing else. No other method is intercepted or answered.
+2. **No arbitrary pre-`initialize` dispatch.** No tool, resource, prompt, or
+   query handler may run before `initialize`; the adapter answers from a
+   constant and must not reach `DocServer` state.
+3. **Ping is passthrough and remains the passing control.** rmcp's existing
+   pre-`initialize` `ping` handling is untouched and must still pass.
+4. **Normal `initialize` must still occur.** After answering, the adapter keeps
+   the connection alive and keeps reading until `initialize` arrives, which then
+   proceeds through unmodified rmcp to a normal `InitializeResult`.
+5. **Evidence-selected response shape — JSON-RPC legacy posture.** Use a
+   correlated JSON-RPC compatibility response only after the exact-Copilot
+   before/after transaction proves that this client accepts it and then sends
+   `initialize`. The MCP draft makes a legacy-class error, with `-32601` as a
+   standards-informed candidate, reasonable to test; it does not prove the
+   exact client's fallback behavior. Returning a real `DiscoverResult` is
+   **forbidden by default** — it would assert modern-era support this server
+   does not implement and could let a client skip `initialize`, which rmcp 1.5
+   requires. If the candidate is rejected, halt 052-S for a bounded Stage
+   amendment rather than inventing a discovery payload or dispatching another
+   pre-`initialize` method.
+6. **Bounded.** Cap pre-`initialize` `server/discover` responses at a concrete,
+   evidence-justified constant and keep a pre-`initialize` deadline. On either
+   exhaustion, stop intercepting and forward the message unchanged to rmcp, so
+   the existing `ExpectedInitializeRequest` path remains the only termination
+   path. A looping client must not hold the server pre-`initialize`.
+7. **stdout stays protocol-clean.** One newline-delimited JSON-RPC message per
+   line; diagnostics only to stderr/tracing, consistent with `056.003-T`.
+
+**Adapter shape (BINDING — so two implementers converge):**
+
+* **Placement/visibility.** The adapter type is private to a binary-owned module
+  reachable from `src/main.rs`, not the `graphtor_core::mcp` library. That keeps
+  the composition usable by the binary without a public library re-export or
+  new semver-visible API. `src/main.rs` keeps only the one-line composition.
+  Update `src/mcp/mod.rs` module rustdoc to say the binary owns STDIO transport
+  composition and may apply a private compatibility boundary before
+  `rmcp::serve_server`; it must not direct callers to bypass it.
+* **Genericity.** The adapter is generic over its inner transport
+  (`struct Adapter<T: Transport<RoleServer> + 'static> { inner: T, .. }`, with
+  `type Error = T::Error`) and is constructed from an already-converted inner
+  transport, so the harness can inject an in-memory inner instead of spawning
+  the production binary.
+* **Disarm edge.** The adapter arms at construction and disarms **permanently**
+  the moment it observes an inbound `ClientRequest::InitializeRequest` in
+  `receive`, before forwarding it. After disarm it is a pure passthrough and
+  **must not** call `send` itself — that also removes the read/write coupling
+  hazard of awaiting an outbound send from inside `receive` once rmcp's
+  `serve_inner` begins issuing concurrent sends.
+* **Scope of bounds.** The response cap and an interception-admission deadline
+  apply only to `server/discover` while pre-`initialize` and are released at
+  the disarm edge. The deadline is checked when the next inbound message
+  arrives; it does not close an idle pipe or impose a global ping timeout, so a
+  legitimately idle post-`initialize` STDIO session is never terminated.
+* **Feature declaration.** Declare on graphtor's own `tokio` dependency any
+  feature the adapter or its harness needs (`time` for the deadline, `io-util`
+  if the harness uses `duplex`) instead of relying on rmcp's feature graph, and
+  update the "activated transitively by rmcp" comment in `Cargo.toml`.
+* **Sunset tripwire.** The adapter exists only because rmcp 1.5's
+  pre-`initialize` loop tolerates only `ping`. Name the native-support removal
+  condition in a comment and re-evaluate it whenever the pinned rmcp version
+  changes; do not add a speculative version assertion.
+
+**Test tiers, honestly labelled:**
+
+* **RED-FIRST (must be observed failing before interception behavior).**
+  * **RED-1** — through a compiling pass-through test seam, drive
+    `server/discover` as the first non-ping request, then `initialize`. Red =
+    the desired continued-handshake assertion fails with
+    `ExpectedInitializeRequest`. Only after that observed red add interception.
+    Green = one correlated `jsonrpc: "2.0"` response, an open connection, a
+    subsequent non-error `result.protocolVersion`, and a normal
+    post-`initialize` tools request.
+  * **RED-5** — at the seam's own level: exactly one `Transport::send` per
+    intercepted request and zero `send` calls for any non-allowlisted message,
+    observed through a mock inner transport. Byte-level stdout parity is
+    `056.023-T` after-run evidence, not an in-crate assertion.
+* **GREEN-FIRST CONTROLS (already pass today; must keep passing).**
+  * **C-1** — an arbitrary non-allowlisted pre-`initialize` method (for example
+    `tools/list`) still fails closed exactly as today, and no handler runs.
+  * **C-2** — pre-`initialize` `ping` still receives `EmptyResult` and the
+    handshake still completes.
+* **POST-FIX REGRESSION.**
+  * **C-3** — cap exhaustion or a `server/discover` received after the
+    admission deadline forwards that message unmodified and yields rmcp's own
+    `ExpectedInitializeRequest`, so no new termination mode is introduced.
+  * **C-4** — a post-`initialize` `server/discover` passes through untouched.
+  * **C-5** — a long-idle post-`initialize` session is never terminated by the
+    adapter.
+
+All of the above run in-crate against an injected inner transport and need no
+`049-S` probe assets.
+
+**Declared-MSRV blocker (resolved upstream by PHASE 1.6 `053-S`, BEFORE this
+task):** the prior statement that "rmcp 1.8.x uses edition 2024 and is excluded
+by Rust 1.75" is **corrected** -- vendored `rmcp-1.5.0/Cargo.toml` also declares
+`edition = "2024"` and no `rust-version`, so edition does not discriminate 1.5.0
+from 1.8.0. The 1.8.x exclusion stands on corrected grounds: unproven MSRV
+parity, wider transitive API surface, and rollback isolation. The established
+blocker is that Cargo 1.75 cannot parse the current rmcp 1.5.0 manifest. The
+repository's Rust 2021 / rust-version 1.75 floor is non-negotiable; raising it
+requires a separate approved constitutional amendment outside this feature.
+
+`056.029-T` selects a compatible rmcp release or pin, or a narrow
+decision-approved backport, fork, or patch, while owning only `Cargo.toml`,
+`Cargo.lock`, and one dated dependency decision. `056.030-T` through
+`056.033-T` separately own CI and declaration alignment. The authoritative
+standing edge is `056.028-T -> 056.029-T`; `056.029-T -> 056.011-T` remains a
+direct H3-A edge, and `052-S` starts only after all five `053-S` members close.
+`056.011-T` consumes the completed Rust/Cargo 1.75 evidence and has no separate
+MSRV entry gate. If the compatible strategy requires source or API migration,
+Stage creates a named bounded follow-up and blocks `053-S`; it never widens this
+task or silently relaxes the floor.
+
+* Own **only** transport types and rmcp/stdio
   wiring. The transport wiring layers atop the `056.015-T` serve-orchestration
   restructure ONLY when H1 and H3-A are co-selected in the same shipment unit
   (a shipment-assembly-time co-selection edge per the Authoritative task
-  ordering) — it is NOT a standing backlog dependency; the standing edge is
-  `056.003 → 056.011` only. Do NOT require persisted or
+  ordering) -- it is NOT a standing backlog dependency. The standing H3-A edges
+  are `056.020 -> 056.028 -> 056.029`,
+  `056.029 -> {056.030, 056.031, 056.032, 056.033, 056.011}`,
+  `056.003 -> 056.011`, and `056.028 -> 056.011`. Do NOT require persisted or
   byte-identical raw frames: reacquire the exact-client transaction SEPARATELY
   before and after the fix through the `056.022-T` wrapper and the `056.023-T`
   in-wrapper observer, each validating semantic initialize correlation (exact
   request id → `jsonrpc: "2.0"` non-error `result.protocolVersion`) plus the
-  redacted transcript digest; add/observe the H3-A red from the before-run, then
+  redacted transcript digest. This transparent wrapper and its probe-owned
+  temporary configuration are valid only for this diagnostic evidence path,
+  not T4 restored-production evidence; add/observe the H3-A red from the before-run, then
   green it with the minimal fix and re-validate from the after-run. No raw bytes
-  on disk; a generic direct initialize is insufficient. `056.011-T` closes on its
-  own once these before/after reacquisitions validate; it does not depend on T4 or
-  production acceptance (no `056.011`↔T4 cycle), and T4 separately accepts production.
-* Inspect candidate crate metadata before implementation. rmcp 1.8.x uses
-  edition 2024 and is excluded by Rust 1.75. Prefer a minimal framing
-  adaptation around pinned 1.5.x; use another release only after recording
-  edition-2021/MSRV compatibility. If a fork/patch override or wider change is
-  required, halt for a separate deliberation. T4 alone owns production-entry
-  acceptance. No `get_info` echo change.
-* If H3-A is not selected, complete done-plus-not-needed.
+  on disk; a generic direct initialize is insufficient. The before-run MUST
+  additionally record the **exact pre-`initialize` wire order** (which methods
+  the client sends before `initialize`, in what order, with which ids) and the
+  after-run MUST prove the **exact response shape the client accepts** — the
+  two facts the 2026-08-29 stderr evidence does NOT establish. `056.011-T`
+  closes on its own once these before/after reacquisitions validate; it does not
+  depend on T4 or production acceptance (no `056.011`↔T4 cycle), and T4
+  separately accepts production.
+* Inspect candidate crate metadata before implementation. **Corrected
+  discriminator:** vendored `rmcp-1.5.0/Cargo.toml` declares `edition = "2024"`
+  and no `rust-version`, exactly like `rmcp-1.8.0`, so edition does **not**
+  discriminate the two. rmcp 1.8.x remains excluded on corrected grounds —
+  unproven MSRV parity, wider transitive API surface, and rollback isolation.
+  Prefer a minimal framing adaptation around the compatible dependency strategy
+  selected by `056.029-T` in `053-S`. The declared-MSRV mismatch is resolved at
+  the fixed Rust 1.75 floor before `052-S` starts; `056.011-T` consumes that
+  completed evidence rather than validating a dynamically resolved floor. If a
+  fork, patch override, source/API migration, or wider change is required, apply
+  the bounded `056.029-T` decision or halt for a separate deliberation. T4 alone
+  owns production-entry acceptance. No `get_info` echo change.
+* H3-A **is** selected as of 2026-08-29; the done-plus-not-needed path no longer
+  applies to this family. It is routed as the sole member of the task-only
+  remedy shipment `052-S`, which depends on `049-S` and complete `053-S`
+  closure (see *Authoritative task ordering*).
 
 #### T-H3-B — Client cwd compatibility — backlog `056.019-T`
 
@@ -892,7 +1085,8 @@ retry contract.
   bounded-`initialize` timeout with the child **still alive** (latency, no
   early exit); for an **H3** cause it is one of two modes — **mode A**
   (framing/version): the child **still alive** with the framed `initialize`
-  never negotiating a `protocolVersion` (transport/framing, no early exit);
+  never negotiating a `protocolVersion` (transport/framing, no early exit). **(CORRECTED 2026-08-29: the SELECTED H3-A signature is NOT `still alive / no early exit`. The evidenced H3-A before-state is preflight complete + `mcp_serve_ready` + rmcp `ExpectedInitializeRequest` for a pre-`initialize` `server/discover` + process exit 2 with the client's pipe closing. The `still alive` descriptor below applies only to the unevidenced framing/version variant of H3-A and must not be used as `052-S`'s acceptance baseline.)**
+
   **mode B** (client ignores/rejects configured `cwd`): T0's real-client
   diagnostic-entry probe records a foreign actual cwd despite the requested
   project-root cwd. The success signal is identical for all: a completed
@@ -997,16 +1191,20 @@ than restate every clause:
 * **Release-unit phases, not one total-order chain** — the work is delivered as
   phased release units: PHASE 1 evidence foundation (shipment `049-S`), PHASE 1.5
   the unconditional evidence-infrastructure unit (`056.028` standalone-probe CI,
-  assembled by Stage after `049-S` closes and before any remedy shipment), PHASE 2
-  selected remediation units (unshipped until T0 selects them, grouped by cause
-  family), PHASE 3 final acceptance/docs (unshipped, dependent on the selected
-  remedies). Remedy family entries depend on the evidence foundation
-  (`056.003-T`, or `056.019-T` for the H3-B-selected managed-config/discriminator
-  groups); intra-family order is a true dependency edge, but unrelated cause
-  families are NOT chained into a total order. Sequential single-shipment
-  execution is enforced by the **explicit selection gate below plus** one
-  in-flight shipment at a time (P-001) and single-worktree topology (P-016), not
-  by fake cross-cause edges. Total task count is 28 (`056.001-T`..`056.028-T`).
+  assembled by Stage after `049-S` closes and before any remedy shipment), PHASE
+  1.6 the Rust 1.75 compatibility and declaration unit (shipment `053-S`, with
+  `056.029` followed by `056.030`/`056.031`/`056.032`/`056.033`, ordered before
+  `052-S`), PHASE 2 selected remediation units, and PHASE 3 final
+  acceptance/docs. The authoritative PHASE 1.5 edge is
+  `056.028-T -> 056.029-T`; its shipment remains uncreated until `049-S` closes.
+  Remedy family entries depend on the evidence foundation (`056.003-T`, or
+  `056.019-T` for the H3-B-selected managed-config/discriminator groups; selected
+  H3-A also depends on `056.028-T` and `056.029-T`). Intra-family order is a
+  true dependency edge, but unrelated cause families are not chained into a total
+  order. Sequential single-shipment execution is enforced by the explicit
+  selection gate plus one in-flight shipment at a time (P-001) and single-worktree
+  topology (P-016), not by fake cross-cause edges. Total task count is 33
+  (`056.001-T`..`056.033-T`).
 * **Explicit selection gate (dependency-ready ≠ selected)** — every PHASE 2
   (`phase:remedy`) task carries a machine-queryable `selection:pending` label plus
   its `cause:<family>` label. After `049-S` closes, Stage consumes the
@@ -1164,6 +1362,24 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
   tools/mcp-probe/Cargo.lock`). Depends on `056.020-T`; evidence-infrastructure
   follow-up outside `049-S`, in T4 fan-in. Created by Stage now; implemented by
   Ship per its test-first contract (seeded-violation red proof).
+* `056.029-T` (re-scoped 2026-08-29) — resolves the established edition-2024
+  rmcp dependency incompatibility at the unchanged Rust 2021 / rust-version 1.75
+  floor. It owns only `Cargo.toml`, `Cargo.lock`, and one dated dependency
+  decision; a source or API migration becomes a named blocked follow-up.
+  `056.028-T -> 056.029-T` is a standing edge. It is not cause-selected and is
+  in T4 fan-in.
+* `056.030-T` (new) — primary CI-only Rust 1.75 enforcement in
+  `.github/workflows/ci.yml`. Depends on `056.029-T`.
+* `056.031-T` (new) — ordinary documentation-only Rust 1.75 declaration
+  alignment in `README.md` and `docs/ARCHITECTURE.md`. Depends on `056.029-T`.
+* `056.032-T` (new) — canonical agent-declaration alignment in `AGENTS.md`,
+  `.github/copilot-instructions.md`, and
+  `.github/instructions/constitution.instructions.md`. Depends on `056.029-T`.
+* `056.033-T` (new) — generic Rust authoring-instruction alignment in
+  `.github/instructions/rust.instructions.md`,
+  `.github/instructions/technology.instructions.md`, and
+  `.github/instructions/technology-rust.instructions.md`. Depends on
+  `056.029-T`.
 * Every causal node is wired into cause-family branches off the evidence
   foundation (see phased ordering below), not one total-order chain. `056.005-T`
   narrows to the embedding lifecycle state machine; `056.025-T` owns the MCP
@@ -1183,14 +1399,15 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
   `056.019-T` is the sole H3-B terminal, adjudicating both isolated-config and cwd
   mechanisms with at most one deferred contrast, fail-closed on inconclusive
   (`blocked` + named Stage follow-up). T4's direct fan-in is all tasks
-  `056.001`..`056.028` except `056.004`, with explicit evidence-chain edges to
+  `056.001`..`056.033` except `056.004`, with explicit evidence-chain edges to
   `056.001-T`, `056.002-T`, `056.021-T`, `056.022-T`, `056.023-T`, `056.024-T`,
-  `056.025-T`, `056.026-T`, `056.027-T`, and `056.028-T`.
+  `056.025-T`, `056.026-T`, `056.027-T`, `056.028-T`, `056.029-T`,
+  `056.030-T`, `056.031-T`, `056.032-T`, and `056.033-T`.
 
 ### Authoritative task ordering (release-unit phases)
 
 The authoritative structure is a set of release-unit phases with cause-family
-branches off a shared evidence spine, not a single 28-task total order. Each edge
+branches off a shared evidence spine, not a single 33-task total order. Each edge
 `X → Y` is a backlog dependency (Y depends on X; X runs first). Sequential
 single-shipment execution is enforced by the explicit selection gate plus one
 in-flight shipment at a time (P-001) and single-worktree topology (P-016), so
@@ -1238,6 +1455,36 @@ Stage after `049-S` closes and BEFORE any selected remedy shipment):**
   (`056.004`) fan-in, so restored-production acceptance cannot pass until the
   probe CI job is green.
 
+**PHASE 1.6 — Rust 1.75 compatibility and declaration alignment (shipment
+`053-S`, queued; ordered after PHASE 1.5 and BEFORE `052-S`):**
+
+* `053-S` contains five dependency-closed members: `056.029` resolves the
+  dependency graph; `056.030` enforces the fixed floor in primary CI;
+  `056.031` aligns ordinary documentation; `056.032` aligns canonical agent
+  declarations; and `056.033` aligns generic Rust authoring instructions. The
+  protected covering feature `056-F` is excluded per P-015
+* **Established blocker:** stable Cargo 1.75 cannot parse the current
+  edition-2024 `rmcp 1.5.0` manifest. The failed `052-S` entry gate is removed;
+  it was a deterministic failure, not a measurement
+* **Bounded unresolved feasibility:** `056.029` selects an MSRV-compatible
+  rmcp release or pin, or a narrow decision-approved backport, fork, or patch.
+  It preserves Rust 2021 / rust-version 1.75. Raising the floor is outside this
+  feature and requires a separate approved constitutional amendment
+* **Width isolation:** `056.029` owns exactly `Cargo.toml`, `Cargo.lock`, and a
+  dated dependency decision. `056.030` through `056.033` own the isolated CI
+  and declaration surfaces. A source or API migration becomes a named blocked
+  follow-up; none of these tasks owns the H3-A adapter
+* **Enforceable order:** `056.028 -> 056.029` is a standing task dependency now.
+  The PHASE 1.5 manifest remains uncreated until `049-S` closes. Before claim,
+  `053-S` member readiness verifies `056.028` terminal, then `056.029` terminal
+  before its four successors; it does not rely on a future manifest mutation
+* `053-S` retains its `049-S` shipment prerequisite, and `052-S` retains its
+  `053-S` shipment prerequisite. `056.011` has the direct standing edge
+  `056.029 -> 056.011`; it begins only after all five `053-S` members close
+* Each PHASE 1.6 task is not cause-selected. All Cargo and CI gates stay at
+  Rust/Cargo 1.75 after the compatible graph is resolved, and all five tasks
+  remain in T4 (`056.004`) fan-in
+
 **PHASE 2 — Selected remediation units (unshipped follow-ups; NOT queued for
 Ship until the selection gate flips them to `selection:selected`; each family
 entry depends on the evidence foundation):**
@@ -1256,8 +1503,21 @@ entry depends on the evidence foundation):**
 * lock recovery: `056.003 → 056.016 → 056.007`
 * H0c state repair: `056.003 → 056.010`
 * H1 model lifecycle: `056.003 → 056.014 → 056.005 → 056.025 → 056.015`
-* H3-A transport compatibility: `056.003 → 056.011` (standing edge; the
-  `after 056.015` ordering is a co-selection-only assembly edge)
+* H3-A transport compatibility: the standing edges are
+  `056.020 -> 056.028 -> 056.029`,
+  `056.029 -> {056.030, 056.031, 056.032, 056.033, 056.011}`,
+  `056.003 -> 056.011`, and `056.028 -> 056.011`. The four alignment tasks
+  are PHASE 1.6 successors, not H3-A adapter work. **SELECTED 2026-08-29** on
+  live actual-client evidence
+  (`docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`),
+  `056.011` is the sole member of `052-S`, and
+  `053-S -> 052-S` ensures every PHASE 1.6 member closes first. `052-S` has no
+  direct PHASE 1.5 shipment edge; `056.028 -> 056.029` is the authority while
+  the PHASE 1.5 manifest remains uncreated. The task consumes completed
+  Rust/Cargo 1.75 compatibility evidence, not a separate MSRV entry gate.
+  The `after 056.015` order remains a co-selection-only assembly edge. The
+  evidence substitutes only for T0 cause ordering; it does not substitute for
+  exact-client before/after acceptance, other family selection, or T4.
 * diagnostic sink (optional): `056.003 → 056.006` (selected only when stderr is
   unavailable AND env inheritance is proven; the `after 056.011` ordering is a
   co-selection-only assembly edge)
@@ -1277,11 +1537,13 @@ selected remedies; not prematurely Ship-ready):**
   `056.013` additionally depends on the discriminator delivery `056.027`, so docs
   are not ready until every family resolves (done or not-needed).
 * `056.004` (T4) keeps direct dependencies on every other task
-  `056.001`..`056.028` except `056.004` itself — with explicit evidence-chain
-  edges to `056.001`, `056.002`, `056.021`, `056.022`, `056.023`, `056.024`,
-  `056.025`, `056.026`, `056.027`, and `056.028` — and is the sole
-  restored-production actual-client acceptance node and the single registry-backed
-  acceptance gate.
+  `056.001`..`056.033` except `056.004` itself. Its explicit H3-A and
+  prerequisite fan-in includes `056.011`, `056.028`, `056.029`, `056.030`,
+  `056.031`, `056.032`, and `056.033`. It remains the sole
+  restored-production actual-client acceptance node and the single
+  registry-backed acceptance gate. `056.029` and its PHASE 1.6 successors ship
+  in `053-S` before `052-S`, so T4 cannot imply Rust 1.75 compatibility until
+  the compatible dependency graph and all declarations are complete.
 * **Final Assembly Protocol (Stage-owned):** after the selected remedy shipments
   complete, Stage (1) confirms every PHASE 2 task is terminal — `done` (selected +
   shipped) or `done` + `not-needed:<evidence id>` (unselected) — the owned
@@ -1317,11 +1579,18 @@ selected remedies; not prematurely Ship-ready):**
   shipment stay blocked rather than accepting an unsafe check-then-open recovery.
 * T4 remains the sole restored-production actual-client acceptance node.
 * Selection gate: dependency-ready ≠ selected. Every PHASE 2 task carries
-  `selection:pending` + `cause:<family>`; Stage flips only selected families to
+  exactly one `selection:*` label (initialized to `selection:pending`) +
+  `cause:<family>`; Stage flips only selected families to
   `selection:selected` after `049-S` closes, and unselected tasks stay `queued` /
   `selection:pending` with no shipment membership (never backlog status
   `blocked`). No Ship/Orchestrator routing can claim an unselected task because it
-  has no shipment membership.
+  has no shipment membership. **Exception (2026-08-29, H3-A only):** live
+  actual-client evidence replaced the T0 cause-ordering input for the H3-A
+  family, so `056.011-T` carries `selection:selected` ahead of `049-S` closure.
+  The label + shipment-membership gate itself was not relaxed and was verified
+  to return zero rows before `052-S` was created. This exception is
+  **non-precedential**: any further substitution requires a new named Stage
+  amendment recorded in `056-F` plus explicit operator acknowledgement.
 * Discriminator split (delivery-safe): the unconditional `type`/`transport`
   reconciliation (`056.026-T`) depends only on the evidence classification, and
   its existing-install delivery (`056.027-T`) composes the selected
@@ -1417,7 +1686,14 @@ if (-not (Test-Path -LiteralPath $CopilotExe)) { throw "exact Copilot identity n
 cargo +1.75.0 run --manifest-path tools/mcp-probe/Cargo.toml -- exact-cli --copilot $CopilotExe
 if ($LASTEXITCODE -ne 0) { throw "exact-cli classification failed (exit $LASTEXITCODE)" }
 
-# 4. Root production quality gates — check $LASTEXITCODE immediately after EVERY
+# 4. 052-S prerequisite verification. The declared-MSRV / edition-2024 mismatch
+#    is resolved UPSTREAM by all five 053-S members, which run before 052-S.
+#    Do not run a separate MSRV entry command here. Before claim, verify the
+#    recorded 053-S Rust/Cargo 1.75-compatible dependency decision and its
+#    completed fixed-floor validation. A missing or failed record blocks 052-S
+#    and returns it to Stage; it must not be waived or followed by adapter work.
+
+# 5. Root production quality gates — check $LASTEXITCODE immediately after EVERY
 #    native command:
 cargo fmt --all -- --check
 if ($LASTEXITCODE -ne 0) { throw "fmt check failed (exit $LASTEXITCODE)" }
@@ -1436,11 +1712,8 @@ cargo audit
 if ($LASTEXITCODE -ne 0) { throw "audit failed (exit $LASTEXITCODE)" }
 cargo build --release
 if ($LASTEXITCODE -ne 0) { throw "release build failed (exit $LASTEXITCODE)" }
-# Conditional when rmcp/dependencies change:
-cargo +1.75.0 check --all-targets
-if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
 
-# 5. Restored-production acceptance runner (056.001-T owns the exact-cli
+# 6. Restored-production acceptance runner (056.001-T owns the exact-cli
 #    classifier; 056.004-T/T4 owns restored-production acceptance). It launches
 #    the exact Copilot CLI NORMALLY against the restored user-facing entry and
 #    MUST NOT wrap/substitute the server or use temp config. Repeat for THREE
@@ -1590,7 +1863,7 @@ Get-ChildItem .graphtor -Filter *.lock
 * **VIII Safety Modes** — investigate-first: T0 orders the causal chain; each
   selected curative task owns its red/green proof before implementation closes.
 * **XI Merge-commit history** — Ship enforces merge-commit-only at merge time.
-* **Phased release-unit structure (P-001/P-015/P-016, IX, X)** — the 28 tasks
+* **Phased release-unit structure (P-001/P-015/P-016, IX, X)** — the 33 tasks
   ship as phased release units, not one chain. **P-015**: the umbrella feature
   `056-F` is the protected covering feature, excluded from every task-only
   manifest (`049-S` and later remedy/acceptance units). **P-001**: exactly one
@@ -1600,9 +1873,11 @@ Get-ChildItem .graphtor -Filter *.lock
   `selection:pending → selection:selected` label + shipment-membership gate owned
   by Stage after `049-S` closes. **IX (Git-friendly persistence)**: backlog
   artifacts stay Markdown + YAML frontmatter and dependency edges are mutated only
-  through backlogit operations. **X (context efficiency)**: the authoritative
-  graph lives in this single `## Issue and Dependency Graph` section; superseded
-  historical Plan Review DAGs are retained only as audit metadata.
+  through backlogit operations. `056.028-T -> 056.029-T` and complete `053-S`
+  closure enforce PHASE 1.5 before `052-S` without creating the PHASE 1.5
+  shipment early. **X (context efficiency)**: the authoritative graph lives in
+  this single `## Issue and Dependency Graph` section; superseded historical Plan
+  Review DAGs are retained only as audit metadata.
 
 ## Plan Hardening Signals
 
@@ -1838,34 +2113,44 @@ and posture-classification context.
   * rollback: none required (decision/PoC only). approval_required: no.
     ActionResult: **planned** (or **abandoned** if managed-config recovery is not
     selected).
-* ProposedAction (conditional, H3-A/H3-B compatibility): obtain task-local
-  branch proof for the evidenced mode; T4 alone accepts production.
-  **H3-A** (child alive,
-  framing/version) uses the minimal edition-2021/Rust-1.75-compatible framing
-  fix in `056.011-T`; rmcp 1.8.x is excluded. **H3-B** (client ignores/rejects
+* ProposedAction (**H3-A, SELECTED 2026-08-29**): implement the narrow
+  pre-`initialize` `server/discover` transport adapter in `056.011-T`; T4 alone
+  accepts production.
+  **H3-A** is the evidenced exit-2 `ExpectedInitializeRequest` after a
+  pre-`initialize` custom request. It uses a narrow adapter around the
+  **pinned** rmcp 1.5.x; a dependency bump is out of scope. rmcp 1.8.x remains
+  excluded on corrected grounds — unproven MSRV parity, wider transitive API
+  surface, and rollback isolation — **not** edition, because vendored
+  `rmcp-1.5.0` is also `edition = "2024"` with no `rust-version`. The
+  declared-MSRV mismatch is resolved upstream by `056.029-T` in `053-S`, which
+  runs before `052-S`; this task then validates once against the RESOLVED
+  declared floor (never a hard-coded `+1.75.0`). A nonzero result makes this
+  ProposedAction **blocked**, returns 052-S to Stage for a new bounded MSRV
+  follow-up, and forbids an adapter MSRV claim.
+  **H3-B** (client ignores/rejects
   pinned `cwd` or merges ancestor config) uses `056.019-T` to choose **B1** (the
   same exact CLI passes a second contrast through a different documented
   isolated-config or working-directory mechanism, activating managed-config code/
   config mutation) or **B2** (that exact CLI supports no safe mechanism, blocking
   shipment with no repo code) — **no** server-side external-path fallback.
-  * targets: **mode A** — `Cargo.toml` `[dependencies]` `rmcp` pin + rmcp
-    `serve_server` / transport wiring in `src/main.rs` / `src/mcp/server.rs`;
+  * targets: **mode A** — the transport adapter plus `rmcp::serve_server` /
+    transport wiring in `src/main.rs` (an rmcp pin change in `Cargo.toml`
+    `[dependencies]` is out of scope and requires a separate deliberation);
     **mode B1** — the documented client-launch capability in `056.019-T` plus the
     managed-config mutation tasks (`056.008-T`/`056.018-T`/`056.009-T`); **mode
     B2** — the client-capability classification in `056.019-T` only.
-  * change_kind: **mode A** compatible dependency/transport edit; **mode B1**
+  * change_kind: **mode A** scoped transport/wiring edit around the pinned
+    dependency; **mode B1**
     managed-config code/config mutation with rollback; **mode B2**
     operator/client-capability classification only (no repo code).
-  * ActionRisk: **moderate** — a mode-A rmcp bump can pull transitive API
-    changes (`serve_server` signature, `schemars` re-export), re-verified in its
-    own review with a separate before/after exact-client reacquisition through
-    the `056.022-T` wrapper and
-    `cargo +1.75.0 check --all-targets`; no `get_info` change. Mode B1 mutates
-    managed config (rolled back via the recovery primitive); mode B2 changes no
-    repo code and adds no containment surface. rollback: **mode A** revert the
-    bump and re-pin rmcp 1.5; **mode B1** revert managed-config changes via the
-    recovery backups; **mode B2** revert to the previously documented client
-    configuration.
+  * ActionRisk: **moderate** — mode A changes startup-critical transport wiring
+    and must pass its own observed-red, exact-client before/after, quality, and
+    declared-MSRV gates; no `get_info` change. Mode B1 mutates managed config
+    (rolled back via the recovery primitive); mode B2 changes no repo code and
+    adds no containment surface. rollback: **mode A** remove the adapter and
+    restore direct pinned-rmcp wiring; **mode B1** revert managed-config changes
+    via the recovery backups; **mode B2** revert to the previously documented
+    client configuration.
   * approval_required: mode B1 managed-config mutation follows the T2e/T2f
     approval path; otherwise no (non-destructive). ActionResult: **planned** (or
     **abandoned** if H3 is not evidenced).
@@ -1925,8 +2210,13 @@ and posture-classification context.
     `incomplete` / `READY_WITH_CONDITIONS` with the observed count and a
     follow-up; never infer healthy from fewer than 3 starts.
   * **rollback trigger:** any OS error 232 recurrence, an exit-before-initialize
-    (H0 or H3 mode B), or a failed/timed-out / never-negotiated `initialize`
-    handshake (H1 or H3 mode A) in the window → revert the shipment commits in
+    (H0, **H3-A**, or H3 mode B — note the SELECTED H3-A signature is itself an
+    exit-before-initialize, namely rmcp `ExpectedInitializeRequest` on a
+    pre-`initialize` `server/discover` followed by exit 2, so an
+    exit-before-initialize must NOT be routed away from H3-A), or a
+    failed/timed-out / never-negotiated `initialize`
+    handshake (H1 or the unevidenced H3-A framing/version variant) in the window
+    → revert the shipment commits in
     reverse dependency order (T4; for H3 mode B, revert to the previously
     documented client configuration) → outcome `rolled-back`.
   * outcome (healthy / degraded / incomplete / rolled-back) is recorded in the shipment
@@ -1939,11 +2229,13 @@ and posture-classification context.
   remain diagnostic evidence.
 * Repository-code branches commit a branch-specific observed-red test that the
   selected curative task greens: H0a uses the driver in `056.008-T`'s
-  generated-entry test; H0b uses a reachable Generation-lock fixture; H3 mode
-  A reacquires the exact-client transaction SEPARATELY before and after the fix
-    through the `056.022-T` wrapper and `056.023-T` observer (semantic initialize
-    correlation plus redacted transcript digest, not raw-frame replay) and closes
-    only after actual-client production-entry acceptance; H1 uses the split
+  generated-entry test; H0b uses a reachable Generation-lock fixture; selected
+  H3-A first runs the direct transport-seam red, then reacquires the exact-client
+  transaction separately before and after the fix through the transparent
+  `056.022-T` wrapper and `056.023-T` observer (semantic initialize correlation
+  plus redacted transcript digest, not raw-frame replay). It closes after that
+  diagnostic evidence proves the accepted response and normal `initialize`;
+  restored-production acceptance remains solely T4. H1 uses the split
   `056.014-T`/`056.005-T`/`056.015-T` deterministic seams.
 * Operational-only H0c and H3-B preserve a bounded actual-client red
   transcript and rerun the exact `/mcp show graphtor-docs` production-entry
@@ -2293,7 +2585,7 @@ current artifact state — see the current-status note above.
   on every push). Prior review outcomes, with their historical SHAs, are recorded
   in the historical audit trail below.
 * Linked deliberation: `docs/decisions/2026-08-21-mcp-serve-initialize-os-error-232-deliberation.md`.
-* Backlog scope: feature `056-F`, tasks `056.001-T`..`056.028-T` (28 tasks).
+* Backlog scope: feature `056-F`, tasks `056.001-T`..`056.033-T` (33 tasks).
   **PHASE 1 evidence shipment `049-S`** (eight-task task-only manifest; `056-F`
   excluded): standalone probe crate transport/teardown/observer-evidence/workspace
   `056.020-T`/`056.022-T`/`056.023-T`/`056.021-T`, exact-CLI T0 `056.001-T`,
@@ -2303,16 +2595,23 @@ current artifact state — see the current-status note above.
   type/transport discriminator `056.026-T` (generation)/`056.027-T` (existing-install
   delivery); H0b lock characterization/implementation `056.016-T`/`056.007-T`; H0c
   `056.010-T`; H1 lifecycle/resolver/projection/wiring
-  `056.014-T`/`056.005-T`/`056.025-T`/`056.015-T`; H3-A `056.011-T`; optional
+  `056.014-T`/`056.005-T`/`056.025-T`/`056.015-T`; H3-A `056.011-T` (queued as
+  the sole member of the task-only remedy shipment `052-S`); optional
   diagnostic sink `056.006-T`; and the safe no-follow primitive decision
   `056.024-T`. **PHASE 3 unshipped final:** docs `056.012-T`/`056.013-T` and T4
   restored-production acceptance `056.004-T`. **PHASE 1.5 unshipped
   evidence-infrastructure unit:** the standalone-probe CI job `056.028-T`, which
   Stage assembles after `049-S` closes and before any remedy shipment (in T4
-  fan-in, not cause-selected). The projection task `056.025-T` (versioned
+  fan-in, not cause-selected). **PHASE 1.6 Rust 1.75 unit (shipment `053-S`,
+  queued):** `056.029-T` resolves the dependency graph at the fixed floor,
+  followed by `056.030-T` primary CI, `056.031-T` ordinary documentation,
+  `056.032-T` canonical agent declarations, and `056.033-T` generic Rust
+  authoring instructions. `056.028-T -> 056.029-T` is the enforceable PHASE 1.5
+  edge; all five tasks are in T4 fan-in and `053-S` blocks `052-S`. The projection task
+  `056.025-T` (versioned
   Loading/Failed/Disabled MCP availability projection) and the discriminator split
   (`056.026-T` generation / `056.027-T` delivery) are also explicitly in scope.
-  This review identity covers all 28 tasks `056.001-T`..`056.028-T`.
+  This review identity covers all 33 tasks `056.001-T`..`056.033-T`.
 
 ### Personas and criteria
 
@@ -2373,3 +2672,130 @@ prefer targeted diagnostics over broad logging, keep the standalone probe crate
 out of the production dependency graph, and preserve MSRV (`cargo +1.75.0`) on
 any rmcp or dependency change. Any retained "close as not-needed" shorthand
 means: move the task to `done` and append a `not-needed: <rationale>` comment.
+
+### Report-only review — 2026-08-29 H3-A recovery (historical snapshot)
+
+**Gate: PASS.** This report reviewed the working-tree H3-A amendment derived
+from `db5baa0` before its Stage planning commit. It is a planning review only:
+no source, test, workflow, build, task-claim, shipment-close, merge, or admin
+fallback action occurred.
+
+> [!IMPORTANT]
+> This historical review preceded the dependency-closed PHASE 1.6 correction.
+> Its routing and MSRV-entry-gate statements are superseded by the current
+> H3-A/MSRV amendment near the start of this plan.
+
+#### Coverage and evidence
+
+* Correctness, architecture/dependencies, scope/constitution, agent-native
+  parity, and schema/CLI/docs coupling were independently reviewed. A targeted
+  Rust-plan re-review checked the binary/library visibility boundary. The
+  learnings check found no contradiction with the rmcp 1.5 or documentation
+  accuracy learnings.
+* The current exact evidence supports `cause:h3a-transport` and
+  `selection:selected` for `056.011-T`: the actual client sends
+  pre-`initialize` `server/discover` at id 0, rmcp 1.5 rejects it before a
+  handler runs, and the process exits 2. It does not prove an accepted response
+  shape, full wire order, or re-probe cadence.
+* **Historical routing note -- superseded.** This review snapshot predated the
+  dependency-closed PHASE 1.6 unit. The current authority is
+  `056.028-T -> 056.029-T -> 056.011-T`, complete `053-S` closure before
+  `052-S`, and no direct PHASE 1.5 shipment-to-`052-S` edge.
+
+#### Remediated P1 findings
+
+* The diagnostic wrapper and probe-owned temporary configuration are valid only
+  for `056.011-T` exact-client before/after evidence. They are explicitly
+  invalid for T4 restored-production acceptance, eliminating the prior
+  contradictory wrapper rule.
+* `056.011-T` owns the single current-pin declared-MSRV invocation, and
+  `056.029-T` dispositions the result. **SUPERSEDED 2026-08-29 (PR #108 cycle
+  2):** the `+1.75.0` form of that gate is a deterministic failure, so
+  `056.029-T` was re-scoped into the declared-MSRV resolution task and shipped
+  ahead of the remedy as the sole member of `053-S`. See the cycle-2 report
+  below.
+* The adapter is a private binary-owned module reachable from `src/main.rs`,
+  not an inaccessible `pub(crate)` library type. Its task explicitly owns the
+  narrow `src/mcp/mod.rs` rustdoc correction.
+* H3-A now closes after its direct transport-seam red and exact-client
+  diagnostic before/after evidence; T4 alone owns restored-production
+  acceptance, so no `056.011-T` ↔ T4 closure cycle remains.
+
+#### Outcome and residual risk
+
+* **P0: 0. P1: 0.** A final correctness re-review found no unresolved blocking
+  finding in the current planning contract.
+* The declared-MSRV state was recorded here as **unmeasured**. **SUPERSEDED
+  2026-08-29 (PR #108 cycle 2):** stable Cargo accepted `edition = "2024"` only
+  from Rust/Cargo 1.85, so the `+1.75.0` gate could only fail. The mismatch is
+  now resolved by `056.029-T` in `053-S` ahead of `052-S`. See the cycle-2
+  report below.
+
+### Report-only review — 2026-08-29 PR #108 review-fix (prior snapshot)
+
+**Gate: PASS.** This report reviewed the working-tree correction of the five
+current PR #108 Copilot review threads, derived from `4750d3d`. Planning review
+only: no source, test, workflow, build, task-claim, shipment-close, merge, or
+admin-fallback action occurred, and no PR body edit, GitHub reply, or thread
+resolution was performed by this pass.
+
+#### Findings addressed
+
+* **P1 (current correction).** Cargo 1.75 cannot parse the current
+  edition-2024 `rmcp 1.5.0` manifest, an established incompatibility rather
+  than an unmeasured risk. `056.029-T` resolves it at the unchanged Rust 1.75
+  floor; `056.030-T` through `056.033-T` separately align CI and declarations.
+  `053-S` contains all five tasks, `056.028-T -> 056.029-T` enforces PHASE 1.5
+  now, `052-S` follows complete `053-S` closure, and `056.011-T` has no
+  separate MSRV entry gate.
+* **P2 (current correction).** The active scope is `056.001-T` through
+  `056.033-T` (33 tasks). The complete standing H3-A edges and T4 fan-in are
+  listed in the current H3-A/MSRV amendment and authoritative task ordering.
+* **P2 (thread 3).** Repository artifacts now use one evidence-backed
+  description of `server/discover`: an MCP **draft**-specification discovery
+  method used by the client's dual-era fallback probe, defined publicly rather
+  than vendor-private, not a finalized MCP release, and absent from rmcp 1.5's
+  accepted pre-`initialize` request set.
+* **P3 (threads 1 and 5).** The `056.011-T` and `056.029-T` descriptions are
+  wrapped in parser-delimited `BEGIN:description` / `END:description` markers
+  matching neighbouring tasks such as `056.024-T`.
+
+#### Ordering and width
+
+* Queue order is `050-S -> 051-S -> 049-S -> PHASE 1.5 (056.028-T, assembled
+  only after `049-S` closes) -> 053-S
+  (056.029-T -> {056.030-T, 056.031-T, 056.032-T, 056.033-T}) -> 052-S
+  (056.011-T)`. `051-S` is not bypassed or removed, and `049-S` retains exactly
+  its eight frozen members.
+* The PHASE 1.5 manifest remains uncreated at plan time. The task edge
+  `056.028-T -> 056.029-T` enforces the order now. Before `053-S` claim,
+  member readiness verifies that edge and the four `056.029-T` successor
+  dependencies; no future shipment-manifest mutation enforces this order.
+* Width isolation holds: `056.029-T` owns only `Cargo.toml`, `Cargo.lock`, and
+  a dated compatible-dependency decision at fixed Rust 1.75. `056.030-T`
+  through `056.033-T` own the isolated CI and declaration surfaces. A
+  source-level migration becomes a named blocked follow-up; the transport
+  remedy stays entirely inside `052-S`.
+
+#### Outcome and residual risk
+
+* **P0: 0. P1: 0.** No unresolved blocking finding remains in the current
+  planning contract.
+* The declared-MSRV state is established from vendored manifest metadata plus
+  the published edition-2024 stabilization release, not from a build run — this
+  Stage pass is planning-only and ran no build. The exact resolved floor and the
+  chosen remedy option are decided inside `056.029-T`.
+* The exact Copilot response-shape acceptance, the full pre-`initialize` wire
+  order, and the re-probe cadence remain unproven and stay as `056.011-T`
+  acceptance.
+* The exact-Copilot accepted error shape, full pre-initialize sequence, and
+  re-probe cadence remain explicit execution evidence, not documentation or
+  implementation assumptions. `-32601` is only a standards-informed candidate.
+* P2/P3 follow-ups remain non-blocking: validate the pinned rmcp transport
+  concurrency model before adding any synchronization test, add the PHASE 1.5
+  shipment dependency before 052-S claim, and compact historical review detail
+  after the active plan is shipped.
+
+The review rejects the metadata-only assertion that the current declared MSRV
+has already failed. `edition = "2024"` and an absent dependency `rust-version`
+are risk signals; only the required actual check may determine the disposition.
