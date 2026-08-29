@@ -153,7 +153,7 @@ in this pass:
 3. **Downstream gating is the plan's own designed contingency, not a defect.**
    The approved plan (`docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`)
    already states: *"Either BLOCKED result keeps Principles III/IV
-   NOT-PASSED"* and *"BLOCKED keeps U1/U2/U6/U9/U2-U5/U10/U11 gated... no
+   NOT-PASSED"* and *"BLOCKED keeps U1/U2/U6/U9/U3–U5/U10/U11 gated... no
    dependency or path-based fallback is added."* Ship's role boundary forbids
    re-triaging or re-grouping backlog structure (that is Stage's job), so the
    9 downstream tasks were returned blocked with an evidence-citing reason
