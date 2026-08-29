@@ -15,16 +15,49 @@ raised progressively more specific findings about U7's evidence (root
 bootstrap correctness → Unix execution → pinned-1.75 Unix execution →
 cross-platform Scenario 3 execution → Scenario 3 mechanism specificity →
 red-phase rigor). Per `circuit-breaker.instructions.md`, remaining findings
-past the cycle cap are recorded as residual/backlog rather than chased
-indefinitely. Two P2/P3 methodology caveats about U7's Scenario 3 harness
-(it exercises `cap_std::fs::Dir::open`'s built-in containment rather than an
-explicit `custom_flags`-based no-follow primitive matching U2's planned
-design, and its red phase was a missing-source compile error rather than a
-compiling-but-failing assertion) are recorded as accepted residual findings
-in `.backlogit/archive/059.007-T.md`'s `feasibility-evidence` section rather
-than further re-executed. Neither caveat reverses the core Scenario 2
-conclusion (the root no-follow bootstrap, proven via an explicit, named,
-executed primitive on both platforms/toolchains).
+past the cycle cap become new, tracked backlog items rather than
+prose-only caveats inside a completed artifact — a Copilot review correctly
+flagged that recording the two residuals only as prose in
+`.backlogit/archive/059.007-T.md` left them unactionable, with no queued
+item tracking either one.
+
+**Tracked follow-up: `059.012-T`** ("U12: Prove explicit `custom_flags`
+no-follow leaf primitive with behavioral red/green harness") now
+materializes both residuals as a single, width-isolated backlog unit:
+
+- **(P2, explicit-primitive gap)** U7's Scenario 3 harness proved
+  beneath-root refusal using `cap_std::fs::Dir::open`'s built-in
+  containment (default `FollowSymlinks::Yes`), not the explicit
+  `custom_flags`-based no-follow primitive that U2 (`059.002-T`)
+  implements and U6 (`059.006-T`) composes. `059.012-T` independently
+  proves that exact explicit primitive (Unix `custom_flags(O_NOFOLLOW)` /
+  Windows `custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)` + explicit
+  post-open `FILE_ATTRIBUTE_REPARSE_POINT` refusal), isolated and named,
+  not the generic cap-std containment this spike happened to exercise.
+- **(P3, red-phase rigor)** U7's recorded red phase was a missing-source
+  compile error ("can't find lib"), not a compiling-but-behaviorally-
+  failing assertion. `059.012-T`'s own acceptance criteria require a
+  proper compiling-but-failing red phase (e.g. a stub opener that still
+  follows the symlink) before its green pass, closing this gap with a
+  durable, behavioral red/green chronology.
+
+`059.012-T` is linked `spike_ref` → `059.007-T` (the spike that surfaced
+the residuals) and `related_to` → `059.002-T`/`059.006-T` (the units whose
+evidence standard it strengthens, without replacing their own acceptance
+criteria). It depends on `059.008-T` (blocks) and is **explicitly NOT part
+of shipment `051-S`** — `051-S`'s manifest remains `[059-F, 059.007-T,
+059.008-T]`, unchanged. `059.012-T` is queued for a **later, separate
+shipment**, assigned during a future Stage harvest/assembly pass once `U8`
+(`059.008-T`) is re-deliberated and feature `059-F` unblocks; it must not
+begin execution before then. This does not alter `051-S`'s own active/
+blocking semantics (see the Next Steps section below): `051-S` still
+remains `active`, still blocks downstream shipment `049-S`, and is still
+not to be closed, archived, or have its dependency dropped as a
+workaround. Neither residual reverses the core Scenario 2 conclusion (the
+root no-follow bootstrap, proven via an explicit, named, executed
+primitive on both platforms/toolchains) — `059.012-T` only strengthens the
+leaf-primitive containment evidence for the U2/U6 portion of the original
+Definition of Done.
 
 ---
 
