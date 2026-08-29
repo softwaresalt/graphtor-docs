@@ -136,7 +136,7 @@ era) specification, not a vendor-private probe.
 
 The failure is **not** a pre-serve early exit (H0-family) and **not** an
 embedding-model lifecycle stall (H1). Preflight completes, the model loads, and
-`serve_server` is entered. The client's **first** request (`id: 0`) is
+`serve_server` is entered. The client's first **non-ping** request (`id: 0`) is
 `server/discover`, which rmcp 1.5 treats as a fatal non-`initialize` request,
 so the server returns `Err`, `cmd_serve` propagates, the process exits `2`, and
 the client's pipe closes — reproducing the original OS error 232 signature from
@@ -184,56 +184,80 @@ are exactly what `056.011-T`'s before/after reacquisition must close.
 The remedy is a narrow, pinned-`rmcp`-1.5 transport adapter between
 `rmcp::transport::stdio()` and `rmcp::serve_server`. Constraints:
 
-1. **Exact allowlist.** Intercept exactly one pre-`initialize` method:
-   `server/discover`. Nothing else is intercepted, dispatched, or answered.
+1. **Exact allowlist.** Intercept exactly one method, `server/discover`, and
+   only while armed (pre-`initialize`). Nothing else is intercepted,
+   dispatched, or answered; a post-`initialize` `server/discover` passes
+   through untouched.
 2. **No arbitrary pre-initialize dispatch.** No tool, resource, prompt, or
-   query handler may run before `initialize`. The adapter answers from a
-   constant; it must not reach `DocServer` state.
+   query handler may run before `initialize`. The adapter replies from a
+   constant payload with the inbound request's correlated id and reads no state
+   outside its own instance; it must not reach `DocServer` state.
 3. **Ping stays rmcp's.** The existing rmcp pre-initialize `ping` handling
    (E3) is passthrough and must remain the passing control.
-4. **Preferred response shape: JSON-RPC error, legacy posture.** Reply to the
-   correlated request `id` with a JSON-RPC error (`-32601` method-not-found is
-   the spec-named legacy response, E4). Returning a real `DiscoverResult`
-   is **forbidden by default**: it would assert modern-era support the server
-   does not implement and would let a conforming client skip `initialize`,
-   which rmcp 1.5 requires. A bounded discovery-compatibility response is only
-   permitted if exact-Copilot evidence proves the error response is rejected,
-   and then only with that evidence recorded.
-5. **Stay alive.** The adapter must not terminate the process or close stdio.
-   After answering, it continues reading until `initialize` arrives, which then
-   proceeds through unmodified rmcp.
-6. **Bounded.** Cap the number of pre-`initialize` `server/discover` responses
-   (small constant) and keep a deadline, so a looping or hostile client cannot
-   hold the server pre-`initialize` indefinitely. Exceeding the cap restores
-   current fail-closed behavior.
+4. **Evidence-selected response shape: JSON-RPC legacy posture.** An
+   implementation-defined legacy-class JSON-RPC error, with `-32601` as a
+   standards-informed candidate, is the narrow response to test. The draft's
+   fallback rule does not prove this exact Copilot client's response handling:
+   only the before/after transaction may establish that it sends `initialize`
+   after the correlated response. Returning a real `DiscoverResult` is
+   **forbidden by default** because it would assert modern-era support this
+   server does not implement and could let a client skip `initialize`, which
+   rmcp 1.5 requires. If the candidate is rejected — no subsequent
+   `initialize` within the evidence-based deadline — do **not** invent a
+   discovery payload: halt 052-S for a bounded Stage amendment that defines the
+   response shape.
+5. **Stay alive while armed.** The interception cap and admission deadline
+   apply only when an inbound `server/discover` arrives while armed. They do
+   not close an idle pipe or impose a global ping timeout. After answering, the
+   adapter continues reading until `initialize` arrives, which then proceeds
+   through unmodified rmcp. The adapter disarms permanently when it observes an
+   inbound `InitializeRequest`, before forwarding it, and after disarm is a
+   pure passthrough that never calls `send` itself.
+6. **Bounded, degrading by passthrough.** Cap the number of intercepted
+   pre-`initialize` `server/discover` responses at a concrete,
+   evidence-justified constant and check an admission deadline when the next
+   inbound message arrives. On cap exhaustion or a post-deadline
+   `server/discover`, the adapter **stops intercepting and forwards that
+   message unmodified**, so the failure path is provably rmcp's own
+   `ExpectedInitializeRequest` and no new termination mode is introduced.
 7. **stdout stays protocol-clean.** One newline-delimited JSON-RPC message per
    line; no diagnostics on stdout. Diagnostics go to stderr/tracing only,
    consistent with `056.003-T`.
 8. **Unchanged otherwise.** No `get_info` echo change, no `DocServer` behavior
    change, no protocol-version claim change.
+9. **Shape is binding.** The adapter lives in a private binary-owned module
+   reachable from `src/main.rs`, not in the `graphtor_core::mcp` library. It is
+   generic over its inner `Transport<RoleServer>` so red/green tests can inject
+   an in-memory inner without exposing a new public API. The task also updates
+   `src/mcp/mod.rs` rustdoc so it does not direct callers to bypass the binary's
+   private compatibility composition. See the plan's `#### T-H3-A` "Adapter
+   shape (BINDING)" block for the full contract.
 
 ## MSRV / edition candidate gate
 
 E5 invalidates the plan's stated exclusion discriminator. The plan said "rmcp
 1.8.x uses edition 2024 and is excluded by Rust 1.75"; in fact the **currently
 pinned rmcp 1.5.0 is also edition 2024** and declares no `rust-version`.
-Edition 2024 requires a Rust toolchain newer than the declared workspace MSRV
-of 1.75, so `cargo +1.75.0 check --all-targets` is unlikely to succeed against
-the *existing* pin, before any H3-A change.
+That metadata identifies a declared-MSRV compatibility question but does not
+establish the actual result of `cargo +1.75.0 check --all-targets` against the
+existing pin. No build was run during this Stage pass.
 
 Consequences, all of which `056.011-T` must honor:
 
 * The 1.8.x exclusion stands, but on corrected grounds: unproven MSRV parity,
   wider transitive API surface, and rollback isolation — **not** edition, which
   does not discriminate 1.5.0 from 1.8.0.
-* `056.011-T` must run the MSRV/edition probe as its **first** step, against
-  the current unmodified pin, and record the result.
-* If `cargo +1.75.0 check --all-targets` already fails on the current pin, that
-  is a pre-existing MSRV-declaration defect, **not** something `056.011-T` may
-  silently relax, silently "prove", or fix in-scope. `056.011-T` records the
-  evidence and halts for a named bounded Stage follow-up on the declared
-  `rust-version`, while the H3-A adapter itself remains edition-2021 source in
-  this crate.
+* `056.011-T` must run the actual declared-MSRV check as its **first** step,
+  against the current unmodified pin, before any H3-A harness, adapter,
+  manifest, or dependency change, and record the exact result.
+* If `cargo +1.75.0 check --all-targets` is nonzero on the current pin, that is
+  a pre-existing MSRV-declaration defect, **not** something `056.011-T` may
+  silently relax, silently "prove", or fix in-scope. `052-S` and `056.011-T`
+  halt and return to Stage before adapter implementation continues.
+  `056.011-T` owns the single check; unshipped `056.029-T` consumes and
+  dispositions its immutable redacted result as a bounded evidence/decision
+  follow-up in T4's fan-in. The adapter cannot be declared MSRV-compatible
+  unless the project builds at its declared MSRV.
 * A dependency-version change (any rmcp bump) remains out of scope for
   `056.011-T` and requires a separate deliberation.
 
@@ -242,7 +266,7 @@ Consequences, all of which `056.011-T` must honor:
 The smallest coherent path keeps the existing decomposition intact:
 
 ```text
-050-S  ->  051-S  ->  049-S  ->  052-S
+050-S  ->  051-S  ->  049-S  ->  PHASE 1.5 (056.028-T)  ->  052-S
 ```
 
 * `049-S` keeps its `blocks` dependency on `051-S`; `051-S` keeps its
@@ -250,17 +274,22 @@ The smallest coherent path keeps the existing decomposition intact:
 * `052-S` is a new task-only remedy shipment whose sole member is
   `056.011-T`, with a `blocks` dependency on `049-S`. The covering feature
   `056-F` is excluded per P-015.
-* Ordering rationale: `056.011-T`'s standing backlog dependency is `056.003-T`,
-  and its exact-client before/after acceptance consumes the `056.022-T` wrapper
-  and `056.023-T` observer. All three are `049-S` members. The adapter's own
+* Ordering rationale: `056.011-T`'s standing backlog dependencies are
+  `056.003-T` and `056.028-T`, and its exact-client before/after acceptance
+  consumes the transparent `056.022-T` wrapper and `056.023-T` observer. Their
+  probe-owned temporary configuration is valid only for this diagnostic
+  before/after evidence, never for T4 restored-production acceptance. All three
+  are `049-S` members. The adapter's own
   in-crate red/green unit tests do **not** need those assets, but the acceptance
   does, so the unit cannot close ahead of `049-S`.
 * Naming the shipment now — rather than leaving `056.011-T` selected but
   unshipped — is the point: it prevents the selected remedy from sitting
   indefinitely outside any release unit.
 * PHASE 1.5 (`056.028-T`, standalone-probe CI) keeps its documented position
-  between `049-S` and any remedy shipment; `052-S` is ordered after it by the
-  same Stage assembly rule.
+  between `049-S` and any remedy shipment; `052-S` is ordered after it by both
+  the Stage rule and `056.011-T`'s explicit dependency.
+* `056.029-T` has no shipment membership and no `selection:*` label. It is T4
+  fan-in only; it does not let a failing MSRV gate be bypassed in 052-S.
 
 ### Emergency hotfix considered and rejected
 

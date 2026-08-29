@@ -28,16 +28,15 @@ Recent GitHub Copilot CLI builds can no longer connect to the `graphtor-docs`
 MCP server: the STDIO transport pipe closes with Windows **OS error 232**
 (`ERROR_NO_DATA`, "pipe is being closed") while the client sends the
 `initialize` request. OS error 232 is a write to a **closed** pipe, so the
-signature is the **server process exiting before the handshake completes** —
-most plausibly one of `cmd_serve`'s pre-`serve_server` normal exits or
-fail-closed errors (cwd-relative `.graphtor/*.db` discovery, lock contention /
-stale-lock pid reuse, pre-v4 schema, duplicate intake, or another config/open
-gate), triggered by a change in *how* the new CLI launches the child
-(cwd / env / lifecycle) rather than by any graphtor-docs code change. The full
-differential diagnosis — and
-why an rmcp `get_info` protocol-echo change is a no-op on rmcp 1.5 — is in the
-linked deliberation. This plan restores connectivity **evidence-first** and
-**test-first**.
+signature is the **server process exiting before the handshake completes**.
+Live exact-client evidence now selects H3-A for this failure: preflight and
+model loading complete, `serve_server` is entered, then the first non-ping
+pre-`initialize` request (`server/discover`, id 0) produces rmcp's
+`ExpectedInitializeRequest` and exit 2. This does not dispose of H0/H1 or H3-B
+as residual cause families; `049-S` still classifies them without bypassing
+`051-S`. The full differential diagnosis — and why an rmcp `get_info`
+protocol-echo change is a no-op on rmcp 1.5 — is in the linked deliberation.
+This plan restores connectivity **evidence-first** and **test-first**.
 
 ## Goal / Definition of Done
 
@@ -121,7 +120,7 @@ linked deliberation. This plan restores connectivity **evidence-first** and
 | Shared lazy lifecycle (conditional H1) | `src/embed/lifecycle.rs` | Supervised clone-shared lifecycle state machine only; expose a stable typed lifecycle-state accessor; the versioned Loading/Failed/Disabled availability projection and `src/mcp/server.rs` consumers move to `056.025-T` → `056.005-T` |
 | Serve/background-sync orchestration (conditional H1) | `src/main.rs::cmd_serve`, `spawn_background_sync` | Inject one shared lazy owner into `DocServer` and Generation sync; neither eager load nor background sync may block initialize; consume the 056.025-T availability projection → `056.015-T` |
 | MCP availability projection (conditional H1) | `src/mcp/server.rs` | Own the versioned Loading/Failed/Disabled MCP availability projection and `search_semantic`/`research_topic` fallback metadata (moved from `056.005-T`/`056.015-T`); red-first projection/tool-contract tests; no `cmd_serve`/background sync → `056.025-T` |
-| Server transport compatibility (conditional H3-A) | rmcp pin + STDIO wiring; standing dep `056.003-T`, after `056.015-T` ONLY when H1+H3-A co-selected | Own transport types/wiring only; reacquire the exact-client transaction SEPARATELY before and after the fix through the `056.022-T` wrapper (semantic initialize correlation plus redacted transcript digest, not raw replay or persistence), red/green and Rust 1.75 proof; T4 owns production acceptance → `056.011-T` |
+| Server transport compatibility (SELECTED H3-A) | pre-`initialize` `server/discover` transport adapter around the pinned rmcp; no pin change; standing deps `056.003-T` and `056.028-T`, after `056.015-T` ONLY when H1+H3-A co-selected | Own transport types/wiring only; before any H3-A work, require an actual current-pin `cargo +1.75.0 check --all-targets` pass or halt/return 052-S to Stage for `056.029-T`; reacquire the exact-client transaction SEPARATELY before and after the fix through the `056.022-T` wrapper (semantic initialize correlation plus redacted transcript digest, not raw replay or persistence); T4 owns production acceptance → `056.011-T` |
 | Client isolated-config + cwd compatibility (conditional H3-B) | actual Copilot CLI capability evidence | Sole H3-B terminal: consume T0's `H3-B-candidate` and adjudicate BOTH a documented explicit isolated-config discovery mechanism (owning the one bounded attempt, plus one deferred control/treatment contrast through the `056.001-T` runner when isolation becomes possible) and a distinct working-directory mechanism; H3-B1 is forward evidence, H3-B2 blocks, inconclusive blocks with evidence (not Unsupported); never reads/mutates the user root config; temporary proof only activates the managed-cwd/recovery tasks (the discriminator tasks `056.026-T`/`056.027-T` are gated separately on an evidenced `type`/`transport` mismatch) and never satisfies T4 → `056.019-T` |
 | Operator documentation (documentation-only) | `056.012-T`: `docs/troubleshooting.md` + the `### search_semantic`/`### research_topic`/`### get_status` headings and a `Runtime diagnostics and recovery` subsection in `docs/mcp-tools.md`. `056.013-T`: the `### 2. Configure your MCP client` managed-launch content in `docs/mcp-tools.md` + `### serve`/`### install`/`### upgrade`/`### uninstall` in `docs/cli-reference/graphtor-docs.md` | Diagnostics plus selected H0b/H0c/H1 contracts (no CLI-reference) → `056.012-T`; managed launch/recovery and H3, reconciling the `type`/`transport` discriminator → `056.013-T` |
 | Tests | `tests/common/mcp_driver.rs`, `tests/mcp_serve_handshake_test.rs`, and colocated focused tests | T1 owns the shared driver module; each production task owns at most three grouped scenarios. Actual-client acceptance remains the final H3/T4 gate |
@@ -796,12 +795,12 @@ pre-serve gates. If H1 is not evidenced, all four tasks (`056.014-T`, `056.005-T
 `not-needed: H1 not evidenced`. `056.012-T` owns the operator-facing tool
 retry contract.
 
-#### T-H3-A — Server framing/version compatibility — backlog `056.011-T`
+#### T-H3-A — Pre-`initialize` `server/discover` transport adapter — backlog `056.011-T`
 
 **SELECTED 2026-08-29 (`selection:selected`).** The H3-A family is no longer
 hypothetical. Live actual-client stderr, exact server source, exact rmcp 1.5.0
 source, and the upstream MCP draft specification jointly evidence the defect:
-the client's **first** request (`id: 0`) is `server/discover`, rmcp 1.5's
+the client's first **non-ping** request (`id: 0`) is `server/discover`, rmcp 1.5's
 pre-`initialize` loop tolerates only `ping`, so the custom request breaks the
 loop and returns `ServerInitializeError::ExpectedInitializeRequest`; `cmd_serve`
 propagates, the process exits `2`, and the client's pipe closes. Full redacted
@@ -827,65 +826,119 @@ constraints:
 4. **Normal `initialize` must still occur.** After answering, the adapter keeps
    the connection alive and keeps reading until `initialize` arrives, which then
    proceeds through unmodified rmcp to a normal `InitializeResult`.
-5. **Preferred response shape — JSON-RPC error, legacy posture.** Reply to the
-   correlated request `id` with a JSON-RPC error; `-32601` method-not-found is
-   the response the MCP draft stdio "Backward Compatibility" section names for
-   legacy servers, and it is the branch that makes a conforming client fall back
-   to `initialize`. Returning a real `DiscoverResult` is **forbidden by
-   default** — it would assert modern-era support this server does not implement
-   and would let a conforming client skip `initialize`, which rmcp 1.5 requires.
-   A bounded discovery-compatibility response is permitted **only** if the
-   exact-Copilot before/after evidence proves the error response is rejected,
-   and only with that evidence recorded in the task.
-6. **Bounded.** Cap pre-`initialize` `server/discover` responses at a small
-   constant and keep a deadline; exceeding the cap restores today's fail-closed
-   behavior. A looping client must not hold the server pre-`initialize`.
+5. **Evidence-selected response shape — JSON-RPC legacy posture.** Use a
+   correlated JSON-RPC compatibility response only after the exact-Copilot
+   before/after transaction proves that this client accepts it and then sends
+   `initialize`. The MCP draft makes a legacy-class error, with `-32601` as a
+   standards-informed candidate, reasonable to test; it does not prove the
+   exact client's fallback behavior. Returning a real `DiscoverResult` is
+   **forbidden by default** — it would assert modern-era support this server
+   does not implement and could let a client skip `initialize`, which rmcp 1.5
+   requires. If the candidate is rejected, halt 052-S for a bounded Stage
+   amendment rather than inventing a discovery payload or dispatching another
+   pre-`initialize` method.
+6. **Bounded.** Cap pre-`initialize` `server/discover` responses at a concrete,
+   evidence-justified constant and keep a pre-`initialize` deadline. On either
+   exhaustion, stop intercepting and forward the message unchanged to rmcp, so
+   the existing `ExpectedInitializeRequest` path remains the only termination
+   path. A looping client must not hold the server pre-`initialize`.
 7. **stdout stays protocol-clean.** One newline-delimited JSON-RPC message per
    line; diagnostics only to stderr/tracing, consistent with `056.003-T`.
 
-**Red-first tests (in-crate, do not require the probe assets):** these are
-written and observed failing before the adapter exists.
+**Adapter shape (BINDING — so two implementers converge):**
 
-* **RED-1 (primary):** drive the adapter-wrapped transport with
-  `server/discover` as request `id: 0`, then `initialize`. Red = the run
-  terminates with `ExpectedInitializeRequest`. Green = a correlated
-  `jsonrpc: "2.0"` response to `id: 0` (error, per constraint 5), the
-  connection stays open, and the subsequent `initialize` yields a non-error
-  `result.protocolVersion`.
-* **RED-2 (allowlist negative):** an arbitrary non-allowlisted pre-`initialize`
-  method (for example `tools/list`) must still fail closed exactly as today —
-  it must **not** be answered, and no handler may run.
-* **RED-3 (control):** pre-`initialize` `ping` still receives
-  `EmptyResult` and the handshake still completes.
-* **RED-4 (bound):** exceeding the pre-`initialize` `server/discover` cap
-  restores fail-closed behavior.
-* **RED-5 (stdout parity):** the adapter adds no stdout bytes beyond the single
-  correlated JSON-RPC response line.
+* **Placement/visibility.** The adapter type is private to a binary-owned module
+  reachable from `src/main.rs`, not the `graphtor_core::mcp` library. That keeps
+  the composition usable by the binary without a public library re-export or
+  new semver-visible API. `src/main.rs` keeps only the one-line composition.
+  Update `src/mcp/mod.rs` module rustdoc to say the binary owns STDIO transport
+  composition and may apply a private compatibility boundary before
+  `rmcp::serve_server`; it must not direct callers to bypass it.
+* **Genericity.** The adapter is generic over its inner transport
+  (`struct Adapter<T: Transport<RoleServer> + 'static> { inner: T, .. }`, with
+  `type Error = T::Error`) and is constructed from an already-converted inner
+  transport, so the harness can inject an in-memory inner instead of spawning
+  the production binary.
+* **Disarm edge.** The adapter arms at construction and disarms **permanently**
+  the moment it observes an inbound `ClientRequest::InitializeRequest` in
+  `receive`, before forwarding it. After disarm it is a pure passthrough and
+  **must not** call `send` itself — that also removes the read/write coupling
+  hazard of awaiting an outbound send from inside `receive` once rmcp's
+  `serve_inner` begins issuing concurrent sends.
+* **Scope of bounds.** The response cap and an interception-admission deadline
+  apply only to `server/discover` while pre-`initialize` and are released at
+  the disarm edge. The deadline is checked when the next inbound message
+  arrives; it does not close an idle pipe or impose a global ping timeout, so a
+  legitimately idle post-`initialize` STDIO session is never terminated.
+* **Feature declaration.** Declare on graphtor's own `tokio` dependency any
+  feature the adapter or its harness needs (`time` for the deadline, `io-util`
+  if the harness uses `duplex`) instead of relying on rmcp's feature graph, and
+  update the "activated transitively by rmcp" comment in `Cargo.toml`.
+* **Sunset tripwire.** The adapter exists only because rmcp 1.5's
+  pre-`initialize` loop tolerates only `ping`. Name the native-support removal
+  condition in a comment and re-evaluate it whenever the pinned rmcp version
+  changes; do not add a speculative version assertion.
 
-**MSRV / edition candidate gate (run FIRST, before any change):** the prior
-statement that "rmcp 1.8.x uses edition 2024 and is excluded by Rust 1.75" is
-**corrected** — vendored `rmcp-1.5.0/Cargo.toml` **also** declares
+**Test tiers, honestly labelled:**
+
+* **RED-FIRST (must be observed failing before interception behavior).**
+  * **RED-1** — through a compiling pass-through test seam, drive
+    `server/discover` as the first non-ping request, then `initialize`. Red =
+    the desired continued-handshake assertion fails with
+    `ExpectedInitializeRequest`. Only after that observed red add interception.
+    Green = one correlated `jsonrpc: "2.0"` response, an open connection, a
+    subsequent non-error `result.protocolVersion`, and a normal
+    post-`initialize` tools request.
+  * **RED-5** — at the seam's own level: exactly one `Transport::send` per
+    intercepted request and zero `send` calls for any non-allowlisted message,
+    observed through a mock inner transport. Byte-level stdout parity is
+    `056.023-T` after-run evidence, not an in-crate assertion.
+* **GREEN-FIRST CONTROLS (already pass today; must keep passing).**
+  * **C-1** — an arbitrary non-allowlisted pre-`initialize` method (for example
+    `tools/list`) still fails closed exactly as today, and no handler runs.
+  * **C-2** — pre-`initialize` `ping` still receives `EmptyResult` and the
+    handshake still completes.
+* **POST-FIX REGRESSION.**
+  * **C-3** — cap exhaustion or a `server/discover` received after the
+    admission deadline forwards that message unmodified and yields rmcp's own
+    `ExpectedInitializeRequest`, so no new termination mode is introduced.
+  * **C-4** — a post-`initialize` `server/discover` passes through untouched.
+  * **C-5** — a long-idle post-`initialize` session is never terminated by the
+    adapter.
+
+All of the above run in-crate against an injected inner transport and need no
+`049-S` probe assets.
+
+**Declared-MSRV gate (run FIRST and block on failure):** the prior statement
+that "rmcp 1.8.x uses edition 2024 and is excluded by Rust 1.75" is
+**corrected** — vendored `rmcp-1.5.0/Cargo.toml` also declares
 `edition = "2024"` and no `rust-version`, so edition does not discriminate 1.5.0
 from 1.8.0. The 1.8.x exclusion stands on corrected grounds: unproven MSRV
-parity, wider transitive API surface, and rollback isolation. Therefore
-`056.011-T` MUST, as its first step, run `cargo +1.75.0 check --all-targets`
-against the **current unmodified pin** and record the result. If that already
-fails on rmcp 1.5.0's edition, it is a pre-existing MSRV-declaration defect:
-`056.011-T` records the evidence and halts for a named bounded Stage follow-up
-on the declared `rust-version`. It MUST NOT silently relax the declared MSRV,
-silently claim MSRV proof, or bump the dependency in-scope.
+parity, wider transitive API surface, and rollback isolation. Metadata does not
+establish whether the current resolved graph builds on Rust 1.75. Before any
+H3-A harness, adapter, manifest, or dependency change, `056.011-T` MUST run
+`cargo +1.75.0 check --all-targets` against the **current unmodified pin** and
+record the exact result. If it is nonzero, `052-S` and `056.011-T` halt and
+return to Stage; do not implement, complete, or call the adapter
+MSRV-compatible. `056.011-T` is the sole executor of this check;
+`056.029-T` consumes and dispositions its immutable redacted record as the
+unshipped bounded evidence/decision follow-up and T4 fan-in. Resumption
+requires a separately reviewed resolution and successful evidence; never
+silently relax `rust-version` or bump rmcp in-scope.
 
 * Own **only** transport types and rmcp/stdio
   wiring. The transport wiring layers atop the `056.015-T` serve-orchestration
   restructure ONLY when H1 and H3-A are co-selected in the same shipment unit
   (a shipment-assembly-time co-selection edge per the Authoritative task
-  ordering) — it is NOT a standing backlog dependency; the standing edge is
-  `056.003 → 056.011` only. Do NOT require persisted or
+  ordering) — it is NOT a standing backlog dependency; the standing edges are
+  `056.003 → 056.011` and `056.028 → 056.011`. Do NOT require persisted or
   byte-identical raw frames: reacquire the exact-client transaction SEPARATELY
   before and after the fix through the `056.022-T` wrapper and the `056.023-T`
   in-wrapper observer, each validating semantic initialize correlation (exact
   request id → `jsonrpc: "2.0"` non-error `result.protocolVersion`) plus the
-  redacted transcript digest; add/observe the H3-A red from the before-run, then
+  redacted transcript digest. This transparent wrapper and its probe-owned
+  temporary configuration are valid only for this diagnostic evidence path,
+  not T4 restored-production evidence; add/observe the H3-A red from the before-run, then
   green it with the minimal fix and re-validate from the after-run. No raw bytes
   on disk; a generic direct initialize is insufficient. The before-run MUST
   additionally record the **exact pre-`initialize` wire order** (which methods
@@ -901,8 +954,8 @@ silently claim MSRV proof, or bump the dependency in-scope.
   discriminate the two. rmcp 1.8.x remains excluded on corrected grounds —
   unproven MSRV parity, wider transitive API surface, and rollback isolation.
   Prefer a minimal framing adaptation around pinned 1.5.x; use another release
-  only after recording MSRV compatibility evidence. Run the MSRV / edition
-  candidate gate above FIRST, against the current unmodified pin. If a
+  only after recording MSRV compatibility evidence. Run the declared-MSRV
+  gate above FIRST, against the current unmodified pin. If a
   fork/patch override or wider change is required, halt for a separate
   deliberation. T4 alone owns production-entry acceptance. No `get_info` echo
   change.
@@ -983,7 +1036,8 @@ silently claim MSRV proof, or bump the dependency in-scope.
   bounded-`initialize` timeout with the child **still alive** (latency, no
   early exit); for an **H3** cause it is one of two modes — **mode A**
   (framing/version): the child **still alive** with the framed `initialize`
-  never negotiating a `protocolVersion` (transport/framing, no early exit);
+  never negotiating a `protocolVersion` (transport/framing, no early exit). **(CORRECTED 2026-08-29: the SELECTED H3-A signature is NOT `still alive / no early exit`. The evidenced H3-A before-state is preflight complete + `mcp_serve_ready` + rmcp `ExpectedInitializeRequest` for a pre-`initialize` `server/discover` + process exit 2 with the client's pipe closing. The `still alive` descriptor below applies only to the unevidenced framing/version variant of H3-A and must not be used as `052-S`'s acceptance baseline.)**
+
   **mode B** (client ignores/rejects configured `cwd`): T0's real-client
   diagnostic-entry probe records a foreign actual cwd despite the requested
   project-root cwd. The success signal is identical for all: a completed
@@ -1093,11 +1147,11 @@ than restate every clause:
   family), PHASE 3 final acceptance/docs (unshipped, dependent on the selected
   remedies). Remedy family entries depend on the evidence foundation
   (`056.003-T`, or `056.019-T` for the H3-B-selected managed-config/discriminator
-  groups); intra-family order is a true dependency edge, but unrelated cause
+  groups; selected H3-A also depends on `056.028-T`); intra-family order is a true dependency edge, but unrelated cause
   families are NOT chained into a total order. Sequential single-shipment
   execution is enforced by the **explicit selection gate below plus** one
   in-flight shipment at a time (P-001) and single-worktree topology (P-016), not
-  by fake cross-cause edges. Total task count is 28 (`056.001-T`..`056.028-T`).
+  by fake cross-cause edges. Total task count is 29 (`056.001-T`..`056.029-T`).
 * **Explicit selection gate (dependency-ready ≠ selected)** — every PHASE 2
   (`phase:remedy`) task carries a machine-queryable `selection:pending` label plus
   its `cause:<family>` label. After `049-S` closes, Stage consumes the
@@ -1274,14 +1328,14 @@ shipment-interface re-probe rule; see the Authoritative task ordering above.
   `056.019-T` is the sole H3-B terminal, adjudicating both isolated-config and cwd
   mechanisms with at most one deferred contrast, fail-closed on inconclusive
   (`blocked` + named Stage follow-up). T4's direct fan-in is all tasks
-  `056.001`..`056.028` except `056.004`, with explicit evidence-chain edges to
+  `056.001`..`056.029` except `056.004`, with explicit evidence-chain edges to
   `056.001-T`, `056.002-T`, `056.021-T`, `056.022-T`, `056.023-T`, `056.024-T`,
   `056.025-T`, `056.026-T`, `056.027-T`, and `056.028-T`.
 
 ### Authoritative task ordering (release-unit phases)
 
 The authoritative structure is a set of release-unit phases with cause-family
-branches off a shared evidence spine, not a single 28-task total order. Each edge
+branches off a shared evidence spine, not a single 29-task total order. Each edge
 `X → Y` is a backlog dependency (Y depends on X; X runs first). Sequential
 single-shipment execution is enforced by the explicit selection gate plus one
 in-flight shipment at a time (P-001) and single-worktree topology (P-016), so
@@ -1347,21 +1401,25 @@ entry depends on the evidence foundation):**
 * lock recovery: `056.003 → 056.016 → 056.007`
 * H0c state repair: `056.003 → 056.010`
 * H1 model lifecycle: `056.003 → 056.014 → 056.005 → 056.025 → 056.015`
-* H3-A transport compatibility: `056.003 → 056.011` (standing edge; the
+* H3-A transport compatibility: `{056.003, 056.028} → 056.011` (standing
+  edges; the
   `after 056.015` ordering is a co-selection-only assembly edge). **SELECTED
   2026-08-29** on live actual-client evidence
   (`docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`) and
   routed as the sole member of the task-only remedy shipment `052-S`, which
   carries a `blocks` dependency on `049-S`. Full queue order is
-  `050-S → 051-S → 049-S → 052-S`; `049-S`'s dependency on the `051-S` security
-  prerequisite is unchanged, and PHASE 1.5 (`056.028`) keeps its documented slot
-  between `049-S` and `052-S`. The evidence substitutes for the T0
+  `050-S → 051-S → 049-S → PHASE 1.5 (056.028) → 052-S`; `049-S`'s dependency
+  on the `051-S` security prerequisite is unchanged. The evidence substitutes
+  for the T0
   *cause-ordering* input for this family only — it does not substitute for
   `056.011-T`'s exact-client before/after acceptance, for any other family's
   selection, or for T4. A pre-`049-S` emergency hotfix was evaluated and
   rejected: `056.011-T`'s acceptance consumes the `056.022-T` wrapper and
   `056.023-T` observer, which are `049-S` deliverables, and reordering would
   bypass the `051-S` security prerequisite for no schedule gain under P-001.
+  Before any H3-A work, its actual current-pin declared-MS​​RV check must pass;
+  a nonzero result blocks/returns 052-S to Stage for the unshipped `056.029-T`
+  decision rather than letting the adapter continue.
 * diagnostic sink (optional): `056.003 → 056.006` (selected only when stderr is
   unavailable AND env inheritance is proven; the `after 056.011` ordering is a
   co-selection-only assembly edge)
@@ -1381,11 +1439,12 @@ selected remedies; not prematurely Ship-ready):**
   `056.013` additionally depends on the discriminator delivery `056.027`, so docs
   are not ready until every family resolves (done or not-needed).
 * `056.004` (T4) keeps direct dependencies on every other task
-  `056.001`..`056.028` except `056.004` itself — with explicit evidence-chain
+  `056.001`..`056.029` except `056.004` itself — with explicit evidence-chain
   edges to `056.001`, `056.002`, `056.021`, `056.022`, `056.023`, `056.024`,
-  `056.025`, `056.026`, `056.027`, and `056.028` — and is the sole
+  `056.025`, `056.026`, `056.027`, `056.028`, and `056.029` — and is the sole
   restored-production actual-client acceptance node and the single registry-backed
-  acceptance gate.
+  acceptance gate. `056.029` remains unshipped but prevents T4 from implying
+  declared-MS​​RV compatibility after a failed measurement.
 * **Final Assembly Protocol (Stage-owned):** after the selected remedy shipments
   complete, Stage (1) confirms every PHASE 2 task is terminal — `done` (selected +
   shipped) or `done` + `not-needed:<evidence id>` (unselected) — the owned
@@ -1421,11 +1480,18 @@ selected remedies; not prematurely Ship-ready):**
   shipment stay blocked rather than accepting an unsafe check-then-open recovery.
 * T4 remains the sole restored-production actual-client acceptance node.
 * Selection gate: dependency-ready ≠ selected. Every PHASE 2 task carries
-  `selection:pending` + `cause:<family>`; Stage flips only selected families to
+  exactly one `selection:*` label (initialized to `selection:pending`) +
+  `cause:<family>`; Stage flips only selected families to
   `selection:selected` after `049-S` closes, and unselected tasks stay `queued` /
   `selection:pending` with no shipment membership (never backlog status
   `blocked`). No Ship/Orchestrator routing can claim an unselected task because it
-  has no shipment membership.
+  has no shipment membership. **Exception (2026-08-29, H3-A only):** live
+  actual-client evidence replaced the T0 cause-ordering input for the H3-A
+  family, so `056.011-T` carries `selection:selected` ahead of `049-S` closure.
+  The label + shipment-membership gate itself was not relaxed and was verified
+  to return zero rows before `052-S` was created. This exception is
+  **non-precedential**: any further substitution requires a new named Stage
+  amendment recorded in `056-F` plus explicit operator acknowledgement.
 * Discriminator split (delivery-safe): the unconditional `type`/`transport`
   reconciliation (`056.026-T`) depends only on the evidence classification, and
   its existing-install delivery (`056.027-T`) composes the selected
@@ -1521,7 +1587,14 @@ if (-not (Test-Path -LiteralPath $CopilotExe)) { throw "exact Copilot identity n
 cargo +1.75.0 run --manifest-path tools/mcp-probe/Cargo.toml -- exact-cli --copilot $CopilotExe
 if ($LASTEXITCODE -ne 0) { throw "exact-cli classification failed (exit $LASTEXITCODE)" }
 
-# 4. Root production quality gates — check $LASTEXITCODE immediately after EVERY
+# 4. Mandatory 052-S declared-MS​​RV gate. Run this BEFORE writing the H3-A
+#    harness, adapter, manifest, or dependency changes, against the current
+#    unmodified pin. A nonzero result blocks/returns 052-S to Stage for
+#    056.029-T; it must not be waived or followed by adapter implementation.
+cargo +1.75.0 check --all-targets
+if ($LASTEXITCODE -ne 0) { throw "declared-MSRV check failed (exit $LASTEXITCODE); block 052-S and return to Stage" }
+
+# 5. Root production quality gates — check $LASTEXITCODE immediately after EVERY
 #    native command:
 cargo fmt --all -- --check
 if ($LASTEXITCODE -ne 0) { throw "fmt check failed (exit $LASTEXITCODE)" }
@@ -1540,11 +1613,8 @@ cargo audit
 if ($LASTEXITCODE -ne 0) { throw "audit failed (exit $LASTEXITCODE)" }
 cargo build --release
 if ($LASTEXITCODE -ne 0) { throw "release build failed (exit $LASTEXITCODE)" }
-# Conditional when rmcp/dependencies change:
-cargo +1.75.0 check --all-targets
-if ($LASTEXITCODE -ne 0) { throw "MSRV check failed (exit $LASTEXITCODE)" }
 
-# 5. Restored-production acceptance runner (056.001-T owns the exact-cli
+# 6. Restored-production acceptance runner (056.001-T owns the exact-cli
 #    classifier; 056.004-T/T4 owns restored-production acceptance). It launches
 #    the exact Copilot CLI NORMALLY against the restored user-facing entry and
 #    MUST NOT wrap/substitute the server or use temp config. Repeat for THREE
@@ -1945,13 +2015,15 @@ and posture-classification context.
 * ProposedAction (**H3-A, SELECTED 2026-08-29**): implement the narrow
   pre-`initialize` `server/discover` transport adapter in `056.011-T`; T4 alone
   accepts production.
-  **H3-A** (child alive, fatal on an unhandled pre-`initialize` custom request)
-  uses an edition-2021 / Rust-1.75-source adapter around the **pinned** rmcp
-  1.5.x; a dependency bump is NOT the default remedy. rmcp 1.8.x remains
+  **H3-A** is the evidenced exit-2 `ExpectedInitializeRequest` after a
+  pre-`initialize` custom request. It uses a narrow adapter around the
+  **pinned** rmcp 1.5.x; a dependency bump is out of scope. rmcp 1.8.x remains
   excluded on corrected grounds — unproven MSRV parity, wider transitive API
   surface, and rollback isolation — **not** edition, because vendored
-  `rmcp-1.5.0` is also `edition = "2024"` with no `rust-version`. The MSRV /
-  edition candidate gate runs first against the current unmodified pin.
+  `rmcp-1.5.0` is also `edition = "2024"` with no `rust-version`. The actual
+  current-pin declared-MS​​RV check runs first; source edition does not establish
+  compatibility. A nonzero result makes this ProposedAction **blocked**,
+  returns 052-S to Stage for 056.029-T, and forbids an adapter MSRV claim.
   **H3-B** (client ignores/rejects
   pinned `cwd` or merges ancestor config) uses `056.019-T` to choose **B1** (the
   same exact CLI passes a second contrast through a different documented
@@ -1964,19 +2036,18 @@ and posture-classification context.
     **mode B1** — the documented client-launch capability in `056.019-T` plus the
     managed-config mutation tasks (`056.008-T`/`056.018-T`/`056.009-T`); **mode
     B2** — the client-capability classification in `056.019-T` only.
-  * change_kind: **mode A** compatible dependency/transport edit; **mode B1**
+  * change_kind: **mode A** scoped transport/wiring edit around the pinned
+    dependency; **mode B1**
     managed-config code/config mutation with rollback; **mode B2**
     operator/client-capability classification only (no repo code).
-  * ActionRisk: **moderate** — a mode-A rmcp bump can pull transitive API
-    changes (`serve_server` signature, `schemars` re-export), re-verified in its
-    own review with a separate before/after exact-client reacquisition through
-    the `056.022-T` wrapper and
-    `cargo +1.75.0 check --all-targets`; no `get_info` change. Mode B1 mutates
-    managed config (rolled back via the recovery primitive); mode B2 changes no
-    repo code and adds no containment surface. rollback: **mode A** revert the
-    bump and re-pin rmcp 1.5; **mode B1** revert managed-config changes via the
-    recovery backups; **mode B2** revert to the previously documented client
-    configuration.
+  * ActionRisk: **moderate** — mode A changes startup-critical transport wiring
+    and must pass its own observed-red, exact-client before/after, quality, and
+    declared-MS​​RV gates; no `get_info` change. Mode B1 mutates managed config
+    (rolled back via the recovery primitive); mode B2 changes no repo code and
+    adds no containment surface. rollback: **mode A** remove the adapter and
+    restore direct pinned-rmcp wiring; **mode B1** revert managed-config changes
+    via the recovery backups; **mode B2** revert to the previously documented
+    client configuration.
   * approval_required: mode B1 managed-config mutation follows the T2e/T2f
     approval path; otherwise no (non-destructive). ActionResult: **planned** (or
     **abandoned** if H3 is not evidenced).
@@ -2036,8 +2107,13 @@ and posture-classification context.
     `incomplete` / `READY_WITH_CONDITIONS` with the observed count and a
     follow-up; never infer healthy from fewer than 3 starts.
   * **rollback trigger:** any OS error 232 recurrence, an exit-before-initialize
-    (H0 or H3 mode B), or a failed/timed-out / never-negotiated `initialize`
-    handshake (H1 or H3 mode A) in the window → revert the shipment commits in
+    (H0, **H3-A**, or H3 mode B — note the SELECTED H3-A signature is itself an
+    exit-before-initialize, namely rmcp `ExpectedInitializeRequest` on a
+    pre-`initialize` `server/discover` followed by exit 2, so an
+    exit-before-initialize must NOT be routed away from H3-A), or a
+    failed/timed-out / never-negotiated `initialize`
+    handshake (H1 or the unevidenced H3-A framing/version variant) in the window
+    → revert the shipment commits in
     reverse dependency order (T4; for H3 mode B, revert to the previously
     documented client configuration) → outcome `rolled-back`.
   * outcome (healthy / degraded / incomplete / rolled-back) is recorded in the shipment
@@ -2050,11 +2126,13 @@ and posture-classification context.
   remain diagnostic evidence.
 * Repository-code branches commit a branch-specific observed-red test that the
   selected curative task greens: H0a uses the driver in `056.008-T`'s
-  generated-entry test; H0b uses a reachable Generation-lock fixture; H3 mode
-  A reacquires the exact-client transaction SEPARATELY before and after the fix
-    through the `056.022-T` wrapper and `056.023-T` observer (semantic initialize
-    correlation plus redacted transcript digest, not raw-frame replay) and closes
-    only after actual-client production-entry acceptance; H1 uses the split
+  generated-entry test; H0b uses a reachable Generation-lock fixture; selected
+  H3-A first runs the direct transport-seam red, then reacquires the exact-client
+  transaction separately before and after the fix through the transparent
+  `056.022-T` wrapper and `056.023-T` observer (semantic initialize correlation
+  plus redacted transcript digest, not raw-frame replay). It closes after that
+  diagnostic evidence proves the accepted response and normal `initialize`;
+  restored-production acceptance remains solely T4. H1 uses the split
   `056.014-T`/`056.005-T`/`056.015-T` deterministic seams.
 * Operational-only H0c and H3-B preserve a bounded actual-client red
   transcript and rerun the exact `/mcp show graphtor-docs` production-entry
@@ -2484,3 +2562,65 @@ prefer targeted diagnostics over broad logging, keep the standalone probe crate
 out of the production dependency graph, and preserve MSRV (`cargo +1.75.0`) on
 any rmcp or dependency change. Any retained "close as not-needed" shorthand
 means: move the task to `done` and append a `not-needed: <rationale>` comment.
+
+### Report-only review — 2026-08-29 H3-A recovery
+
+**Gate: PASS.** This report reviewed the working-tree H3-A amendment derived
+from `db5baa0` before its Stage planning commit. It is a planning review only:
+no source, test, workflow, build, task-claim, shipment-close, merge, or admin
+fallback action occurred.
+
+#### Coverage and evidence
+
+* Correctness, architecture/dependencies, scope/constitution, agent-native
+  parity, and schema/CLI/docs coupling were independently reviewed. A targeted
+  Rust-plan re-review checked the binary/library visibility boundary. The
+  learnings check found no contradiction with the rmcp 1.5 or documentation
+  accuracy learnings.
+* The current exact evidence supports `cause:h3a-transport` and
+  `selection:selected` for `056.011-T`: the actual client sends
+  pre-`initialize` `server/discover` at id 0, rmcp 1.5 rejects it before a
+  handler runs, and the process exits 2. It does not prove an accepted response
+  shape, full wire order, or re-probe cadence.
+* `049-S` retains exactly its eight evidence members and depends on `051-S`;
+  `052-S` has exactly `056.011-T` and depends on `049-S`. The task-level
+  `056.028-T` dependency enforces PHASE 1.5 before the remedy, and Stage must
+  add the future PHASE 1.5 shipment as an explicit 052-S shipment dependency
+  before claim.
+
+#### Remediated P1 findings
+
+* The diagnostic wrapper and probe-owned temporary configuration are valid only
+  for `056.011-T` exact-client before/after evidence. They are explicitly
+  invalid for T4 restored-production acceptance, eliminating the prior
+  contradictory wrapper rule.
+* `056.011-T` owns the single current-pin `cargo +1.75.0 check --all-targets`
+  invocation. Unshipped `056.029-T` consumes and dispositions that immutable
+  redacted result, so the T4 fan-in cannot remain queued after a passing check
+  or fork a second pre-change measurement.
+* The adapter is a private binary-owned module reachable from `src/main.rs`,
+  not an inaccessible `pub(crate)` library type. Its task explicitly owns the
+  narrow `src/mcp/mod.rs` rustdoc correction.
+* H3-A now closes after its direct transport-seam red and exact-client
+  diagnostic before/after evidence; T4 alone owns restored-production
+  acceptance, so no `056.011-T` ↔ T4 closure cycle remains.
+
+#### Outcome and residual risk
+
+* **P0: 0. P1: 0.** A final correctness re-review found no unresolved blocking
+  finding in the current planning contract.
+* The declared-MS​​RV state remains **unmeasured**, not presumed failed from
+  metadata. The actual check is a mandatory first action for 052-S; a nonzero
+  result blocks/returns 052-S to Stage before adapter work or any
+  MSRV-compatibility claim.
+* The exact-Copilot accepted error shape, full pre-initialize sequence, and
+  re-probe cadence remain explicit execution evidence, not documentation or
+  implementation assumptions. `-32601` is only a standards-informed candidate.
+* P2/P3 follow-ups remain non-blocking: validate the pinned rmcp transport
+  concurrency model before adding any synchronization test, add the PHASE 1.5
+  shipment dependency before 052-S claim, and compact historical review detail
+  after the active plan is shipped.
+
+The review rejects the metadata-only assertion that the current declared MSRV
+has already failed. `edition = "2024"` and an absent dependency `rust-version`
+are risk signals; only the required actual check may determine the disposition.
