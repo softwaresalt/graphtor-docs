@@ -37,6 +37,15 @@ in this pass:
    concrete downstream shipment (`049-S`) that is blocked by `051-S`
    remaining open, and states explicitly that `051-S` must not be closed,
    archived, or have its dependency dropped as a workaround.
+5. **Additional correction (surfaced by ongoing Copilot shadow review, not
+   one of the original 4 findings)**: Copilot correctly identified that
+   U7's originally-recorded root bootstrap (`Dir::open_ambient_dir` alone)
+   does not refuse a symlinked workspace root. Verified empirically and
+   corrected: the root must be opened via `cap_primitives::fs::
+   open_dir_nofollow` relative to an ambiently-opened parent, not via
+   `Dir::open_ambient_dir` on the root path directly. U7 remains PASS with
+   the corrected construction; full evidence is in
+   `.backlogit/archive/059.007-T.md`.
 
 ---
 
@@ -72,21 +81,35 @@ in this pass:
 
 ## Decisions and rationale
 
-1. **U7 (`059.007-T`) — PASS.** Built an isolated, throwaway `cap-std`
-   feasibility harness at `target/feasibility/u7-cap-std-harness/` (git-ignored,
-   own `[workspace]` table to escape the root workspace, no `tempfile`
-   dev-dependency to avoid an unrelated `getrandom 0.4.3` `edition2024` MSRV
-   trap under the pinned toolchain). Proved, under both stable `rustc` and
-   `rustc +1.75.0`:
+1. **U7 (`059.007-T`) — PASS (corrected in this pass; see the Update section
+   above).** Built an isolated, throwaway `cap-std` feasibility harness at
+   `target/feasibility/u7-cap-std-harness/` (git-ignored, own `[workspace]`
+   table to escape the root workspace, no `tempfile` dev-dependency to avoid
+   an unrelated `getrandom 0.4.3` `edition2024` MSRV trap under the pinned
+   toolchain). Proved, under both stable `rustc` and `rustc +1.75.0`:
    - Scenario 1: `cap-std 4.0.3` (newest stable release) compiles and its
      tests pass under Rust 1.75 (cap-primitives 4.0.3, rustix 1.1.4,
      io-lifetimes 2.0.4/3.0.1, io-extras 0.19.0, windows-sys 0.59.0/0.60.2/
      0.61.2 all resolve cleanly).
-   - Scenario 2: `Dir::open_ambient_dir(root, ambient_authority())` bootstraps
-     the workspace-root handle; `cap_std::fs::File::into_std()` is the
-     selected `File` boundary (U2's `open_no_follow` keeps its existing
-     `std::fs::File` return type regardless of ambient-path vs.
-     capability-root-relative origin).
+   - Scenario 2 (**corrected**): the originally-recorded bootstrap,
+     `Dir::open_ambient_dir(root, ambient_authority())` alone, does **not**
+     provide a no-follow/no-reparse root open — a Copilot review correctly
+     flagged this, and it was confirmed empirically in a follow-up harness: a
+     symlinked root was **followed**, not refused. The corrected
+     construction ambiently opens the workspace root's **parent** only
+     (`cap_primitives::fs::open_ambient_dir`), then opens the root itself
+     relative to that parent handle via `cap_primitives::fs::
+     open_dir_nofollow` (public in `cap-primitives` 4.0.3, but not exposed as
+     a `cap_std::fs::Dir` method — both crates are needed as direct
+     dependencies). Re-verified: a symlinked root is refused
+     (`ERROR_STOPPED_ON_SYMLINK`/os error 681 on Windows); an ordinary root
+     still succeeds. The trusted-parent threat model is now precise: only
+     the immediate parent of the root is trusted (the same single
+     ambient-authority step any `std::fs` ambient call already makes); the
+     root itself is verified, not assumed. `cap_std::fs::File::into_std()`
+     remains the selected `File` boundary. Full corrected evidence, including
+     the explicit U1/U2/U6 implementation note that **both** `cap-std` and
+     `cap-primitives` must be adopted, is in `.backlogit/archive/059.007-T.md`.
    - Scenario 3: table-driven refusal matrix — absolute path, `..` escape,
      intermediate-directory symlink swap, and in-bounds leaf symlink were all
      refused. The Windows leaf case required an **explicit post-open**
