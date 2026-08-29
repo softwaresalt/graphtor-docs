@@ -15,6 +15,8 @@ backlog_refs:
   - "056.011-T"
   - "049-S"
   - "052-S"
+  - "053-S"
+  - "056.029-T"
 source: "operator live actual-client stderr, 2026-08-29 (redacted)"
 tags:
   - mcp
@@ -102,8 +104,11 @@ wire before `rmcp::serve_server`.
 
 ### E4 — Upstream MCP draft specification
 
-`server/discover` is a **standardized** MCP method in the draft (2026-07-28
-era) specification, not a vendor-private probe.
+`server/discover` is a **draft-specification** MCP discovery method (2026-07-28
+era draft) used by a dual-era client's pre-`initialize` fallback probe. It is
+defined in the public MCP draft rather than being a vendor-private extension,
+but the draft is not a finalized MCP release, and `server/discover` is **not**
+in rmcp 1.5's accepted pre-`initialize` request set, which admits only `ping`.
 
 * [Discovery](https://modelcontextprotocol.io/specification/draft/server/discover)
   defines `server/discover` as a request a client may send "before sending any
@@ -233,63 +238,89 @@ The remedy is a narrow, pinned-`rmcp`-1.5 transport adapter between
    private compatibility composition. See the plan's `#### T-H3-A` "Adapter
    shape (BINDING)" block for the full contract.
 
-## MSRV / edition candidate gate
+## MSRV / edition blocker and its resolution unit
 
-E5 invalidates the plan's stated exclusion discriminator. The plan said "rmcp
-1.8.x uses edition 2024 and is excluded by Rust 1.75"; in fact the **currently
-pinned rmcp 1.5.0 is also edition 2024** and declares no `rust-version`.
-That metadata identifies a declared-MSRV compatibility question but does not
-establish the actual result of `cargo +1.75.0 check --all-targets` against the
-existing pin. No build was run during this Stage pass.
+E5 invalidates the plan's original exclusion discriminator **and** establishes a
+deterministic blocker rather than an open risk. The plan said "rmcp 1.8.x uses
+edition 2024 and is excluded by Rust 1.75"; in fact the **currently pinned rmcp
+1.5.0 is also edition 2024** and declares no `rust-version`. Stable Cargo did
+not accept `edition = "2024"` in any manifest until Rust/Cargo 1.85, so Cargo
+1.75 cannot parse the resolved `rmcp 1.5.0` manifest at all. The formerly
+mandatory `cargo +1.75.0 check --all-targets` entry gate on `052-S` was
+therefore a guaranteed failure rather than a measurement, and `052-S` could
+never have reached adapter implementation under that plan. No build was run in
+this Stage pass; the conclusion rests on the vendored manifest metadata in E5
+plus the published edition-2024 stabilization release.
 
-Consequences, all of which `056.011-T` must honor:
+Consequences:
 
 * The 1.8.x exclusion stands, but on corrected grounds: unproven MSRV parity,
   wider transitive API surface, and rollback isolation — **not** edition, which
   does not discriminate 1.5.0 from 1.8.0.
-* `056.011-T` must run the actual declared-MSRV check as its **first** step,
-  against the current unmodified pin, before any H3-A harness, adapter,
-  manifest, or dependency change, and record the exact result.
-* If `cargo +1.75.0 check --all-targets` is nonzero on the current pin, that is
-  a pre-existing MSRV-declaration defect, **not** something `056.011-T` may
-  silently relax, silently "prove", or fix in-scope. `052-S` and `056.011-T`
-  halt and return to Stage before adapter implementation continues.
-  `056.011-T` owns the single check; unshipped `056.029-T` consumes and
-  dispositions its immutable redacted result as a bounded evidence/decision
-  follow-up in T4's fan-in. The adapter cannot be declared MSRV-compatible
-  unless the project builds at its declared MSRV.
-* A dependency-version change (any rmcp bump) remains out of scope for
-  `056.011-T` and requires a separate deliberation.
+* The DAG is corrected instead of deferring a known blocker to execution.
+  `056.029-T` is re-scoped from an unshipped evidence-consumer into the
+  declared-MSRV / dependency-compatibility resolution task, and becomes the sole
+  member of the dedicated queued shipment `053-S` (PHASE 1.6) that executes
+  **before** `052-S`.
+* `056.029-T` chooses exactly one bounded resolution at implementation time:
+  (a) raise the declared `rust-version` to a truthful floor that parses
+  edition-2024 dependency manifests and align `Cargo.toml`, the standalone probe
+  manifest, CI workflows, instruction files, and affected docs; or (b) select an
+  MSRV-compatible rmcp strategy through a bounded decision. Neither option is
+  preselected or implemented here. The mismatch is never silently waived, never
+  a silent `rust-version` relaxation, and never a silent rmcp bump; any rmcp
+  version change stays reviewed inside `056.029-T` or a named split if width
+  requires it.
+* Width isolation is preserved: `056.029-T` owns only the dependency/toolchain
+  declaration and the documentation/CI text that asserts it, and the transport
+  remedy stays entirely inside `052-S`.
+* `056.011-T` no longer adjudicates MSRV. Its first step validates once against
+  the **resolved** declared `rust-version` left by `056.029-T`
+  (`cargo +<resolved floor> check --all-targets`), never a hard-coded
+  `+1.75.0`. A nonzero result there blocks `052-S` and returns it to Stage for a
+  new bounded MSRV follow-up; it never permits adapter continuation or an
+  MSRV-compatibility claim.
+* A failed or unresolved declared-MSRV question **blocks** `052-S`. There is no
+  path in which it is merely advisory or deferrable to final acceptance.
 
 ## Release-unit routing
 
-The smallest coherent path keeps the existing decomposition intact:
+The smallest coherent path keeps the existing decomposition intact and inserts
+one prerequisite release unit:
 
 ```text
-050-S  ->  051-S  ->  049-S  ->  PHASE 1.5 (056.028-T)  ->  052-S
+050-S  ->  051-S  ->  049-S  ->  PHASE 1.5 (056.028-T)  ->  053-S (056.029-T)  ->  052-S
 ```
 
 * `049-S` keeps its `blocks` dependency on `051-S`; `051-S` keeps its
-  dependency on `050-S`. Nothing is removed or reordered.
-* `052-S` is a new task-only remedy shipment whose sole member is
-  `056.011-T`, with a `blocks` dependency on `049-S`. The covering feature
+  dependency on `050-S`. Nothing is removed or reordered, and `049-S` keeps its
+  frozen eight-task manifest.
+* `053-S` is the PHASE 1.6 task-only declared-MSRV shipment whose sole member is
+  `056.029-T`, with a `blocks` dependency on `049-S`.
+* `052-S` is the task-only remedy shipment whose sole member is `056.011-T`,
+  with `blocks` dependencies on `049-S` **and** on `053-S`, so it transitively
+  waits for the evidence unit and the declared-MSRV unit. The covering feature
   `056-F` is excluded per P-015.
 * Ordering rationale: `056.011-T`'s standing backlog dependencies are
-  `056.003-T` and `056.028-T`, and its exact-client before/after acceptance
-  consumes the transparent `056.022-T` wrapper and `056.023-T` observer. Their
-  probe-owned temporary configuration is valid only for this diagnostic
-  before/after evidence, never for T4 restored-production acceptance. All three
-  are `049-S` members. The adapter's own
+  `056.003-T`, `056.028-T`, and `056.029-T`, and its exact-client before/after
+  acceptance consumes the transparent `056.022-T` wrapper and `056.023-T`
+  observer. Their probe-owned temporary configuration is valid only for this
+  diagnostic before/after evidence, never for T4 restored-production acceptance.
+  All three of those evidence tasks are `049-S` members. The adapter's own
   in-crate red/green unit tests do **not** need those assets, but the acceptance
   does, so the unit cannot close ahead of `049-S`.
-* Naming the shipment now — rather than leaving `056.011-T` selected but
-  unshipped — is the point: it prevents the selected remedy from sitting
+* Naming the shipments now — rather than leaving `056.011-T` or `056.029-T`
+  selected but unshipped — is the point: it prevents required work from sitting
   indefinitely outside any release unit.
-* PHASE 1.5 (`056.028-T`, standalone-probe CI) keeps its documented position
-  between `049-S` and any remedy shipment; `052-S` is ordered after it by both
-  the Stage rule and `056.011-T`'s explicit dependency.
-* `056.029-T` has no shipment membership and no `selection:*` label. It is T4
-  fan-in only; it does not let a failing MSRV gate be bypassed in 052-S.
+* PHASE 1.5 assembly gate: the `056.028-T` shipment manifest is deliberately
+  **not** created at plan time. Stage creates it only after `049-S` closes, and
+  when it does it adds that shipment as an explicit `053-S` dependency before
+  claim. Until then PHASE 1.5 precedence is carried by `056.011-T`'s standing
+  `blocks` dependency on `056.028-T`.
+* `056.029-T` carries no `selection:*` label, exactly like `056.028-T`: it is
+  not cause-selected, so the `phase:remedy` selection gate does not apply to its
+  `053-S` membership. It remains in T4 fan-in, and a failing MSRV gate can no
+  longer be bypassed in `052-S` because the resolution now precedes the remedy.
 
 ### Emergency hotfix considered and rejected
 
@@ -315,5 +346,7 @@ acceptance are all preserved unchanged.
    bounded-cap constraint above exists precisely because of this.
 4. Whether other cause families are *also* present is untouched by this note.
    `049-S` T0 still runs and may order additional causes.
-5. The MSRV/edition state of the current pin is derived from crate metadata
-   only; no build was run in this Stage pass.
+5. The MSRV/edition state is established from vendored manifest metadata plus
+   the published edition-2024 stabilization release, not from a build run in
+   this Stage pass. The exact resolved floor and the chosen remedy option are
+   decided by `056.029-T` in `053-S`, ahead of `052-S`.

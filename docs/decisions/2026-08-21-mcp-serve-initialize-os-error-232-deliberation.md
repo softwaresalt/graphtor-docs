@@ -452,21 +452,30 @@ rather than edited in place, so the original reasoning stays auditable.
   at request `id: 0`. Because rmcp `>= 1.4` no longer gates on
   `notifications/initialized`, that message can only be produced before a
   successful `InitializeResult`, so `server/discover` arrives **before or
-  instead of** `initialize`. `server/discover` is a standardized method in the
-  MCP draft (2026-07-28 era) stdio backward-compatibility probe, not a
-  vendor-private call. The full redacted record, the remedy constraints, and the
+  instead of** `initialize`. `server/discover` is an MCP **draft**-specification
+  discovery method (2026-07-28 era draft) used by a dual-era client's
+  pre-`initialize` stdio backward-compatibility fallback probe: it is defined in
+  the public MCP draft rather than being a vendor-private extension, the draft
+  is not a finalized MCP release, and it is **not** in rmcp 1.5's accepted
+  pre-`initialize` request set, which admits only `ping`. The full redacted
+  record, the remedy constraints, and the
   explicit residual uncertainty are in
   `docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`.
   `056.011-T` is `selection:selected` and routed as the sole member of the
-  task-only shipment `052-S`, ordered after `049-S`. The evidence substitutes
+  task-only shipment `052-S`, ordered after `049-S` and after the PHASE 1.6
+  declared-MSRV shipment `053-S`. The evidence substitutes
   for the T0 *cause-ordering* input for this family only.
 * **The rmcp 1.8.x exclusion rationale is corrected.** "1.8.x is excluded by
   edition 2024" does not hold as a discriminator: vendored `rmcp-1.5.0` — the
   crate this workspace already pins — also declares `edition = "2024"` and no
   `rust-version`. The exclusion stands on corrected grounds (unproven MSRV
-  parity, wider transitive API surface, rollback isolation), and `056.011-T`
-  now carries an explicit MSRV/edition candidate gate that must be run against
-  the current unmodified pin before any change.
+  parity, wider transitive API surface, rollback isolation). The declared-MSRV
+  mismatch is a deterministic blocker rather than an open measurement — stable
+  Cargo accepted `edition = "2024"` only from Rust/Cargo 1.85, so `cargo
+  +1.75.0` cannot parse the resolved `rmcp 1.5.0` manifest — so it is resolved
+  by `056.029-T`, the sole member of the PHASE 1.6 shipment `053-S`, which runs
+  BEFORE `052-S`. `056.011-T` then validates once against the resolved declared
+  `rust-version`, never a hard-coded `+1.75.0`.
 
 The rest of this deliberation is unchanged. Other cause families remain
 unselected, `049-S` still runs T0, `049-S` keeps its dependency on the `051-S`

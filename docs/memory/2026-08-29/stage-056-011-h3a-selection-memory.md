@@ -51,8 +51,13 @@ Corroboration, all read-only:
 * `ExpectedInitializedNotification` is `#[deprecated]` since rmcp 1.4 and never
   constructed, so the observed message can only precede a successful
   `InitializeResult` — which proves ordering.
-* Upstream MCP draft: `server/discover` is a **standardized** stdio
-  backward-compatibility probe, and the spec's own fallback rule is that any
+* Upstream MCP draft: `server/discover` is a **draft-specification** discovery
+  method used by the client's dual-era stdio backward-compatibility fallback
+  probe — publicly specified rather than vendor-private, but not a finalized MCP
+  release, and not in rmcp 1.5's accepted pre-`initialize` request set
+  (wording aligned 2026-08-29 in the PR #108 review-fix cycle; see
+  `docs/memory/2026-08-29/stage-056-011-h3a-pr108-reviewfix-memory.md`). The
+  spec's own fallback rule is that any
   error other than a recognized modern error (or no response at all) makes a
   conforming client fall back to `initialize`, with the fallback explicitly
   **not** keyed to one error code.
