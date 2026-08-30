@@ -187,9 +187,13 @@ transition that takes effect the moment the closure PR merges to `main`.
 * A future Ship session runs `blocked → queued` (or any other) status
   normalization directly instead of handing off scope + dependency
   context to Stage (repeat P-010 violation, per Stage's ratification).
-* A future Ship session deletes a mistakenly created artifact without
-  real-time operator approval instead of leaving it for Stage/operator
-  recovery (repeat P-005 violation).
+* A future Ship session executes the deletion of a mistakenly created
+  artifact itself — with or without real-time operator approval — instead
+  of halting and handing the cleanup to Stage/the operator or a
+  separately authorized recovery executor/path (a repeat **P-005**
+  violation if unapproved; a repeat **P-010** violation regardless of
+  approval, since approval satisfies P-005 destructiveness only and never
+  grants Ship the role authority to run the deletion).
 * Implementation of the rescoped scope begins before `059.014-T` reaches
   `done` and/or before a Stage session has assembled it into a shipment.
 
@@ -209,10 +213,25 @@ rescoped scope that Ship created rather than Stage.
 
 ## Rollback Procedure
 
-`git revert` the closure PR's merge commit (backlog-state-only diff, safely
-revertible); re-run `shipment-reconcile mode: pre` against `051-S`'s
-original three-item manifest to re-establish the pre-transition baseline
-before re-attempting the transition.
+**ProposedAction**: `git revert <exact merge commit SHA>` — the closure
+PR's merge commit only (backlog-state-only diff), producing a single new
+revert commit; never `git reset`, `git push --force`, or any broad
+directory restore. **ActionRisk**: `destructive` (VCS history mutation,
+Constitution Principle VII / P-005; strict-safety
+`ProposedAction`/`ActionRisk: destructive` contract). **Safety mode**:
+careful / freeze-scope — the action is scoped to the exact named commit
+and nothing else. **ActionResult**: `blocked` until explicit real-time
+operator approval is obtained; this procedure is a documented option, not
+an executed or pre-authorized action, and nothing has been reverted as
+part of writing this closure record.
+
+If and when the operator grants that approval: execute `git revert`
+against the exact approved commit SHA only, then re-verify by re-running
+`shipment-reconcile mode: pre` against `051-S`'s original three-item
+manifest to confirm the pre-transition baseline is restored before
+re-attempting the transition. If approval is not granted, or the operator
+is unavailable, halt with `ActionResult: blocked` and take no reverting
+action.
 
 ## Validation Window
 
@@ -865,7 +884,7 @@ force.
 | Pre-deploy audit | N/A — no migration/flag/cross-service dependency |
 | Runtime verification | `PASS` — structural/backlog-state verification (no runtime surface changed) |
 | Post-deploy observation window | Closed — no async rollout; end state already confirmed |
-| Rollback trigger + procedure | Defined: revert + re-reconcile |
+| Rollback trigger + procedure | Defined: exact-commit `git revert` (ActionRisk: destructive; ActionResult: blocked pending explicit real-time operator approval) + re-reconcile |
 | Risky actions | Consolidated four-row record in Review-Fix Cycle 4 above: three distinct **P-010** violations (status normalization, shipment creation, `059.008-T` `blocked_reason` mutation) and one distinct **P-005** violation (destructive deletion without real-time approval) — none retroactively legalized; Stage's ratifications (`52c3bf1`, `63f933a`, `303106c`) affirm only the resulting disposition/text, not the mutations that produced them |
 | Historical process gaps (no P-code) | Two permanent historical process gaps recorded 2026-08-30 (PR #114 review threads `3890182197`/`3890182212`) — shipment lock not held across pre→safe-close→post, and commit evidence recorded after (not before) archival relocation; see Historical Process Gap Reconciliation above. Not correctable retroactively; no corruption or concurrent-mutation evidence found |
 | Backlog closure | `CLOSED` (`051-S`); rescoped scope prepared but **unshipped** (no shipment created — see Backlog Closure Evidence above) |
@@ -1118,6 +1137,55 @@ pending follow-up** — not performed by this pass; see
 `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
 newest resumption section for the current status.
 
+## Current-Contract Reconciliation (2026-08-30, PR #114 HEAD `45876b6`)
+
+A later Ship-side alignment pass (`45876b6`) landed further corrections to
+`.github/agents/.ship.agent.md`, `.github/agents/.stage.agent.md`, and
+`.github/policies/workflow-policies.md`/`shipment-reconcile/SKILL.md`,
+after every violation and correction recorded above. This note is a
+pointer, not a re-litigation, so readers of this closure's contract
+summary are not left relying on the older transport/membership/role
+semantics superseded by that commit:
+
+* **Selected-transport commit evidence (P-007).** Safe-close now
+  dispatches, once per artifact and before any mutation, on whether the
+  **selected invocation transport** for the archive call itself both
+  accepts the delivered-work SHA and guarantees atomic persistence to the
+  archived artifact's frontmatter `commit` — registry parameter presence
+  alone (e.g. `archive_item.params.commit_sha`) is not that guarantee,
+  since the installed CLI mapping `backlogit archive {id}` has no commit
+  flag and always takes the non-atomic path. The two paths are mutually
+  exclusive; each artifact is archived exactly once.
+* **`custom_fields.items` as the sole membership source.** The impossible
+  reverse-orphan scan is replaced by a live overlap scan of shipments'
+  `custom_fields.items` — there is no reverse per-item `shipment_id`
+  field — and Stage's Step 5.5 Mode R shipment-reuse lookup now runs
+  **before** membership validation, matching against the exact ordered
+  candidate list (`member_ids` in Mode R, `harvest_ids` in Mode H) rather
+  than after.
+* **Exact Mode R reuse, not approximate.** A `queued` shipment is reusable
+  in Mode R only when its `custom_fields.items` is **exactly equal** to
+  `assembly_ids`; a subset, superset, or any other partial overlap halts
+  and is never auto-reconciled by Stage. This refines, rather than
+  contradicts, the disjoint-set and fail-closed-add corrections already
+  recorded above in "Mode R Fail-Closed Partition Correction."
+* **P-010/P-005 policy alignment.** `.github/policies/workflow-policies.md`
+  now states directly, in both P-007's and P-015's recovery text and
+  Stage's Role Boundary violation-action note: operator approval addresses
+  only a command's destructiveness (P-005); it never grants an agent the
+  role authority its Role Boundary withholds (P-010). An approved
+  destructive command is still a P-010 violation when the acting agent's
+  Role Boundary forbids that category of mutation. This is the same
+  principle applied above in the corrected deletion-recovery guidance
+  (compound entry cross-referenced below) and the corrected Rollback
+  Procedure earlier in this closure record — recorded once here, not
+  restated per section.
+
+This pointer does not reopen, legalize, or alter any of the four
+historical violations recorded above; it exists solely so the closure's
+own contract summary does not misdirect a future reader to semantics
+`45876b6` has since superseded.
+
 ## Cross-References
 
 * `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
@@ -1147,9 +1215,11 @@ newest resumption section for the current status.
   the `054-S` deletion wording (aligns node A's decision-doc citation and
   the nine-vs-ten count to the corrected Mode R contract)
 * `63f933a736b59279d09748b5b3795c928e99e3d4` — Stage's convergence pass:
-  appended durable Stage-ratification comments to `059.014-T`/`059.008-T`
-  and recorded the fourth distinct Ship P-010 (`059.008-T` `blocked_reason`
-  mutation)
+  recorded the fourth distinct Ship P-010 (`059.008-T` `blocked_reason`
+  mutation) and attempted/recorded ratification of `059.014-T`/`059.008-T`
+  through `backlogit comment add` — those comments landed only in
+  gitignored `.backlogit/logs/*.jsonl` and were not durable, authoritative
+  PR evidence
 * `303106caac7e9c955f8d45512f6086b8fb05ee04` — persisted the
   `059.014-T`/`059.008-T` Stage ratifications as durable tracked
   `stage-ratification` body sections (the prior `backlogit comment add`
@@ -1181,6 +1251,14 @@ newest resumption section for the current status.
   evidence-recorded-after-archival-relocation gap findings to the three
   `051-S` reconciliation reports (frontmatter + body), this closure
   record, and the transition memory checkpoint; assigns no new P-code
+* `45876b6b1c3a11f3bc594b2ac1140e2be9d74386` — later agent-contract/policy
+  alignment: selected-transport commit-evidence closure paths (P-007),
+  live `custom_fields.items` overlap scan replacing the impossible
+  reverse-orphan scan with Stage's Mode R reuse lookup run before
+  membership validation, exact (not approximate) Mode R reuse equality,
+  and explicit P-010/P-005 approval-vs-role-authority wording across P-007/
+  P-010/P-015 — see "Current-Contract Reconciliation" above; does not
+  reopen or alter any of the four historical violations recorded above
 * `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`
 * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`
 * `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`

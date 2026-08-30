@@ -1,6 +1,6 @@
 ---
 title: "Shipment supersession pattern: return-blocked non-terminal manifest items, safe-close the evidence shipment, prepare the rescoped scope for Stage to assemble"
-description: "When an active shipment's manifest mixes a done evidence task with a still-blocked feature/task that must never be cascade-archived, return the non-done items from the manifest first so shipment-reconcile's pre-mode expected_status check and safe-close protected-set computation both work correctly, then close the now-single-item shipment, identify the rescoped feasible scope, and hand it off — un-normalized — to Stage, which exclusively normalizes every superseded-chain member to an intake-valid status and decides on successor-shipment assembly, per both agents' NON-NEGOTIABLE P-010 role boundaries; never instruct Ship to delete a mistakenly created shipment without real-time operator approval"
+description: "When an active shipment's manifest mixes a done evidence task with a still-blocked feature/task that must never be cascade-archived, return the non-done items from the manifest first so shipment-reconcile's pre-mode expected_status check and safe-close protected-set computation both work correctly, then close the now-single-item shipment, identify the rescoped feasible scope, and hand it off — un-normalized — to Stage, which exclusively normalizes every superseded-chain member to an intake-valid status and decides on successor-shipment assembly, per both agents' NON-NEGOTIABLE P-010 role boundaries; if Ship mistakenly creates a shipment, operator approval satisfies P-005 destructiveness only — it never grants Ship the P-010 authority to delete it, so Ship must halt with ActionResult blocked and hand the deletion to the operator or a separately authorized recovery path, never execute it itself"
 problem_type: "workflow-handoff"
 category: "best-practices"
 component: "shipment-reconcile skill + Ship Step 6 closure, backlogit shipment lifecycle"
@@ -214,17 +214,29 @@ first — regardless of *when* it was returned or how it came to be
    approval; that remains a separate, unresolved P-005 violation, not a
    compliant remediation of the P-010 finding it was responding to** —
    deleting a P-010 violation does not exempt the deletion from its own
-   destructive-command approval gate. The correct response to a
-   mistakenly created shipment is one of:
-   * halt and request explicit real-time operator approval for the
-     deletion before running it, or
+   destructive-command approval gate.
+   **Operator approval addresses only the command's destructiveness
+   (P-005); it never grants role authority a Role Boundary withholds
+   (P-010).** `backlogit_delete_item` is Forbidden for Ship regardless of
+   approval state — an approved destructive command is still a P-010
+   violation when the acting agent's Role Boundary forbids that category
+   of mutation. The correct response to a mistakenly created shipment is,
+   therefore, one of:
+   * halt, record the exact `ProposedAction` (the identified artifact and
+     the deletion it would require), `ActionRisk: destructive`, and
+     `ActionResult: blocked`, and hand the cleanup to the operator or to a
+     separately authorized recovery executor/path — Ship itself must
+     never execute the deletion, even after approval is granted, because
+     approval cannot substitute for the P-010 authority Ship's Role
+     Boundary withholds; or
    * leave the artifact in place, unclaimed and unshipped, and hand it to
      Stage/the operator as a recovery item in the closure/memory
      artifacts, recording the mistaken creation as an open P-010 finding
      until the operator or Stage resolves it.
 
    Never instruct Ship to delete its own mistaken artifact as a matter of
-   routine remediation. The correct handoff for the legitimate case (no
+   routine remediation, and never instruct Ship to run the deletion itself
+   even once approval is obtained. The correct handoff for the legitimate case (no
    mistaken shipment exists) is precisely the step 4/5 sequence, not a
    shortcut around it: Ship leaves and hands off, in the closure/memory
    artifacts, every scope member's **un-normalized** current `status` and
@@ -306,7 +318,9 @@ safe-close → **identify the full rescoped scope and hand it, un-normalized,
 to Stage (never run `blocked → queued` normalization as Ship)** → **Stage
 normalizes every superseded-chain member to `queued` and decides on
 shipment assembly (never assemble it as Ship, and never delete a
-mistakenly created shipment without real-time operator approval)** →
+mistakenly created shipment itself, even with real-time operator
+approval — approval satisfies P-005 destructiveness only and never grants
+Ship the P-010 authority to run the deletion)** →
 **verify the prepared scope's own intake-readiness**," not as a single
 `shipment ship`/cascade call and not by mutating status or creating a
 successor shipment directly as Ship. This keeps the blocked feature and any
@@ -315,7 +329,9 @@ ensures the prepared scope is genuinely executable once shipped, and keeps
 both status normalization and shipment creation where the role boundary
 requires them — with Stage, not Ship. If Ship nonetheless creates an
 out-of-boundary artifact by mistake, treat correcting it as its own
-destructive action requiring approval, not a self-authorized cleanup step.
+destructive action requiring approval — and, even once approved, as an
+action Ship must hand off rather than execute, never a self-authorized
+cleanup step.
 
 ## Mode R / Role-Boundary Reconciliation Addendum (2026-08-30, `242b5e3`/`537daaf`)
 
