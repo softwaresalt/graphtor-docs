@@ -71,21 +71,63 @@ in queue, not archived, when the shipment closes."
    **stronger** safety guarantee than manually eyeballing which items to
    protect — the mechanism is generic and doesn't need to know in advance
    which items are "supposed" to survive.
-4. **Assemble the fresh, rescoped shipment** for the still-feasible scope
-   (`backlogit shipment create --items ...`). Per this workspace's Ship Role
-   Boundary, creating shipments is normally Stage's job — but Ship's own
-   Step 0.5 fallback path explicitly permits direct assembly **when the
-   operator explicitly confirms bypassing Stage**, and the governing
-   decision document itself named this as a sanctioned "Ship's choice"
-   alternative. Record the explicit operator authorization in the closure
-   report; do not silently create shipments as a matter of routine.
+4. **Restore the rescoped-feasible returned members to an intake-valid
+   status BEFORE assembling the successor shipment** (this step is
+   easy to miss — a Copilot review on the first pass of this pattern
+   correctly caught its absence). `return-blocked` only detaches manifest
+   membership; it deliberately does **not** touch `status`, so any item
+   that was `blocked` under the OLD (now-superseded) dependency chain stays
+   `blocked` after being returned. If those items are then folded straight
+   into a new shipment's manifest while still `blocked`, the successor
+   shipment can never pass Ship's own Step 0.5 intake reconciliation
+   (`shipment-reconcile mode: pre` with `expected_status: queued` — see
+   `.ship.agent.md` primary-path step 6 and `shipment-reconcile/SKILL.md`'s
+   pre-mode `status-mismatch` classification, which halts on any manifest
+   item whose `status` doesn't equal the expected value). Completing a
+   downstream gate task (e.g. an operator sign-off) does **not** itself
+   transition these members — `status` and the dependency graph are
+   orthogonal in this schema.
+
+   The supported workflow: for every returned item whose *only* remaining
+   blocker is a dependency edge in the manifest it's about to join (not a
+   terminal/evidence-based block), transition it back to `queued` directly:
+   ```bash
+   backlogit move <id> --status queued
+   ```
+   This is a valid direct `blocked → queued` transition in this backlogit
+   version (verified — no intermediate `active` hop required, unlike the
+   `queued → done` FSM constraint documented in
+   `backlogit-status-transitions-2026-05-02.md`). It clears any
+   `custom_fields.blocked_reason` on that item as a side effect (verified);
+   preserve the narrative in git history / the governing decision doc
+   instead of relying on the live field. Do **not** apply this to items
+   whose block is itself the terminal, decided evidence (e.g. a feasibility
+   spike that proved infeasible) — those stay `blocked` and stay **out of**
+   the successor manifest.
+5. **Assemble the fresh, rescoped shipment** for the now-`queued` feasible
+   scope (`backlogit shipment create --items ...`). Per this workspace's
+   Ship Role Boundary, creating shipments is normally Stage's job — but
+   Ship's own Step 0.5 fallback path explicitly permits direct assembly
+   **when the operator explicitly confirms bypassing Stage**, and the
+   governing decision document itself named this as a sanctioned "Ship's
+   choice" alternative. Record the explicit operator authorization in the
+   closure report; do not silently create shipments as a matter of routine.
+6. **Verify intake-readiness before presenting the shipment as executable**:
+   confirm every manifest member's `status` equals `queued` (or `active` if
+   already claimed) — the same check Step 0.5 will perform later — so the
+   successor shipment doesn't merely exist, but can actually be claimed and
+   built without an immediate `RECONCILE_FAIL`.
 
 ## Prevention
 
 When a shipment's manifest will end in a mixed done/blocked/terminal-blocked
 outcome, plan the closure as "return non-`done` items → reconcile pre →
-safe-close → create successor shipment for the returned/rescoped items,"
-not as a single `shipment ship`/cascade call. This keeps the blocked feature
-and any terminally-blocked evidence task visible in the queue (never
-archived) while still letting the shipment record for the completed
-evidence-gathering scope close cleanly.
+safe-close → **restore the rescoped-feasible returned items to `queued`** →
+create successor shipment → **verify the successor's own intake-readiness**,"
+not as a single `shipment ship`/cascade call and not by assembling the
+successor immediately after `return-blocked` without the status-restore
+step. This keeps the blocked feature and any terminally-blocked evidence
+task visible in the queue (never archived) while still letting the
+shipment record for the completed evidence-gathering scope close cleanly,
+and it ensures the successor shipment is genuinely executable, not just
+structurally present.

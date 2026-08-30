@@ -118,7 +118,8 @@ transition that takes effect the moment the closure PR merges to `main`.
 | Safe-close `051-S` as a single artifact (never the cascade `backlogit_ship_shipment`) | low (manifest-scoped; protected-set baseline + verify-after-each both passed) | applied, verified `CLOSED`, no cascade |
 | Create shipment `054-S` directly as Ship (normally a Stage-only operation per Role Boundary) | moderate (role-boundary exception; justified by explicit operator instruction + the decision document's own named "Ship's choice" alternative; recorded non-silently) | applied, documented as an explicit, non-routine exception |
 | Create post-merge transition branch `post-merge/059-f-toctou-transition` directly from `origin/main` while carrying an uncommitted operator `.gitignore` edit + untracked `docs/scratch/` across the switch | low (blob-hash-verified identical before switching; SHA-256 re-verified after; untracked files unaffected by checkout) | applied, verified byte-for-byte preserved |
-| Do NOT mark `059.014-T` (operator sign-off gate) done; do NOT begin `059-F`/`054-S` implementation; do NOT claim `049-S` | n/a (explicit scope boundary, not an action) | honored — verified `059.014-T` still `queued`, no `054-S` member touched beyond manifest creation, `049-S` untouched |
+| Transition `059-F` + eight units (`059.001/002/003/004/005/006/010/011-T`) directly `blocked → queued` (review-fix cycle 1, Copilot finding on PR #114) | low (status-field-only; dependency graph unchanged; verified valid direct transition in this backlogit version; clears `custom_fields.blocked_reason` as a documented side effect, narrative preserved in git history/decision doc) | applied, verified — all 10 `054-S` members now `queued`; `059.008-T`/`059.009-T` (out of scope) remain `blocked`, untouched |
+| Do NOT mark `059.014-T` (operator sign-off gate) done; do NOT begin `059-F`/`054-S` implementation; do NOT claim `049-S` | n/a (explicit scope boundary, not an action) | honored — verified `059.014-T` still `queued`, no `054-S` member work begun beyond manifest creation + status normalization, `049-S` untouched |
 
 ## Healthy Signals
 
@@ -179,9 +180,40 @@ No async rollout.
   `backlogit_ship_shipment`).
 * Post-mode: `.backlogit/reconcile/051-S-post-20260829-203815.md` —
   `PROCEED`.
-* New shipment `054-S`: `queued`, 10 dependency-closed members (see memory
-  checkpoint table).
+* New shipment `054-S`: `queued`, 10 dependency-closed members, **all 10
+  confirmed `status: queued`** (intake-valid — see Review-Fix Cycle 1 below).
 * `049-S`: confirmed `queued`, zero dependencies, independently claimable.
+
+## Review-Fix Cycle 1 (Copilot shadow review, PR #114)
+
+Two related findings on the initial PR #114 diff, both fixed and pushed in
+one follow-up commit:
+
+1. **`054-S` manifest not intake-valid**: `059-F` and all eight
+   U1/U2/U3/U4/U5/U6/U10/U11 units were still `status: blocked` (carried
+   over from the pre-PR#113 U8-gated dependency chain; their status field
+   was never refreshed even though PR #113 already rewired the underlying
+   dependency edges). Ship's own Step 0.5 intake reconciliation
+   (`expected_status: queued`) would `HALT` on this the moment `054-S` is
+   claimed. **Fixed**: `backlogit move <id> --status queued` on all nine
+   affected items (verified valid direct `blocked → queued` transition; no
+   status mutation to out-of-scope `059.008-T`/`059.009-T`, which correctly
+   remain `blocked`).
+2. **Compound doc omitted the fix's own prerequisite**: the newly-authored
+   `docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`
+   documented "return-blocked → safe-close → assemble successor" without
+   the status-restore step, so following it verbatim would reproduce
+   finding 1. **Fixed**: added an explicit "restore to intake-valid status"
+   step (and a final "verify intake-readiness" step) to the compound entry.
+
+Both fixes are backlog-state + docs only (no `src/`/`Cargo.*` changes).
+Reconciliation and doctor were not re-run for this cycle since neither
+touches `051-S` (already closed and archived) or archive integrity — only
+`054-S`'s already-`queued`, not-yet-archived manifest members changed
+status, which is outside `shipment-reconcile`'s scope (that skill validates
+manifests against `expected_status` at intake/closure time, not ad hoc
+mid-session status edits). Direct field re-verification (table above)
+stands as the evidence for this cycle.
 
 ## Releasability Evidence
 

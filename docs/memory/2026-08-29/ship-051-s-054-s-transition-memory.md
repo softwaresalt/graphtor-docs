@@ -124,13 +124,46 @@ re-scope or re-split any task; only manifest membership was changed.
 
 | Item | Status after this session | Notes |
 |---|---|---|
-| 059-F (feature) | `blocked` (unchanged) | Returned from 051-S, added to 054-S; still gated on 059.014-T sign-off before U1 can start |
+| 059-F (feature) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Returned from 051-S, added to 054-S; still gated on 059.014-T sign-off before U1 can start (dependency graph gates readiness, not the status field) |
+| U1 (059.001-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S; deps `059.007-T`(done)+`059.014-T`(queued) |
+| U2 (059.002-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S |
+| U3 (059.003-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S |
+| U4 (059.004-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S |
+| U5 (059.005-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S |
+| U6 (059.006-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S |
 | U7 (059.007-T) | `done`, archived (unchanged) | Pre-archived by PR #111; sole item that was ever a manifest member of the now-closed 051-S |
 | U8 (059.008-T) | `blocked` (unchanged, terminal) | Returned from 051-S; NOT added to 054-S; NOT archived; remains visible in queue as the accepted-residual evidence record |
 | U9 (059.009-T) | `blocked` (unchanged) | Not in 054-S; deps already re-pointed (PR #113) to 059.006-T + 059.013-T; later separate shipment |
+| U10 (059.010-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S |
+| U11 (059.011-T) | `queued` (transitioned from `blocked`, review-fix cycle 1) | Added to 054-S |
 | U12 (059.012-T) | `queued` (unchanged) | Not in 054-S; deps already re-pointed (PR #113) to 059.014-T; later separate shipment |
 | U13 (059.013-T, Option A) | `queued` (unchanged) | Not in 054-S; non-blocking follow-up, later separate shipment |
 | U14 (059.014-T, sign-off gate) | `queued` (unchanged) | Added to 054-S; operator sign-off gate — **not marked done, not bypassed, by this session** |
+
+### Review-fix cycle 1 (Copilot shadow review, PR #114)
+
+Copilot's shadow review on PR #114 correctly identified that `054-S`'s
+manifest, as originally assembled, could not pass Ship's own future Step 0.5
+intake reconciliation: `059-F` and all eight U1/U2/U3/U4/U5/U6/U10/U11 units
+were still `status: blocked` (a holdover from the OLD U8-gated dependency
+chain that PR #113 already rewired away from at the *dependency-edge*
+level, but their `status` field was never refreshed to match). `.ship.agent.md`
+primary-path step 6 runs `shipment-reconcile mode: pre` with
+`expected_status: queued` at intake, which halts with `status-mismatch` on
+any manifest member whose status isn't `queued`/`active` — completing
+`059.014-T` does not itself flip these members' status. Fixed by
+transitioning all nine affected items directly `blocked → queued` via
+`backlogit move <id> --status queued` (verified as a valid direct
+transition in this backlogit version; no intermediate `active` hop
+required). Re-verified afterward: all 10 `054-S` members now `status:
+queued`; `059.008-T`/`059.009-T` (out-of-scope, correctly excluded from
+`054-S`) remain `blocked`; `059.012-T`/`059.013-T` (out-of-scope) remain
+`queued`, untouched. A second Copilot finding on the same root cause (the
+new compound entry's procedure omitted this normalization step) was fixed
+by adding an explicit "restore to intake-valid status" step to
+`docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`.
+Both fixes pushed as a follow-up commit on this PR; reconciliation
+re-verified clean (see updated Reconciliation section below).
 
 **Never cascade-closed or archived**: verified before and after every
 mutation that `059-F` and all 13 non-U7 `059.*` siblings remained present in
