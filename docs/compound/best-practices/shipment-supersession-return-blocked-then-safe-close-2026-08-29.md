@@ -6,7 +6,7 @@ category: "best-practices"
 component: "shipment-reconcile skill + Ship Step 6 closure, backlogit shipment lifecycle"
 root_cause: "shipment-reconcile's pre-mode classifies any manifest item whose status does not match expected_status as status-mismatch (HALT); a shipment whose original scope produced a mixed outcome (one item done, one item terminally blocked, the covering feature itself blocked) cannot be safe-closed as-is without first removing the non-terminal members from the manifest, and any superseded-dependency-chain member later folded into a successor shipment while still `blocked` will fail that successor's own future intake"
 resolution_type: "workaround"
-severity: "low"
+severity: "high"
 message: "051-S manifest [059-F, 059.007-T, 059.008-T]: 059-F blocked, 059.008-T blocked (terminal evidence), 059.007-T done"
 file_path: ".github/skills/shipment-reconcile/SKILL.md"
 citations:
@@ -120,6 +120,24 @@ first — regardless of *when* it was returned or how it came to be
       entry, since stash operations are equally Stage-only under the same
       P-010 list — so Stage can independently review and decide
       normalization for itself.
+   4. **Never directly edits a returned item's `blocked_reason` or other
+      `custom_fields` planning text, even for a "clarifying wording
+      fix."** That is also an unclassified item-planning mutation,
+      fail-closed forbidden for Ship. **A prior version of this pattern
+      had Ship do exactly this** — rewording `059.008-T`'s
+      `blocked_reason` for clarity after it had already been returned
+      from `051-S`. A later, independent Stage ratification
+      (`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`,
+      converged `63f933a`, persisted as durable tracked evidence in
+      `303106c`) confirmed that edit was itself an un-legalized
+      **fourth**, distinct P-010 violation — separate from the
+      status-normalization violation above and the
+      shipment-creation/deletion violations in step 6 below — even
+      though the resulting text turned out, on independent review, to be
+      semantically correct. If a returned item's planning-field wording
+      needs correction, hand off the proposed text and rationale to
+      Stage in the closure/memory artifacts instead of editing it
+      directly.
 5. **Stage normalizes every superseded-chain member of the handed-off
    scope to an intake-valid status.** This step belongs to Stage, not
    Ship; it is described here only so the reusable procedure documents
@@ -201,7 +219,7 @@ first — regardless of *when* it was returned or how it came to be
    — so the handoff is genuinely actionable, not just structurally
    present.
 
-## Audit-Trail Caveat: Destructive Delete May Not Emit a Tombstone
+## Audit-Trail Caveat: Hook/Log Replay Is Incomplete for Deletions and Custom-Field Mutations (broadened, 2026-08-30)
 
 A later holistic correctness review of PR #114 (2026-08-29, post-closure)
 confirmed a **backlogit audit-trail limitation** directly relevant to
@@ -213,29 +231,49 @@ delete 054-S --force` emitted **no** deletion or tombstone event in
 either file. Replaying either file in isolation would therefore falsely
 infer the deleted artifact remains queued.
 
-**This is a tool limitation, not something to work around by hand-editing
-append-only hook/log files or inventing a synthetic tombstone event** —
-either action would corrupt tool-managed state this workspace's
-`backlogit` overlay treats as authoritative.
+A further frozen-diff reconciliation pass (2026-08-30) found the gap is
+**not unique to deletion**: `.backlogit/hooks_queue.jsonl` contains
+**zero** entries tagged `"custom_fields"` anywhere in the file. The
+`return-blocked` calls in step 1 above (which mutate
+`custom_fields.blocked_reason`) each leave an `item_blocked` entry in the
+affected item's own per-item log (`.backlogit/logs/<id>.jsonl`) but no
+corresponding entry in the central `hooks_queue.jsonl`; and the direct
+Ship `blocked_reason` edit that produced the fourth historical P-010
+violation (step 4 above) left **no** entry in either log at all.
 
-**Source-of-truth ordering for deletes**: prefer the **artifact store and
-current structured query state** (`backlogit get <id>`, `backlogit sync`
-artifact count, direct file existence / `git status --short` against
-`.backlogit/queue/<id>.md` and `.backlogit/archive/<id>.md`) over
-**replay-only hook/log history** whenever confirming that a delete
-occurred and completed. Hook/log replay remains reliable for creation,
-status-change, and other non-delete mutations, where events are
-consistently emitted.
+**This is a tool limitation, not something to work around by hand-editing
+append-only hook/log files or inventing a synthetic tombstone or any
+other event** — either action would corrupt tool-managed state this
+workspace's `backlogit` overlay treats as authoritative.
+
+**Source-of-truth ordering for deletes and custom-field mutations
+(corrected, narrower claim than the prior wording)**: prefer the
+**artifact store and current structured query state** (`backlogit get
+<id>`, `backlogit sync` artifact count, direct file existence /
+`git status --short` against `.backlogit/queue/<id>.md` and
+`.backlogit/archive/<id>.md`) over **replay-only hook/log history**
+whenever confirming that a delete, `return-blocked` call, or other
+`custom_fields`/planning-field mutation occurred and completed. Hook/log
+replay is proven reliable only for `create_artifact` and top-level
+`status`-change events; the prior wording's claim that it "remains
+reliable for creation, status-change, and other non-delete mutations" is
+not proven and is withdrawn — `custom_fields`/`blocked_reason` mutations
+are inconsistently captured, sometimes only in a per-item log and
+sometimes not at all.
 
 **Required evidence going forward**: any future operator-approved
-destructive recovery of a mistakenly created backlog artifact MUST
-capture explicit **before/after structured query evidence** at the time
-of the action (e.g. `backlogit get <id>` before and after; `backlogit
-sync` artifact count before and after; file-existence/`git status
---short` on the artifact's queue/archive path before and after) — do not
-rely on the hook/log stream alone to prove the deletion occurred, since
-`backlogit delete --force` is not guaranteed to emit a corresponding
-lifecycle event.
+destructive recovery of a mistakenly created backlog artifact, **or any
+manifest/custom-field mutation on an existing artifact (`return-blocked`,
+direct `blocked_reason`/`custom_fields` edits, etc.)**, MUST capture
+explicit **before/after structured query evidence** at the time of the
+action (e.g. `backlogit get <id>` before and after; `backlogit sync`
+artifact count before and after; file-existence/`git status --short` on
+the artifact's queue/archive path before and after; a before/after diff
+of the mutated field's text) — do not rely on the hook/log stream alone
+to prove the mutation occurred, since neither `backlogit delete --force`
+nor `custom_fields` edits are guaranteed to emit a corresponding
+lifecycle event. Never synthesize or tamper with hook/log entries to
+compensate for a gap in captured evidence.
 
 ## Prevention
 

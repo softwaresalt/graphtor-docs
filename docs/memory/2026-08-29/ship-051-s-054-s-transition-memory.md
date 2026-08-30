@@ -83,7 +83,16 @@ violation: Stage's independent ratification
 (`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`,
 commit `52c3bf1`) settles that normalization is Stage-exclusive and
 affirms the resulting `queued` disposition as semantically correct
-**without** retroactively legalizing the mutation that produced it. The
+**without** retroactively legalizing the mutation that produced it. A
+**fourth, distinct P-010** violation is also recorded: after `059.008-T`
+was returned from `051-S`, Ship separately mutated its `blocked_reason`
+planning field/body directly (review-fix cycle 3's wording correction) —
+an unclassified item-planning mutation, fail-closed forbidden. Stage
+independently ratified the current terminal `blocked_reason` text as
+semantically correct, durably recorded in a tracked `stage-ratification`
+body section on `.backlogit/queue/059.008-T.md` (Stage convergence
+`63f933a`, persisted as tracked PR evidence in `303106c`), **without**
+retroactively legalizing the mutation itself (see review-fix cycle 4). The
 scope below remains prepared (returned from `051-S`, status-normalized to
 `queued`, dependency-closed) as **individual, unshipped backlog items**,
 ready for a **future Stage session** to assemble into a successor
@@ -257,7 +266,10 @@ rather than auto-fixed:
 
 See the closure artifact's "Review-Fix Cycle 3" section for the full
 detail and the consolidated Risky Action Record entry in "Review-Fix
-Cycle 4" for all three historical violations.
+Cycle 4" for all four historical violations (a fourth, distinct P-010 —
+the `059.008-T` `blocked_reason` mutation — was identified and ratified
+by Stage in a later convergence pass; see the "Rescoped feasible scope"
+section above and the closure artifact's Review-Fix Cycle 4 section).
 
 ### Review-fix cycle 4 (Stage independent ratification + Ship correction)
 
@@ -294,9 +306,11 @@ round (comments `3888455427`, `3888512917`, `3888512942`, `3888512963`,
   forbids instructing Ship to delete a mistakenly created shipment as
   routine remediation.
 * Corrected this memory checkpoint and the closure artifact to
-  distinguish the three historical violations explicitly — **P-010**
+  distinguish the four historical violations explicitly — **P-010**
   (status normalization), **P-010** (shipment creation), **P-005**
-  (destructive deletion without approval) — rather than treating the
+  (destructive deletion without approval), **P-010** (`059.008-T`
+  `blocked_reason` mutation, ratified separately by Stage's later
+  convergence pass `63f933a`/`303106c`) — rather than treating the
   normalization as an open question or the deletion as a compliant revert.
 * Refreshed the PR body's Local Review Readiness block for the current
   HEAD and updated Follow-up 3 to reflect the resolved ownership rule
@@ -423,8 +437,14 @@ Confirmed independently ready, no residual dependency on `051-S`:
   (status unchanged at that point), then review-fix cycle 1 transitioned
   `status: blocked -> queued` (`blocked_reason` cleared as a side effect of
   that transition) — see Review-fix cycle 1 above
-* `.backlogit/queue/059.008-T.md` — `blocked_reason` updated (status
-  unchanged — stays `blocked`, correctly excluded from any shipment)
+* `.backlogit/queue/059.008-T.md` — `blocked_reason` updated twice (status
+  unchanged — stays `blocked`, correctly excluded from any shipment):
+  first by `return-blocked` (compliant, membership-only removal), then a
+  second, direct Ship edit in review-fix cycle 3 that corrected the
+  wording — the second edit is the **fourth**, distinct historical P-010
+  violation (unclassified item-planning mutation), ratified but not
+  retroactively legalized by Stage's later convergence pass (`63f933a`,
+  `303106c`); see the "Rescoped feasible scope" section above
 * `.backlogit/queue/059.001-T.md` through `059.006-T.md`, `059.010-T.md`,
   `059.011-T.md` — review-fix cycle 1 transitioned each `status: blocked ->
   queued` (`blocked_reason` cleared as a side effect where present)
@@ -482,27 +502,42 @@ in this checkpoint's own citations. Both are read/citation corrections —
 no append-only/tool-managed file was hand-edited, no immutable snapshot
 was rewritten, and neither finding is a new risky action.
 
-**Finding 1 — backlogit audit-trail limitation (delete emits no
-tombstone)**: `.backlogit/hooks_queue.jsonl` seq `1157` and
-`.backlogit/logs/054-S.jsonl` record only the creation event for `054-S`
-(`2026-08-29T20:39:07 -07:00`); the later `backlogit delete 054-S --force`
-emitted no deletion/tombstone event in either file — confirmed by direct
-inspection. Replaying either file alone would falsely infer `054-S`
-remains queued. This is a backlogit tool limitation, not something to
-remediate by hand-editing hook/log files or inventing a synthetic
-tombstone. **Source-of-truth ordering**: for deletes, prefer the artifact
+**Finding 1 — backlogit audit-trail limitation (broadened, 2026-08-30
+reconciliation): hook/log replay is incomplete for deletions and
+custom-field mutations, not just deletion**: `.backlogit/hooks_queue.jsonl`
+seq `1157` and `.backlogit/logs/054-S.jsonl` record only the creation
+event for `054-S` (`2026-08-29T20:39:07 -07:00`); the later `backlogit
+delete 054-S --force` emitted no deletion/tombstone event in either file —
+confirmed by direct inspection. Replaying either file alone would falsely
+infer `054-S` remains queued. This gap is not unique to deletion: direct
+inspection finds **zero** `custom_fields`-tagged entries anywhere in
+`hooks_queue.jsonl`; the `return-blocked` mutations on `059-F`/`059.008-T`
+each left a per-item `item_blocked` log entry but no central-log entry,
+and the later, distinct Ship edit to `059.008-T`'s `blocked_reason`
+(review-fix cycle 3's wording correction — the fourth historical P-010
+violation) produced **no** entry in either log at all. This is a backlogit
+tool limitation, not something to remediate by hand-editing hook/log files
+or inventing a synthetic tombstone or other event. **Source-of-truth
+ordering (corrected, narrower claim)**: for deletes and for
+`custom_fields`/`blocked_reason` mutations alike, prefer the artifact
 store and current structured query results (`backlogit get`, `backlogit
 sync` count, direct file existence) over replay-only hook/log history;
-hook/log replay remains reliable for creation and status-change events
-(as observed here for `054-S`'s own creation). **Forward requirement**:
-future operator-approved destructive recovery MUST capture explicit
+hook/log replay is proven reliable only for creation and status-change
+events — the prior claim that it "remains reliable for creation and
+status-change events" as if that were the only carve-out understated how
+incomplete replay is for manifest/custom-field mutations, and is now
+corrected. **Forward requirement**: future operator-approved destructive
+recovery, and any manifest/custom-field mutation, MUST capture explicit
 before/after structured query evidence at the time of the action, since
-delete may not emit a tombstone. Full detail and the resulting compound-
-procedure update are in
+neither delete nor `custom_fields` edits are guaranteed to emit a
+lifecycle event. Never synthesize or tamper with hook/log entries to
+compensate for a gap in captured evidence. Full detail and the resulting
+compound-procedure update are in
 `docs/closure/2026-08-29-051-s-toctou-transition-closure.md`'s
-"Post-Closure Correction" section and
+"Post-Closure Correction" and "Frozen-Diff Consensus Reconciliation"
+sections and
 `docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`'s
-new "Audit-Trail Caveat" section.
+"Audit-Trail Caveat" section.
 
 **Finding 2 — reconcile post-mode snapshot timing**: the annotation added
 above to the `.backlogit/reconcile/051-S-post-20260829-203815.md`
@@ -552,3 +587,32 @@ exclusive ownership of backlog/stash mutation and successor-shipment
 assembly under the fail-closed P-010 policy. Full detail is in
 `docs/closure/2026-08-29-051-s-toctou-transition-closure.md`'s
 "Post-Closure Correction" section.
+
+## Frozen-Diff Consensus Reconciliation (2026-08-30, PR #114)
+
+A final Ship-side documentation audit reconciliation, driven by
+frozen-diff review consensus on this PR. No subagents used; no merge
+performed; dirty `.gitignore` and all untracked/ignored files (including
+`docs/scratch/`) preserved untouched. Full narrative detail lives in
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md`'s
+"Frozen-Diff Consensus Reconciliation" section; summarized here for this
+checkpoint's own continuity:
+
+* Broadened the Finding 1 audit-trail caveat above (hook/log replay is
+  proven only for creation/status-change events, not for every
+  `custom_fields`/manifest mutation or every destructive action).
+* Recorded the fourth distinct historical violation (`059.008-T`
+  `blocked_reason` mutation, P-010) throughout this checkpoint and the
+  closure artifact; all "three violations" framing is corrected to four.
+* Cross-referenced Stage's convergence pass (`63f933a`), the
+  durable-ratification persistence fix (`303106c`), and
+  `9fa1e32a23a442a737c2120cb48bdee6e6fc2ff3` (Ship continuity-checkpoint
+  classification under the Role Boundary table — a latent policy
+  ambiguity closed, not an executed violation).
+* Clarified the closure artifact's Cycle 4 thread-count wording ("all six
+  threads outstanding entering Cycle 4," not every thread from Cycles 3-4).
+* Raised the compound entry's `severity` frontmatter from `low` to `high`.
+
+Reconciliation reports under `.backlogit/reconcile/` and the append-only
+`.backlogit/hooks_queue.jsonl`/`.backlogit/logs/*.jsonl` files remain
+untouched, per their immutable/append-only nature.
