@@ -445,6 +445,29 @@ precise transition for Ship, on its next cycle, is:
 3. **Do not treat `051-S` as safe to close merely because its feature was blocked** — closure is
    justified only by this decision's rescope, not by the block itself.
 
+### Status normalization + successor-shipment assembly ownership (Stage-owned; added 2026-08-30)
+
+Clarification following Copilot review comment `3888455427` on PR #114 and the Stage ratification
+decision `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`.
+The "returned-blocked tasks already exist for" phrasing in step 2 above must **not** be read as
+authorizing Ship to perform the `blocked → queued` normalization of the feasible units. Ownership
+is split as follows:
+
+* **Ship identifies, returns, and hands off.** Ship classifies the manifest, uses status-preserving
+  `return-blocked` to remove the non-terminal members from the manifest it owns, safe-closes the
+  evidence shipment, and records the rescoped scope in its closure/memory artifacts. Ship performs
+  **no** `blocked → queued` normalization and assembles **no** successor shipment.
+* **Stage normalizes and assembles.** Stage normalizes every superseded-chain member to an
+  intake-valid status (`blocked → queued`) where the only remaining blocker is a dependency edge on
+  another in-scope member or an already-`done`/gate item, rewires the feasible DAG, and — when a
+  fresh shipment is chosen — assembles the successor shipment under Step 5.5.
+
+The `blocked → queued` normalization is an `update backlog items` operation the Stage Role Boundary
+allows and the Ship Role Boundary does not enumerate; under fail-closed P-010 it is Stage-only. The
+earlier Ship-performed normalization of `059-F` and `059.001/002/003/004/005/006/010/011-T` remains
+a P-010 violation and is **not** retroactively legalized; Stage affirmed the resulting queued
+disposition only after independent review.
+
 ## Rejected Alternatives
 
 * **Option C (alt engine/architecture)** — disproportionate; large new audit/perf surface;

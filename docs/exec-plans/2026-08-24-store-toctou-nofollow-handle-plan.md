@@ -954,3 +954,14 @@ either re-scopes `051-S`'s manifest to the feasible task set (`059-F` + U1/U2/U6
 as the owner, or closes `051-S` (feasibility complete; engine binding infeasible/accepted) and
 Stage assembles a fresh implementation shipment. `049-S` is decoupled from `051-S` (sequencing-only
 edge, no code coupling, no schedule gain) so bug `7BF1961D` proceeds independently.
+
+**Status-normalization + assembly ownership (Stage-owned; added 2026-08-30).** Following Copilot
+review comment `3888455427` on PR #114 and
+`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`: the
+`blocked → queued` normalization of the feasible units (`059-F` + U1/U2/U6/U3/U4/U5/U10/U11) is a
+Stage `update backlog items` operation, not a Ship operation. Ship only identifies the non-terminal
+manifest members, `return-blocked`s them (status-preserving), safe-closes the evidence shipment, and
+hands off the rescoped scope; **Stage** performs the status normalization, rewires the feasible DAG,
+and assembles any successor shipment under Step 5.5. The prior Ship-performed normalization remains
+a P-010 violation and is not retroactively legalized — Stage affirmed the resulting `queued`
+disposition only after independent review.
