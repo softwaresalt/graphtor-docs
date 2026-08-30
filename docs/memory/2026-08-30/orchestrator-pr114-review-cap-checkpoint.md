@@ -127,7 +127,7 @@ any one in isolation risks reintroducing a fail-closed violation the other
 addresses — this is why the operator directed a single Stage/Prompt Builder
 pass over all four as one dependency graph rather than incremental point fixes.
 
-## Dependent P2 / Document Nodes (16 threads)
+## Dependent P2 / Document Nodes (11 threads)
 
 These are wording, count, or cross-reference defects in documents downstream of
 the P1 nodes above. None are structural; all remain genuinely unresolved at
@@ -230,7 +230,7 @@ stash item was created. No merge was attempted or performed.
    * Broaden the Continuity allowance to explicitly include recovery of prior
      Ship-owned checkpoints, while retaining the prohibition on touching
      another agent's state (resolves D).
-2. **Ship then aligns the 14 dependent P2/document nodes** listed above so they
+2. **Ship then aligns the 11 dependent P2/document nodes** listed above so they
    match whatever the Stage pass decides for (A)/(B), plus the independently
    correctable wording/count/cross-reference defects that do not depend on the
    P1 outcome (H1/title frontmatter, terminal-state wording, nine-vs-ten count,
