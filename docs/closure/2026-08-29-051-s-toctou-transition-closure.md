@@ -1186,6 +1186,91 @@ historical violations recorded above; it exists solely so the closure's
 own contract summary does not misdirect a future reader to semantics
 `45876b6` has since superseded.
 
+## Final Review-Cap Checkpoint (2026-08-30, PR #114 HEAD `484c5c63693c6a44b62b65d83563d3c8e37a726e`) — BLOCKED
+
+This is the final Ship-side checkpoint for this session. The operator's
+prior instruction was to continue correction/re-review but to report if
+three more rounds failed to converge; three additional blocker-focused
+rounds have now run beyond the prior review-fix cap and did not reach
+zero P1. Per the review-fix circuit breaker
+(`.github/instructions/github-pr-automation.instructions.md` §1.8,
+`circuit-breaker.instructions.md` "Review-fix cycles per task: 3") and the
+operator's explicit stop condition, **no further fix is being applied this
+session**. Full detail, the 9-persona review method note, and the
+rejected/downgraded findings with rationale are recorded in
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+("Resumption / Resolution #3 — Final Review-Cap Checkpoint"); this section
+summarizes the current readiness state only and does not restate that
+evidence in full.
+
+**Method note**: the Engram daemon was unavailable after two valid
+connection attempts, degrading indexed code-graph coverage for these three
+rounds. Review substituted a frozen SHA-qualified full diff (HEAD `45876b6`
+through current HEAD `484c5c6`) reviewed by a 9-persona pass instead.
+
+### Local Review Readiness (current)
+
+- Reviewed HEAD: `484c5c63693c6a44b62b65d83563d3c8e37a726e`
+- Outcome: `BLOCKED`
+- Blocking findings: `P0=0, P1=4`
+  1. `.github/agents/.stage.agent.md` root creation dead path — the
+     fail-closed `backlogit_create_item` allowance requires `parent_id`
+     for an existing covering feature even when creating that root
+     feature; future fix must permit top-level feature creation with no
+     parent while still requiring `parent_id` for child tasks/subtasks.
+  2. `.github/skills/shipment-reconcile/SKILL.md` phase-input deadlock —
+     pre-mode recognizes `current-delivery-pending-finalization` via
+     proof conditions requiring `merge_commit_sha`/origin-main
+     confirmation, but the input contract only supplies the merge SHA to
+     safe-close/post, and Ship direct-resume has no merge yet at
+     pre-mode; future fix must separate preflight candidate
+     classification from safe-close's authoritative proof, or supply the
+     post-merge input only at the closure preflight step.
+  3. Same skill — lock halt/resume gap — multiple safe-close halt paths
+     after relocation do not explicitly release the canonical logical
+     lock or define a persisted owner/checkpoint resume; reacquisition on
+     a missing queue target fails closed and can strand closure; future
+     fix must define release-on-every-halt before mutation, or an
+     owner-validated resumable lock handoff/checkpoint protocol after
+     mutation.
+  4. Same skill — foreign-prearchive evidence timing — a foreign
+     pre-archived member with missing/contradictory commit evidence is
+     allowed through pre-mode and only fails mid safe-close, potentially
+     after earlier members mutate; the historical evidence-remediation
+     workflow is named but has no entry point/mode; future fix must
+     preflight all archived evidence before any mutation and define the
+     remediation handoff/entry point.
+- Full local build: `not applicable` is **not** claimed — this PR now
+  includes YAML/config changes (`.github/agents/`, `.github/policies/`,
+  `.github/skills/`), not only backlog-state/docs content. Per `gh pr
+  checks 114` / `gh api .../check-runs` at this HEAD: `detect code
+  changes` = `pass` (8s), `build` = `pass` (3m12s — GitHub Actions ran the
+  build job because the path filter matched the YAML/config changes),
+  `copilot-pull-request-reviewer` = `success`.
+- Follow-ups: a new Stage/Prompt Builder pass is required to resolve the
+  four accepted P1 blockers above as a single dependency set; no backlog
+  IDs were created in this capped Ship session for that follow-up work.
+  Rejected/downgraded findings this pass (not accepted as blockers, with
+  rationale) — recorded in full in the memory checkpoint above:
+  shipment `shipped` status is not unsupported (`.backlogit/header-def.yaml`
+  already defines it; `fec8818e`/`e0c02ae` already aligned routing/config/
+  SQL-docs); CLI/MCP transport branching and native atomic-tool requests
+  are architectural P2 follow-ups, not current P0/P1; the historical four
+  P-005/P-010 violations and two historical process gaps remain permanent
+  audit residuals, not newly curable blockers; append-only `054-S` event
+  history and mandatory checkpoint files stay, not removed as scope
+  cleanup.
+- Shadow review / hosted threads: paginated GraphQL
+  (`reviewThreads(first:100)`, single page, `hasNextPage=false`) reports
+  86 total threads, 36 resolved, **50 unresolved** at this HEAD. No thread
+  was replied to or resolved by this checkpoint pass.
+
+**PR #114 remains BLOCKED and must not be merged.** No subagent was used
+for this checkpoint, no merge was attempted, and no GitHub review thread
+was replied to or resolved by this pass. This section does not alter,
+redact, or supersede any prior section of this closure record, all of
+which remain accurate historical record.
+
 ## Cross-References
 
 * `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
@@ -1259,6 +1344,13 @@ own contract summary does not misdirect a future reader to semantics
   and explicit P-010/P-005 approval-vs-role-authority wording across P-007/
   P-010/P-015 — see "Current-Contract Reconciliation" above; does not
   reopen or alter any of the four historical violations recorded above
+* `a8653eb`, `c55135a`, `fec8818e`, `e0c02ae`, `484c5c6` — further
+  agent/skill/instruction/decision-doc alignment commits landing between
+  the `45876b6` reconciliation and current HEAD `484c5c63693c6a44b62b65d83563d3c8e37a726e`;
+  reviewed by the three additional blocker-focused rounds recorded in
+  "Final Review-Cap Checkpoint" above, which found 4 new accepted P1
+  blockers (none of these commits resolves them) and rejected/downgraded
+  several other candidate findings — see that section for full detail
 * `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`
 * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`
 * `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`

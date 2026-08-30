@@ -409,3 +409,129 @@ Reason," "Deduplicated Blocking Graph," "Dependent P2 / Document Nodes," or
 "Preservation Status" content, nor the first "Resumption / Resolution"
 section at HEAD `537daaf`, both of which remain the accurate historical
 record.
+
+## Resumption / Resolution #3 — Final Review-Cap Checkpoint (2026-08-30, PR #114 HEAD `484c5c63693c6a44b62b65d83563d3c8e37a726e`)
+
+Everything above this section — the original halt/cap record at HEAD
+`1080120`, the first Resumption/Resolution at HEAD `537daaf`, and
+Resumption/Resolution #2 at HEAD `3fb4fd0` — is left as written; this
+section does not alter, redact, or supersede any of it. This is the
+**final** checkpoint for this Ship session: the operator's prior
+instruction was to continue correction/re-review but to report if three
+more rounds failed to converge. Three additional blocker-focused rounds
+have now run beyond the prior cap and did not reach zero P1. **No further
+fixes are being applied this session.**
+
+### Method note — Engram degraded, frozen-diff + 9-persona review used instead
+
+The Engram daemon was unavailable after two valid connection attempts this
+pass, so indexed code-graph/impact-analysis coverage was degraded for these
+three rounds. Per the fallback protocol, review substituted a frozen
+SHA-qualified full diff (against the prior documented HEAD `45876b6`
+through current HEAD `484c5c6`) reviewed by a 9-persona pass, rather than
+Engram-backed graph traversal. This is a coverage-quality caveat on the
+findings below, not a claim that no review occurred.
+
+### Accepted P1 blockers (4) — none resolved this session
+
+| # | Node | Finding | Required future fix |
+|---|---|---|---|
+| 1 | `.github/agents/.stage.agent.md` root creation dead path | The fail-closed `backlogit_create_item` allowance requires `parent_id` for an existing covering feature even when creating that root feature itself — a self-referential precondition with no path to satisfy it for the first (root) feature. | Permit top-level feature creation with no `parent_id`, while still requiring `parent_id` for child tasks/subtasks. |
+| 2 | `.github/skills/shipment-reconcile/SKILL.md` phase-input deadlock | Pre-mode recognizes `current-delivery-pending-finalization` by invoking proof conditions that include `merge_commit_sha`/origin-main confirmation, but the input contract only supplies the merge SHA to safe-close/post — and Ship's direct-resume path has no merge yet at pre-mode time. | Separate preflight candidate classification from safe-close's authoritative proof, or explicitly provide the required post-merge input only at the closure preflight step where it actually exists. |
+| 3 | Same skill — lock halt/resume gap | Multiple safe-close halt paths after relocation do not explicitly release the canonical logical lock, and do not define a persisted owner/checkpoint resume; reacquisition on a missing queue target fails closed, so closure can strand itself holding an unreleased lock with no defined recovery. | Define release-on-every-halt before mutation, or an owner-validated resumable lock handoff/checkpoint protocol after mutation. |
+| 4 | Same skill — foreign-prearchive evidence timing | A foreign pre-archived member with missing/contradictory commit evidence is allowed through pre-mode and only fails mid safe-close — potentially after earlier members have already mutated. The historical evidence-remediation workflow is named but has no entry point/mode to invoke it. | Preflight all archived evidence before any mutation, and define the remediation handoff/entry point so a contradictory foreign artifact halts before any member is touched. |
+
+These four are carried forward as the current, unresolved blocking set.
+None was fixed this session — this checkpoint is halt-and-record only, per
+the operator's explicit stop condition.
+
+### Rejected / downgraded findings this pass (with rationale)
+
+* **Shipment `shipped` status is NOT unsupported.**
+  `.backlogit/header-def.yaml` already defines the `shipped` status value;
+  commit `fec8818e` ("fix(harness): align status routing with shipment
+  terminal states") already aligned archive routing, config, and export
+  maps to it, and `e0c02ae` ("fix(instructions): document persisted
+  items.status union with per-type limits") already aligned the SQL/docs
+  references. No P1 remains on this thread — the finding described a
+  state that was already corrected on this branch before this review
+  pass began.
+* **CLI/MCP transport branching and native atomic-tool requests are
+  architectural P2 follow-ups, not current P0/P1.** The
+  selected-transport branches (see "Current-Contract Reconciliation" HEAD
+  `45876b6` above) are explicit and fail-closed — an unsupported or
+  ambiguous transport halts rather than silently degrading — so this is a
+  design-improvement opportunity, not a defect blocking this PR.
+* **The historical four P-005/P-010 violations and the two historical
+  process gaps (lock-not-held; evidence-recorded-after-archival-relocation)
+  remain permanent audit residuals, not newly curable blockers.** They are
+  not re-litigated, reopened, or added to the accepted P1 list above; they
+  stay exactly as recorded in the prior sections of this file and in the
+  closure artifact.
+* **Append-only `054-S` event history and mandatory checkpoint files stay
+  as-is.** They are not removed or trimmed as scope cleanup; this session
+  performed no destructive or tidying mutation against them.
+
+### Circuit breaker / cap status
+
+Review-fix cycle cap
+(`.github/instructions/github-pr-automation.instructions.md` §1.8, mirrored
+by `circuit-breaker.instructions.md` "Review-fix cycles per task: 3") was
+already reached before this pass (see the original halt record above).
+The operator's explicit instruction — continue correction/re-review, but
+report if three more rounds fail to converge — has now also been
+exhausted: three additional blocker-focused rounds ran and did not reach
+zero P1 (4 remain, per the accepted table above). **No further fix is
+being applied this session.** PR #114 remains **BLOCKED** and **must not
+be merged**. No subagents were used for this checkpoint. No merge was
+attempted. No GitHub review thread was replied to or resolved by this
+pass.
+
+### CI / build truth at this HEAD
+
+This PR now includes YAML/config changes (`c55135a`, `fec8818e`, `e0c02ae`
+touch `.github/agents/`, `.github/policies/`, `.github/skills/`
+instruction/config files), not only backlog-state/docs content. Per
+`gh pr checks 114` and `gh api .../check-runs` at HEAD `484c5c6`: `detect
+code changes` = `pass` (8s), `build` = `pass` (3m12s, GitHub Actions did
+run the build job for this HEAD because the path filter matched the
+YAML/config changes), `copilot-pull-request-reviewer` = `success`. Build
+non-applicability is **not** claimed here — the build job executed and
+passed.
+
+### Thread state at this HEAD (paginated GraphQL, single page)
+
+`reviewThreads(first:100)` returned `pageInfo.hasNextPage = false` with 86
+total threads on a single page: 36 resolved, **50 unresolved**. No thread
+was replied to or resolved by this checkpoint pass — this is a read-only
+count for the readiness record.
+
+### Preservation / scope discipline
+
+Read-only investigation only for this pass: `git log`, `gh pr checks`,
+`gh api` (check-runs, GraphQL review threads), and file review against
+tracked content. No `.backlogit/` artifact was created, mutated, claimed,
+or archived. No backlog item or stash entry was created — the four
+accepted P1 blockers above require a fresh Stage/Prompt Builder pass, not
+a Ship-side fix, and no such pass was run in this capped session. Local
+dirty/untracked state (`.gitignore` modification, `docs/scratch/`,
+`git_commands.py`, `run_git_commands.sh`) is left exactly as found, per
+the preservation convention already recorded above.
+
+### Next steps
+
+1. **A new Stage/Prompt Builder pass** must resolve the four accepted P1
+   blockers above as their own dependency set. No backlog IDs were created
+   in this capped Ship session for that follow-up work.
+2. **Do not merge PR #114** until that pass lands and a fresh current-HEAD
+   local review confirms `P1=0`.
+3. **GraphQL thread reply/resolution** for the 50 unresolved hosted
+   threads remains a distinct, pending step, out of scope for this halt
+   checkpoint.
+4. **Readiness block refresh** — the PR body's `Local Review Readiness`
+   block is updated by this same checkpoint task to reference this HEAD,
+   `Outcome: BLOCKED`, `P0=0, P1=4`, per the closure and PR-body updates
+   accompanying this file.
+
+This section does not alter, redact, or supersede any content in the
+sections above, all of which remain the accurate historical record.
