@@ -247,8 +247,10 @@ No async rollout.
 * Rescoped scope: 10 dependency-closed items — `059-F` plus the eight
   implementation tasks (`059.001/002/003/004/005/006/010/011-T`) were
   `blocked → queued` normalized (Review-Fix Cycle 1 below); the sign-off
-  gate `059.014-T`, the tenth member, was **created and remains `queued`**
-  and required no normalization. **All 10 confirmed `status: queued`**
+  gate `059.014-T`, the tenth item (a Mode R prerequisite, never itself a
+  shipment member — see "Mode R Fail-Closed Partition Correction" below),
+  was **created and remains `queued`** and required no normalization.
+  **All 10 confirmed `status: queued`**
   (intake-valid), **unshipped** (no successor shipment created by Ship —
   see Review-Fix Cycle 2 below).
 * `049-S`: confirmed `queued`, zero dependencies, independently claimable.
@@ -877,17 +879,25 @@ orchestrator checkpoint memory are edited.
 now resolved at the agent-contract/Stage-decision level:
 
 * **(A) Stage recovery/assembly path** — resolved by
-  `.github/agents/.stage.agent.md`'s new Step 5.5 **Mode R**
+  `.github/agents/.stage.agent.md`'s Step 5.5 **Mode R**
   ratified-existing-scope handoff, and by the durable, exact-ID
   authorization in
   `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
   § *Mode R Authorization for Successor-Shipment Assembly*: covering
-  feature `059-F`, the exact 10-ID `handoff_ids` set (`059-F`,
-  `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`,
-  `059.006-T`, `059.010-T`, `059.011-T`, `059.014-T`), and the parent-first
-  assembly order `059-F → 059.014-T → 059.001-T → 059.002-T → 059.006-T →
-  059.003-T → 059.004-T → 059.005-T → 059.010-T → 059.011-T`, with
-  `059.007-T` cited as an external terminal prerequisite (not a member).
+  feature `059-F`; `member_ids` exactly 9 (`059-F`, `059.001-T`,
+  `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`,
+  `059.010-T`, `059.011-T`) — these and only these become `assembly_ids`,
+  in the parent-first order `059-F → 059.001-T → 059.002-T → 059.006-T →
+  059.003-T → 059.004-T → 059.005-T → 059.010-T → 059.011-T`;
+  `prerequisite_ids` exactly 2 (`059.007-T`, `done`/archived and already
+  satisfied, and `059.014-T`, the operator sign-off gate, `queued` until
+  sign-off moves it to `done`/archived) — neither is ever a shipment
+  member; and `handoff_ids`, the 11-ID auditable union of those two sets
+  and nothing more, never the assembly set. **As first recorded (HEAD
+  `537daaf`) this bullet named a single 10-ID `handoff_ids` set that
+  folded the sign-off gate into the member list and the assembly order;
+  `378444e`/`3fb4fd0` corrected that to the disjoint sets above — see the
+  "Mode R Fail-Closed Partition Correction" section below.**
 * **(B) `051-S` closure-timing sequencing** — resolved by the same
   decision's § *Supersession of the PR #113 `051-S` Closure-Timing
   Requirement*: an evidence-shipment closure (this closure's own subject)
@@ -950,6 +960,81 @@ pass; see
 `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
 resumption section for the current status of each thread.
 
+## Mode R Fail-Closed Partition Correction (2026-08-30, PR #114 HEAD `3fb4fd0`)
+
+A further Ship-side documentation alignment pass, driven by new Mode R review
+findings raised after `537daaf` and resolved by the agent-contract/Stage-state
+pair `378444e`/`3fb4fd0` landed later on this same PR. No subagents, no merge,
+no backlog/stash/shipment mutation. Dirty `.gitignore` and all
+untracked/ignored files preserved; only this closure artifact, the transition
+memory checkpoint, the compound best-practices entry, and the orchestrator
+checkpoint memory are edited.
+
+**Root fixes landed by `378444e`** (`.github/agents/.ship.agent.md` +
+`.github/agents/.stage.agent.md`):
+
+* **Disjoint Mode R sets, fail-closed.** Step 5.5 Mode R now requires the
+  ratifying authorization to name two disjoint exact sets — `member_ids` (the
+  items intended for shipment; become `assembly_ids` verbatim) and
+  `prerequisite_ids` (external gates/terminal prerequisites, never shipped,
+  never counted in the manifest) — with `handoff_ids` demoted to an auditable
+  union of the two and nothing more. An ID named in both sets, or not named in
+  either, is a halt, not a skip.
+* **Fail-closed add/manifest behavior in Mode R.** Any add failure, a member
+  found concurrently assigned to another shipment, status drift since
+  validation, or any manifest read-back discrepancy now halts assembly
+  immediately in Mode R — never skip-and-record-the-reason (that tolerance now
+  applies to Mode H only). An unverified `shipment_id` is never handed off;
+  the exact-manifest read-back (Step 5.5 item 7) is the publication gate.
+* **Complete Stage mutation classification.** Stage's operation table now
+  classifies every state-mutating backlogit operation it uses:
+  `backlogit_create_item`, `backlogit_update_item`, `backlogit_append_comment`,
+  `backlogit_add_dependency`/`backlogit_remove_dependency`,
+  `backlogit_add_link`/`backlogit_remove_link`, `backlogit_move_item` (status
+  Stage has ratified/normalized on a work item, or complete/archive on a
+  `backlog-md` work item — never a stash-archival fallback),
+  `backlogit_archive_item`, `backlogit_stash`/`backlogit_stash_edit`,
+  `backlogit_deliberate`, `backlogit_harvest_stash`, and
+  `backlogit_stash_archive`; `backlogit_delete_item` and
+  `backlogit_track_commit` are explicitly Forbidden for Stage (commit
+  evidence is Ship's execution/closure record, P-010); and any other
+  state-mutating operation is Forbidden by the fail-closed rule until
+  classified.
+* **Ship commit-tracking authority.** Ship's Allowed column now names
+  `backlogit_track_commit` (or the registry-equivalent `commit` field) as
+  evidence-only authority: it may record the actual, already-`origin/main`-
+  confirmed merge commit SHA of Ship's current shipment or its member tasks
+  as closure/reconciliation evidence, and nothing else — no scope,
+  acceptance-criteria, dependency, priority, or status authority, and no
+  authority over any item outside Ship's current shipment.
+* **Removal of the invalid `move_item` stash fallback.** Stage's stash-entry
+  retirement step no longer falls back to `backlogit_move_item` when
+  `backlogit_stash_archive` is unavailable — a hex stash ID is not a
+  backlog-item ID, so that fallback mutated the wrong object through the
+  wrong API. The corrected default is: leave the stash entry untouched,
+  record a retirement handoff naming the entry and its promotion target, and
+  report the missing capability as a block.
+
+**Alignment landed by `3fb4fd0`** (Stage-owned decision/plan/backlog-item/
+memory artifacts — the four Ship-owned continuity artifacts listed at the
+top of this section are aligned separately, by this same pass): the `059-F`
+Mode R authorization now names `member_ids` exactly 9, `prerequisite_ids`
+exactly 2 (`059.007-T`, `059.014-T`), and `handoff_ids` as their 11-ID
+auditable union only; the assembly order lists the 9 `member_ids` only
+(`059.014-T` removed from position 2); and the normalized-scope count is
+corrected to nine members — `059.014-T` was never `blocked`, was never
+normalized, and is a prerequisite, not a member. No item status, dependency
+edge, shipment, or sign-off state changed by either commit.
+
+This pass does **not** legalize any of the four historical violations
+recorded above (status normalization; `054-S` shipment creation; its
+unapproved deletion; `059.008-T` `blocked_reason` mutation) — all four
+remain standing, un-legalized historical record, unchanged by this pass.
+**Final current-HEAD review and GraphQL thread reply/resolution remain a
+pending follow-up** — not performed by this pass; see
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
+newest resumption section for the current status.
+
 ## Cross-References
 
 * `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
@@ -963,7 +1048,21 @@ resumption section for the current status of each thread.
 * `537daaf1d93be7e2d0326736885dbeecf8a4cdd6` — Stage-state commit: names
   the exact 10-ID Mode R `handoff_ids` set and assembly order for `059-F`,
   and supersedes the PR #113 `051-S` closure-timing precondition with
-  evidence-based rationale (resolves blocking node B)
+  evidence-based rationale (resolves blocking node B). **The 10-ID
+  `handoff_ids` framing here was later corrected by `378444e`/`3fb4fd0` —
+  see "Mode R Fail-Closed Partition Correction" above.**
+* `378444e393a84af03f0316db88967ac80d0a7846` — agent-contract fix: corrects
+  Step 5.5 Mode R to require disjoint `member_ids`/`prerequisite_ids` sets,
+  fail-closes assembly on add failure/drift/manifest mismatch, completes
+  Stage's mutation classification table, allows Ship's evidence-only
+  `backlogit_track_commit`, and removes the invalid `move_item` stash
+  fallback (resolves the disjoint-set gap in Mode R node A)
+* `3fb4fd035a7f9d90c2fd9fadab0a3ffb85eb8c91` — Stage-state alignment
+  commit: renames the `059-F` Mode R authorization's `handoff_ids` to
+  disjoint `member_ids` (9) / `prerequisite_ids` (2), corrects the
+  normalized-scope count to nine, and fixes Stage memory chronology and
+  the `054-S` deletion wording (aligns node A's decision-doc citation and
+  the nine-vs-ten count to the corrected Mode R contract)
 * `63f933a736b59279d09748b5b3795c928e99e3d4` — Stage's convergence pass:
   appended durable Stage-ratification comments to `059.014-T`/`059.008-T`
   and recorded the fourth distinct Ship P-010 (`059.008-T` `blocked_reason`
@@ -1002,9 +1101,11 @@ resumption section for the current status of each thread.
 ## Stash Follow-Up Review
 
 One genuine follow-up exists — **a future Stage session must assemble the
-rescoped 10-item scope (`059-F` + U1/U2/U3/U4/U5/U6/U10/U11 + `059.014-T`)
-into a successor shipment** — but this closure does **not** create a stash
-entry for it. `.github/policies/workflow-policies.md`'s P-010 definition
+9-member scope (`059-F` + U1/U2/U3/U4/U5/U6/U10/U11) — `member_ids` under
+Step 5.5 Mode R — into a successor shipment once both `prerequisite_ids`
+are satisfied: `059.007-T` (already `done`/archived) and `059.014-T` (the
+operator sign-off gate, still `queued`)** — but this closure does **not**
+create a stash entry for it. `.github/policies/workflow-policies.md`'s P-010 definition
 lists "Perform stash operations, triage, or deliberation" under **Ship MUST
 NOT**, the same unconditional list that forbids shipment creation (see
 Review-Fix Cycle 2). Recording this follow-up as a stash entry would repeat

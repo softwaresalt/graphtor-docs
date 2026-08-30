@@ -279,7 +279,7 @@ in two commits later on this branch:
 
 | Node | Original finding | Resolution |
 |---|---|---|
-| (A) Stage has no authorized existing-scope recovery/assembly path | Step 5.5 was harvest-only (`.stage.agent.md:482-487`) | `.stage.agent.md`'s new Step 5.5 **Mode R** ratified-existing-scope handoff, plus the durable, exact-10-ID authorization in `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md` § *Mode R Authorization for Successor-Shipment Assembly* (`handoff_ids`: `059-F`, `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`, `059.010-T`, `059.011-T`, `059.014-T`; assembly order `059-F → 059.014-T → 059.001-T → 059.002-T → 059.006-T → 059.003-T → 059.004-T → 059.005-T → 059.010-T → 059.011-T`) |
+| (A) Stage has no authorized existing-scope recovery/assembly path | Step 5.5 was harvest-only (`.stage.agent.md:482-487`) | `.stage.agent.md`'s Step 5.5 **Mode R** ratified-existing-scope handoff, plus the durable authorization in `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md` § *Mode R Authorization for Successor-Shipment Assembly* (`member_ids` exactly 9: `059-F`, `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`, `059.010-T`, `059.011-T`; `prerequisite_ids` exactly 2: `059.007-T`, `059.014-T`; `handoff_ids` their 11-ID audit union only; assembly order `059-F → 059.001-T → 059.002-T → 059.006-T → 059.003-T → 059.004-T → 059.005-T → 059.010-T → 059.011-T`). *As first resolved (HEAD `537daaf`) this cell named a single 10-ID `handoff_ids` set that folded `059.014-T` into the member list; corrected by `378444e`/`3fb4fd0` — see the newest Resumption section below.* |
 | (B) `051-S` closed before `059.014-T` sign-off, sequencing unresolved | no explicit Stage decision superseded/ratified the timing | Same decision's § *Supersession of the PR #113 `051-S` Closure-Timing Requirement* — an evidence-shipment closure may precede sign-off, provided it archives only delivered members, returns non-terminal members status-preservingly, accepts no residual risk, and starts no implementation; `059.014-T` gates successor-shipment assembly and implementation only; **explicitly not a retroactive security sign-off** |
 | (C) Ship's Role Boundary doesn't enumerate `return-blocked` | unclassified P-010 gap under fail-closed evaluation | `.ship.agent.md`'s Role Boundary Allowed column now explicitly names the narrow, status-preserving `return-blocked` operation (scoped to `shipment-reconcile`/safe-close, exact blocked reason only, no broader planning authority), plus a companion Mutation Classification (P-010 fail-closed) table |
 | (D) Continuity scoped to "current session" only | stale-checkpoint recovery of prior-session checkpoints was unclassified | Continuity row on both agents broadened to Ship-/Stage-owned checkpoints from the current **or a prior** session for the same shipment/PR/scope, after validating owner and scope on each checkpoint before resolving it |
@@ -334,3 +334,78 @@ This section does not alter, redact, or supersede the original "Exact Stop
 Reason," "Deduplicated Blocking Graph," "Dependent P2 / Document Nodes," or
 "Preservation Status" content above, which remains the accurate historical
 record of the halt at HEAD `1080120`.
+
+## Resumption / Resolution #2 (2026-08-30, PR #114 HEAD `3fb4fd0`)
+
+Everything above this section — the original halt/cap record at HEAD
+`1080120` and the first Resumption/Resolution at HEAD `537daaf` — is left
+as written; this section does not alter, redact, or supersede either. It
+documents what changed on the branch since, without rewriting that
+evidence.
+
+### New Mode R review findings: resolved
+
+Node (A)'s HEAD-`537daaf` resolution (table above) named a single 10-ID
+`handoff_ids` set that folded the sign-off gate `059.014-T` into the member
+list and the assembly order. Further Copilot shadow-review findings on that
+framing were resolved by two commits landed later on this branch:
+
+* `378444e` — agent-contract fix: `.github/agents/.ship.agent.md` +
+  `.github/agents/.stage.agent.md`
+* `3fb4fd0` — Stage-state alignment commit: `.backlogit/queue/059-F.md`,
+  `.backlogit/queue/059.014-T.md`,
+  `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`,
+  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`,
+  `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`,
+  `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`
+
+| Finding | Resolution |
+|---|---|
+| Mode R's single `handoff_ids` set conflated shipment members with external gates — no fail-closed halt on add failure/drift/manifest mismatch | `378444e` corrects Step 5.5 Mode R to a disjoint two-set contract: `member_ids` (become `assembly_ids` verbatim) and `prerequisite_ids` (never shipped, never counted in the manifest), with `handoff_ids` demoted to an auditable union of the two only. Any add failure, concurrent shipment assignment, status drift, or manifest read-back discrepancy now halts Mode R assembly immediately — never skip-and-record (that tolerance is Mode H-only) — and an unverified `shipment_id` is never handed off |
+| Stage's mutation classification table was incomplete (several state-mutating backlogit operations Stage actually uses were unclassified) | `378444e` classifies every state-mutating operation Stage uses: `create_item`, `update_item`, `append_comment`, `add_dependency`/`remove_dependency`, `add_link`/`remove_link`, `move_item` (ratified status on a work item, or complete/archive a `backlog-md` work item — never a stash-archival fallback), `archive_item`, `stash`/`stash_edit`, `deliberate`, `harvest_stash`, `stash_archive`; `delete_item` and `track_commit` are explicitly Forbidden for Stage; any other state-mutating operation is Forbidden by the fail-closed rule until classified |
+| Ship had no classified authority to record closure/reconciliation commit evidence | `378444e` adds `backlogit_track_commit` (or the registry `commit` field) to Ship's Allowed column as evidence-only: records the actual, already-`origin/main`-confirmed merge commit SHA of Ship's current shipment or its member tasks, and nothing else |
+| Stage's stash-entry retirement step fell back to `backlogit_move_item` when `backlogit_stash_archive` was unavailable — invalid, since a hex stash ID is not a work-item ID | `378444e` removes that fallback; the corrected default is to leave the stash entry untouched, record a retirement handoff naming the entry and its promotion target, and report the missing capability as a block |
+| The `059-F` Mode R authorization named a single 10-ID `handoff_ids` set and a 10-step assembly order that included `059.014-T` | `3fb4fd0` renames it to `member_ids` exactly 9, `prerequisite_ids` exactly 2 (`059.007-T`, `059.014-T`), `handoff_ids` their 11-ID auditable union only, and a 9-step assembly order with `059.014-T` removed from position 2 |
+| The normalized-scope count was stated as ten (`059-F` + 8 tasks + `059.014-T`) | `3fb4fd0` corrects it to nine: `059.014-T` was never `blocked`, was never normalized, and is a prerequisite, not a member |
+| Stage memory misstated the initial `059.014-T`/`059.008-T` ratifications as tracked from the start, and the `054-S` deletion as "reverted" | `3fb4fd0` corrects the chronology (local-only `backlogit comment add` first, tracked `stage-ratification` sections written later by `303106c`) and the `054-S` wording (unapproved destructive P-005 violation, not compliant remediation) |
+
+**None of this retroactively legalizes** the four historical violations
+recorded above and in
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md` (status
+normalization; `054-S` shipment creation; its unapproved deletion;
+`059.008-T` `blocked_reason` mutation). All four remain standing,
+un-legalized historical record; none of them was a Mode R assembly call.
+
+### Ship-owned continuity/knowledge artifacts aligned by this pass
+
+This pass touches the same four Ship-owned continuity/knowledge artifacts
+the first Resumption/Resolution touched:
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md` (new "Mode R
+Fail-Closed Partition Correction" section, corrected Mode R node (A)
+description, corrected Cross-References, corrected Stash Follow-Up Review
+9-member wording),
+`docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md` (new "Mode R
+Partition-Alignment Correction" section, corrected node (A) bullet),
+`docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`
+(new "Mode R Partition-Alignment Correction" addendum, corrected 10-item
+scope wording and assembly-path bullet), and this memory checkpoint (node
+(A) table cell corrected, this new resumption section appended).
+
+### Still pending (unchanged from the first resumption)
+
+* **Final current-HEAD review** — a fresh local review against the HEAD
+  this commit produces has not yet been run.
+* **GraphQL thread reply/resolution** — none of the threads named in either
+  resumption section (P1 or P2), nor the new Mode R review findings
+  resolved by `378444e`/`3fb4fd0` above, have been replied to or resolved
+  via the GraphQL `resolveReviewThread` mutation by this pass. That remains
+  a distinct, pending follow-up step, out of scope for this alignment
+  pass.
+* **Readiness block refresh** — the PR's `Local Review Readiness` block
+  still needs updating for the new HEAD once the above completes.
+
+This section does not alter, redact, or supersede the original "Exact Stop
+Reason," "Deduplicated Blocking Graph," "Dependent P2 / Document Nodes," or
+"Preservation Status" content, nor the first "Resumption / Resolution"
+section at HEAD `537daaf`, both of which remain the accurate historical
+record.

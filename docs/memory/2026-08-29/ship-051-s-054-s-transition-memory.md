@@ -100,8 +100,11 @@ shipment:
 
 * **Scope**: `059-F` + `059.001-T` (U1), `059.002-T` (U2), `059.003-T`
   (U3), `059.004-T` (U4), `059.005-T` (U5), `059.006-T` (U6), `059.010-T`
-  (U10), `059.011-T` (U11), `059.014-T` (operator sign-off gate) — 10 items,
-  all `status: queued`, no shipment membership.
+  (U10), `059.011-T` (U11) — 9 future Mode R shipment members — plus
+  `059.014-T` (operator sign-off gate, a Mode R prerequisite, never itself
+  a shipment member) — 10 items total, all `status: queued`, no shipment
+  membership. Only the 9 members are ever assembled into the successor
+  shipment; `059.014-T` gates that assembly and is never shipped.
 * **Explicitly excluded** (per the decision — remain for later, separate
   shipments and are NOT touched by this session): `059.008-T` (U8, terminal
   evidence, stays blocked/unshipped), `059.009-T` (U9, engine-open,
@@ -469,10 +472,13 @@ Confirmed independently ready, no residual dependency on `051-S`:
   sign-off `059.014-T`, which this session does **not** mark done or
   bypass.
 * **Successor shipment assembly for the rescoped scope — not performed by
-  this session** (P-010 remediation, review-fix cycle 2). The 10-item scope
-  (`059-F` + 8 units + `059.014-T`) is prepared, `queued`, dependency-closed,
-  and unshipped. A future **Stage** session must assemble it into a
-  shipment; Ship must not do so.
+  this session** (P-010 remediation, review-fix cycle 2). The 9-member
+  scope (`059-F` + 8 units) is prepared, `queued`, dependency-closed, and
+  unshipped; `059.014-T` is prepared alongside it as the Mode R
+  prerequisite sign-off gate, never itself a shipment member. A future
+  **Stage** session must assemble the 9 members into a shipment once both
+  Mode R prerequisites (`059.007-T`, already `done`/archived, and
+  `059.014-T`, pending sign-off) are satisfied; Ship must not do so.
 * **Operator approval for the `054-S` deletion — not obtained in real time**
   (review-fix cycle 3, escalated; unresolved through review-fix cycle 4).
   The delete was destructive (Constitution Principle VII / P-005) and
@@ -632,8 +638,14 @@ checkpoint's own continuity:
   `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` are
   resolved** at the agent-contract/Stage-decision level, prospectively:
   (A) Stage's Step 5.5 **Mode R** ratified-existing-scope handoff, naming
-  the exact 10-ID `handoff_ids` set and assembly order for `059-F` in
-  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`;
+  `member_ids` (9) and `prerequisite_ids` (2, `059.007-T`/`059.014-T`) for
+  `059-F` in
+  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+  — **as first recorded (this pass) the authorization named a single 10-ID
+  `handoff_ids` set that folded the sign-off gate `059.014-T` into the
+  member list and assembly order; the correction below (`378444e`/
+  `3fb4fd0`) replaced that with the disjoint `member_ids`/`prerequisite_ids`
+  sets, with `handoff_ids` demoted to their 11-ID audit union**;
   (B) that same decision's supersession of the PR #113 `051-S`
   closure-timing precondition — an evidence-shipment closure may precede
   `059.014-T` sign-off, which gates successor-shipment assembly and
@@ -665,3 +677,58 @@ checkpoint's own continuity:
   frontmatter title node, were already resolved by `537daaf` on the Stage
   side. **Final current-HEAD review and GraphQL thread reply/resolution
   remain a pending follow-up**, not performed by this pass.
+
+## Mode R Partition-Alignment Correction (2026-08-30, PR #114 HEAD `3fb4fd0`)
+
+A further Ship-side reconciliation, driven by new Mode R review findings
+raised after `537daaf` and resolved by the agent-contract/Stage-state pair
+`378444e`/`3fb4fd0` landed later on this PR. No subagents, no merge, no
+backlog/stash/shipment mutation. Full narrative detail lives in
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md`'s "Mode R
+Fail-Closed Partition Correction" section; summarized here for this
+checkpoint's own continuity:
+
+* **Mode R is now a disjoint two-set contract, fail-closed.** `378444e`
+  corrected `.github/agents/.stage.agent.md`'s Step 5.5 Mode R to require
+  `member_ids` (items intended for shipment; become `assembly_ids`
+  verbatim) and `prerequisite_ids` (external gates, never shipped, never
+  counted in the manifest) as disjoint exact sets, with `handoff_ids`
+  demoted to their auditable union only. Any add failure, concurrent
+  shipment assignment, status drift, or manifest read-back discrepancy now
+  halts Mode R assembly immediately — never skip-and-record (that
+  tolerance is Mode H-only) — and an unverified `shipment_id` is never
+  handed off.
+* **Stage's mutation classification is now complete.** Every
+  state-mutating backlogit operation Stage uses is classified:
+  `create_item`, `update_item`, `append_comment`, `add_dependency`/
+  `remove_dependency`, `add_link`/`remove_link`, `move_item` (ratified
+  status on a work item, or complete/archive a `backlog-md` work item —
+  never a stash-archival fallback), `archive_item`, `stash`/`stash_edit`,
+  `deliberate`, `harvest_stash`, `stash_archive`; `delete_item` and
+  `track_commit` are explicitly Forbidden for Stage.
+* **Ship's commit-tracking authority is now explicit.** Ship's Allowed
+  column names `backlogit_track_commit` (or the registry `commit` field)
+  as evidence-only: it records the actual, already-`origin/main`-confirmed
+  merge commit SHA of Ship's current shipment or its member tasks, and
+  nothing else — no planning-field or status authority, and no authority
+  over any item outside Ship's current shipment.
+* **The invalid `move_item` stash fallback is removed.** Stage's stash
+  retirement step no longer falls back to `backlogit_move_item` when
+  `backlogit_stash_archive` is unavailable (a hex stash ID is not a
+  work-item ID); the corrected default is to leave the entry untouched,
+  record a retirement handoff, and report the missing capability as a
+  block.
+* **`3fb4fd0` aligned the `059-F` Mode R authorization to that contract**:
+  `member_ids` exactly 9, `prerequisite_ids` exactly 2 (`059.007-T`,
+  `059.014-T`), `handoff_ids` their 11-ID auditable union only, the
+  assembly order listing the 9 members only, and the normalized-scope
+  count corrected to nine (`059.014-T` was never `blocked`, never
+  normalized, and is a prerequisite, not a member).
+* **None of this retroactively legalizes** the four historical violations
+  recorded above (status normalization; `054-S` shipment creation; its
+  unapproved deletion; `059.008-T` `blocked_reason` mutation) — all four
+  remain standing, un-legalized historical record.
+* **Final current-HEAD review and GraphQL thread reply/resolution remain a
+  pending follow-up**, not performed by this pass either — see
+  `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
+  newest resumption section for the current status.
