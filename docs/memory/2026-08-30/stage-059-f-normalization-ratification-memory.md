@@ -1,6 +1,7 @@
 ---
 type: session-memory
 agent: stage
+title: "Stage session memory: 059-F normalization/assembly ownership P-010 remediation and PR #114 reconciliation"
 timestamp: 2026-08-30T04:53:00Z
 branch: post-merge/059-f-toctou-transition
 pr: 114
@@ -116,3 +117,76 @@ dirty/untracked/ignored files preserved.
 * No shipment created/claimed/closed/archived; no status normalized; no sign-off marked done; no
   dependency changed; no source/test/config edits; no Ship closure/compound/transition-memory/agent
   files touched; no PR body/thread edits; no merge.
+
+## Mode R / supersession reconciliation pass (2026-08-30, PR #114 HEAD `242b5e3`)
+
+Single coherent Stage pass reconciling the Stage-owned state/document graph against seven PR #114
+review threads. No subagents, no merge, no shipment creation, no sign-off completion. Dirty
+`.gitignore` and all untracked/ignored scratch/session files preserved.
+
+### Corrections applied
+
+1. **Durable Step 5.5 Mode R authorization** (threads `3888677640`, `3888851260`). Added
+   § *Mode R Authorization for Successor-Shipment Assembly* to
+   `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`, naming
+   covering feature `059-F` and the exact 10-ID `handoff_ids` set
+   (`059-F`, `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`,
+   `059.010-T`, `059.011-T`, `059.014-T`) with the parent-first assembly order
+   `059-F → 059.014-T → 059.001-T → 059.002-T → 059.006-T → 059.003-T → 059.004-T → 059.005-T →
+   059.010-T → 059.011-T`, the exclusions (`059.008-T` terminal, `059.009-T` deferred,
+   `059.012-T`/`059.013-T` later shipments), and `059.007-T` (`done`/archived) cited as an
+   intentional terminal prerequisite rather than a member. After `059.014-T` sign-off Stage may
+   enter Step 5.5 directly under Mode R citing that section, with Steps 1–5 logged not applicable,
+   re-validate the exact set, then assemble. No stash entry or synthetic harvest is manufactured;
+   no shipment is assembled now.
+2. **PR #113 `051-S` closure-timing supersession** (thread `3888809409`). Added
+   § *Supersession of the PR #113 `051-S` Closure-Timing Requirement*. Evidence-based rationale:
+   `051-S` was an **evidence** shipment (post-return manifest `[059.007-T]`, already `done`); the
+   safe-close archived only that delivered member plus the shipment record, returned `059-F` and
+   `059.008-T` status-preservingly via `return-blocked` (both stayed `blocked`, neither archived),
+   accepted no residual risk, and began no implementation. The sequencing mismatch is recorded
+   honestly — the closure ran before the precondition was superseded, and Ship could not cure it
+   unilaterally because re-scope/successor assembly is Stage-only. Current rule: evidence-shipment
+   closure may precede sign-off; `059.014-T` gates successor assembly and implementation only.
+   Explicitly **not** a retroactive security sign-off.
+3. **Readiness query relabelled feature-family-wide** (thread `3888610906`). The query returning
+   `059.013-T` is now labelled as spanning the whole `059-F` feature family, not the near-term
+   scope; restricted to the near-term scope the ready set is `059-F` + `059.014-T`.
+4. **Tracked `059-F` shipment posture superseded** (thread `3888860317`). Via
+   `backlogit update 059-F --section redeliberation-2026-08-29=…`, the earlier *Shipment posture*
+   paragraph (`051-S` "stays active/blocked", transition "executed only by Ship after sign-off") is
+   struck in place with an enacted note; via
+   `backlogit update 059-F --section stage-ratify-2026-08-30=…`, the ratification section now
+   explicitly declares itself the superseding authority and records the archived `051-S` state,
+   absent `054-S`, Stage-only ownership, and the Mode R handoff set.
+5. **Normalization vs assembly/implementation separated** (threads `3888860326`, `3888860333`,
+   `3888860341`). The exec plan
+   (`docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`), the re-deliberation decision
+   (`docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`), and
+   the tracked `059.014-T` `stage-ratification` section now state that the `blocked → queued`
+   normalization and DAG rewire are **already completed by Ship in violation and independently
+   ratified by Stage while `059.014-T` remains `queued`** — never gated on sign-off, because the
+   gate works through the `blocks` edge `059.001-T ← 059.014-T` — while **successor-shipment
+   assembly and implementation (U1 onward) remain gated** on sign-off. Ratification still does not
+   legalize the Ship mutation.
+6. **Memory frontmatter title added** (thread `3888555111`). This file now carries a `title:`
+   frontmatter field, satisfying MD041 without introducing an H1 (per
+   `.github/instructions/markdown.instructions.md`).
+
+### Verification
+
+* `backlogit sync` clean; family query re-confirms `059-F`/`059.001–006`/`059.010–014` unchanged
+  statuses, `059.007-T` `done`, `059.008-T`/`059.009-T` `blocked`.
+* `item_deps` edge set unchanged (21 edges); Kahn ordering over the near-term DAG still acyclic.
+* Mode R validation snapshot: all 10 IDs live in `.backlogit/queue/`, all under `059-F`, none in any
+  open shipment manifest (open shipments are `049-S`, `052-S`, `053-S` — all `056.*`), only
+  out-of-set dependency edges are on the terminal prerequisite `059.007-T`.
+* Markdown lint clean on all changed files.
+
+### Invariants held
+
+No status change, no dependency change, no shipment created/claimed/closed/archived, no sign-off
+marked `done`, no source/test/config edits. Ship closure, compound, transition-memory, reconcile,
+and agent files untouched — the superseding authority for the `051-S` timing lives in the
+Stage-owned decision instead. `.gitignore` and all untracked/ignored scratch/session files
+preserved.

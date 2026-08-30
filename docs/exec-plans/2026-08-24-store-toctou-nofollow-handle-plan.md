@@ -958,9 +958,29 @@ status-preserving `return-blocked` and handed off; the Ship-created successor `0
 and is absent, but that deletion was an unapproved destructive P-005 violation, not compliant
 remediation. **Ship did not, and cannot, re-scope `051-S` or create a successor shipment** —
 under fail-closed P-010 both are Stage-only. **Stage exclusively** normalizes (`blocked → queued`)
-the feasible units and assembles any successor shipment (Step 5.5), and only **after** the operator
-sign-off gate `059.014-T` is `done`. `049-S` is decoupled from `051-S` (sequencing-only edge, no
+the feasible units and assembles any successor shipment (Step 5.5). Those two Stage acts are on
+**different clocks**: the `blocked → queued` normalization of `059-F` + U1/U2/U6/U3/U4/U5/U10/U11
+is **already completed and Stage-ratified** (2026-08-30) while `059.014-T` is still `queued` — it
+was never gated on sign-off, because the gate functions as the `blocks` edge `059.001-T ←
+059.014-T`, so U1 stays unexecutable regardless of the units' intake status. Only
+**successor-shipment assembly and the implementation that follows it (U1 onward)** wait for
+`059.014-T` to be `done`. Ratifying the completed normalization grants no early execution
+authority and does not retroactively legalize the Ship mutation that produced it. `049-S` is
+decoupled from `051-S` (sequencing-only edge, no
 code coupling, no schedule gain) so bug `7BF1961D` proceeds independently.
+
+**`051-S` closure timing (superseded precondition; recorded 2026-08-30).** The original PR #113
+requirement that `051-S` be resolved only *after* `059.014-T` sign-off is **explicitly superseded**
+by `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+§ *Supersession of the PR #113 `051-S` Closure-Timing Requirement*. Evidence-based basis: `051-S`
+was an **evidence** shipment whose post-return manifest was `[059.007-T]` (already `done`);
+the safe-close archived only that delivered member plus the shipment record, returned `059-F` and
+`059.008-T` status-preservingly via `return-blocked` (both stayed `blocked`, neither archived),
+accepted no residual risk, and began no implementation. The sequencing mismatch is recorded
+honestly: the closure ran before the precondition was superseded. Current rule:
+**evidence-shipment closure may precede sign-off; `059.014-T` gates successor-shipment assembly
+and implementation only.** This is a shipment-lifecycle timing supersession, **not** a retroactive
+security sign-off — `059.014-T` remains `queued` and the Accepted-Residual-Risk Record is unsigned.
 
 **Status-normalization + assembly ownership (Stage-owned; added 2026-08-30).** Following Copilot
 review comment `3888455427` on PR #114 and
@@ -976,3 +996,16 @@ Ship's post-return mutation of `059.008-T`'s `blocked_reason` planning field; St
 ratified the current terminal blocked reason as semantically correct without legalizing the mutation
 (see the *Historical Ship role-boundary violation record* in
 `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`).
+
+**Successor-shipment assembly path (Step 5.5 Mode R; added 2026-08-30).** The ten near-term items
+were harvested in an earlier session and already exist in the queue, so Step 5.5's default Mode H
+scope guard (harvest-only IDs) cannot admit them. The durable Mode R authorization — covering
+feature `059-F`, exact `handoff_ids` `059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
+059.005-T, 059.006-T, 059.010-T, 059.011-T, 059.014-T`, with the parent-first assembly order and
+the exclusion of `059.008-T`/`059.009-T`/`059.012-T`/`059.013-T` and the terminal external
+prerequisite `059.007-T` — is recorded in
+`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+§ *Mode R Authorization for Successor-Shipment Assembly*. After `059.014-T` is `done`, Stage enters
+Step 5.5 directly under Mode R citing that section, logs Steps 1–5 as not applicable, re-validates
+the exact set, and assembles. No stash entry or synthetic harvest may be manufactured, and no
+shipment is assembled while the gate is open.

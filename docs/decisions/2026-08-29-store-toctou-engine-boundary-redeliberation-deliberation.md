@@ -429,8 +429,12 @@ record itself says has no causal basis and no schedule benefit.
 > P-005 violation, not compliant remediation. **Ship did not, and cannot, re-scope `051-S`
 > or create a successor shipment** — under fail-closed P-010 both are Stage-only. Stage
 > **exclusively** performs the `blocked → queued` normalization of the feasible units and any
-> successor-shipment assembly (Step 5.5), and only **after** the operator sign-off gate
-> `059.014-T` is `done`. See the *Status normalization + successor-shipment assembly ownership*
+> successor-shipment assembly (Step 5.5). Those two Stage acts have **different timing**: the
+> normalization is **already completed and Stage-ratified** (2026-08-30) while `059.014-T` is
+> still `queued` — it was never gated on sign-off, because the gate acts through the `blocks` edge
+> `059.001-T ← 059.014-T`. **Only successor-shipment assembly and the implementation that follows
+> it (U1 onward) wait** for `059.014-T` to be `done`. See the *Status normalization +
+> successor-shipment assembly ownership*
 > addendum, the *Historical Ship role-boundary violation record* below, and
 > `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`.
 
@@ -492,6 +496,30 @@ allows and the Ship Role Boundary does not enumerate; under fail-closed P-010 it
 earlier Ship-performed normalization of `059-F` and `059.001/002/003/004/005/006/010/011-T` remains
 a P-010 violation and is **not** retroactively legalized; Stage affirmed the resulting queued
 disposition only after independent review.
+
+**Timing (do not conflate the two Stage acts).** Normalization and assembly run on different
+clocks:
+
+| Act | State | Gated on `059.014-T`? |
+|---|---|---|
+| `blocked → queued` normalization of the feasible units + `059-F` | **already completed**, Stage-ratified 2026-08-30 while the gate is still `queued` | No |
+| Feasible-DAG rewire (U8/U9 edge drops, U12 re-point) | **already completed**, ratified | No |
+| Successor-shipment assembly (Step 5.5) | not started | **Yes** |
+| Implementation of the rescoped scope (U1 onward) | not started | **Yes** |
+
+The gate does its work as a dependency edge (`059.001-T ← 059.014-T`), so a `queued`-but-not-ready
+status is precisely the intake-valid disposition that keeps U1 unexecutable. Ratifying the
+completed normalization therefore grants no early execution authority.
+
+**Assembly path.** Because these items were harvested in an earlier session, Step 5.5's default
+Mode H harvest-only scope guard cannot admit them. The durable **Mode R** authorization — covering
+feature `059-F` and the exact 10-ID handoff set, with assembly order, exclusions, and the terminal
+external prerequisite `059.007-T` — is recorded in
+`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+§ *Mode R Authorization for Successor-Shipment Assembly*. That same decision also supersedes the
+PR #113 `051-S` closure-timing precondition (§ *Supersession of the PR #113 `051-S` Closure-Timing
+Requirement*): evidence-shipment closure may precede sign-off; `059.014-T` gates successor
+assembly and implementation only.
 
 ### Historical Ship role-boundary violation record (four distinct standing entries; added 2026-08-30)
 
@@ -565,6 +593,6 @@ legalized by any Stage ratification; Stage only affirms resulting dispositions o
 |---|---|
 | Accepted residual is read as "the whole fix is weakened" | The record scopes the residual to the engine-open path only; the `chmod` paths are fully contained; sign-off gate + amended DoD make the boundary explicit. |
 | Decoupling `049-S` reads as dropping the security fix | Decision states `059-F` continues on its rescoped shipment; decouple is documented and reversible; no code coupling exists. |
-| `051-S` accidentally closed/dependency-dropped to "unblock" work | Explicitly forbidden; Ship-side transition is the only sanctioned resolution, gated on sign-off. |
+| `051-S` accidentally closed/dependency-dropped to "unblock" work | Explicitly forbidden; Ship-side transition is the only sanctioned resolution. The original "gated on sign-off" timing was superseded on 2026-08-30 for **evidence**-shipment closure only (`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md` § *Supersession of the PR #113 `051-S` Closure-Timing Requirement*): closure must archive only delivered members, return non-terminal members status-preservingly, accept no residual risk, and start no implementation. Closure of an **implementation** shipment carrying the rescoped scope stays gated on `059.014-T`. |
 | Rescoped tasks still carry stale U8/U9 gating in the graph | Stage rewires U1/U6/U3/U4/U5/U10 dependencies to the feasible path (documented) so the backlog reflects the decision. |
 | Option A never happens; residual becomes permanent | Compensating controls stand on their own for the local-only threat model; `059.013-T` tracks closure; residual is re-reviewed at each serve trust-boundary revision. |
