@@ -488,8 +488,15 @@ disposition only after independent review.
 2. Upstream cozo appetite for a capability-/identity-bound open (Option A, `059.013-T`) — not
    yet investigated to acceptance; determines whether closure is via upstream PR or a maintained
    fork, and on what timeline.
-3. Ship's choice between re-scoping `051-S` in place vs. closing it and assembling a fresh
-   implementation shipment (both planned above; operator/Ship decision).
+3. ~~Ship's choice between re-scoping `051-S` in place vs. closing it and assembling a fresh
+   implementation shipment.~~ **Resolved.** This was never a Ship decision. Ship has safely
+   closed `051-S` (the evidence shipment) using only allowed close/return/handoff operations,
+   with the non-terminal members returned via status-preserving `return-blocked`. Deciding
+   whether a fresh implementation shipment is assembled — and assembling it under Step 5.5 after
+   operator sign-off (`059.014-T`) and readiness — is a Stage-exclusive responsibility per the
+   Stage-owned ownership addendum above and the ratification decision
+   `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`. Under
+   fail-closed P-010, successor-shipment assembly is Stage-only; Ship enumerates no such operation.
 4. Windows retained-handle vs identity-verified re-open (Option A/C from the *original*
    deliberation, unit-level) — still decided during U3/U10 implementation, unaffected by this
    re-deliberation.
