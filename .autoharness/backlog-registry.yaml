@@ -411,6 +411,8 @@ status_values:
   active: "active"
   done: "done"
   blocked: "blocked"
+  shipped: "shipped"
+  abandoned: "abandoned"
 
 features:
   sql_query: true

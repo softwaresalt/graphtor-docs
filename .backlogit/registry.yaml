@@ -6,6 +6,8 @@ directories:
             - accepted
             - rejected
             - archived
+            - shipped
+            - abandoned
         type: []
     - path: queue
       condition:
