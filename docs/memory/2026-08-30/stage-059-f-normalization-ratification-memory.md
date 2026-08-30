@@ -57,19 +57,21 @@ Final Stage planning/audit convergence pass over the frozen diff. No subagents, 
 Engram unavailable — used structured `backlogit` queries + exact reads only. Four Stage-owned
 corrections applied:
 
-1. **`059.014-T` comment now real (makes the earlier memory claim true).** The prior note that
+1. **`059.014-T` ratification now durable in tracked source-of-truth.** The prior note that
    Stage recorded ratification comments on *both* `059-F` and `059.014-T` was only partly reflected
-   in tool history. Appended a concise Stage convergence-ratification comment to `059.014-T` via the
-   supported `backlogit comment add` operation (no hand-editing of tool-managed history): it remains
-   the **sole** dependency-ready queued sign-off gate — status `queued`, **not** `done` and **not**
-   bypassed — and after sign-off Stage (not Ship) exclusively owns normalization + successor-shipment
-   assembly (Step 5.5).
+   in tool history. Wrote a concise Stage convergence-ratification into a durable tracked
+   `stage-ratification` body section on `059.014-T` via the supported source-of-truth mutation
+   `backlogit update 059.014-T --section stage-ratification=<content>` (no hand-editing of
+   tool-managed history): it remains the **sole** dependency-ready queued sign-off gate — status
+   `queued`, **not** `done` and **not** bypassed — and after sign-off Stage (not Ship) exclusively
+   owns normalization + successor-shipment assembly (Step 5.5).
 2. **`059.008-T` blocked-reason ratification + fourth P-010.** Ship previously changed
    `059.008-T`'s `blocked_reason` planning field/body **after** the task was returned from `051-S` —
    an unclassified Ship item-planning mutation, fail-closed **P-010**. Independently reviewed and
    ratified the current terminal blocked reason as **semantically correct** (U8 terminally BLOCKED;
    engine-open closure deferred to `059.013-T` Option A; stays `blocked`, remains in
-   `.backlogit/queue/`) and appended a Stage comment via `backlogit comment add`. The comment records
+   `.backlogit/queue/`) and wrote it into a durable tracked `stage-ratification` body section via
+   `backlogit update 059.008-T --section stage-ratification=<content>`. The section records
    that ratification **does not** retroactively legalize the Ship mutation; status stays `blocked`,
    dependencies (`059.007-T`) unchanged.
 3. **Decision + plan superseded/enacted wording and four-entry violation record.** In
@@ -85,6 +87,27 @@ corrections applied:
 4. **This memory reconciled.** Fixed the incomplete
    `2026-08-29-...redeliberation-deliberation.md` cross-reference (now the full filename) and added
    the `059.008` ratification / fourth-P-010 finding and the actual `059.014-T` convergence comment.
+
+## Persistence-defect correction pass (2026-08-30, PR #114 HEAD 63f933a)
+
+The two ratifications from the immediately prior convergence pass were recorded only via
+`backlogit comment add`, which lands solely in gitignored `.backlogit/logs/*.jsonl` and the
+disposable index — **not durable PR evidence**. Closed that defect by writing the ratifications to
+the supported tracked source-of-truth body section `stage-ratification` on both queue task files:
+
+* `backlogit update 059.014-T --section stage-ratification=<content>` — Stage independently confirms
+  `queued` is the sole sign-off gate (not done/bypassed); 059-F implementation remains blocked by it;
+  Stage owns future normalization/assembly.
+* `backlogit update 059.008-T --section stage-ratification=<content>` — Stage independently ratifies
+  the current terminal `blocked_reason` as semantically correct; status stays `blocked` and deps
+  (`059.007-T`) unchanged; ratification does **not** retroactively legalize Ship's post-return
+  `blocked_reason` mutation, which remains the **fourth** P-010 violation.
+
+The durable tracked `stage-ratification` sections are now the authoritative PR record; the earlier
+local-only `backlogit comment add` history remains non-authoritative. No status, dependency, or
+sign-off state changed; index re-synced; the two queue task files plus this memory committed. Ship
+docs/agent/compound artifacts untouched; `.gitignore`, `docs/scratch/`, and all other
+dirty/untracked/ignored files preserved.
 
 ### State invariants (unchanged by this pass)
 

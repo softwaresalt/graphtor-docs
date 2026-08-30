@@ -518,9 +518,11 @@ legalized by any Stage ratification; Stage only affirms resulting dispositions o
    reviewed and ratified the **current terminal blocked reason as semantically correct** — U8
    engine-open feasibility is terminally BLOCKED, accepted as decided input, engine-open closure
    deferred to `059.013-T` (Option A), status stays `blocked` and the artifact stays in
-   `.backlogit/queue/` — via a Stage comment on `059.008-T`. That ratification affirms the resulting
-   text **only** and does **not** retroactively legalize the Ship mutation; status remains `blocked`
-   and dependencies (`059.007-T`) are unchanged.
+   `.backlogit/queue/` — recorded durably in the tracked `stage-ratification` body section of
+   `059.008-T` (written via `backlogit update 059.008-T --section stage-ratification=…`; the earlier
+   `backlogit comment add` history was gitignored and non-authoritative). That ratification affirms
+   the resulting text **only** and does **not** retroactively legalize the Ship mutation; status
+   remains `blocked` and dependencies (`059.007-T`) are unchanged.
 
 ## Rejected Alternatives
 
