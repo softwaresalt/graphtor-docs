@@ -61,7 +61,19 @@ step itself — see review-fix cycle 2.
   that authorized this closure; the underlying U7/U8 evidence itself was
   produced by PR #111, `72940e92d8fd19638a4cc25a40301a31babdbf1a` — both
   SHAs recorded in the reconciliation reports since the archive record has
-  only one `commit` field).
+  only one `commit` field) **as originally recorded at this session's
+  close. Evidence-remediation note (PR #114 review, 2026-08-30)**: GitHub
+  review comments 3889065765/3889065781/3889122382 correctly identified
+  that the archive `commit` field and the reconciliation reports'
+  `merge_commit_sha` should carry the delivered-work SHA (PR #111,
+  `72940e92...`), not the decision-authority SHA (PR #113, `92de0250...`).
+  `archive/051-S.md` and `archive/059.007-T.md` were corrected to
+  `commit: 72940e92d8fd19638a4cc25a40301a31babdbf1a` via
+  `backlogit update <id> --commit 72940e92...` (evidence-only field update,
+  no status/body change); the three `051-S` reconciliation reports were
+  corrected to `merge_commit_sha: 72940e92...` with `92de0250...` retained
+  as a separate `decision_authority_sha` field. This note documents the
+  remediation; it does not reopen or relitigate the original closure.
 * Final manifest: `[059.007-T]` only (the two non-`done` original members,
   `059-F` and `059.008-T`, were returned from the manifest via
   `backlogit shipment return-blocked` *before* closure — their `status`
