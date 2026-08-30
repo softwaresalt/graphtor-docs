@@ -13,7 +13,7 @@ pr: 113
 repo: "softwaresalt/graphtor-docs"
 branch: "chore/stage-059-f-redeliberation"
 head_before: "f8d0d2202d523026a2b33016cd3dc96a0c7abe98"
-status: "remediation applied + committed (8c22f3d) + pushed; 7 original threads replied and resolved; PR body refreshed to HEAD 8c22f3d, READY_WITH_FOLLOWUPS, P0=0/P1=0; addressing cycle-1 re-review follow-ups"
+status: "remediation applied and pushed across successive commits. The authoritative current-HEAD readiness gate is the PR #113 body Local Review Readiness block, kept in sync with HEAD via gh pr edit (NOT this file). This session memory records immutable point-in-time commit facts and intentionally does not re-pin the latest HEAD, to avoid a record that perpetually trails HEAD by one commit."
 ---
 
 ## Operator Override (explicit, bounded)
@@ -99,9 +99,18 @@ adjudicated **Valid** and fixed:
 | `PRRT_kwDORiB5E86deJ0p` / 3888247758 | `.backlogit/hooks_queue.jsonl` | Applied the `059.014-T` title change through backlogit so an `update_artifact` `title_delta` event is emitted (stale intermediate-only title in the append-only stream). |
 | `PRRT_kwDORiB5E86deJ0s` / 3888247763 | continuation memory `:16` | PR body already refreshed to HEAD 8c22f3d / READY_WITH_FOLLOWUPS; updated this memory's stale `status` field to reflect completion. |
 
-## Next steps
+## Exceptional correction cycle 2 (re-review of c9a7f9c)
 
-Commit/push cycle-1 fixes → reply to each of the 6 new threads with the fixing
-commit → resolve via GraphQL → refresh PR body readiness to the new HEAD → wait
-CI + inspect any further auto re-review. Cap: ≤3 exceptional cycles; stop on
-same-error recurrence ×3. No merge (Stage does not merge).
+The auto re-review of `c9a7f9c` surfaced 2 threads:
+
+| Thread / comment | Surface | Disposition |
+|---|---|---|
+| `PRRT_kwDORiB5E86deNw0` / 3888271291 | `.backlogit/queue/059.006-T.md` implementation-notes | **Valid, fixed:** the named engine-open residual now reads "leaf and intermediate-directory redirection", matching 059.014-T and the accepted-risk record. (Scenario-2 intermediate-directory *chmod-path* containment wording is correct as-is — that is U6's permission-path containment, not the engine residual.) |
+| `PRRT_kwDORiB5E86deNww` / 3888271286 | continuation memory `:16` | **Recurring "record trails HEAD by one commit" class (3rd occurrence).** Root cause: a committed record cannot cite its own not-yet-created commit SHA, and the auto re-review often snapshots the PR body mid-refresh. Structural fix applied: this memory no longer re-pins the latest HEAD; the authoritative current-HEAD readiness gate is the PR body Local Review Readiness block, refreshed via `gh pr edit` after each push. Per the circuit-breaker same-error rule, this class will not be chased with further memory-only commits. |
+
+## Authoritative readiness pointer
+
+Current-HEAD merge readiness is NOT recorded in this file. It lives in the PR #113
+body `## Local Review Readiness` block, which is refreshed to the true current
+HEAD via `gh pr edit` after every push (no new commit). Consult the PR body, not
+this memory, for the current gate state.
