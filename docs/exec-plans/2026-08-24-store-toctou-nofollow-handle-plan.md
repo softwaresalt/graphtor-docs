@@ -954,8 +954,9 @@ after `059.014-T` sign-off, either re-scopes `051-S`'s manifest to the feasible 
 U1/U2/U6/U3/U4/U5/U10/U11) as the owner, or closes `051-S` (feasibility complete; engine binding
 infeasible/accepted) and Stage assembles a fresh implementation shipment.~~ **Enacted outcome:**
 `051-S` was **safely closed and is now `archived`**; its non-terminal members were removed with
-status-preserving `return-blocked` and handed off; the Ship-created successor `054-S` was reverted
-and does not exist. **Ship did not, and cannot, re-scope `051-S` or create a successor shipment** —
+status-preserving `return-blocked` and handed off; the Ship-created successor `054-S` was deleted
+and is absent, but that deletion was an unapproved destructive P-005 violation, not compliant
+remediation. **Ship did not, and cannot, re-scope `051-S` or create a successor shipment** —
 under fail-closed P-010 both are Stage-only. **Stage exclusively** normalizes (`blocked → queued`)
 the feasible units and assembles any successor shipment (Step 5.5), and only **after** the operator
 sign-off gate `059.014-T` is `done`. `049-S` is decoupled from `051-S` (sequencing-only edge, no

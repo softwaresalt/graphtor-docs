@@ -425,7 +425,8 @@ record itself says has no causal basis and no schedule benefit.
 > pick a shipment "alternative" is **no longer accurate and MUST NOT be acted on**. What actually
 > happened: shipment `051-S` was **safely closed and is now `archived`**; its non-terminal members
 > were removed with status-preserving `return-blocked` and handed off; the Ship-created successor
-> shipment `054-S` was reverted and does not exist. **Ship did not, and cannot, re-scope `051-S`
+> shipment `054-S` was deleted and is absent, but that deletion was an unapproved destructive
+> P-005 violation, not compliant remediation. **Ship did not, and cannot, re-scope `051-S`
 > or create a successor shipment** — under fail-closed P-010 both are Stage-only. Stage
 > **exclusively** performs the `blocked → queued` normalization of the feasible units and any
 > successor-shipment assembly (Step 5.5), and only **after** the operator sign-off gate
@@ -501,8 +502,9 @@ by one entry — the three-entry record in the Ship-owned closure artifact
 legalized by any Stage ratification; Stage only affirms resulting dispositions on their own merits.
 
 1. **Ship created shipment `054-S` directly** — **P-010** (shipment creation is unconditionally
-   forbidden for Ship, no operator-confirmation carve-out). Reverted; `054-S` does not exist
-   (`backlogit get 054-S` → not found).
+   forbidden for Ship, no operator-confirmation carve-out). `054-S` is absent
+   (`backlogit get 054-S` → not found), but its absence is the result of the unapproved destructive
+   deletion recorded as entry 2 below (a P-005 violation), not a compliant revert/remediation.
 2. **Ship deleted `054-S` via `backlogit delete 054-S --force` without prior operator approval** —
    **P-005** destructive-action violation (Constitution Principle VII), attempted remediation of
    entry 1. Git-revertible (original content recoverable from commit `79381b2`); recorded as a
