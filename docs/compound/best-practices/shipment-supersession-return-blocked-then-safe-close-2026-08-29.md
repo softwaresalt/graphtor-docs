@@ -149,11 +149,18 @@ first — regardless of *when* it was returned or how it came to be
    definition is unconditional: **"Ship MUST NOT: Create backlog items,
    create shipments..."**, and **"Do not proceed past the boundary even if
    the operator requests work outside scope — redirect to the correct
-   agent instead."** This holds even when `.ship.agent.md`'s own Step 0.5
-   fallback text describes an operator-confirmed direct-assembly path, and
-   even when a governing decision document frames fresh-shipment assembly
-   as "Ship's choice" — the canonical policy document takes precedence
-   over both.
+   agent instead."** An earlier revision of `.ship.agent.md`'s Step 0.5
+   included an operator-confirmed direct-assembly fallback that permitted
+   Ship to assemble a shipment itself once the operator confirmed intent;
+   that carve-out was removed in
+   `ea47df004755e155947a51be0e36e362601279de`. Under the current,
+   authoritative Step 0.5, Ship's only choices at shipment-assembly time
+   are to **select an existing Stage-prepared shipment** or to
+   **halt/redirect to Stage** — there is no operator-confirmation path
+   that permits Ship to assemble a shipment directly, even when a
+   governing decision document frames fresh-shipment assembly as "Ship's
+   choice." The canonical policy document and the current Step 0.5 text
+   are in agreement, not in tension.
 
    **If Ship ever creates a successor shipment in violation of this
    boundary, do not compound the error by deleting it unilaterally.**
@@ -177,10 +184,16 @@ first — regardless of *when* it was returned or how it came to be
 
    Never instruct Ship to delete its own mistaken artifact as a matter of
    routine remediation. The correct handoff for the legitimate case (no
-   mistaken shipment exists) is: leave the normalized scope as individual,
-   `queued`, dependency-closed backlog items with no shipment membership,
-   and record in the closure/memory artifacts that a future Stage session
-   must assemble them into a shipment.
+   mistaken shipment exists) is precisely the step 4/5 sequence, not a
+   shortcut around it: Ship leaves and hands off, in the closure/memory
+   artifacts, every scope member's **un-normalized** current `status` and
+   full dependency-edge context — no shipment membership, no status
+   mutation performed by Ship; Stage independently validates that handoff
+   and performs any normalization it decides is warranted (`blocked →
+   queued` for superseded-chain members whose block is not terminal
+   evidence); only **after** Stage's normalization do the resulting
+   `queued`, dependency-closed items constitute the prepared scope that a
+   future Stage session assembles into a successor shipment.
 7. **Once Stage completes normalization, verify intake-readiness of the
    prepared scope**: confirm every scope member's `status` equals `queued`
    (or `active` if some are already claimed elsewhere) — the same check

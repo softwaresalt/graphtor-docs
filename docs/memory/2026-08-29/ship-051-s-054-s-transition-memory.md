@@ -523,3 +523,32 @@ stale 051-S stage continuity memory`) is the Stage continuity repair that
 marks the prior `stage-051-S-store-toctou-nofollow` continuity memory
 `SUPERSEDED`, reflecting the final `051-S`/`059-F` state this checkpoint
 documents.
+
+**Second root-cause fix — latent P-010/P-005 risk in Ship's follow-up
+instructions (no violation occurred)**: the same holistic review
+separately examined `.github/agents/.ship.agent.md`'s pre-merge and
+post-merge follow-up steps and found the text still instructed Ship
+itself to create stash entries or backlog follow-up items, append the
+stash queue file, remove source stash entries, and archive source
+deliberation artifacts — all stash/backlog mutations forbidden to Ship
+under P-010's unconditional list. **This session never executed any of
+those steps** (this checkpoint's own follow-up handling already routed
+follow-ups to plain documentation, not stash creation), so this is a
+latent agent-definition defect, not a second executed violation for this
+checkpoint's Risky Action Record.
+`75ff829ea6cfdd0ea90223f704abca723ba481a5` (`fix(agents): redirect Ship
+stash/backlog follow-up mutations to Stage handoff (P-010)`) is the
+structural fix: it replaces every pre-merge and post-merge
+stash/backlog-mutation instruction with an operator-visible handoff to
+Stage — Ship now only records follow-up summaries and source-artifact IDs
+(read-only) in the closure/memory/PR-readiness fields and redirects all
+stash/backlog creation, removal, and archival to a future Stage session,
+with `agent-intercom` broadcast names renamed from "stashed"/"archived"
+to "handoff ready" accordingly. This complements
+`ea47df004755e155947a51be0e36e362601279de`'s shipment-assembly fix and is
+consistent with Stage's independent decision-wording correction
+(`881fd6657e06e45bc9a76f66827f18764cf224a2`), which reaffirms Stage's
+exclusive ownership of backlog/stash mutation and successor-shipment
+assembly under the fail-closed P-010 policy. Full detail is in
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md`'s
+"Post-Closure Correction" section.

@@ -572,9 +572,56 @@ explicit pre-normalization timing note.
   individually queued — keeping Stage's own session-continuity record
   aligned with the final state this closure documents.
 
-Neither finding changes this closure's `READY_WITH_FOLLOWUPS` status or
-any Risky Action Record row above; both are read/citation corrections
-plus forward-looking procedure guidance, not new risky actions.
+### Second root-cause fix — latent P-010/P-005 risk in Ship's follow-up instructions (no violation occurred)
+
+The same holistic correctness review separately examined
+`.github/agents/.ship.agent.md`'s pre-merge and post-merge follow-up
+steps (pre-merge Step 9; post-merge Steps 6–7) for the same class of
+role-boundary defect already found and structurally fixed at the
+shipment-assembly level (`ea47df004755e155947a51be0e36e362601279de`
+above). It found the agent-definition text still instructed Ship itself
+to **create stash entries or backlog follow-up items, append
+`.backlogit/queue/.stash.md`, remove source stash entries via
+`backlogit_stash_remove`, and archive source deliberation artifacts via
+`backlogit_archive_item`** — every one of these is a stash/backlog
+mutation, and P-010's unconditional "Ship MUST NOT: ... Perform stash
+operations, triage, or deliberation... create backlog items..." list
+forbids all of them.
+
+**This session never executed any of those steps.** This closure's own
+follow-up handling (see Backlog Closure Evidence and the Stash Follow-Up
+Review above) already routed the rescoped-scope follow-up to plain
+documentation in the closure/memory/PR fields instead of stash creation,
+precisely to avoid this same constraint. The finding is therefore a
+**latent defect in the agent-definition text** — a P-010/P-005 risk that
+would have materialized on a future session's next pre- or post-merge
+closure, not a second executed historical violation to add to this
+closure's Risky Action Record.
+
+`75ff829ea6cfdd0ea90223f704abca723ba481a5` (`fix(agents): redirect Ship
+stash/backlog follow-up mutations to Stage handoff (P-010)`) is the
+structural fix: it replaces every pre-merge and post-merge
+stash/backlog-mutation instruction in `.github/agents/.ship.agent.md`
+with an operator-visible **handoff to Stage** — Ship now only records
+follow-up summaries and source-artifact IDs
+(`source_stash_id`/`source_deliberation_id`, read-only) alongside their
+governing closure-artifact paths in the closure/memory/PR-readiness
+fields, and explicitly redirects all stash/backlog creation, removal, and
+archival to a future Stage session. The associated `agent-intercom`
+broadcast names were renamed from "stashed"/"archived" to "handoff ready"
+to match the corrected behavior. This fix follows the same pattern as,
+and complements, `ea47df004755e155947a51be0e36e362601279de`'s
+shipment-assembly fix, and is consistent with Stage's independent
+decision-wording correction
+(`881fd6657e06e45bc9a76f66827f18764cf224a2`), which reaffirms that Stage
+exclusively owns backlog/stash mutation and successor-shipment assembly
+under the fail-closed P-010 policy.
+
+Neither Finding 1 nor Finding 2 nor this latent-risk fix changes this
+closure's `READY_WITH_FOLLOWUPS` status or any Risky Action Record row
+above; all three are read/citation corrections and a proactive structural
+fix for a risk that never executed in this session, not new risky
+actions requiring an additional Risky Action Record row.
 
 ## Releasability Evidence
 
@@ -647,6 +694,14 @@ archive under this protocol — logged as "not present → skip."
 * `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
 * `ea47df004755e155947a51be0e36e362601279de` — root-cause fix removing
   Ship's fallback shipment-creation path (`.github/agents/.ship.agent.md`)
+* `75ff829ea6cfdd0ea90223f704abca723ba481a5` — second root-cause fix
+  redirecting Ship's pre/post-merge stash/backlog follow-up mutations to
+  an operator-visible Stage handoff (`.github/agents/.ship.agent.md`);
+  latent P-010/P-005 risk found by holistic review, not an executed
+  historical violation
+* `881fd6657e06e45bc9a76f66827f18764cf224a2` — Stage's decision-wording
+  correction reaffirming Stage-exclusive backlog/stash mutation and
+  successor-shipment assembly
 * `af1547074234364f3bdd9439871c568f6bf2f8aa` — Stage continuity repair
   superseding the stale `051-S` continuity memory (`.backlogit/memories.json`)
 * `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`
