@@ -71,8 +71,14 @@ performed and re-confirmed in this session:
   `.backlogit/archive/`. See
   `.backlogit/reconcile/051-S-safe-close-20260829-203729.md`.
 * **No cascade**: `git status --short -- ".backlogit/"` inspected after
-  every mutation; only `051-S` (relocated) and the two `return-blocked`
-  targets (`blocked_reason` field only, `status` unchanged) appear.
+  every mutation across the whole session (safe-close phase, then review-fix
+  cycle 1). Safe-close phase: only `051-S` (relocated) and the two
+  `return-blocked` targets (`blocked_reason` field only, `status`
+  unchanged) appeared. Review-fix cycle 1 additionally shows `059-F` and
+  eight task files (`059.001/002/003/004/005/006/010/011-T`) as modified —
+  this is the intake-status normalization documented in Review-Fix Cycle 1
+  below, not a cascade: no path moved into or out of `.backlogit/archive/`
+  at any point after the safe-close phase completed.
 * **049-S readiness**: `.backlogit/queue/049-S.md` frontmatter confirmed to
   have no `dependencies` field; `backlogit query` confirms no other
   top-level release unit is `active` (P-001 clean).

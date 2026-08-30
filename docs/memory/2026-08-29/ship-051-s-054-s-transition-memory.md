@@ -245,10 +245,18 @@ Confirmed independently ready, no residual dependency on `051-S`:
   branch switch (verified: diff hunk identical, SHA-256 recorded).
 * `docs/scratch/`: all 9 pre-existing untracked files still present,
   untouched, still untracked (not staged/committed by this session).
-* `059-F`, `059.008-T`, `059.009-T`, `059.012-T`, `059.013-T`: none
-  archived, none status-mutated beyond the two explicit `return-blocked`
-  calls (which only remove manifest membership and record a
-  `blocked_reason`, never change `status`).
+* `059.008-T`, `059.009-T`, `059.012-T`, `059.013-T`: none archived, none
+  status-mutated at all this session (the `return-blocked` calls on
+  `059.008-T` only removed manifest membership and recorded a
+  `blocked_reason`, never changed `status`; `059.009-T`/`059.012-T`/
+  `059.013-T` were never touched).
+* `059-F`: NOT archived, but its `status` **was** deliberately mutated this
+  session in two distinct steps — first `return-blocked` (membership-only,
+  `status` stayed `blocked`), then a separate, explicit
+  `backlogit move 059-F --status queued` in review-fix cycle 1 (see that
+  section above) to make `054-S` intake-valid. This is a real status
+  change, not a preservation — called out explicitly here so it isn't
+  conflated with the status-preserving `return-blocked` operation.
 * No cascade archival occurred at any point (verified via
   `git status --short -- ".backlogit/"` before and after every mutation —
   see the safe-close reconciliation report for the full diff evidence).
@@ -256,9 +264,15 @@ Confirmed independently ready, no residual dependency on `051-S`:
 ## Files modified this session (backlog + docs only)
 
 * `.backlogit/queue/051-S.md` → archived to `.backlogit/archive/051-S.md`
-* `.backlogit/queue/059-F.md` — `blocked_reason` updated (status unchanged)
+* `.backlogit/queue/059-F.md` — `return-blocked` recorded `blocked_reason`
+  (status unchanged at that point), then review-fix cycle 1 transitioned
+  `status: blocked -> queued` (`blocked_reason` cleared as a side effect of
+  that transition) — see Review-fix cycle 1 above
 * `.backlogit/queue/059.008-T.md` — `blocked_reason` updated (status
-  unchanged)
+  unchanged — stays `blocked`, correctly excluded from `054-S`)
+* `.backlogit/queue/059.001-T.md` through `059.006-T.md`, `059.010-T.md`,
+  `059.011-T.md` — review-fix cycle 1 transitioned each `status: blocked ->
+  queued` (`blocked_reason` cleared as a side effect where present)
 * `.backlogit/queue/054-S.md` (new)
 * `.backlogit/hooks_queue.jsonl` — backlogit-managed append-only event log
 * `.backlogit/reconcile/051-S-pre-20260829-203640.md` (new)
