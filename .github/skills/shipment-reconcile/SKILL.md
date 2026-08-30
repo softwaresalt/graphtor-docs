@@ -108,8 +108,12 @@ commit **evidence source** and the SHA **value**:
   approval the skill stays halted and never commits the corrupt state.
 * **Commit evidence before archival.** Safe-close records the actual delivered-work merge
   commit on each live manifest item and on the shipment record **before** that artifact is
-  archived — via atomic archive commit metadata when available, otherwise via
-  `backlogit_track_commit`. It never writes evidence after archival, never overwrites a
+  archived, via **exactly one** of two mutually exclusive paths chosen at a single dispatch
+  point: atomic archive commit metadata when the configured `archive_item` accepts it,
+  otherwise `backlogit_track_commit` on the still-live record followed by the configured
+  non-atomic status/archival sequence. Each artifact is archived **exactly once**; the
+  paths are never chained. If neither path is available it halts before any terminal
+  mutation. It never writes evidence after archival, never overwrites a
   pre-archived member's existing merge commit with the current closure SHA, and halts
   rather than fabricating missing or contradictory evidence.
 * **Single-writer lock.** When invoked from Ship Step 6, this skill holds the
@@ -227,21 +231,47 @@ step 1 first and release it on completion.
 4. **Record commit evidence, then archive, each manifest item individually** (loop over
    `items` ONLY). Commit evidence is always written **before** the artifact moves, because
    once an item is archived its source record may no longer be mutable:
-   * If the item's file is in `.backlogit/queue/` (a **live** manifest item):
-     * **Evidence first.** If the backlog registry's `archive_item` operation supports
-       **atomic commit metadata**, pass `merge_commit_sha` to that operation using the
-       tool's configured field (for backlogit, `commit_sha`) so archival and evidence
-       commit together. Otherwise call `backlogit_track_commit` (registry `track_commit`;
-       CLI mapping `backlogit update {id} --commit {sha}`) to record `merge_commit_sha` on
-       the item **BEFORE** the `backlogit_move_item` / `backlogit_archive_item` calls.
-     * If neither an atomic archive field nor a source-mutating `track_commit` is
-       available, **halt** with `RECONCILE_FAIL` and report the missing capability. Never
+   * If the item's file is in `.backlogit/queue/` (a **live** manifest item), close it via
+     **exactly one** of the two **mutually exclusive** paths below. **Dispatch once**, before
+     any mutation, on the single condition *"does the registry's configured `archive_item`
+     operation accept **atomic commit metadata**?"*, then follow only the path that condition
+     selects. The paths are alternatives, never a sequence: the item is archived **exactly
+     once**, by whichever path runs.
+     * **Path A — atomic archive** (the configured `archive_item` **does** accept commit
+       metadata). Invoke `backlogit_archive_item` **exactly once**, passing
+       `merge_commit_sha` in the operation's configured field (for backlogit, `commit_sha`),
+       so archival and evidence commit together in that single call. That call **is** the
+       archival: do **not** afterwards call `backlogit_move_item`, `backlogit_archive_item`,
+       or `backlogit_track_commit` on this item — it has already left
+       `.backlogit/queue/`, and a second move/archive would operate on an artifact that is
+       no longer there. Verify the resulting archived record exists at
+       `.backlogit/archive/{id}.*` and carries the expected commit evidence. Classify
+       `matched` with evidence source `atomic-archive-metadata`.
+     * **Path B — track-commit fallback** (the configured `archive_item` does **not** accept
+       commit metadata). While the item is still **live** in `.backlogit/queue/`, call
+       `backlogit_track_commit` (registry `track_commit`; CLI mapping
+       `backlogit update {id} --commit {sha}`) to record `merge_commit_sha` on the item, then
+       **verify** that evidence is present on the live record **before** going further —
+       this is the last point at which the source record is reliably mutable. Only then run
+       the registry's configured non-atomic status/archival sequence **exactly once**: move
+       the item to `done` via `backlogit_move_item`, then archive that single artifact via
+       `backlogit_archive_item` (CLI fallback `backlogit archive {id}`). On backlogit
+       installations where `move ... --status done` already **relocates** the file out of
+       `.backlogit/queue/` before the final archive-marker operation, the record is no
+       longer writable at its original path, so this contract **never** writes evidence
+       after that move. Classify `matched` with evidence source `track_commit`.
+     * **Neither path available.** If the configured `archive_item` accepts no atomic
+       commit-metadata field **and** no source-mutating `track_commit` is available,
+       **halt** with `RECONCILE_FAIL` and report the missing capability **before any
+       terminal mutation** — do not move, archive, or otherwise close the item. Never
        attempt to write commit evidence **after archival**, and never treat a
        report-only note as a substitute for evidence on the item.
-     * **Then archive.** Move the item to `done` via `backlogit_move_item`, then archive
-       that single artifact via `backlogit_archive_item` (CLI fallback
-       `backlogit archive {id}`). Classify `matched` and record the evidence source
-       (`atomic-archive-metadata` or `track_commit`) and the recorded SHA value.
+     * **Verify after either successful path** (one shared invariant, whichever branch ran):
+       confirm the item now appears in `.backlogit/archive/` **exactly once** and
+       carries evidence equal to `merge_commit_sha`, confirm it is gone from
+       `.backlogit/queue/`, and record the evidence **source**
+       (`atomic-archive-metadata` or `track_commit`) and the SHA **value** in the report
+       before moving to the next item.
    * If the item's file is already in `.backlogit/archive/` (a **pre-archived** member):
      classify `pre-archived` and **skip** — do not re-archive. Reusing the `pre-archived`
      classification prevents false-positive cascade flags on items that were legitimately
@@ -256,6 +286,14 @@ step 1 first and release it on completion.
        item) or **contradictory** (a recorded commit that conflicts with the item's
        documented delivery), **halt** with `RECONCILE_FAIL` and name the item. Never
        fabricate, infer, or backfill a SHA to close the gap.
+     * **Remediation boundary.** Repairing a previously completed record is the job of a
+       separate **historical evidence-remediation** workflow, run **outside** this
+       safe-close operation, only with **authoritative provenance** for the correct
+       delivered-work SHA (for example the merge commit proven on `origin/main` for the
+       shipment that actually delivered the item) and only with an **audit note** recording
+       what was changed, why, and on whose authority. Safe-close itself never silently
+       infers or backfills evidence, and never repairs a pre-archived record inline — it
+       halts and defers to that workflow.
    * If the item's file is in neither location: classify `missing`, halt with
      `RECONCILE_FAIL`, and do not continue archiving.
 
@@ -302,21 +340,44 @@ step 1 first and release it on completion.
    protected set is intact in `.backlogit/queue/`.
 
 8. **Record the shipment record's own commit evidence, then archive it** (single artifact,
-   non-cascading):
-   * **Evidence first.** Record the shipment record's **actual delivered-work merge
-     commit** — the `merge_commit_sha` input, which merged this shipment's delivered work
-     into `main` — **BEFORE** archiving the record. Use the `archive_item` operation's
-     atomic commit metadata field when it supports one; otherwise call
-     `backlogit_track_commit` on `{shipment_id}` first. If neither is available, halt with
-     `RECONCILE_FAIL` rather than archiving without evidence — never write the evidence
-     after archival.
+   non-cascading): close `{shipment_id}` via **exactly one** of the two **mutually
+   exclusive** paths below. **Dispatch once**, on the same condition used in step 4 —
+   whether the configured `archive_item` operation accepts **atomic commit metadata** — and
+   then follow only that path. The paths are alternatives, never a sequence: the shipment
+   record is archived **exactly once**.
+   * **Path A — atomic archive** (the configured `archive_item` **does** accept commit
+     metadata). Invoke `backlogit_archive_item` on `{shipment_id}` **exactly once**, passing
+     the **actual delivered-work merge commit** — the `merge_commit_sha` input, which merged
+     this shipment's delivered work into `main` — in the operation's configured field (for
+     backlogit, `commit_sha`), so archival and evidence commit together in that single call.
+     Do **not** afterwards call `backlogit_move_item`, `backlogit_archive_item`, or
+     `backlogit_track_commit` on the shipment record; it has already left the queue.
+     Evidence source: `atomic-archive-metadata`.
+   * **Path B — track-commit fallback** (the configured `archive_item` does **not** accept
+     commit metadata). While `{shipment_id}` is still **live** in `.backlogit/queue/`,
+     call `backlogit_track_commit` on it to record the delivered-work merge SHA **BEFORE**
+     any status change or archival, and **verify** that evidence is present on the live
+     record. Only then run the configured non-atomic status/archival sequence **exactly
+     once**: `backlogit_move_item` to `done` where the installation requires it, then
+     `backlogit_archive_item` (CLI fallback `backlogit archive {id}`). Where
+     `move ... --status done` **relocates** the record out of `.backlogit/queue/` before
+     the final archive-marker operation, the record is no longer writable at its original
+     path, so this contract **never** writes evidence after that move. Evidence source:
+     `track_commit`.
+   * **Neither path available.** If the configured `archive_item` accepts no atomic
+     commit-metadata field **and** no source-mutating `track_commit` is available, **halt**
+     with `RECONCILE_FAIL` **before any terminal mutation** rather than archiving the
+     shipment record without evidence — never write the evidence after archival.
    * Do not substitute a decision or closure-authority SHA here. The commit that recorded
      the decision or approval to close authorizes the closure; it is not the delivered
      work.
-   * **Then archive** only the `{shipment_id}` artifact via `backlogit_archive_item` (CLI
-     fallback `backlogit archive {id}`). Closing the shipment record is the point of
-     safe-close, so it is **not** in the protected set — but it must be archived as its own
-     single artifact, **never** via the cascade `backlogit_ship_shipment`.
+   * **Verify after either successful path** (one shared invariant, whichever branch ran):
+     confirm `{shipment_id}` now appears in `.backlogit/archive/` **exactly once**,
+     carries evidence equal to `merge_commit_sha`, and is gone from `.backlogit/queue/`;
+     record the evidence **source** and the SHA **value** in the report. Closing the
+     shipment record is the point of safe-close, so it is **not** in the protected set —
+     but it is archived as its own single artifact, **never** via the cascade
+     `backlogit_ship_shipment`.
    * Then re-run the verify-after-each invariant (step 5) to confirm archiving the shipment
      record did not disturb the protected set.
 
@@ -351,7 +412,13 @@ If pre-mode cannot acquire the lock because another process holds it:
 * Safe-close verifies the protected set survives after every single-item archival (verify-after-each invariant), with no pre-archived exemption for protected-set members
 * Safe-close archives the shipment record as its own single artifact and never via the cascade op
 * Safe-close records commit evidence (actual delivered-work merge SHA) on each live manifest item and on the shipment record **before** archiving that artifact, via atomic archive commit metadata or `backlogit_track_commit`, and never after archival
+* Safe-close archives each live manifest item and the shipment record **exactly once**: it dispatches once on whether the configured `archive_item` accepts atomic commit metadata, and the atomic-archive and `track_commit` paths are **mutually exclusive** — never chained
+* The atomic path calls `archive_item` exactly once with commit metadata and never follows it with `backlogit_move_item` / `backlogit_archive_item` / `backlogit_track_commit` on that same artifact
+* The track-commit path records and verifies evidence while the artifact is still live, then runs the configured non-atomic status/archival sequence exactly once, and never writes evidence after a `move ... --status done` that relocates the file
+* If **neither** an atomic commit-metadata field nor a source-mutating `track_commit` is available, safe-close **halts** with `RECONCILE_FAIL` before any terminal mutation
+* After either successful path, one shared verify-after-each invariant confirms the artifact is archived exactly once with the expected evidence, and records the evidence source and SHA value
 * Safe-close preserves a pre-archived member's existing merge commit — verifying and reporting it rather than overwriting it with the current closure SHA — and halts rather than fabricating missing or contradictory evidence
+* Repairing a previously completed record is deferred to a separate historical evidence-remediation workflow run outside safe-close, with authoritative provenance and an audit note; safe-close never silently infers or backfills evidence
 * Safe-close reports the commit evidence source and value per member and for the shipment record
 * Safe-close halts on cascade detection and executes `git restore`/`git revert` recovery only after explicit real-time operator approval, scoped to the exact identified paths or exact revert commit, with a P-005 violation event; it never force/resets, never broadens to unrelated paths or history, and never auto-prunes the manifest
 * `mode: post` runs after the safe-close archive sequence in Ship Step 6
