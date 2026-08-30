@@ -948,12 +948,18 @@ Dependency changes from the prior authority (each enacted in backlog by this Sta
   invariants, deterministic `should_refuse_reparse` predicate) is retained unchanged for the
   feasible units.
 
-**`051-S` transition (Ship-owned; planned, not executed by Stage):** Stage does not mutate the
-active `051-S` manifest or close it. Ship, on its next cycle and only after `059.014-T` sign-off,
-either re-scopes `051-S`'s manifest to the feasible task set (`059-F` + U1/U2/U6/U3/U4/U5/U10/U11)
-as the owner, or closes `051-S` (feasibility complete; engine binding infeasible/accepted) and
-Stage assembles a fresh implementation shipment. `049-S` is decoupled from `051-S` (sequencing-only
-edge, no code coupling, no schedule gain) so bug `7BF1961D` proceeds independently.
+**`051-S` transition (SUPERSEDED / ENACTED — 2026-08-30 Stage convergence, PR #114):**
+~~Stage does not mutate the active `051-S` manifest or close it. Ship, on its next cycle and only
+after `059.014-T` sign-off, either re-scopes `051-S`'s manifest to the feasible task set (`059-F` +
+U1/U2/U6/U3/U4/U5/U10/U11) as the owner, or closes `051-S` (feasibility complete; engine binding
+infeasible/accepted) and Stage assembles a fresh implementation shipment.~~ **Enacted outcome:**
+`051-S` was **safely closed and is now `archived`**; its non-terminal members were removed with
+status-preserving `return-blocked` and handed off; the Ship-created successor `054-S` was reverted
+and does not exist. **Ship did not, and cannot, re-scope `051-S` or create a successor shipment** —
+under fail-closed P-010 both are Stage-only. **Stage exclusively** normalizes (`blocked → queued`)
+the feasible units and assembles any successor shipment (Step 5.5), and only **after** the operator
+sign-off gate `059.014-T` is `done`. `049-S` is decoupled from `051-S` (sequencing-only edge, no
+code coupling, no schedule gain) so bug `7BF1961D` proceeds independently.
 
 **Status-normalization + assembly ownership (Stage-owned; added 2026-08-30).** Following Copilot
 review comment `3888455427` on PR #114 and
@@ -964,4 +970,8 @@ manifest members, `return-blocked`s them (status-preserving), safe-closes the ev
 hands off the rescoped scope; **Stage** performs the status normalization, rewires the feasible DAG,
 and assembles any successor shipment under Step 5.5. The prior Ship-performed normalization remains
 a P-010 violation and is not retroactively legalized — Stage affirmed the resulting `queued`
-disposition only after independent review.
+disposition only after independent review. A fourth distinct Ship P-010 was subsequently recorded:
+Ship's post-return mutation of `059.008-T`'s `blocked_reason` planning field; Stage independently
+ratified the current terminal blocked reason as semantically correct without legalizing the mutation
+(see the *Historical Ship role-boundary violation record* in
+`docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`).

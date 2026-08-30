@@ -27,8 +27,8 @@ assembly to Stage.
 * Authored `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
   ratifying the dispositions and deciding the ownership division (Ship identifies/returns/hands off;
   Stage normalizes + assembles). Lint clean.
-* Amended `docs/decisions/2026-08-29-...redeliberation-deliberation.md` and
-  `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md` with a dated Stage-ownership
+* Amended `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
+  and `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md` with a dated Stage-ownership
   clarification (normalization is Stage-only under P-010). Lint clean.
 * Recorded Stage ratification comments on `059-F` and `059.014-T` via `backlogit comment add`.
 * Recorded that the historical Ship normalization **remains a P-010 violation, not retroactively
@@ -49,3 +49,47 @@ assembly to Stage.
   Stage.
 * Operator: sign off `059.014-T` to unblock U1 onward.
 * Stage (future cycle): after sign-off, assemble the successor implementation shipment (Step 5.5).
+
+## Convergence pass (2026-08-30, PR #114 frozen-diff review remediation)
+
+Final Stage planning/audit convergence pass over the frozen diff. No subagents, no merge; dirty
+`.gitignore` and all untracked/ignored scratch/staging/session artifacts preserved untouched.
+Engram unavailable — used structured `backlogit` queries + exact reads only. Four Stage-owned
+corrections applied:
+
+1. **`059.014-T` comment now real (makes the earlier memory claim true).** The prior note that
+   Stage recorded ratification comments on *both* `059-F` and `059.014-T` was only partly reflected
+   in tool history. Appended a concise Stage convergence-ratification comment to `059.014-T` via the
+   supported `backlogit comment add` operation (no hand-editing of tool-managed history): it remains
+   the **sole** dependency-ready queued sign-off gate — status `queued`, **not** `done` and **not**
+   bypassed — and after sign-off Stage (not Ship) exclusively owns normalization + successor-shipment
+   assembly (Step 5.5).
+2. **`059.008-T` blocked-reason ratification + fourth P-010.** Ship previously changed
+   `059.008-T`'s `blocked_reason` planning field/body **after** the task was returned from `051-S` —
+   an unclassified Ship item-planning mutation, fail-closed **P-010**. Independently reviewed and
+   ratified the current terminal blocked reason as **semantically correct** (U8 terminally BLOCKED;
+   engine-open closure deferred to `059.013-T` Option A; stays `blocked`, remains in
+   `.backlogit/queue/`) and appended a Stage comment via `backlogit comment add`. The comment records
+   that ratification **does not** retroactively legalize the Ship mutation; status stays `blocked`,
+   dependencies (`059.007-T`) unchanged.
+3. **Decision + plan superseded/enacted wording and four-entry violation record.** In
+   `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md` and
+   `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`, the forward-looking
+   *Ship-Side Transition (planned/not executed)* and the operator/Ship "alternative" wording are now
+   marked **SUPERSEDED / ENACTED** (original text struck, not silently rewritten): `051-S` is safely
+   closed and `archived`; the Ship-created `054-S` was reverted and does not exist; **Ship did not,
+   and cannot, re-scope `051-S` or create a successor**; Stage exclusively normalizes and assembles
+   after `059.014-T` sign-off. Extended the historical violation record from **three to four**
+   distinct entries by adding the Ship `blocked_reason` mutation P-010, with Stage's independent
+   ratification linked.
+4. **This memory reconciled.** Fixed the incomplete
+   `2026-08-29-...redeliberation-deliberation.md` cross-reference (now the full filename) and added
+   the `059.008` ratification / fourth-P-010 finding and the actual `059.014-T` convergence comment.
+
+### State invariants (unchanged by this pass)
+
+* `059-F` = `queued`; `059.014-T` = `queued` (sole ready sign-off gate, not done/bypassed);
+  `059.008-T` = `blocked` (deps `059.007-T` unchanged); `051-S` = `archived`; `054-S` = not found.
+* No shipment created/claimed/closed/archived; no status normalized; no sign-off marked done; no
+  dependency changed; no source/test/config edits; no Ship closure/compound/transition-memory/agent
+  files touched; no PR body/thread edits; no merge.
