@@ -1,6 +1,6 @@
 ---
 title: "Shipment supersession pattern: return-blocked non-terminal manifest items, safe-close the evidence shipment, prepare the rescoped scope for Stage to assemble"
-description: "When an active shipment's manifest mixes a done evidence task with a still-blocked feature/task that must never be cascade-archived, return the non-done items from the manifest first so shipment-reconcile's pre-mode expected_status check and safe-close protected-set computation both work correctly, then close the now-single-item shipment and normalize every superseded-chain member of the rescoped feasible scope to an intake-valid status — leaving shipment assembly itself to Stage, per Ship's NON-NEGOTIABLE P-010 role boundary"
+description: "When an active shipment's manifest mixes a done evidence task with a still-blocked feature/task that must never be cascade-archived, return the non-done items from the manifest first so shipment-reconcile's pre-mode expected_status check and safe-close protected-set computation both work correctly, then close the now-single-item shipment, identify the rescoped feasible scope, and hand it off — un-normalized — to Stage, which exclusively normalizes every superseded-chain member to an intake-valid status and decides on successor-shipment assembly, per both agents' NON-NEGOTIABLE P-010 role boundaries; never instruct Ship to delete a mistakenly created shipment without real-time operator approval"
 problem_type: "workflow-handoff"
 category: "best-practices"
 component: "shipment-reconcile skill + Ship Step 6 closure, backlogit shipment lifecycle"
@@ -11,7 +11,9 @@ message: "051-S manifest [059-F, 059.007-T, 059.008-T]: 059-F blocked, 059.008-T
 file_path: ".github/skills/shipment-reconcile/SKILL.md"
 citations:
   - "docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md"
+  - "docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md"
   - "docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md"
+  - "docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md"
   - "https://github.com/softwaresalt/graphtor-docs/pull/113"
   - "https://github.com/softwaresalt/graphtor-docs/pull/114"
 tags:
@@ -87,15 +89,42 @@ first — regardless of *when* it was returned or how it came to be
    **stronger** safety guarantee than manually eyeballing which items to
    protect — the mechanism is generic and doesn't need to know in advance
    which items are "supposed" to survive.
-4. **Normalize EVERY superseded-chain member of the rescoped scope to an
-   intake-valid status** — not just the members returned from `051-S` in
-   the current session. Identify the full rescoped scope from the
-   governing decision document (the feature plus every unit named
-   feasible), regardless of which prior session returned each one from a
-   shipment or whether it was ever in a shipment at all. For each member
-   whose *only* remaining blocker is a dependency edge on another scope
-   member or an already-`done`/gate item (not a terminal/evidence-based
-   block), transition it back to `queued` directly:
+4. **Identify the full rescoped scope and hand it, un-normalized, to
+   Stage — do NOT run `backlogit move <id> --status queued` as Ship.**
+   Fail-closed P-010 role enforcement
+   (`.github/instructions/role-enforcement.instructions.md`) treats any
+   backlog state mutation not listed in Ship's Allowed column as
+   forbidden. `.github/policies/workflow-policies.md` lists "move tasks to
+   active/done" as Ship-allowed; a `blocked → queued` planning-shaping
+   status change is a different, unlisted mutation and therefore defaults
+   to forbidden for Ship. It is, however, explicitly Stage-allowed
+   ("update backlog items"). **A prior version of this pattern had Ship
+   run this normalization directly. A later, independent Stage
+   ratification
+   (`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`)
+   confirmed that mutation was itself an un-legalized P-010 violation —
+   distinct from the shipment-creation violation in step 6 below — even
+   though the resulting `queued` disposition turned out, on independent
+   review, to be semantically correct. Do not repeat it.** Instead, Ship:
+   1. Identifies the full rescoped scope from the governing decision
+      document (the feature plus every unit named feasible), regardless of
+      which prior session returned each item from a shipment or whether it
+      was ever in a shipment at all;
+   2. Records, for every scope member, its current `status` value and its
+      full `depends_on` dependency-edge context (which edges are satisfied,
+      which are internal to the scope, which point at an already-`done`
+      item outside the scope);
+   3. Hands this off in the closure/memory artifacts — never as a stash
+      entry, since stash operations are equally Stage-only under the same
+      P-010 list — so Stage can independently review and decide
+      normalization for itself.
+5. **Stage normalizes every superseded-chain member of the handed-off
+   scope to an intake-valid status.** This step belongs to Stage, not
+   Ship; it is described here only so the reusable procedure documents
+   the full two-agent handoff. Stage identifies each member whose *only*
+   remaining blocker is a dependency edge on another scope member or an
+   already-`done`/gate item (not a terminal/evidence-based block) and
+   transitions it directly:
    ```bash
    backlogit move <id> --status queued
    ```
@@ -105,46 +134,73 @@ first — regardless of *when* it was returned or how it came to be
    `backlogit-status-transitions-2026-05-02.md`). It clears any
    `custom_fields.blocked_reason` on that item as a side effect (verified);
    preserve the narrative in git history / the governing decision doc
-   instead of relying on the live field. Do **not** apply this to items
-   whose block is itself the terminal, decided evidence (e.g. a feasibility
-   spike that proved infeasible) — those stay `blocked` and stay **out of**
-   the rescoped scope entirely. Skipping any affected member (for example,
-   normalizing only the members returned in the current session while
-   leaving pre-existing `blocked` siblings untouched) reproduces the same
-   intake-mismatch failure for a future shipment attempt.
-5. **Hand off shipment assembly to Stage — do NOT assemble it as Ship.**
-   `.github/policies/workflow-policies.md`'s P-010 definition is
-   unconditional: **"Ship MUST NOT: Create backlog items, create
-   shipments..."**, and **"Do not proceed past the boundary even if the
-   operator requests work outside scope — redirect to the correct agent
-   instead."** This holds even when `.ship.agent.md`'s own Step 0.5
+   instead of relying on the live field. Stage does **not** apply this to
+   items whose block is itself the terminal, decided evidence (e.g. a
+   feasibility spike that proved infeasible) — those stay `blocked` and
+   stay **out of** the rescoped scope entirely. Skipping any affected
+   member (for example, normalizing only the members returned in the
+   current session while leaving pre-existing `blocked` siblings
+   untouched) reproduces the same intake-mismatch failure for a future
+   shipment attempt.
+6. **Stage decides on and assembles the successor shipment — Ship never
+   assembles it.** `.github/policies/workflow-policies.md`'s P-010
+   definition is unconditional: **"Ship MUST NOT: Create backlog items,
+   create shipments..."**, and **"Do not proceed past the boundary even if
+   the operator requests work outside scope — redirect to the correct
+   agent instead."** This holds even when `.ship.agent.md`'s own Step 0.5
    fallback text describes an operator-confirmed direct-assembly path, and
    even when a governing decision document frames fresh-shipment assembly
    as "Ship's choice" — the canonical policy document takes precedence
-   over both. **A prior version of this pattern created the successor
-   shipment directly as Ship; a Copilot shadow review correctly flagged it
-   as a P-010 violation, and it was reverted** (`backlogit delete <id>
-   --force`). The correct handoff: leave the normalized scope as
-   individual, `queued`, dependency-closed backlog items with no shipment
-   membership, and record in the closure/memory artifacts (not a stash
-   entry — stash operations are equally Stage-only under the same P-010
-   list) that a future Stage session must assemble them into a shipment.
-6. **Verify intake-readiness of the prepared scope**: confirm every
-   scope member's `status` equals `queued` (or `active` if some are
-   already claimed elsewhere) — the same check Step 0.5 will perform when
-   Stage's successor shipment is later claimed — so the handoff is
-   genuinely actionable, not just structurally present.
+   over both.
+
+   **If Ship ever creates a successor shipment in violation of this
+   boundary, do not compound the error by deleting it unilaterally.**
+   Deleting a backlog artifact (`backlogit delete <id> --force`) is itself
+   a destructive action under Constitution Principle VII / P-005 and the
+   strict-safety `ProposedAction`/`ActionRisk: destructive` contract — it
+   requires real-time operator approval before execution, regardless of
+   whether the artifact being deleted was itself created in error.
+   **A prior version of this pattern ran that delete without obtaining
+   approval; that remains a separate, unresolved P-005 violation, not a
+   compliant remediation of the P-010 finding it was responding to** —
+   deleting a P-010 violation does not exempt the deletion from its own
+   destructive-command approval gate. The correct response to a
+   mistakenly created shipment is one of:
+   * halt and request explicit real-time operator approval for the
+     deletion before running it, or
+   * leave the artifact in place, unclaimed and unshipped, and hand it to
+     Stage/the operator as a recovery item in the closure/memory
+     artifacts, recording the mistaken creation as an open P-010 finding
+     until the operator or Stage resolves it.
+
+   Never instruct Ship to delete its own mistaken artifact as a matter of
+   routine remediation. The correct handoff for the legitimate case (no
+   mistaken shipment exists) is: leave the normalized scope as individual,
+   `queued`, dependency-closed backlog items with no shipment membership,
+   and record in the closure/memory artifacts that a future Stage session
+   must assemble them into a shipment.
+7. **Once Stage completes normalization, verify intake-readiness of the
+   prepared scope**: confirm every scope member's `status` equals `queued`
+   (or `active` if some are already claimed elsewhere) — the same check
+   Step 0.5 will perform when Stage's successor shipment is later claimed
+   — so the handoff is genuinely actionable, not just structurally
+   present.
 
 ## Prevention
 
 When a shipment's manifest will end in a mixed done/blocked/terminal-blocked
 outcome, plan the closure as "return non-`done` items → reconcile pre →
-safe-close → **normalize every superseded-chain member of the rescoped
-scope to `queued` (not just this session's returns)** → **hand the prepared
-scope to Stage for shipment assembly (never assemble it as Ship)** →
+safe-close → **identify the full rescoped scope and hand it, un-normalized,
+to Stage (never run `blocked → queued` normalization as Ship)** → **Stage
+normalizes every superseded-chain member to `queued` and decides on
+shipment assembly (never assemble it as Ship, and never delete a
+mistakenly created shipment without real-time operator approval)** →
 **verify the prepared scope's own intake-readiness**," not as a single
-`shipment ship`/cascade call and not by creating a successor shipment
-directly. This keeps the blocked feature and any terminally-blocked
-evidence task visible in the queue (never archived), ensures the prepared
-scope is genuinely executable once shipped, and keeps shipment creation
-where the role boundary requires it — with Stage, not Ship.
+`shipment ship`/cascade call and not by mutating status or creating a
+successor shipment directly as Ship. This keeps the blocked feature and any
+terminally-blocked evidence task visible in the queue (never archived),
+ensures the prepared scope is genuinely executable once shipped, and keeps
+both status normalization and shipment creation where the role boundary
+requires them — with Stage, not Ship. If Ship nonetheless creates an
+out-of-boundary artifact by mistake, treat correcting it as its own
+destructive action requiring approval, not a self-authorized cleanup step.
