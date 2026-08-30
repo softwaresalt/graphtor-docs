@@ -51,7 +51,7 @@ permission-mutation unit (U1/U2/U6/U3/U4/U5/U10/U11) is feasible per U7 PASS.
   - U2 `059.002-T`, U11 `059.011-T`: unchanged
 - Amended `059-F` DoD via new `BEGIN:redeliberation-2026-08-29` section + added decision to
   references. **051-S manifest NOT mutated** (`[059-F, 059.007-T, 059.008-T]` unchanged); not closed.
-- `059.012-T` (U12) left untouched (queued, later separate shipment).
+- `059.012-T` (U12): dependency repointed `059.008-T` -> `059.014-T` (review-fix cycle 1, 2026-08-29) so it becomes ready at the feature-unblock gate; still queued for a later separate shipment.
 - Traceability comments appended to 049-S, 051-S, 059-F (actor stage).
 - Graph verified acyclic; `doctor` flagged only pre-existing `archived_from_self_ref` warnings on
   unrelated archived items (032/038/041/043…), none on touched items.

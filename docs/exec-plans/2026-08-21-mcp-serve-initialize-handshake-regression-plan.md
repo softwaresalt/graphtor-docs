@@ -73,8 +73,10 @@ H3-A edges are `056.020-T -> 056.028-T -> 056.029-T`,
 `056.029-T -> {056.030-T, 056.031-T, 056.032-T, 056.033-T, 056.011-T}`,
 `056.003-T -> 056.011-T`, `056.028-T -> 056.011-T`, `053-S -> 052-S`, and
 `{056.011-T, 056.028-T, 056.029-T, 056.030-T, 056.031-T, 056.032-T,
-056.033-T} -> 056.004-T`. `049-S` remains frozen with eight members and its
-`051-S` prerequisite. The PHASE 1.5 shipment remains uncreated until `049-S`
+056.033-T} -> 056.004-T`. `049-S` remains frozen with eight members; its former
+`051-S` prerequisite is **SUPERSEDED** — `049-S` is decoupled from `051-S`
+(2026-08-29 store-toctou engine-boundary re-deliberation; sequencing-only edge,
+now removed) and has no shipment prerequisite. The PHASE 1.5 shipment remains uncreated until `049-S`
 closes, but `056.028-T -> 056.029-T` already enforces its order. Before
 `053-S` claim, member readiness verifies that `056.028-T` is terminal and that
 every `056.029-T` successor is dependency-ready; `052-S` starts only after all
@@ -2771,8 +2773,11 @@ resolution was performed by this pass.
 * Queue order is `050-S -> 051-S -> 049-S -> PHASE 1.5 (056.028-T, assembled
   only after `049-S` closes) -> 053-S
   (056.029-T -> {056.030-T, 056.031-T, 056.032-T, 056.033-T}) -> 052-S
-  (056.011-T)`. `051-S` is not bypassed or removed, and `049-S` retains exactly
-  its eight frozen members.
+  (056.011-T)`. **SUPERSEDED 2026-08-29:** `049-S` is decoupled from `051-S`
+  (store-toctou engine-boundary re-deliberation; the `051-S -> 049-S` sequencing
+  edge is removed, so the queue order no longer routes `049-S` through `051-S`).
+  `049-S` retains exactly its eight frozen members but has no `051-S`
+  prerequisite.
 * The PHASE 1.5 manifest remains uncreated at plan time. The task edge
   `056.028-T -> 056.029-T` enforces the order now. Before `053-S` claim,
   member readiness verifies that edge and the four `056.029-T` successor

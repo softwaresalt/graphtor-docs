@@ -185,31 +185,42 @@ pre-existing symlink-swap TOCTOU in the guard's permission handling is a
 separate, deferred security-mechanism change (stash `5905CDEE`); it does not
 change the guarantee described above and is tracked independently.
 
-### Operator trust boundary: workspace write access during serve
+### Operator trust boundary: workspace directory write access
 
-`serve` requires a trusted workspace. The operator MUST ensure that neither the
-served database leaf entries (the `.db` file and any `-wal`/`-shm`/`-journal`
-sidecars) nor any **intermediate directory beneath the workspace root** is
-attacker-writable during an active serve window. This requirement covers the
-**write-mode `open_sqlite`** path (a `Generation`-posture database) as well as
-the read-only serve path — the write-mode branch is the higher-impact one,
-because a redirected engine open can read, write, or create an external target,
-not merely expose information.
+Every command that opens a database — `serve` **and** every write-mode command
+that reaches `DataStore::open_sqlite` (for example `sync`, via
+`with_locked_database_store`, `src/main.rs:603-617`) — requires a trusted
+workspace. The operator MUST ensure that the **workspace root directory
+namespace and every parent directory component leading to each database** are
+not writable by an untrusted party, **and** that the database leaf entries
+themselves (the `.db` file and any `-wal`/`-shm`/`-journal` sidecars) are not
+attacker-writable. Directory authority is the load-bearing requirement:
+replacing a leaf entry requires write/delete/rename authority on its **parent
+directory**, not write permission on the file, so for the common `root/graph.db`
+layout — where no intermediate directory exists — an attacker who can mutate the
+root directory can still swap the leaf even if the file's write bit is protected.
+Protecting only the leaf's permission bit is therefore insufficient; the parent
+directory chain, up to and including the workspace root, must be protected too.
+This requirement is **not** limited to an active `serve` window: it applies
+whenever any write-mode command opens the store, because a redirected write-mode
+open can read, write, or create an external target.
 
 This boundary exists because the storage engine re-resolves the database **by
 bare path**: cozo's `SqliteStorage` re-opens SQLite by path on every pool-empty
 `transact()` for the `DataStore` lifetime, and `DbInstance::new`'s
 `path: impl AsRef<Path>` structurally rejects a handle/capability object. A
-local attacker who can swap a leaf entry or an intermediate directory beneath
-the root **during** serve can therefore redirect the engine open to a different
-file, even after the permission-mutation paths are fully identity-bound. This is
-the **named accepted residual** recorded in the
+local attacker who can swap a leaf entry or any parent directory beneath (or at)
+the workspace root **while a store-opening command holds the store** can
+therefore redirect the engine open to a different file, even after the
+permission-mutation paths are fully identity-bound. This is the **named accepted
+residual** recorded in the
 [store TOCTOU engine-boundary re-deliberation](../decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md):
 the `chmod`/read-only permission paths are fully contained (no permission
 mutation can escape the workspace), but the engine's own path re-resolution is
 not, and closing it fully is tracked as later upstream-cozo work (`059.013-T`).
-Until that closure lands, run `serve` only against a workspace whose leaf and
-intermediate paths beneath the root are not writable by an untrusted party.
+Until that closure lands, run `serve` and every write-mode command only against a
+workspace whose root directory namespace, every parent directory component, and
+leaf entries are not writable by an untrusted party.
 
 ## `--read-only` escape hatch
 

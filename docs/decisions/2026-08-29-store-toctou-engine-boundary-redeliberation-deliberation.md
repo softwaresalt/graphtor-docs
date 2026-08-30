@@ -347,13 +347,20 @@ record itself says has no causal basis and no schedule benefit.
   leaf swap" — cozo's per-`transact()` reopen makes it reachable by leaf or intermediate swap alike.
 * **Severity bounding (threat model)**: The graphtor-docs operating model is single-developer,
   local-only (`AGENTS.md`, `docs/design-docs/…consumption-first-serve-and-trust-boundary`). The
-  residual requires a **local** attacker with write access **beneath** the workspace root (a leaf
-  entry or an intermediate directory) **during** an active serve window. Impact by branch:
-  `open_engine_readonly` (read serve) is bounded to reading a redirected file (information
-  exposure), since the serve read path sets files read-only; **`open_sqlite` (write-mode) is the
-  higher-impact branch** — a redirected engine open could read/write or create an external target,
-  so operational guidance (control #3) MUST cover write-mode opens, not only the read serve path.
-  This is a local-only, active-serve-window threat, but it is **not** "narrower than a leaf swap".
+  residual requires a **local** attacker with write/delete/rename authority on a leaf entry or on
+  **any parent directory component up to and including the workspace root**, while a store-opening
+  command holds the store. It is **not** limited to an active `serve` window: `cmd_sync` reaches the
+  same `DataStore::open_sqlite` bare-path reopen via `with_locked_database_store`
+  (`src/main.rs:603-617`), so a write-mode `sync` is exposed even when no server is running. Impact
+  by branch: `open_engine_readonly` (read serve) is bounded to reading a redirected file (information
+  exposure), since the serve read path sets files read-only; **`open_sqlite` (write-mode, reached by
+  `serve` generation posture and by `sync`) is the higher-impact branch** — a redirected engine open
+  could read/write or create an external target, so operational guidance (control #3) MUST cover
+  every write-mode store open, not only the read serve path. Note that swapping a leaf requires
+  authority on its **parent directory**, so the root directory namespace and every parent component
+  must be protected, not just the leaf's write bit (for a `root/graph.db` layout the root directory
+  itself is the relevant parent). This is a local-only threat that spans every write-mode store open
+  (serve and sync), and it is **not** "narrower than a leaf swap".
 * **Compensating controls** (to accompany the accepted residual):
   1. **Full permission-path containment** (this fix): no `chmod` can escape the workspace,
      removing the highest-impact (privilege/permission) branch of the original threat. This is the
@@ -365,13 +372,17 @@ record itself says has no causal basis and no schedule benefit.
      `transact()` reopen window. This is a best-effort detection aid only; it is **not** load-bearing
      for the acceptance decision, and no serve-time monitoring task is added to this shipment (YAGNI
      for the local-only model). The acceptance rests on controls #1, #3, and #4.
-  3. **Operational guidance**: document that graphtor-docs serve must run against a workspace
-     whose leaf entries and intermediate directories are not attacker-writable during serve
-     (consistent with the local-only trust boundary), **covering write-mode `open_sqlite` opens as
-     well as read serve**; surface this in the serve trust-boundary design doc. **Enacted
-     2026-08-29:** this guidance is now committed in
+  3. **Operational guidance**: document that every store-opening command — graphtor-docs `serve`
+     AND every write-mode command that reaches `DataStore::open_sqlite` (for example `sync`, via
+     `with_locked_database_store`) — must run against a workspace whose **root directory namespace
+     and every parent directory component leading to each database**, as well as the leaf entries,
+     are not attacker-writable (consistent with the local-only trust boundary). Directory authority
+     is load-bearing: replacing a leaf requires write/delete/rename authority on its parent
+     directory, so protecting only the leaf's write bit is insufficient, and the requirement is
+     **not** limited to an active serve window. Surface this in the serve trust-boundary design doc.
+     **Enacted 2026-08-29:** this guidance is now committed in
      `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md` under the
-     "Operator trust boundary: workspace write access during serve" subsection, and `059.014-T`
+     "Operator trust boundary: workspace directory write access" subsection, and `059.014-T`
      requires its presence as a hard sign-off precondition (see that item's acceptance criteria).
   4. **Tracked closure path**: Option A (`059.013-T`) keeps the full engine-open closure on the
      roadmap; the residual is time-limited by that follow-up, not permanent-by-default.
