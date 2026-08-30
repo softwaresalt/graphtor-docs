@@ -1,0 +1,314 @@
+---
+title: "Ship 051-S execution memory — U7 PASS / U8 BLOCKED feasibility outcome"
+date: "2026-08-29"
+shipment: "051-S"
+feature: "059-F"
+agent: "Ship"
+status: "blocked (feasibility gate)"
+---
+
+## Circuit-breaker note (review-fix cycle limit reached)
+
+This PR went through significantly more than 3 review-fix cycles (the
+workspace's circuit-breaker cap) as successive Copilot shadow-review rounds
+raised progressively more specific findings about U7's evidence (root
+bootstrap correctness → Unix execution → pinned-1.75 Unix execution →
+cross-platform Scenario 3 execution → Scenario 3 mechanism specificity →
+red-phase rigor). Per `circuit-breaker.instructions.md`, remaining findings
+past the cycle cap become new, tracked backlog items rather than
+prose-only caveats inside a completed artifact — a Copilot review correctly
+flagged that recording the two residuals only as prose in
+`.backlogit/archive/059.007-T.md` left them unactionable, with no queued
+item tracking either one.
+
+**Tracked follow-up: `059.012-T`** ("U12: Prove explicit `custom_flags`
+no-follow leaf primitive with behavioral red/green harness") now
+materializes both residuals as a single, width-isolated backlog unit:
+
+- **(P2, explicit-primitive gap)** U7's Scenario 3 harness proved
+  beneath-root refusal using `cap_std::fs::Dir::open`'s built-in
+  containment (default `FollowSymlinks::Yes`), not the explicit
+  `custom_flags`-based no-follow primitive that U2 (`059.002-T`)
+  implements and U6 (`059.006-T`) composes. `059.012-T` independently
+  proves that exact explicit primitive (Unix `custom_flags(O_NOFOLLOW)` /
+  Windows `custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)` + explicit
+  post-open `FILE_ATTRIBUTE_REPARSE_POINT` refusal), isolated and named,
+  not the generic cap-std containment this spike happened to exercise.
+- **(P3, red-phase rigor)** U7's recorded red phase was a missing-source
+  compile error ("can't find lib"), not a compiling-but-behaviorally-
+  failing assertion. `059.012-T`'s own acceptance criteria require a
+  proper compiling-but-failing red phase (e.g. a stub opener that still
+  follows the symlink) before its green pass, closing this gap with a
+  durable, behavioral red/green chronology.
+
+`059.012-T` is linked `spike_ref` → `059.007-T` (the spike that surfaced
+the residuals) and `related_to` → `059.002-T`/`059.006-T` (the units whose
+evidence standard it strengthens, without replacing their own acceptance
+criteria). It depends on `059.008-T` (blocks) and is **explicitly NOT part
+of shipment `051-S`** — `051-S`'s manifest remains `[059-F, 059.007-T,
+059.008-T]`, unchanged. `059.012-T` is queued for a **later, separate
+shipment**, assigned during a future Stage harvest/assembly pass once `U8`
+(`059.008-T`) is re-deliberated and feature `059-F` unblocks; it must not
+begin execution before then. This does not alter `051-S`'s own active/
+blocking semantics (see the Next Steps section below): `051-S` still
+remains `active`, still blocks downstream shipment `049-S`, and is still
+not to be closed, archived, or have its dependency dropped as a
+workaround. Neither residual reverses the core Scenario 2 conclusion (the
+root no-follow bootstrap, proven via an explicit, named, executed
+primitive on both platforms/toolchains) — `059.012-T` only strengthens the
+leaf-primitive containment evidence for the U2/U6 portion of the original
+Definition of Done.
+
+---
+
+## Update — PR #111 current-HEAD review remediation (this pass, HEAD `58e4204` base)
+
+Four review findings against the original checkpoint below were remediated
+in this pass:
+
+1. **P2 Constitution/Test-first** (`059.008-T` acceptance promised a
+   compiled test-first evidence harness; only source-tracing was persisted):
+   built and ran a compiled, test-first negative-proof harness (`trybuild`,
+   isolated/throwaway under `target/`, deleted after capture) that proves
+   `cozo::DbInstance::new`'s `path: impl AsRef<Path>` parameter structurally
+   rejects a capability/handle object (`std::fs::File` fails to compile with
+   `E0277`). Full test-first chronology (red: fixtures missing → green:
+   fixtures authored, baseline passes, negative fixture fails to compile
+   exactly as expected) and the scenario-by-scenario reconciliation are
+   persisted in `.backlogit/queue/059.008-T.md`'s `feasibility-evidence`
+   section.
+2. **P3 traceability** (generic `blocked_reason` boilerplate didn't
+   distinguish direct vs. transitive U8 dependents): corrected all 9 returned
+   tasks' `blocked_reason` to accurately name the direct dependency
+   (`059.001-T`/U1, `059.006-T`/U6, `059.009-T`/U9 each depend on `059.008-T`
+   directly) versus the transitive path for the rest.
+3. **P2 security advisory** (option (b) leaf-only narrowing under-specified):
+   the Recommendation section below now requires a new Stage `deliberate`
+   pass, an amended feature DoD/scope, and an explicit accepted-residual-risk
+   record with compensating controls before option (b) may be started, and
+   states plainly it is not a substitute for the original fail-closed DoD.
+4. **P3 forward-progress**: the Next Steps section below now names the
+   concrete downstream shipment (`049-S`) that is blocked by `051-S`
+   remaining open, and states explicitly that `051-S` must not be closed,
+   archived, or have its dependency dropped as a workaround.
+5. **Additional correction (surfaced by ongoing Copilot shadow review, not
+   one of the original 4 findings)**: Copilot correctly identified that
+   U7's originally-recorded root bootstrap (`Dir::open_ambient_dir` alone)
+   does not refuse a symlinked workspace root. Verified empirically and
+   corrected: the root must be opened via `cap_primitives::fs::
+   open_dir_nofollow` relative to an ambiently-opened parent, not via
+   `Dir::open_ambient_dir` on the root path directly. Copilot further
+   pressed that the Unix side of this had only been inferred, not executed
+   (correctly — the initial correction was Windows-only); a Linux execution
+   environment (WSL2/Ubuntu 26.04) was provisioned specifically to close
+   that gap with real execution (`ENOTDIR` refusal), not inference. U7
+   remains PASS with the corrected, now dual-platform-executed
+   construction; full evidence is in
+   `.backlogit/archive/059.007-T.md`.
+
+---
+
+## Task IDs touched
+
+- `051-S` (shipment) — claimed, remains `active` (manifest narrowed to `059-F`,
+  `059.007-T`, `059.008-T` after `return-blocked` detached the other 9 items).
+- `059-F` (feature) — moved `queued` → `blocked` with a feature-level summary
+  comment.
+- `059.007-T` (U7, root/API/MSRV feasibility) — moved `queued` → `active` →
+  `done`, PASS evidence recorded via `backlogit comment add`.
+- `059.008-T` (U8, engine-open feasibility) — moved `queued` → `active` →
+  `blocked`, BLOCKED evidence recorded via `backlogit comment add`.
+- `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`,
+  `059.009-T`, `059.010-T`, `059.011-T` — each returned blocked from the
+  shipment via `backlogit shipment return-blocked --shipment 051-S --item
+  <id> --reason "..."` (transitively gated on U8 BLOCKED per the approved
+  plan dependency graph: `U1` never adopts `cap-std`/`libc`/`windows-sys`
+  until both `U7` and `U8` PASS).
+
+## Files modified
+
+- `.backlogit/queue/051-S.md`, `.backlogit/queue/059-F.md`, and the 9 returned
+  task files — status/comment updates only (backlog state, no source code).
+- `.backlogit/archive/059.007-T.md` (new) — U7 archived on `done`.
+- `.backlogit/hooks_queue.jsonl` — backlogit-managed event log.
+- `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md` (this
+  file).
+- **No files under `src/`, `Cargo.toml`, or `Cargo.lock` were changed.**
+  `.gitignore`'s pre-existing operator modification (`+.backlogit/checkpoints/`,
+  `+.backlogit/runtime/`) and `docs/scratch/` (untracked) were left untouched,
+  unstaged, and byte-identical throughout.
+
+## Decisions and rationale
+
+1. **U7 (`059.007-T`) — PASS (corrected in this pass; see the Update section
+   above).** Built an isolated, throwaway `cap-std` feasibility harness at
+   `target/feasibility/u7-cap-std-harness/` (git-ignored, own `[workspace]`
+   table to escape the root workspace, no `tempfile` dev-dependency to avoid
+   an unrelated `getrandom 0.4.3` `edition2024` MSRV trap under the pinned
+   toolchain). Proved, under both stable `rustc` and `rustc +1.75.0`:
+   - Scenario 1: `cap-std 4.0.3` (newest stable release) compiles and its
+     tests pass under Rust 1.75 (cap-primitives 4.0.3, rustix 1.1.4,
+     io-lifetimes 2.0.4/3.0.1, io-extras 0.19.0, windows-sys 0.59.0/0.60.2/
+     0.61.2 on Windows; rustix 1.1.4 on Linux).
+   - Scenario 2 (**corrected**): the originally-recorded bootstrap,
+     `Dir::open_ambient_dir(root, ambient_authority())` alone, does **not**
+     provide a no-follow/no-reparse root open — a Copilot review correctly
+     flagged this, and it was confirmed empirically: a symlinked root was
+     **followed**, not refused. The corrected construction ambiently opens
+     the workspace root's **parent** only (`cap_primitives::fs::
+     open_ambient_dir`), then opens the root itself relative to that parent
+     handle via `cap_primitives::fs::open_dir_nofollow` (public in
+     `cap-primitives` 4.0.3, but not exposed as a `cap_std::fs::Dir` method
+     — both crates are needed as direct dependencies). The trusted-parent
+     threat model is now precise: only the immediate parent of the root is
+     trusted (the same single ambient-authority step any `std::fs` ambient
+     call already makes); the root itself is verified, not assumed.
+     `cap_std::fs::File::into_std()` remains the selected `File` boundary.
+   - Scenario 3: a table-driven capability-walk refusal matrix (absolute
+     path, `..` escape, intermediate-directory symlink swap, in-bounds leaf
+     symlink) exercised through the corrected Scenario 2 handle.
+   - **Test-first chronology and full dual-platform/dual-toolchain
+     execution** (added after two further Copilot review rounds correctly
+     pointed out that an earlier pass only exercised Scenario 3 on Windows
+     and never recorded an explicit red/green narrative): a `cargo
+     test`-based harness was authored **red-first** — `tests/scenarios.rs`
+     imported functions from a `src/lib.rs` that did not yet exist, and
+     `cargo test` failed to compile ("can't find lib ..."), confirmed red —
+     then `src/lib.rs` was implemented and the suite turned **green**: 6/6
+     tests pass (`scenario2a_symlinked_root_is_refused`,
+     `scenario2b_normal_root_succeeds`, `scenario3a_absolute_path_is_refused`,
+     `scenario3b_parent_escape_is_refused`,
+     `scenario3c_intermediate_symlink_swap_is_refused`,
+     `scenario3d_leaf_symlink_is_refused`). This exact 6/6 suite was then run
+     to completion on **all four** platform/toolchain combinations: Windows
+     stable, Windows `+1.75.0`, Linux stable, and Linux `+1.75.0` (Ubuntu
+     26.04 via WSL2 — a minimal `rustup` profile plus a `zig cc` linker
+     wrapper substituted for a system C toolchain since no `sudo`/system
+     compiler was available; both removed after evidence capture). Refusal
+     signal observed for a symlinked root: `ERROR_STOPPED_ON_SYMLINK`/os
+     error 681 on Windows; `ENOTDIR`/os error 20 on Linux (the
+     cap-primitives/kernel combination reports `ENOTDIR` rather than `ELOOP`
+     for this open shape — the open still fails and the symlink is never
+     followed either way).
+   - IMPLEMENTATION NOTE for U1/U2/U6: both `cap-std` (the `Dir`/`File`
+     capability-relative walk) **and** `cap-primitives` (the
+     `open_dir_nofollow` root-bootstrap primitive) must be adopted as direct
+     dependencies — `cap-std` alone is insufficient for a genuinely
+     no-follow root bootstrap. Full evidence, including persisted
+     command/output snippets and named test results per
+     platform/toolchain, is in `.backlogit/archive/059.007-T.md`.
+   - Harnesses deleted after each evidence-capture pass (`target/` is
+     git-ignored and the plan explicitly frames U7's harness as throwaway).
+
+2. **U8 (`059.008-T`) — BLOCKED.** Traced the actual engine-open code path
+   this crate depends on: `cozo` 0.7 (`storage-sqlite` feature) →
+   `cozo-core/src/storage/sqlite.rs`. Two decisive facts, read directly from
+   `cozo`'s source:
+   - `new_cozo_sqlite(path)` (reached via `DbInstance::new("sqlite", path,
+     options)`) calls `sqlite::Connection::open_thread_safe(&path)` — a bare
+     path, and the `options` JSON argument is never forwarded to the
+     underlying `sqlite3_open_v2` flags (matches the pre-existing comment in
+     `src/db/store.rs::configure_sqlite_wal`: "Cozo's SQLite backend ignores
+     the `options` string").
+   - **`SqliteStorage::transact()` re-opens by path on every transaction**
+     when its internal connection pool is empty (`self.pool.lock().unwrap()
+     .pop() == None` → `Connection::open_thread_safe(&self.name)`, where
+     `self.name` is the original `PathBuf` captured at construction). This
+     means even a hypothetical one-time capability-bound open at
+     `DbInstance::new` could not close the gap — every later pool-empty
+     transaction re-resolves the bare path with zero capability involvement,
+     for the entire lifetime of the `DataStore`.
+   - The underlying `sqlite` crate (`stainless-steel/sqlite` 0.32) does expose
+     `OpenFlags::with_uri()` (`SQLITE_OPEN_URI`), which is the only plausible
+     hook for a same-identity trick (e.g. Linux `file:/proc/self/fd/N?...`),
+     but `cozo` never sets it and gives callers no way to inject it. The
+     `/proc/self/fd` trick has no Windows equivalent short of raw Win32
+     `OpenFileById`/`FILE_ID_DESCRIPTOR` — unsafe FFI, incompatible with
+     `#![forbid(unsafe_code)]` absent a vetted safe wrapper crate (none found).
+   - **Conclusion**: no capability- or same-identity-bound SQLite/Cozo
+     engine-open is reachable from safe Rust without forking `cozo` (out of
+     scope; Constitution Principle VI). This is a hard, source-verified
+     blocker, not a time-boxed guess.
+
+3. **Downstream gating is the plan's own designed contingency, not a defect.**
+   The approved plan (`docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`)
+   already states: *"Either BLOCKED result keeps Principles III/IV
+   NOT-PASSED"* and *"BLOCKED keeps U1/U2/U6/U9/U3–U5/U10/U11 gated... no
+   dependency or path-based fallback is added."* Ship's role boundary forbids
+   re-triaging or re-grouping backlog structure (that is Stage's job), so the
+   9 downstream tasks were returned blocked with an evidence-citing reason
+   rather than re-sequenced or worked around.
+
+4. **No PR was opened for a code change** — because none exists. `U1` (the
+   only unit that would touch `Cargo.toml`) never runs while `U8` is
+   BLOCKED, so `src/db/store.rs` and `Cargo.toml`/`Cargo.lock` are untouched.
+   The committable artifact for this session is the backlog state transition
+   (shipment/feature/task status + evidence comments) plus this memory
+   checkpoint. A PR carrying only that traceability record is opened so the
+   BLOCKED conclusion is reviewable before the shipment is considered
+   resolved.
+
+## Recommendation for Stage (next step, not performed by Ship)
+
+Re-deliberate the engine-boundary approach before any further `059-F` work
+resumes. Options surfaced for that deliberation:
+
+- (a) Option C (identity-verified re-open) applied **per `transact()` call**,
+  not just at initial open — since `cozo` reopens repeatedly, a one-shot
+  Option A/C decision at construction time is insufficient by itself.
+- (b) Narrow scope to a leaf-only no-follow fix (U2's primitives applied
+  directly to `EngineReadonlyGuard`/`clear_stale_readonly_lock` without full
+  intermediate-directory containment). **This option is NOT a drop-in
+  substitute for the original plan and must NOT be presented as satisfying
+  the original Constitution Principles III/IV fail-closed Definition of
+  Done.** Choosing it requires, at minimum, all of the following before any
+  implementation begins:
+  1. a **new Stage `deliberate` pass** documenting why the narrower scope is
+     acceptable, superseding or amending
+     `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md`;
+  2. an **amended feature Definition of Done / scope** for `059-F` (or a
+     replacement feature) that explicitly states Principles III/IV are met
+     only for the leaf (final-component) threat and NOT for the
+     intermediate-directory threat — the current DoD's fail-closed wording
+     cannot simply carry over unchanged;
+  3. an explicit **accepted-residual-risk record** naming the
+     intermediate-directory symlink/junction swap as a known, accepted gap,
+     with compensating controls (e.g., workspace-root permission hardening,
+     monitoring/alerting on unexpected reparse points beneath the workspace,
+     or a documented operational mitigation) — not silence;
+  4. sign-off that this residual risk is acceptable for the threat model in
+     `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`
+     (or successor) before implementation starts.
+  Without all four, option (b) must not be started — it would silently
+  narrow a security fix below its originally-approved bar.
+- (c) File an upstream `cozo` feature request (or maintain a fork) for a
+  capability-/handle-bound SQLite open.
+
+## Open questions
+
+- Should `059-F`'s scope be split so a leaf-only fix (option b above) can ship
+  independently of the engine-boundary question? This is a Stage decision,
+  and per option (b) above it requires a new deliberation pass, amended DoD,
+  and an explicit residual-risk record before it may proceed — it is not a
+  simple scope trim.
+- Is the `cozo` maintainer likely to accept a capability-open feature request
+  in a reasonable timeframe? Not investigated in this session.
+
+## Next steps
+
+1. Push this branch and open a PR carrying the backlog-state + memory-only
+   diff for review.
+2. Once reviewed, the operator/Stage decides whether to re-run `deliberate`
+   for `059-F`'s engine-boundary question, split scope, or shelve the feature.
+3. **This shipment (`051-S`) intentionally remains `active` (not archived,
+   closed, or dependency-dropped) and, by design, BLOCKS downstream work
+   until Stage re-deliberates and selects a safe replacement path.**
+   Concretely, shipment `049-S` ("Fix MCP serve initialize-handshake
+   regression") already declares a `blocks` dependency on `051-S`
+   (`049-S → 051-S`) and cannot proceed while `051-S` remains unresolved.
+   `051-S` must NOT be treated as safe to close, archive, or have its
+   dependency silently dropped merely because its own feature work is
+   blocked — that would incorrectly unblock `049-S` (and any other future
+   dependent) without the underlying security question actually being
+   resolved. It stays open, visibly blocked, until Stage's re-deliberation
+   produces a decision per the Recommendation section above.
