@@ -940,7 +940,7 @@ Dependency changes from the prior authority (each enacted in backlog by this Sta
 * **U8 PASS is NO LONGER a completion gate.** Its BLOCKED evidence is an accepted decided input.
   **U9 (engine-open binding) is removed** from the DoD and deferred to Option A.
 * Principles III/IV are **PASSED for the permission-mutation threat only**; they remain
-  **NOT-PASSED for the engine-open intermediate-directory redirection**, which is the named,
+  **NOT-PASSED for the engine-open leaf and intermediate-directory redirection**, which is the named,
   signed-off accepted residual. The original fail-closed DoD is **not** claimed as satisfied.
 * Implementation (U1 onward) does not begin until `059.014-T` (operator sign-off) is `done`.
 * Everything else in the prior DoD (test-first, `#![forbid(unsafe_code)]`, MSRV 1.75 continuous

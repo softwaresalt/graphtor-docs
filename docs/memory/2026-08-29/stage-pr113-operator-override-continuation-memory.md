@@ -108,6 +108,24 @@ The auto re-review of `c9a7f9c` surfaced 2 threads:
 | `PRRT_kwDORiB5E86deNw0` / 3888271291 | `.backlogit/queue/059.006-T.md` implementation-notes | **Valid, fixed:** the named engine-open residual now reads "leaf and intermediate-directory redirection", matching 059.014-T and the accepted-risk record. (Scenario-2 intermediate-directory *chmod-path* containment wording is correct as-is — that is U6's permission-path containment, not the engine residual.) |
 | `PRRT_kwDORiB5E86deNww` / 3888271286 | continuation memory `:16` | **Recurring "record trails HEAD by one commit" class (3rd occurrence).** Root cause: a committed record cannot cite its own not-yet-created commit SHA, and the auto re-review often snapshots the PR body mid-refresh. Structural fix applied: this memory no longer re-pins the latest HEAD; the authoritative current-HEAD readiness gate is the PR body Local Review Readiness block, refreshed via `gh pr edit` after each push. Per the circuit-breaker same-error rule, this class will not be chased with further memory-only commits. |
 
+## Exceptional correction cycle 3 (re-review of 2eb2623)
+
+The auto re-review of `2eb2623` surfaced 3 threads; all adjudicated **Valid** and fixed:
+
+| Thread / comment | Surface | Fix |
+|---|---|---|
+| `PRRT_kwDORiB5E86deP0N` / 3888283866 | exec-plan `2026-08-24-store-toctou-nofollow-handle-plan.md` amended DoD | Aligned the last residual-scope occurrence to "leaf and intermediate-directory redirection". |
+| `PRRT_kwDORiB5E86deP0Y` / 3888283879 | `.backlogit/queue/059.013-T.md` | Wrapped the task description in `<!-- BEGIN:description -->` markers (majority convention, 31/47 task files; matches 056.008-T description-first pattern) so section-based backlogit reads expose it. |
+| `PRRT_kwDORiB5E86deP0i` / 3888283891 | `.backlogit/queue/059.014-T.md` | Same description-marker wrap. Proactively wrapped 059.001-T and 059.006-T too (same defect, avoids a further cycle). |
+
+Leaf/intermediate residual-scope consistency is now aligned across **all** active
+surfaces: deliberation (summary, trade-off table, III/IV posture, residual
+record), 059-F DoD, 059.006-T notes, 059.014-T sign-off, and the exec-plan DoD.
+The recurring "record trails HEAD" class did not reappear (memory made
+HEAD-agnostic in cycle 2). Cycle cap (3) reached; per protocol, any further
+auto-review comments are surfaced as follow-ups rather than triggering a 4th
+cycle, and the PR body remains the authoritative current-HEAD gate.
+
 ## Authoritative readiness pointer
 
 Current-HEAD merge readiness is NOT recorded in this file. It lives in the PR #113
