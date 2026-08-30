@@ -216,8 +216,9 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 
 ### U6 — Integrate beneath-root opener and permission boundary (composes U2; gates U9/U3–U5/U10)
 
-* **Changes**: implement the production `open_beneath` boundary proven by U7,
-  after U8 proves that a safe engine boundary exists, U1 adopts the exact
+* **Changes**: implement the production `open_beneath` boundary proven by U7
+  (U8's engine-boundary feasibility recorded **BLOCKED** — superseded gate, the accepted
+  engine-open residual; U6 does **not** require the engine binding), after U1 adopts the exact
   dependencies, and U2 provides the leaf no-follow/permission primitives. Resolve
   the main database and sidecars relative to the retained root capability, COMPOSE
   U2's `open_no_follow` / `capture_perms` / `set_readonly_via_handle` primitives
@@ -233,11 +234,14 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
      primitive) without a path fallback.
 * **Acceptance**: integrated `src/db/store.rs` passes Rust 1.75 check, clippy
   pedantic, and targeted tests; no in-crate `unsafe` or unwrap/expect.
-* **Backlog**: `059.006-T`; depends on U1, U2, U7, and U8; composes U2; gates U9 and U3–U5/U10.
+* **Backlog**: `059.006-T`; depends on U1, U2, and U7 (U8 dropped — **superseded 2026-08-29**, accepted residual); composes U2; gates U3–U5/U10 (U9 deferred to a later separate shipment). See the re-deliberation replan for the authoritative deps.
 
 ### U9 — Integrate capability-bound SQLite/Cozo engine open (code, test-first)
 
-* **Changes**: implement U8's proven engine boundary through
+* **Changes**: **DEFERRED (2026-08-29 re-deliberation, later separate shipment).** U8 did
+  **not** prove a safe engine boundary — it recorded BLOCKED (cozo 0.7 bare-path reopen). Once
+  `059.013-T` (upstream cozo / maintained-fork) delivers a safe capability-/identity-bound engine
+  open, implement it through
   `configure_sqlite_wal` and `open_sqlite_instance`/`DbInstance::new`. Never
   convert back to the original `safe_path` for an unbound engine open.
 * **Three test-first scenarios**:
@@ -248,7 +252,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
      expected behavior through the proven bound mechanism.
 * **Acceptance**: Rust 1.75, clippy pedantic, and targeted tests pass; no in-crate
   `unsafe`, original-path engine reopen, or success-shaped fallback.
-* **Backlog**: `059.009-T`; depends on U6 and U8; U3–U5 and U10 also depend on U9; U2 precedes U6 and U11 depends on U2.
+* **Backlog**: `059.009-T`; **DEFERRED** — depends on `059.013-T` and U6 (U8 dropped as a gate; **superseded 2026-08-29**); U3–U5 and U10 NO LONGER depend on U9; U2 precedes U6 and U11 depends on U2.
 
 ### U3 — Bind EngineReadonlyGuard lock/rollback/Drop to retained handles (code, test-first)
 
@@ -353,7 +357,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   referenced (not re-implemented). The Windows retained-handle non-interference and
   broader-policy deltas are validated in U10; the deterministic predicate and
   literal-equality / single-source structural proof are validated in U11.
-* **Backlog**: `059.005-T`; depends on U3, U4, U6, and U9.
+* **Backlog**: `059.005-T`; depends on U3, U4, and U6 (U9 dropped — **superseded 2026-08-29**; engine-open containment is the deferred accepted residual).
 
 ### U10 - Windows retained-handle engine non-interference and broader non-name-surrogate reparse regression (tests)
 
@@ -382,7 +386,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   where creatable and otherwise skips (not fails); whether each filesystem-dependent
   Windows test executed or skipped is reported; passes `clippy::pedantic -D warnings`;
   no `.unwrap()`/`.expect()`. At most two independently countable scenarios.
-* **Backlog**: `059.010-T`; depends on U3, U4, U6, and U9 (same gating as U5).
+* **Backlog**: `059.010-T`; depends on U3, U4, and U6 (U9 dropped — **superseded 2026-08-29**; same gating as U5).
 
 ### U11 - Deterministic reparse predicate, Windows literal-equality, and single-source structural proof (tests)
 
@@ -424,6 +428,14 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   equality, structural single-source proof).
 * **Backlog**: `059.011-T`; depends on U2 (transitively feasibility-gated via U2 -> U1).
 ## Dependency Graph
+
+> **SUPERSEDED (2026-08-29 re-deliberation, Option B).** The authoritative near-term
+> graph is the *Rescoped authoritative DAG* in the "AUTHORITATIVE re-deliberation
+> replan - 2026-08-29" section at the end of this plan. U8 is terminally BLOCKED
+> (accepted engine-open residual, not a gate) and U9 is deferred to a later separate
+> shipment; U1 and U6 no longer depend on U8, and U3/U4/U5/U10 no longer depend on U9.
+> Implementation is gated on the operator sign-off `059.014-T`. The graph and prose
+> below are retained for historical context only.
 
 ```text
 U7 root/API/MSRV proof
@@ -507,7 +519,7 @@ U7 root/API/MSRV proof
 |---|---|---|
 | I. Safety-First Rust | PASS | Entirely safe std (`OpenOptionsExt::custom_flags`, `File::set_permissions`, `File::metadata`, Windows `access_mode`/`share_mode`); `#![forbid(unsafe_code)]` preserved; all new helpers return `Result` with no `.unwrap()`/`.expect()`; each code unit gates on `clippy::pedantic -D warnings`. |
 | II. Test-First Development | PASS | U2/U3/U4 author NEW failing tests before implementation; U5 characterization; all existing tests re-run unchanged. |
-| III. Workspace Isolation / IV. CLI Containment | **NOT-PASSED (provisional; gated on U7/U8 PASS + U6/U9)** | U7 proves the root/API/MSRV capability foundation, U8 proves the bound engine API, U6 integrates the contained opener/permission boundary, and U9 integrates the actual WAL/SQLite/Cozo open. Until both proofs PASS and both integrations land, III/IV are not complete. Unsupported sidecar cleanup retains the sidecar. |
+| III. Workspace Isolation / IV. CLI Containment | **NOT-PASSED (provisional; gated on U7/U8 PASS + U6/U9)** — **SUPERSEDED 2026-08-29: see "AUTHORITATIVE re-deliberation replan - 2026-08-29" at the end of this plan; III/IV are now scoped-PASS for the permission-mutation threat and NOT-PASSED (accepted residual) for the engine-open redirection, since U8 is terminally BLOCKED and U9 is deferred.** | U7 proves the root/API/MSRV capability foundation, U8 proves the bound engine API, U6 integrates the contained opener/permission boundary, and U9 integrates the actual WAL/SQLite/Cozo open. Until both proofs PASS and both integrations land, III/IV are not complete. Unsupported sidecar cleanup retains the sidecar. |
 | V. Structured Observability | PASS | Each fail-closed refusal returns a traceable `GraphtorError`, not a silent early return. |
 | VI. Single Responsibility | PASS | `libc`/`windows-sys` are platform-gated, pinned to an already-transitive lock version, justified; `cap-std` (U6) is the **candidate** single safe capability API for beneath-root containment, layered on the already-transitive `rustix`, with its pin/MSRV/semantics **proven by the U7 evidence gate before adoption**; no speculative abstraction (helpers consumed by both paths). |
 | VII. Destructive Command Approval | PASS | No destructive actions; permission changes are transient and restored (see Plan Hardening risky-actions table). |
@@ -876,3 +888,69 @@ recorded in backlog. Shipment `051-S` contains `059-F` plus `059.001-T` through
 land. Wherever earlier passes use the shorthand `U2-U5`, read it under this authority
 as: U2 is a leaf primitive preceding U6; U3-U5 plus U10 are gated on U6+U9; U11 is
 gated after U2.
+
+### AUTHORITATIVE re-deliberation replan - 2026-08-29 (U8 BLOCKED: scoped permission-mutation path)
+
+**Gate: DECISION** — supersedes the engine-boundary portions of every prior section for the
+purpose of unblocking `059-F`. Source:
+`docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
+(Option B chosen). U7 (`059.007-T`) recorded PASS; U8 (`059.008-T`) recorded **BLOCKED** with
+source-verified, compile-checked evidence that cozo 0.7 `SqliteStorage` re-opens SQLite by a
+**bare path** on every pool-empty `transact()` for the `DataStore` lifetime, and
+`DbInstance::new`'s `path: impl AsRef<Path>` structurally rejects a handle/capability object
+(type-system fact). No safe capability-/identity-bound engine open exists without forking cozo
+(out of scope, Principle VI).
+
+**Chosen path (Option B + evidence-based `049-S` decouple):** land the *permission-mutation*
+containment (feasible per U7) and accept + document the *engine-open* residual (infeasible per
+U8), tracking full closure via upstream cozo (Option A) as a later separate shipment.
+
+**Rescoped authoritative DAG (engine-open binding removed from the near-term critical path):**
+
+```text
+U7(done) ─▶ U1 ─▶ U2 ─▶ U6 ─▶ U3/U4 ─▶ U5/U10
+                    └────────────────▶ U11 (after U2)
+sign-off 059.014-T ─▶ U1          (implementation gated on operator sign-off)
+DEFERRED (later separate shipment): U8(evidence, terminal) ; U9 ; U12(059.012-T) ; upstream cozo 059.013-T
+```
+
+Dependency changes from the prior authority (each enacted in backlog by this Stage pass):
+
+* `059.001-T` (U1): deps `[059.007-T, 059.014-T]` — drop `059.008-T`; add the sign-off gate.
+* `059.006-T` (U6): deps `[059.001-T, 059.002-T, 059.007-T]` — drop `059.008-T`. U6 contains the
+  `chmod` paths (leaf via U2 + intermediate directory via the cap-std root-relative walk); it does
+  **not** require the engine binding.
+* `059.003-T` (U3), `059.004-T` (U4): deps `[059.002-T, 059.006-T]` — drop `059.009-T`.
+* `059.005-T` (U5), `059.010-T` (U10): deps `[059.003-T, 059.004-T, 059.006-T]` — drop `059.009-T`.
+  U10's Windows retained-handle non-interference test now asserts non-interference between the
+  retained **permission** handle and the engine open (unchanged value; no longer U9-gated).
+* `059.002-T` (U2), `059.011-T` (U11): unchanged.
+* `059.009-T` (U9): reclassified **deferred/upstream**; deps `[059.013-T, 059.006-T]`; excluded
+  from `059-F` near-term completion; later separate shipment. Nothing feasible depends on it.
+* New `059.013-T` (Option A: upstream cozo capability-open request / maintained-fork evaluation),
+  parent `059-F`, later separate shipment.
+* New `059.014-T` (operator sign-off gate on the accepted engine-open residual), parent `059-F`.
+
+**Amended `059-F` Definition of Done (engine-boundary portion):**
+
+* The two originally-reported permission-mutation TOCTOUs (`5905CDEE`, `E86A6E56`) are closed by
+  identity-bound, no-follow, root-relative handles; no path-based `chmod`; no `chmod` can be
+  redirected outside the workspace (leaf **and** intermediate-directory containment of the
+  permission paths).
+* **U8 PASS is NO LONGER a completion gate.** Its BLOCKED evidence is an accepted decided input.
+  **U9 (engine-open binding) is removed** from the DoD and deferred to Option A.
+* Principles III/IV are **PASSED for the permission-mutation threat only**; they remain
+  **NOT-PASSED for the engine-open leaf and intermediate-directory redirection**, which is the named,
+  signed-off accepted residual. The original fail-closed DoD is **not** claimed as satisfied.
+* Implementation (U1 onward) does not begin until `059.014-T` (operator sign-off) is `done`.
+* Everything else in the prior DoD (test-first, `#![forbid(unsafe_code)]`, MSRV 1.75 continuous
+  CID check, clippy pedantic, cargo audit, no duplicate crate copy, exact-permission and sidecar
+  invariants, deterministic `should_refuse_reparse` predicate) is retained unchanged for the
+  feasible units.
+
+**`051-S` transition (Ship-owned; planned, not executed by Stage):** Stage does not mutate the
+active `051-S` manifest or close it. Ship, on its next cycle and only after `059.014-T` sign-off,
+either re-scopes `051-S`'s manifest to the feasible task set (`059-F` + U1/U2/U6/U3/U4/U5/U10/U11)
+as the owner, or closes `051-S` (feasibility complete; engine binding infeasible/accepted) and
+Stage assembles a fresh implementation shipment. `049-S` is decoupled from `051-S` (sequencing-only
+edge, no code coupling, no schedule gain) so bug `7BF1961D` proceeds independently.

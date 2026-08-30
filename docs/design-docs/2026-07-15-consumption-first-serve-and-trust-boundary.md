@@ -185,6 +185,77 @@ pre-existing symlink-swap TOCTOU in the guard's permission handling is a
 separate, deferred security-mechanism change (stash `5905CDEE`); it does not
 change the guarantee described above and is tracked independently.
 
+### Operator trust boundary: workspace directory write access
+
+**Every** command that opens a database requires a trusted workspace — this
+covers every store constructor and call path, **not only `serve` and write-mode
+commands**:
+
+* **`serve`** opens `DataStore::open_sqlite` (generation posture, read/write)
+  plus a read-only companion via `DataStore::open_sqlite_readonly`, or
+  `DataStore::open_engine_readonly` (read-only posture).
+* **`sync`** and **`prewarm`** are write-mode opens that reach
+  `DataStore::open_sqlite` via `with_locked_database_store`
+  (`src/main.rs:603-617`).
+* **`status`** and **every query subcommand** (`search`, `search-semantic`,
+  `research`, `traverse`, `list-sources`, `get-chunk`, `get-document`) are
+  read-only opens via `DataStore::open_sqlite_readonly` (`src/main.rs:2768`,
+  `2978`).
+
+All three constructors — `open_sqlite`, `open_sqlite_readonly`, and
+`open_engine_readonly` — funnel through the same bare-path `open_sqlite_instance`
+engine open (`src/db/store.rs`), so the cozo per-`transact()` re-resolution
+redirection reaches read-only `status`/query reads exactly as it reaches
+write-mode opens. (`open_sqlite_readonly` enforces read-only only at the
+`DataStore` boundary; its underlying cozo connection still opens with the
+engine's hard-coded read-write-create flags.)
+
+The operator MUST ensure that the **workspace root directory
+namespace, the workspace root's own parent directory, and every parent directory
+component leading to each database** are not writable by an untrusted party,
+**and** that the database leaf entries themselves (the `.db` file and any
+`-wal`/`-shm`/`-journal` sidecars) are not attacker-writable. Directory authority
+is the load-bearing requirement: replacing a leaf entry requires
+write/delete/rename authority on its **parent directory**, not write permission
+on the file, so for the common `root/graph.db` layout — where no intermediate
+directory exists — an attacker who can mutate the root directory can still swap
+the leaf even if the file's write bit is protected.
+Protecting only the leaf's permission bit is therefore insufficient; the parent
+directory chain, up to and including the workspace root **and the workspace
+root's own parent directory**, must be protected too. The workspace-root
+no-follow bootstrap ambiently opens and trusts the root's parent, and
+`open_dir_nofollow` only refuses symlinks/reparse points — it cannot reject a
+real-directory replacement of the root — so either that parent namespace must be
+protected too or the opened root's identity must be verified after open.
+This requirement is **not** limited to an active `serve` window, and **not** to
+write-mode commands: it applies whenever **any store-opening command** opens the
+store. The read-only `status`/query opens are **not** bounded to information
+exposure — cozo always opens connections `SQLITE_OPEN_READWRITE |
+SQLITE_OPEN_CREATE`, and `open_sqlite_readonly` blocks only explicit
+`DataStore::mutate` calls, not engine-side effects, so a redirected read can
+still incur engine-side writes/creation on the swapped target. The write-mode
+opens (`serve` generation, `sync`, `prewarm`) additionally perform
+application-level read/write/create.
+
+This boundary exists because the storage engine re-resolves the database **by
+bare path**: cozo's `SqliteStorage` re-opens SQLite by path on every pool-empty
+`transact()` for the `DataStore` lifetime, and `DbInstance::new`'s
+`path: impl AsRef<Path>` structurally rejects a handle/capability object. A
+local attacker who can swap a leaf entry or any parent directory beneath (or at)
+the workspace root **while a store-opening command holds the store** can
+therefore redirect the engine open to a different file, even after the
+permission-mutation paths are fully identity-bound. This is the **named accepted
+residual** recorded in the
+[store TOCTOU engine-boundary re-deliberation](../decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md):
+the `chmod`/read-only permission paths are fully contained (no permission
+mutation can escape the workspace), but the engine's own path re-resolution is
+not, and closing it fully is tracked as later upstream-cozo work (`059.013-T`).
+Until that closure lands, run `serve` and every other store-opening command
+(`sync`, `prewarm`, `status`, and all query subcommands) only against a
+workspace whose root directory namespace, the workspace root's own parent
+directory, every parent directory component, and leaf entries are not writable by
+an untrusted party.
+
 ## `--read-only` escape hatch
 
 `serve --read-only` forces **every** database in the served set to `ReadOnly`
