@@ -244,10 +244,13 @@ No async rollout.
   Stage's ratification
   (`docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`),
   not by this snapshot.
-* Rescoped scope: 10 dependency-closed items, **all 10 confirmed
-  `status: queued`** (intake-valid — see Review-Fix Cycle 1 below),
-  **unshipped** (no successor shipment created by Ship — see Review-Fix
-  Cycle 2 below).
+* Rescoped scope: 10 dependency-closed items — `059-F` plus the eight
+  implementation tasks (`059.001/002/003/004/005/006/010/011-T`) were
+  `blocked → queued` normalized (Review-Fix Cycle 1 below); the sign-off
+  gate `059.014-T`, the tenth member, was **created and remains `queued`**
+  and required no normalization. **All 10 confirmed `status: queued`**
+  (intake-valid), **unshipped** (no successor shipment created by Ship —
+  see Review-Fix Cycle 2 below).
 * `049-S`: confirmed `queued`, zero dependencies, independently claimable.
 
 ## Review-Fix Cycle 1 (Copilot shadow review, PR #114)
@@ -798,8 +801,11 @@ instruction.
 
 ## Source Artifact Cleanup
 
-Reviewed `custom_fields` on the covering feature `059-F`: no
-`source_stash_id` or `source_deliberation_id` key present (this feature's
+Reviewed `custom_fields` on the covering feature `059-F`: reading both the
+singular (`source_stash_id`, `source_deliberation_id`) and plural
+(`source_stash_ids`, `source_deliberation_ids`) field variants — per the
+corrected Ship handoff instruction (`242b5e3`) that unions and dedupes
+both — confirms **no** key of any of the four is present (this feature's
 provenance is tracked via `references:`/`links:` to
 `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliberation.md`
 and the 2026-08-29 re-deliberation, not via `custom_fields`). Nothing to
@@ -808,7 +814,24 @@ archive under this protocol — logged as "not present → skip."
 ## Documentation / Knowledge Graduation Review
 
 * `docs/ARCHITECTURE.md` — no structural change; not touched.
-* `AGENTS.md` — no agent or skill change; not touched.
+* `AGENTS.md` — no top-level `AGENTS.md` change. This PR's later Mode R
+  reconciliation commit (`242b5e3`) **does** modify
+  `.github/agents/.ship.agent.md` and `.github/agents/.stage.agent.md`
+  operational contracts: Ship's Role Boundary gains an explicit, narrow,
+  status-preserving `return-blocked` allowance plus a Mutation
+  Classification (P-010 fail-closed) table; Continuity on both agents is
+  broadened to cover owner/scope-validated checkpoints from the current
+  *or a prior* session for the same shipment/PR/scope; `backlogit_sync_index`
+  and `backlogit_ack_hook_events` are classified as derived-state,
+  conferring no backlog authority; and Ship's source-artifact retirement
+  handoff now reads both singular and plural
+  `source_stash_id(s)`/`source_deliberation_id(s)` fields and defaults to
+  Stage archival (`stash_archive`), never removal. Stage gains the
+  corresponding Step 5.5 Mode R ratified-existing-scope assembly path plus
+  its own Mutation Classification table. See
+  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+  and the "Mode R / Role-Boundary Reconciliation" section below for the
+  full change record.
 * `docs/design-docs/` — no new durable design decision to graduate this
   session; the re-deliberation decision document itself already carries the
   durable rationale.
@@ -838,10 +861,109 @@ archive under this protocol — logged as "not present → skip."
     cover `custom_fields`/`blocked_reason` mutations (not just deletes) and
     raised the entry's `severity` frontmatter field from `low` to `high`.
 
+## Mode R / Role-Boundary Reconciliation (2026-08-30, PR #114 HEAD `537daaf`)
+
+A further Ship-side documentation reconciliation pass, driven by three
+outstanding Copilot shadow-review threads (`3888555129`, `3888555139`,
+`3888693389`) and the agent-contract/Stage-state pair `242b5e3`/`537daaf`
+landed later on this same PR. No subagents, no merge, no
+backlog/stash/shipment mutation. Dirty `.gitignore` and all
+untracked/ignored files preserved; only this closure artifact, the
+transition memory checkpoint, the compound best-practices entry, and the
+orchestrator checkpoint memory are edited.
+
+**Blocking-node resolution.** The four P1 root nodes recorded in
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` are
+now resolved at the agent-contract/Stage-decision level:
+
+* **(A) Stage recovery/assembly path** — resolved by
+  `.github/agents/.stage.agent.md`'s new Step 5.5 **Mode R**
+  ratified-existing-scope handoff, and by the durable, exact-ID
+  authorization in
+  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+  § *Mode R Authorization for Successor-Shipment Assembly*: covering
+  feature `059-F`, the exact 10-ID `handoff_ids` set (`059-F`,
+  `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`,
+  `059.006-T`, `059.010-T`, `059.011-T`, `059.014-T`), and the parent-first
+  assembly order `059-F → 059.014-T → 059.001-T → 059.002-T → 059.006-T →
+  059.003-T → 059.004-T → 059.005-T → 059.010-T → 059.011-T`, with
+  `059.007-T` cited as an external terminal prerequisite (not a member).
+* **(B) `051-S` closure-timing sequencing** — resolved by the same
+  decision's § *Supersession of the PR #113 `051-S` Closure-Timing
+  Requirement*: an evidence-shipment closure (this closure's own subject)
+  may precede `059.014-T` sign-off, provided it archives only delivered
+  (`done`) members, returns every non-terminal member status-preservingly,
+  accepts no residual risk, and starts no implementation — all four of
+  which this closure already satisfied. `059.014-T` gates
+  **successor-shipment assembly and implementation of the rescoped scope
+  only**; it never gated status normalization and no longer gates
+  evidence-shipment closure. **This is explicitly not a retroactive
+  security sign-off** — the Accepted-Residual-Risk Record and
+  `059.014-T` itself remain untouched and `queued`.
+* **(C) `return-blocked` role-boundary classification** — resolved by
+  `.github/agents/.ship.agent.md`'s Role Boundary Allowed column, which now
+  explicitly names the narrow, status-preserving `return-blocked`
+  operation (scoped to `shipment-reconcile`/safe-close, recording only the
+  exact blocked reason required, no broader item-planning authority) and a
+  companion Mutation Classification (P-010 fail-closed) table.
+* **(D) Continuity scoped to "current session" only** — resolved by
+  broadening both agents' Continuity row to Ship-/Stage-owned checkpoints
+  from the current *or a prior* session for the same shipment/PR/scope,
+  after validating owner and scope on each checkpoint before resolving it.
+
+Closing these four latent policy gaps is prospective, not retroactive: it
+does **not** legalize any of this closure's four recorded historical
+violations (status normalization; `054-S` shipment creation; its
+unapproved deletion; `059.008-T` `blocked_reason` mutation), none of which
+was a `return-blocked` call or a continuity-checkpoint operation. All four
+remain standing, un-legalized historical record — see the consolidated
+Risky Action Record in Review-Fix Cycle 4 above, unchanged by this pass.
+
+**Content corrections applied** (the three thread fixes proper):
+
+* `3888555129` / `3888555139` — both in
+  `docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`:
+  the "neither should ever become `done` or be archived" wording is scoped
+  to the `051-S` closure operation only (`059-F` is a live feature expected
+  to reach `done` after sign-off/implementation; only `059.008-T`'s BLOCKED
+  state is permanent), and the "every unit in that scope carries
+  `status: blocked`" wording now names the nine normalized members
+  (`059-F` + the eight implementation tasks) explicitly and states that the
+  tenth scope member, `059.014-T`, was created/remains `queued` and
+  required no normalization.
+* `3888693389` — this closure's own "Documentation / Knowledge Graduation
+  Review" `AGENTS.md` row, corrected above to acknowledge `242b5e3`'s
+  `.github/agents/.ship.agent.md`/`.stage.agent.md` operational-contract
+  changes instead of asserting no agent/skill change.
+
+**Dependent-node status**: the remaining P2/document nodes tracked in the
+orchestrator checkpoint that touch Stage-owned decision/plan/backlog-item
+files (`3888610906`, `3888693375`, `3888693380`, `3888860317`,
+`3888860326`, `3888860333`, `3888860341`) were already resolved by
+`537daaf` on the Stage side; `3888555111` (memory frontmatter title) was
+already resolved by `537daaf`'s `title:` addition to
+`docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`.
+This pass touches only the four Ship-owned continuity/knowledge artifacts
+named above. **Final current-HEAD review and GraphQL thread
+reply/resolution remain a pending follow-up** — not performed by this
+pass; see
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
+resumption section for the current status of each thread.
+
 ## Cross-References
 
 * `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
 * `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+* `242b5e3e1cc7e39972fcc77e06643cecb0ec2ce0` — agent-contract fix: adds
+  Stage's Step 5.5 Mode R ratified-handoff assembly path, explicitly
+  authorizes Ship's narrow `return-blocked` operation, broadens Continuity
+  to prior-session same-scope checkpoints, and classifies
+  `backlogit_sync_index`/`backlogit_ack_hook_events` as derived-state on
+  both agents (resolves blocking nodes A/C/D)
+* `537daaf1d93be7e2d0326736885dbeecf8a4cdd6` — Stage-state commit: names
+  the exact 10-ID Mode R `handoff_ids` set and assembly order for `059-F`,
+  and supersedes the PR #113 `051-S` closure-timing precondition with
+  evidence-based rationale (resolves blocking node B)
 * `63f933a736b59279d09748b5b3795c928e99e3d4` — Stage's convergence pass:
   appended durable Stage-ratification comments to `059.014-T`/`059.008-T`
   and recorded the fourth distinct Ship P-010 (`059.008-T` `blocked_reason`
@@ -870,6 +992,7 @@ archive under this protocol — logged as "not present → skip."
 * `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`
 * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`
 * `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`
+* `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
 * `docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`
 * `docs/compound/workflow-issues/post-merge-branch-preserve-dirty-file-2026-08-29.md`
 * Follow-up items stashed: **none, by design** (see Stash Follow-Up Review

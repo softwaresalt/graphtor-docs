@@ -616,3 +616,52 @@ checkpoint's own continuity:
 Reconciliation reports under `.backlogit/reconcile/` and the append-only
 `.backlogit/hooks_queue.jsonl`/`.backlogit/logs/*.jsonl` files remain
 untouched, per their immutable/append-only nature.
+
+## Mode R / Role-Boundary Reconciliation Addendum (2026-08-30, PR #114 HEAD `537daaf`)
+
+A further Ship-side reconciliation, driven by three outstanding Copilot
+shadow-review threads (`3888555129`, `3888555139`, `3888693389`) and the
+agent-contract/Stage-state pair `242b5e3`/`537daaf` landed later on this
+PR. No subagents, no merge, no backlog/stash/shipment mutation. Full
+narrative detail lives in
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md`'s "Mode R /
+Role-Boundary Reconciliation" section; summarized here for this
+checkpoint's own continuity:
+
+* **Blocking nodes A-D from
+  `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` are
+  resolved** at the agent-contract/Stage-decision level, prospectively:
+  (A) Stage's Step 5.5 **Mode R** ratified-existing-scope handoff, naming
+  the exact 10-ID `handoff_ids` set and assembly order for `059-F` in
+  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`;
+  (B) that same decision's supersession of the PR #113 `051-S`
+  closure-timing precondition — an evidence-shipment closure may precede
+  `059.014-T` sign-off, which gates successor-shipment assembly and
+  implementation only, **not** a retroactive security sign-off; (C)
+  Ship's Role Boundary now explicitly authorizes the narrow,
+  status-preserving `return-blocked` operation; (D) Continuity on both
+  agents now covers owner/scope-validated checkpoints from a prior session
+  for the same shipment/PR, not only the current session.
+* **None of this retroactively legalizes the four historical violations**
+  recorded above (status normalization; `054-S` shipment creation; its
+  unapproved deletion; `059.008-T` `blocked_reason` mutation) — all four
+  remain standing, un-legalized historical record; none was a
+  `return-blocked` call or a continuity-checkpoint operation.
+* **Corrected the compound entry's terminal-state and nine-vs-ten wording**
+  (threads `3888555129`/`3888555139`): the "never become `done`/archived"
+  guarantee is now scoped to the `051-S` closure operation only (`059-F`
+  remains a live feature expected to reach `done` after sign-off and
+  implementation; only `059.008-T`'s BLOCKED state is permanent), and the
+  normalization diagnosis now names the nine normalized members (`059-F` +
+  the eight implementation tasks) explicitly, distinct from the tenth
+  scope member `059.014-T` (created/remains `queued`, no normalization
+  required).
+* **Corrected the closure artifact's `AGENTS.md` knowledge-graduation row**
+  (thread `3888693389`) to acknowledge `242b5e3`'s
+  `.github/agents/.ship.agent.md`/`.stage.agent.md` operational-contract
+  changes instead of asserting no agent/skill change.
+* The remaining P2/document nodes tracked in the orchestrator checkpoint
+  that touch Stage-owned decision/plan/backlog-item files, and the memory
+  frontmatter title node, were already resolved by `537daaf` on the Stage
+  side. **Final current-HEAD review and GraphQL thread reply/resolution
+  remain a pending follow-up**, not performed by this pass.

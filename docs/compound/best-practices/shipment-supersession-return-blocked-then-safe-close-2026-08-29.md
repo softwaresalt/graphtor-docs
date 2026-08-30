@@ -39,19 +39,29 @@ accepted U8's BLOCKED result as a decided input and authorized closing
 Running `shipment-reconcile mode: pre` with `expected_status: done` directly
 against the original three-item manifest would immediately `HALT` with
 `status-mismatch` on both `059-F` and `059.008-T` — neither is `done`, and
-neither should ever become `done` or be archived (the feature is honestly
-blocked pending operator sign-off; U8's BLOCKED status is itself the
-correct, permanent evidence record).
+neither should become `done` or be archived **by this `051-S` closure
+operation**. That prohibition is scoped to the closure itself, not a
+permanent claim about both items alike: `059-F` is a live feature, honestly
+`blocked` pending operator sign-off, and is expected to reach `done` later
+once sign-off lands and implementation completes on whatever successor
+shipment a future Stage session assembles. Only `059.008-T`'s (U8) BLOCKED
+status is the correct, **permanent** evidence record — it is not expected
+to change, and is not re-evaluated by this closure or by sign-off.
 
 A second, independent problem surfaced once the rescoped scope was
-gathered: **every unit in that scope carries `status: blocked`**, not just
-the two returned from `051-S` in this same session — most of them had
-already been returned `blocked` from `051-S` in an *earlier* session, once
-the original engine-boundary dependency chain (gating them on the now-
-terminally-BLOCKED U8) was in force. A superseded dependency-chain member's
-`status` field does not self-correct when the *dependency edges* are later
-rewired (e.g. by a Stage re-deliberation pass) — status and the dependency
-graph are independent in this schema.
+gathered: of the 10-item Mode R scope (`059-F` + the eight implementation
+tasks `059.001/002/003/004/005/006/010/011-T` + the sign-off gate
+`059.014-T`), **nine members — `059-F` plus the eight implementation
+tasks — carried `status: blocked`**, not just the two returned from
+`051-S` in this same session; most of them had already been returned
+`blocked` from `051-S` in an *earlier* session, once the original
+engine-boundary dependency chain (gating them on the now-terminally-
+BLOCKED U8) was in force. The tenth scope member, the sign-off gate
+`059.014-T`, was **created and remains `queued`** — it never carried a
+superseded `blocked` status and required no normalization. A superseded
+dependency-chain member's `status` field does not self-correct when the
+*dependency edges* are later rewired (e.g. by a Stage re-deliberation
+pass) — status and the dependency graph are independent in this schema.
 
 ## Root Cause
 
@@ -77,6 +87,16 @@ first — regardless of *when* it was returned or how it came to be
    `return-blocked` removes the item from `custom_fields.items` **without**
    changing its `status` (it stays exactly `blocked`) — this is the key
    property that makes it safe here, unlike `backlogit move`/`archive`.
+   **Role-boundary authorization (2026-08-30, `242b5e3`)**: Ship's Role
+   Boundary Allowed column now explicitly enumerates this narrow,
+   status-preserving `return-blocked` operation, scoped to
+   `shipment-reconcile`/safe-close and recording only the exact blocked
+   reason that operation requires — it confers no broader item-planning
+   authority (no scope/acceptance-criteria/dependency/priority change, and
+   no blocked-to-queued normalization). This closes a latent policy gap a
+   holistic PR #114 review identified; it does not retroactively legalize
+   any of the four historical violations recorded below, none of which was
+   the `return-blocked` call itself.
 2. **Re-run `shipment-reconcile mode: pre`** with `expected_status: done`
    against the now-single-item manifest (`[059.007-T]`, already archived) —
    classifies as `pre-archived`, gate returns `PROCEED`.
@@ -293,3 +313,45 @@ both status normalization and shipment creation where the role boundary
 requires them — with Stage, not Ship. If Ship nonetheless creates an
 out-of-boundary artifact by mistake, treat correcting it as its own
 destructive action requiring approval, not a self-authorized cleanup step.
+
+## Mode R / Role-Boundary Reconciliation Addendum (2026-08-30, `242b5e3`/`537daaf`)
+
+Two structural gaps this pattern exposed have since been closed at the
+agent-definition and Stage-decision level; both are cross-referenced here,
+not re-litigated:
+
+* **Successor-shipment assembly path.** Step 4/5/6's "hand it,
+  un-normalized, to Stage ... a future Stage session assembles it" no
+  longer has to wait for a fresh harvest. `.github/agents/.stage.agent.md`
+  now supports a durable **Step 5.5 Mode R** ratified-existing-scope
+  handoff for exactly this recovery case; the exact 10-ID `handoff_ids`
+  set, assembly order, exclusions, and terminal prerequisite for `059-F`
+  are named in
+  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+  § *Mode R Authorization for Successor-Shipment Assembly*. Mode R supplies
+  *scope*, never gate relief — assembly stays blocked until the operator
+  sign-off gate (`059.014-T`) is `done`.
+* **Continuity and source-artifact retirement handoff wording.** Ship's
+  Continuity Allowed scope now explicitly covers Ship-owned checkpoints
+  from a prior session for the same shipment/PR (owner and scope validated
+  before resolving), not only the current session. The source-artifact
+  retirement handoff Ship records for Stage (step 4 above) now reads both
+  the singular and plural `source_stash_id`/`source_stash_ids` and
+  `source_deliberation_id`/`source_deliberation_ids` fields (union +
+  dedupe) and defaults to the state-appropriate **archive** action
+  (`stash_archive` or the equivalent artifact archive) — never removal —
+  consistent with `stash_remove` being destructive/deprecated per
+  `.github/instructions/backlogit.instructions.md`.
+
+Neither change retroactively legalizes any of the four historical
+violations recorded in this entry's citations (status normalization,
+`054-S` shipment creation, its unapproved deletion, `059.008-T`
+`blocked_reason` mutation) — all four remain standing, un-legalized
+historical record. Closure of the `051-S` **evidence** shipment (this
+entry's own subject) may precede the `059.014-T` sign-off gate; that gate
+governs successor-shipment assembly and implementation of the rescoped
+scope only, never the historical normalization or this evidence-shipment
+closure, and this is not a retroactive security sign-off — see
+`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+§ *Supersession of the PR #113 `051-S` Closure-Timing Requirement* for the
+full evidence-based rationale.

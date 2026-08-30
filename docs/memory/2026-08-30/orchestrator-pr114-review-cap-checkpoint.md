@@ -253,3 +253,84 @@ stash item was created. No merge was attempted or performed.
   `docs/exec-plans/`, or `docs/closure/` was modified by this checkpoint pass.
 * This memory file and the PR #114 body update (Step 3) are the only writes
   performed by this checkpoint task.
+
+## Resumption / Resolution (2026-08-30, PR #114 HEAD `537daaf`)
+
+Everything above this section is the original, **unaltered** halt/cap record
+captured at HEAD `1080120e75c0a1604918c37b03fdb5ea8aa2cfab` — the exact stop
+reason, the four P1 blocking nodes, the 11 dependent P2 nodes, the
+permanent four-violation record, and the preservation status are left as
+written. This section documents what changed on the branch since, without
+rewriting that evidence.
+
+### Blocking P1 nodes A-D: resolved
+
+The Stage/Prompt Builder correction pass this checkpoint called for landed
+in two commits later on this branch:
+
+* `242b5e3` — agent-contract fix: `.github/agents/.ship.agent.md` +
+  `.github/agents/.stage.agent.md`
+* `537daaf` — Stage-state commit: `.backlogit/queue/059-F.md`,
+  `.backlogit/queue/059.014-T.md`,
+  `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`,
+  `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`,
+  `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`,
+  `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`
+
+| Node | Original finding | Resolution |
+|---|---|---|
+| (A) Stage has no authorized existing-scope recovery/assembly path | Step 5.5 was harvest-only (`.stage.agent.md:482-487`) | `.stage.agent.md`'s new Step 5.5 **Mode R** ratified-existing-scope handoff, plus the durable, exact-10-ID authorization in `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md` § *Mode R Authorization for Successor-Shipment Assembly* (`handoff_ids`: `059-F`, `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`, `059.010-T`, `059.011-T`, `059.014-T`; assembly order `059-F → 059.014-T → 059.001-T → 059.002-T → 059.006-T → 059.003-T → 059.004-T → 059.005-T → 059.010-T → 059.011-T`) |
+| (B) `051-S` closed before `059.014-T` sign-off, sequencing unresolved | no explicit Stage decision superseded/ratified the timing | Same decision's § *Supersession of the PR #113 `051-S` Closure-Timing Requirement* — an evidence-shipment closure may precede sign-off, provided it archives only delivered members, returns non-terminal members status-preservingly, accepts no residual risk, and starts no implementation; `059.014-T` gates successor-shipment assembly and implementation only; **explicitly not a retroactive security sign-off** |
+| (C) Ship's Role Boundary doesn't enumerate `return-blocked` | unclassified P-010 gap under fail-closed evaluation | `.ship.agent.md`'s Role Boundary Allowed column now explicitly names the narrow, status-preserving `return-blocked` operation (scoped to `shipment-reconcile`/safe-close, exact blocked reason only, no broader planning authority), plus a companion Mutation Classification (P-010 fail-closed) table |
+| (D) Continuity scoped to "current session" only | stale-checkpoint recovery of prior-session checkpoints was unclassified | Continuity row on both agents broadened to Ship-/Stage-owned checkpoints from the current **or a prior** session for the same shipment/PR/scope, after validating owner and scope on each checkpoint before resolving it |
+
+Each resolution is **prospective** — it closes a latent policy/process gap
+going forward. **None retroactively legalizes** the four historical
+violations recorded above and in
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md` (status
+normalization; `054-S` shipment creation; its unapproved deletion;
+`059.008-T` `blocked_reason` mutation). All four remain standing,
+un-legalized historical record; none of them was itself a `return-blocked`
+call or a continuity-checkpoint operation.
+
+### Dependent P2 / document nodes
+
+Of the 11 dependent nodes tabled above:
+
+* **Resolved by `242b5e3`** (Ship-side agent-contract fix): `3888693375`
+  (`source_stash_ids` plural now read, union+dedupe) and `3888693380`
+  (`stash_archive` is now the recorded default, never stash removal) —
+  both at `.github/agents/.ship.agent.md:598,601` on the current HEAD.
+* **Resolved by `537daaf`** (Stage-side state commit): `3888610906`
+  (readiness query relabelled feature-family-wide),
+  `3888860317` (`059-F` shipment-posture supersession recorded),
+  `3888860326`/`3888860333`/`3888860341` (the three "normalization already
+  completed, only assembly/implementation gated" wording corrections in
+  the exec plan, the re-deliberation decision, and `059.014-T`), and
+  `3888555111` (memory frontmatter `title:` added to
+  `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`).
+* **Resolved by this commit** (Ship-owned continuity/knowledge artifacts —
+  the only files this pass touches): `3888555129` (compound doc
+  terminal-state wording, scoped to the `051-S` closure operation) and
+  `3888555139` (compound doc nine-vs-ten normalization count, naming the
+  nine normalized members explicitly) in
+  `docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`;
+  and `3888693389` (closure doc `AGENTS.md` knowledge-graduation row,
+  corrected to acknowledge the `242b5e3` agent-contract changes) in
+  `docs/closure/2026-08-29-051-s-toctou-transition-closure.md`.
+
+### Still pending
+
+* **Final current-HEAD review** — a fresh local review against the HEAD
+  this commit produces has not yet been run.
+* **GraphQL thread reply/resolution** — none of the threads named above (P1
+  or P2) have been replied to or resolved via the GraphQL
+  `resolveReviewThread` mutation by this pass. That remains a distinct,
+  pending follow-up step, out of scope for this alignment pass.
+* **Readiness block refresh** — the PR's `Local Review Readiness` block
+  still needs updating for the new HEAD once the above completes.
+
+This section does not alter, redact, or supersede the original "Exact Stop
+Reason," "Deduplicated Blocking Graph," "Dependent P2 / Document Nodes," or
+"Preservation Status" content above, which remains the accurate historical
+record of the halt at HEAD `1080120`.
