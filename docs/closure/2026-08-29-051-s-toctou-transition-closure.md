@@ -226,13 +226,23 @@ No async rollout.
 
 ## Backlog Closure Evidence
 
-* Pre-mode: `.backlogit/reconcile/051-S-pre-20260829-203640.md` — `PROCEED`.
+* Pre-mode: `.backlogit/reconcile/051-S-pre-20260829-203640.md` —
+  `PROCEED_WITH_RECORDED_GAPS` (recommendation label corrected 2026-08-30,
+  PR #114 review; see Historical Process Gap Reconciliation below — no
+  `missing`/`status-mismatch`/`orphan` items found, the gap is procedural
+  only).
 * Safe-close: `.backlogit/reconcile/051-S-safe-close-20260829-203729.md` —
-  `CLOSED` (14-member protected set verified intact; shipment archived as
-  its own single artifact; merge SHA `92de025` recorded; never the cascade
-  `backlogit_ship_shipment`).
+  `CLOSED_WITH_RECORDED_GAPS` (14-member protected set verified intact;
+  shipment archived as its own single artifact; delivered-work merge SHA
+  `72940e92d8fd19638a4cc25a40301a31babdbf1a` recorded (PR #111;
+  `92de0250...` retained separately as `decision_authority_sha` — see
+  `ff2676f459ef05e81192435f294a0b7f16601ee7`); never the cascade
+  `backlogit_ship_shipment`; recommendation label corrected 2026-08-30, PR
+  #114 review — see Historical Process Gap Reconciliation below).
 * Post-mode: `.backlogit/reconcile/051-S-post-20260829-203815.md` —
-  `PROCEED`. **Annotation (holistic correctness review, see Post-Closure
+  `VERIFIED_WITH_RECORDED_GAPS` (recommendation label corrected 2026-08-30,
+  PR #114 review; see Historical Process Gap Reconciliation below).
+  **Annotation (holistic correctness review, see Post-Closure
   Correction below)**: this immutable, timestamped snapshot truthfully
   reports `059-F` as still `status: blocked` at its own capture time
   (`20:38:15 -07:00`) — that observation predates the Review-Fix Cycle 1
@@ -775,6 +785,78 @@ untouched by this pass, per their immutable/append-only nature. The PR
 body/Local Review Readiness block is intentionally not updated by this
 pass.
 
+## Historical Process Gap Reconciliation (2026-08-30, PR #114 review threads 3890182197 / 3890182212)
+
+Two additional historical-process gaps in the original 2026-08-29 `051-S`
+safe-close run were identified by PR #114 review comments `3890182197` and
+`3890182212`, after the `ff2676f459ef05e81192435f294a0b7f16601ee7`
+evidence-value remediation above had already corrected *which* commit was
+recorded as delivered-work evidence. These are distinct findings about
+*when* and *under what lock discipline* the original run executed — not a
+re-litigation of the SHA-value fix, and not new data-corruption findings.
+
+1. **Shipment lock not held (`3890182197`)**. The 2026-08-29 run did not
+   acquire or hold the shipment-record lock across pre-mode → safe-close →
+   post-mode, as the current `shipment-reconcile` skill requires when
+   invoked from Ship Step 6. The general single-agent locking exception in
+   `.github/instructions/concurrency.instructions.md` does not override
+   that workflow-specific lock requirement — the post report's original
+   `PROCEED` recommendation, paired with an explicit "no lock was held"
+   rationale, overstated protocol compliance. There is no evidence of
+   concurrent mutation, a second active agent, or protected-set corruption
+   during the run (the Protected Set baseline and Verify-After-Each
+   Invariant checks in the safe-close report, and the Protected-Set Final
+   Confirmation in the post report, all independently confirm state
+   integrity). Absence of concurrent-access evidence does not
+   retroactively satisfy the lock-holding contract; this is a permanent
+   historical process gap in the original run, not a correctable defect,
+   and not itself a data-corruption blocker.
+2. **Commit evidence recorded after archival relocation, not before
+   (`3890182212`)**. The safe-close report's command sequence, in actual
+   execution order, was: (a) `backlogit move 051-S --status done`, which
+   this backlogit installation's status-routing rules already relocated
+   from `.backlogit/queue/` to `.backlogit/archive/`; (b) `backlogit
+   update 051-S --commit ...`, which recorded commit evidence against the
+   **already-archived** artifact; (c) `backlogit archive 051-S`, which
+   applied terminal archive markers. The revised reconciliation skill and
+   Ship authorization require evidence (`track_commit`-equivalent) to be
+   recorded **before** the artifact is archived/relocated out of the
+   queue. Step (b) preceding step (c)'s terminal marker call does not
+   satisfy that contract, because step (a)'s relocation was itself the
+   archival event — the commit update in this run followed the archival
+   relocation, not the reverse. This ordering gap is distinct from the
+   `ff2676f` remediation: `ff2676f` corrected *which* SHA was recorded
+   (the decision-authority SHA was wrongly used in place of the
+   delivered-work SHA); this finding is about *when* the (eventually
+   correct) evidence was recorded relative to archival. Neither defect is
+   correctable retroactively — the actual 2026-08-29 execution order is
+   permanent history. `fcbd6e8` (already on this branch before this
+   reconciliation pass) subsequently split the safe-close skill's
+   atomic-archive and track-commit-then-archive paths into mutually
+   exclusive options specifically so a future run cannot reproduce this
+   ordering gap.
+
+Both gaps are recorded as **permanent residual historical process gaps**,
+not as data-corruption findings and not as a fifth/sixth entry in the
+four-row P-005/P-010 Risky Action Record above — no repository policy
+(`.github/policies/workflow-policies.md` or the constitution) assigns a
+P-code to "lock not held" or "evidence recorded after archival relocation"
+specifically, and none is invented here. The three `.backlogit/reconcile/`
+`051-S` reports were amended a second time (the first being `ff2676f`) to
+carry this distinction explicitly, in frontmatter (`lock_held: false`,
+`lock_compliance: historical_gap`, and, on the safe-close report only,
+`evidence_order_compliance: historical_gap`) and in body text. Their
+`recommendation` values changed from the plain `PROCEED`/`CLOSED` labels
+(which read as unqualified current-contract compliance) to
+`PROCEED_WITH_RECORDED_GAPS` / `CLOSED_WITH_RECORDED_GAPS` /
+`VERIFIED_WITH_RECORDED_GAPS` respectively. This second amendment to the
+otherwise-immutable reconciliation reports is, like `ff2676f`, a narrow,
+labeled provenance/compliance-labeling correction: it does not rewrite the
+underlying state-verification evidence (protected-set checks, archive
+presence, deleted-file guard) those reports already recorded, and it does
+not claim the original run complied with the stricter contract now in
+force.
+
 ## Releasability Evidence
 
 | Evidence | Status |
@@ -785,6 +867,7 @@ pass.
 | Post-deploy observation window | Closed — no async rollout; end state already confirmed |
 | Rollback trigger + procedure | Defined: revert + re-reconcile |
 | Risky actions | Consolidated four-row record in Review-Fix Cycle 4 above: three distinct **P-010** violations (status normalization, shipment creation, `059.008-T` `blocked_reason` mutation) and one distinct **P-005** violation (destructive deletion without real-time approval) — none retroactively legalized; Stage's ratifications (`52c3bf1`, `63f933a`, `303106c`) affirm only the resulting disposition/text, not the mutations that produced them |
+| Historical process gaps (no P-code) | Two permanent historical process gaps recorded 2026-08-30 (PR #114 review threads `3890182197`/`3890182212`) — shipment lock not held across pre→safe-close→post, and commit evidence recorded after (not before) archival relocation; see Historical Process Gap Reconciliation above. Not correctable retroactively; no corruption or concurrent-mutation evidence found |
 | Backlog closure | `CLOSED` (`051-S`); rescoped scope prepared but **unshipped** (no shipment created — see Backlog Closure Evidence above) |
 
 **Releasability status**: `READY_WITH_FOLLOWUPS` — the core transition
@@ -1088,6 +1171,16 @@ newest resumption section for the current status.
   successor-shipment assembly
 * `af1547074234364f3bdd9439871c568f6bf2f8aa` — Stage continuity repair
   superseding the stale `051-S` continuity memory (`.backlogit/memories.json`)
+* `ff2676f459ef05e81192435f294a0b7f16601ee7` — evidence-value remediation:
+  corrected `051-S`/`059.007-T` archive `commit` field and the three
+  reconciliation reports' `merge_commit_sha` from the decision-authority
+  SHA (PR #113) to the delivered-work SHA (PR #111); added an
+  evidence-remediation note to `ship-051-s-054-s-transition-memory.md`
+* This session's historical-process-gap reconciliation (see Historical
+  Process Gap Reconciliation above) — added lock-not-held and
+  evidence-recorded-after-archival-relocation gap findings to the three
+  `051-S` reconciliation reports (frontmatter + body), this closure
+  record, and the transition memory checkpoint; assigns no new P-code
 * `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`
 * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`
 * `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`

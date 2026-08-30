@@ -74,6 +74,36 @@ step itself — see review-fix cycle 2.
   corrected to `merge_commit_sha: 72940e92...` with `92de0250...` retained
   as a separate `decision_authority_sha` field. This note documents the
   remediation; it does not reopen or relitigate the original closure.
+* **Historical process gap note (PR #114 review, 2026-08-30, threads
+  `3890182197`/`3890182212`)**: two additional, distinct historical
+  process gaps were identified in the original 2026-08-29 run, separate
+  from the SHA-value remediation immediately above. (1) The run did not
+  acquire or hold a shipment-record lock across pre-mode → safe-close →
+  post-mode, as the current `shipment-reconcile` skill requires when
+  invoked from Ship Step 6; the general single-agent locking exception
+  (`.github/instructions/concurrency.instructions.md`) does not override
+  that workflow-specific requirement. (2) The safe-close command sequence
+  recorded commit evidence (`backlogit update 051-S --commit ...`) only
+  *after* `backlogit move 051-S --status done` had already relocated the
+  record into `.backlogit/archive/`, contradicting the current
+  evidence-before-archival-relocation contract; the terminal
+  `backlogit archive 051-S` marker call came third, so the commit update
+  preceding it does not establish compliance, because the archival event
+  was the relocation in step one. Neither gap is correctable
+  retroactively; neither indicates concurrent mutation, a second active
+  agent, or protected-set corruption (the protected-set baseline and
+  verify-after-each checks below independently confirm state integrity).
+  Both are recorded as permanent residual historical process gaps, not as
+  a fifth/sixth entry alongside the four P-005/P-010 violations below, and
+  no repository policy assigns a P-code to either, so none is invented.
+  The three `.backlogit/reconcile/` `051-S` reports were amended a second
+  time (the first being the SHA-value remediation above) with explicit
+  `lock_held`/`lock_compliance`/`evidence_order_compliance` frontmatter
+  and body text, and their `recommendation` values changed from plain
+  `PROCEED`/`CLOSED` to `PROCEED_WITH_RECORDED_GAPS` /
+  `CLOSED_WITH_RECORDED_GAPS` / `VERIFIED_WITH_RECORDED_GAPS`
+  respectively, so the reports no longer read as unqualified
+  current-contract compliance.
 * Final manifest: `[059.007-T]` only (the two non-`done` original members,
   `059-F` and `059.008-T`, were returned from the manifest via
   `backlogit shipment return-blocked` *before* closure — their `status`
@@ -364,16 +394,22 @@ Confirmed independently ready, no residual dependency on `051-S`:
 
 ## Reconciliation (pre / safe-close / post)
 
-* `.backlogit/reconcile/051-S-pre-20260829-203640.md` — `PROCEED` (sole
-  remaining manifest item `059.007-T` pre-archived; 0 orphans).
-* `.backlogit/reconcile/051-S-safe-close-20260829-203729.md` — `CLOSED`
-  (14-member protected set — `059-F` + 13 non-U7 siblings — proven intact
-  at baseline and after every mutation; shipment record archived as its own
-  single artifact with commit SHA recorded; never the cascade
-  `backlogit_ship_shipment`).
-* `.backlogit/reconcile/051-S-post-20260829-203815.md` — `PROCEED` (archive
-  file present, no deletions). **Annotation (holistic correctness review,
-  see Post-Closure Correction below)**: this immutable snapshot's
+* `.backlogit/reconcile/051-S-pre-20260829-203640.md` —
+  `PROCEED_WITH_RECORDED_GAPS` (sole remaining manifest item `059.007-T`
+  pre-archived; 0 orphans; recommendation label corrected 2026-08-30, PR
+  #114 review — see the historical process gap note above).
+* `.backlogit/reconcile/051-S-safe-close-20260829-203729.md` —
+  `CLOSED_WITH_RECORDED_GAPS` (14-member protected set — `059-F` + 13
+  non-U7 siblings — proven intact at baseline and after every mutation;
+  shipment record archived as its own single artifact with delivered-work
+  commit SHA recorded; never the cascade `backlogit_ship_shipment`;
+  recommendation label corrected 2026-08-30, PR #114 review — see the
+  historical process gap note above).
+* `.backlogit/reconcile/051-S-post-20260829-203815.md` —
+  `VERIFIED_WITH_RECORDED_GAPS` (archive file present, no deletions;
+  recommendation label corrected 2026-08-30, PR #114 review — see the
+  historical process gap note above). **Annotation (holistic correctness
+  review, see Post-Closure Correction below)**: this immutable snapshot's
   `059-F remains status: blocked` observation is truthful as of its own
   `20:38:15 -07:00` capture, which predates the `20:58:43 -07:00`
   Review-Fix Cycle 1 normalization (`16186d0`) and Stage's ratification;
