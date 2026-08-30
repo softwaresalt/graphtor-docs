@@ -216,8 +216,9 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
 
 ### U6 — Integrate beneath-root opener and permission boundary (composes U2; gates U9/U3–U5/U10)
 
-* **Changes**: implement the production `open_beneath` boundary proven by U7,
-  after U8 proves that a safe engine boundary exists, U1 adopts the exact
+* **Changes**: implement the production `open_beneath` boundary proven by U7
+  (U8's engine-boundary feasibility recorded **BLOCKED** — superseded gate, the accepted
+  engine-open residual; U6 does **not** require the engine binding), after U1 adopts the exact
   dependencies, and U2 provides the leaf no-follow/permission primitives. Resolve
   the main database and sidecars relative to the retained root capability, COMPOSE
   U2's `open_no_follow` / `capture_perms` / `set_readonly_via_handle` primitives
@@ -233,11 +234,14 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
      primitive) without a path fallback.
 * **Acceptance**: integrated `src/db/store.rs` passes Rust 1.75 check, clippy
   pedantic, and targeted tests; no in-crate `unsafe` or unwrap/expect.
-* **Backlog**: `059.006-T`; depends on U1, U2, U7, and U8; composes U2; gates U9 and U3–U5/U10.
+* **Backlog**: `059.006-T`; depends on U1, U2, and U7 (U8 dropped — **superseded 2026-08-29**, accepted residual); composes U2; gates U3–U5/U10 (U9 deferred to a later separate shipment). See the re-deliberation replan for the authoritative deps.
 
 ### U9 — Integrate capability-bound SQLite/Cozo engine open (code, test-first)
 
-* **Changes**: implement U8's proven engine boundary through
+* **Changes**: **DEFERRED (2026-08-29 re-deliberation, later separate shipment).** U8 did
+  **not** prove a safe engine boundary — it recorded BLOCKED (cozo 0.7 bare-path reopen). Once
+  `059.013-T` (upstream cozo / maintained-fork) delivers a safe capability-/identity-bound engine
+  open, implement it through
   `configure_sqlite_wal` and `open_sqlite_instance`/`DbInstance::new`. Never
   convert back to the original `safe_path` for an unbound engine open.
 * **Three test-first scenarios**:
@@ -248,7 +252,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
      expected behavior through the proven bound mechanism.
 * **Acceptance**: Rust 1.75, clippy pedantic, and targeted tests pass; no in-crate
   `unsafe`, original-path engine reopen, or success-shaped fallback.
-* **Backlog**: `059.009-T`; depends on U6 and U8; U3–U5 and U10 also depend on U9; U2 precedes U6 and U11 depends on U2.
+* **Backlog**: `059.009-T`; **DEFERRED** — depends on `059.013-T` and U6 (U8 dropped as a gate; **superseded 2026-08-29**); U3–U5 and U10 NO LONGER depend on U9; U2 precedes U6 and U11 depends on U2.
 
 ### U3 — Bind EngineReadonlyGuard lock/rollback/Drop to retained handles (code, test-first)
 
@@ -353,7 +357,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   referenced (not re-implemented). The Windows retained-handle non-interference and
   broader-policy deltas are validated in U10; the deterministic predicate and
   literal-equality / single-source structural proof are validated in U11.
-* **Backlog**: `059.005-T`; depends on U3, U4, U6, and U9.
+* **Backlog**: `059.005-T`; depends on U3, U4, and U6 (U9 dropped — **superseded 2026-08-29**; engine-open containment is the deferred accepted residual).
 
 ### U10 - Windows retained-handle engine non-interference and broader non-name-surrogate reparse regression (tests)
 
@@ -382,7 +386,7 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   where creatable and otherwise skips (not fails); whether each filesystem-dependent
   Windows test executed or skipped is reported; passes `clippy::pedantic -D warnings`;
   no `.unwrap()`/`.expect()`. At most two independently countable scenarios.
-* **Backlog**: `059.010-T`; depends on U3, U4, U6, and U9 (same gating as U5).
+* **Backlog**: `059.010-T`; depends on U3, U4, and U6 (U9 dropped — **superseded 2026-08-29**; same gating as U5).
 
 ### U11 - Deterministic reparse predicate, Windows literal-equality, and single-source structural proof (tests)
 
@@ -424,6 +428,14 @@ established. See `docs/decisions/2026-08-24-store-toctou-nofollow-handle-deliber
   equality, structural single-source proof).
 * **Backlog**: `059.011-T`; depends on U2 (transitively feasibility-gated via U2 -> U1).
 ## Dependency Graph
+
+> **SUPERSEDED (2026-08-29 re-deliberation, Option B).** The authoritative near-term
+> graph is the *Rescoped authoritative DAG* in the "AUTHORITATIVE re-deliberation
+> replan - 2026-08-29" section at the end of this plan. U8 is terminally BLOCKED
+> (accepted engine-open residual, not a gate) and U9 is deferred to a later separate
+> shipment; U1 and U6 no longer depend on U8, and U3/U4/U5/U10 no longer depend on U9.
+> Implementation is gated on the operator sign-off `059.014-T`. The graph and prose
+> below are retained for historical context only.
 
 ```text
 U7 root/API/MSRV proof

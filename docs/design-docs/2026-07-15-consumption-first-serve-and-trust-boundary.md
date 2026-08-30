@@ -185,6 +185,32 @@ pre-existing symlink-swap TOCTOU in the guard's permission handling is a
 separate, deferred security-mechanism change (stash `5905CDEE`); it does not
 change the guarantee described above and is tracked independently.
 
+### Operator trust boundary: workspace write access during serve
+
+`serve` requires a trusted workspace. The operator MUST ensure that neither the
+served database leaf entries (the `.db` file and any `-wal`/`-shm`/`-journal`
+sidecars) nor any **intermediate directory beneath the workspace root** is
+attacker-writable during an active serve window. This requirement covers the
+**write-mode `open_sqlite`** path (a `Generation`-posture database) as well as
+the read-only serve path — the write-mode branch is the higher-impact one,
+because a redirected engine open can read, write, or create an external target,
+not merely expose information.
+
+This boundary exists because the storage engine re-resolves the database **by
+bare path**: cozo's `SqliteStorage` re-opens SQLite by path on every pool-empty
+`transact()` for the `DataStore` lifetime, and `DbInstance::new`'s
+`path: impl AsRef<Path>` structurally rejects a handle/capability object. A
+local attacker who can swap a leaf entry or an intermediate directory beneath
+the root **during** serve can therefore redirect the engine open to a different
+file, even after the permission-mutation paths are fully identity-bound. This is
+the **named accepted residual** recorded in the
+[store TOCTOU engine-boundary re-deliberation](../decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md):
+the `chmod`/read-only permission paths are fully contained (no permission
+mutation can escape the workspace), but the engine's own path re-resolution is
+not, and closing it fully is tracked as later upstream-cozo work (`059.013-T`).
+Until that closure lands, run `serve` only against a workspace whose leaf and
+intermediate paths beneath the root are not writable by an untrusted party.
+
 ## `--read-only` escape hatch
 
 `serve --read-only` forces **every** database in the served set to `ReadOnly`

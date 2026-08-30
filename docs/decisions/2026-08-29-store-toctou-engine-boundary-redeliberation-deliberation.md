@@ -368,11 +368,17 @@ record itself says has no causal basis and no schedule benefit.
   3. **Operational guidance**: document that graphtor-docs serve must run against a workspace
      whose leaf entries and intermediate directories are not attacker-writable during serve
      (consistent with the local-only trust boundary), **covering write-mode `open_sqlite` opens as
-     well as read serve**; surface this in the serve trust-boundary design doc.
+     well as read serve**; surface this in the serve trust-boundary design doc. **Enacted
+     2026-08-29:** this guidance is now committed in
+     `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md` under the
+     "Operator trust boundary: workspace write access during serve" subsection, and `059.014-T`
+     requires its presence as a hard sign-off precondition (see that item's acceptance criteria).
   4. **Tracked closure path**: Option A (`059.013-T`) keeps the full engine-open closure on the
      roadmap; the residual is time-limited by that follow-up, not permanent-by-default.
 * **Sign-off gate**: `059.014-T` (operator sign-off against the serve trust-boundary design
-  doc). Until it is `done`, `059-F` implementation (U1 onward) does not begin. **This record
+  doc). Until it is `done`, `059-F` implementation (U1 onward) does not begin. The control #3
+  design-doc guidance is a **committed precondition** of `059.014-T` (recorded in that item's
+  acceptance criteria); sign-off cannot close while it is absent. **This record
   does NOT assert that the original Principles III/IV fail-closed DoD passed.**
 
 ## Ship-Side Transition (planned precisely; not executed by Stage)
