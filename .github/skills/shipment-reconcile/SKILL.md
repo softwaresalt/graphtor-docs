@@ -50,10 +50,22 @@ Every item in the manifest is classified as one of:
 | Classification | Pre-Mode Meaning | Post-Mode Meaning |
 |---|---|---|
 | `matched` | Queue file present AND declared status matches `expected_status` | Archive file present for this item |
-| `pre-archived` | No queue file found but archive file exists — item already archived before this shipment ran; treated as valid | N/A (all items are expected in archive; use `matched` / `missing`) |
+| `current-delivery-pending-finalization` | No queue file found but an archive file exists because **this shipment's own execution** moved the task to terminal `status: done`, and the installed status routing relocated it into `.backlogit/archive/` immediately — before the PR merge SHA existed — so its final archive markers/evidence are not yet complete. Valid **only** when the fail-closed provenance proof in Safe-Close Mode step 4 passes; ambiguous provenance halts | N/A (all items are expected in archive; use `matched` / `missing`) |
+| `pre-archived` | No queue file found but an archive file exists because an **earlier shipment** delivered/archived the item, or it otherwise **predates** this shipment — distinct from `current-delivery-pending-finalization`, which is this shipment's own in-flight delivery; its commit evidence belongs to that earlier delivery and is never overwritten with this run's SHA | N/A (all items are expected in archive; use `matched` / `missing`) |
 | `missing` | No queue or archive file found for this manifest item | Archive file not found for this manifest item |
 | `status-mismatch` | Queue file present but declared status does not match `expected_status` | N/A (post-mode does not check status fields) |
 | `conflict` | This manifest item ID also appears in the `custom_fields.items` manifest of **another live shipment** (queued or active) — a duplicate/overlapping assignment | N/A (post-mode does not scan live shipment manifests) |
+
+> **Two archived cases, never one.** A manifest item found in `.backlogit/archive/` is
+> **not** automatically an earlier shipment's delivery. The installed status routing
+> relocates a task into the archive directory the moment it reaches the terminal status
+> `done` — before the PR merge SHA exists — and Ship applies that transition when it
+> completes the task, so this shipment's **own** members routinely land there mid-run (see
+> `.backlogit/registry.yaml`). Classifying them as `pre-archived` would forbid writing this
+> shipment's SHA and then halt on the resulting missing evidence, deadlocking closure
+> permanently. The two cases are therefore split, and the split is decided by the
+> **provenance proof** in Safe-Close Mode step 4 — never by membership or a missing commit
+> alone.
 
 > Classification semantics are mode-dependent. Pre-mode checks the queue
 > for status correctness; post-mode checks the archive for file presence only.
@@ -68,7 +80,7 @@ Every item in the manifest is classified as one of:
 
 The report ends with a `recommendation`:
 
-* `PROCEED` — all items are `matched` or `pre-archived`; no action needed
+* `PROCEED` — all items are `matched`, `current-delivery-pending-finalization`, or `pre-archived`; no action needed
 * `HALT — operator reconcile required` — one or more missing, status-mismatch, or conflicting (duplicate-assignment) items (pre-mode)
 * `HALT — restore archives` — missing archive files or unrestored deletions (post-mode)
 * `CLOSED` — safe-close archived every manifest item individually, archived the
@@ -78,8 +90,10 @@ The report ends with a `recommendation`:
 
 For `mode: safe-close`, the report also records the **protected set** (the parent
 feature file and every unshipped sibling task file that must survive closure) and,
-per manifest item, whether it was `matched` (archived by this run) or
-`pre-archived` (already archived before this run; skipped to avoid
+per manifest item, whether it was `matched` (archived by this run),
+`current-delivery-pending-finalization` (this shipment's own member, already relocated
+by its terminal `done` transition and finalized in place once its provenance proof
+passed), or `pre-archived` (delivered by an earlier shipment; skipped to avoid
 double-archival and false-positive cascade flags).
 
 Safe-close additionally records, for **each member and for the shipment record**, the
@@ -89,13 +103,25 @@ commit **evidence source** and the SHA **value**:
 |---|---|
 | `atomic-archive-metadata` | The **selected invocation transport** for the archive operation itself accepted the delivered SHA **and** its own tool contract guarantees the value is persisted to the archived artifact's frontmatter `commit` atomically with archival, so archival and evidence committed together |
 | `frontmatter-commit-update` | The delivered-work merge SHA was written to the still-**live** artifact's frontmatter `commit` by a commit-only update (MCP `backlogit_update_item` carrying only `commit`, or CLI `backlogit update {id} --commit {sha}`) and verified there before any terminal mutation |
+| `current-delivery-post-terminal` | **This** shipment's own member had already been relocated into `.backlogit/archive/` by its terminal `done` transition **before** the PR merge SHA existed, so the delivered-work SHA was written to the **archived** record's frontmatter `commit` by the same commit-only update and verified there — but only after the fail-closed provenance proof in Safe-Close Mode step 4 passed. An **explicit exception** to the live-before-terminal rule, forced by the installed status routing; never silent inference and never a backfill |
 | `pre-existing` | A pre-archived member's own earlier merge commit, preserved and verified — never overwritten with this run's closure SHA |
 
-> The artifact's frontmatter `commit` is safe-close's **canonical** closure evidence. An
-> optional `backlogit_track_commit` (registry `track_commit`) commit-link entry is
-> **supplemental** provenance only: commit_links are a separate store and never substitute
-> for frontmatter `commit`. Record a supplemental commit_link, if the installation offers
-> one, in addition to — never instead of — the canonical evidence.
+> **Canonical evidence, resolved by transport.** The artifact's frontmatter `commit` is
+> safe-close's **canonical** closure evidence. The two installed surfaces reach it
+> differently, so resolve `track_commit` by transport **before** calling anything:
+>
+> * **MCP.** The canonical write is `backlogit_update_item` carrying **only** `commit`.
+>   MCP `backlogit_track_commit` writes commit_links — a separate store that never
+>   substitutes for frontmatter `commit` — so an optional MCP `backlogit_track_commit`
+>   call is **supplemental** provenance recorded *in addition to*, never instead of, the
+>   canonical evidence.
+> * **CLI.** The installed registry maps `track_commit` to
+>   `backlogit update {id} --commit {sha}` — the **same** CLI command as the canonical
+>   frontmatter update, not a distinct supplemental call. On CLI, execute that command
+>   **once** and classify it as the **canonical** frontmatter evidence write. Never
+>   **double-call** it as a supplemental commit-link: a second invocation would merely
+>   re-run the identical canonical write, and this mapping produces no separate commit_link
+>   to record.
 
 > The recorded SHA is always the **actual delivered-work merge commit** (the commit that
 > merged the shipped work into `main`). It is distinct from any **decision/closure-authority
@@ -135,9 +161,17 @@ commit **evidence source** and the SHA **value**:
   live record with a commit-only update, verifies it, and only then runs the non-atomic
   terminal/archive sequence **exactly once**. Each artifact is archived **exactly once**; the
   paths are never chained. If neither path is available it halts before any terminal mutation.
-  It never writes evidence after archival, never overwrites a pre-archived member's existing
-  merge commit with the current closure SHA, and halts rather than fabricating missing or
-  contradictory evidence.
+  It never writes evidence after archival on these live paths, never overwrites a
+  pre-archived member's existing merge commit with the current closure SHA, and halts rather
+  than fabricating missing or contradictory evidence.
+* **Two archived cases, split by provenance proof.** A manifest item found in
+  `.backlogit/archive/` is classified `current-delivery-pending-finalization` **only** when a
+  fail-closed provenance proof shows it is **this** shipment's own member, relocated there by
+  its terminal `done` transition before the merge SHA existed; otherwise it is `pre-archived`
+  (an earlier shipment's delivery). Membership in `custom_fields.items` alone and a missing
+  `commit` alone are **never** proof, ambiguous provenance halts, and a record already fully
+  `status: archived` is out of safe-close's scope entirely — it routes to historical
+  evidence remediation.
 * **Single-writer logical lock.** When invoked from Ship Step 6, this skill holds the
   `.backlogit/queue/.{shipment_id}.md.lock` file (via the `file-lock` skill) for the
   duration of pre-mode → safe-close → post-mode. That original queue-path lock file is the
@@ -199,7 +233,12 @@ contract fixes the lock's identity explicitly:
    * If found, read its frontmatter and compare `status` to `expected_status`
      — classify as `matched` or `status-mismatch`
    * If NOT found in queue, check `.backlogit/archive/{id}.*`
-     — if archive file exists, classify as `pre-archived` (valid; item already shipped)
+     — if an archive file exists, decide **which** archived case it is: classify
+     `current-delivery-pending-finalization` when the Safe-Close Mode step 4 provenance
+     proof holds (this shipment's own member, terminal-relocated by its `done` transition
+     before the merge SHA existed), otherwise classify `pre-archived` (delivered by an
+     earlier shipment). Both are valid at this gate; neither is inferred from membership
+     alone, and ambiguous provenance halts
      — if no file in either location, classify as `missing`. This normal per-item check is
      the only source of `missing`; the scan in step 4 never produces it
 
@@ -220,7 +259,8 @@ contract fixes the lock's identity explicitly:
    `.backlogit/reconcile/{shipment_id}-{mode}-{timestamp}.md`.
 
 6. **Gate decision**:
-   * If all items are `matched` or `pre-archived` and no conflicts exist → `recommendation: PROCEED`
+   * If all items are `matched`, `current-delivery-pending-finalization`, or `pre-archived`
+     and no conflicts exist → `recommendation: PROCEED`
    * If any `missing`, `status-mismatch`, or `conflict` items exist →
      `recommendation: HALT — operator reconcile required`
    * On `HALT`: emit the report path, release the lock, and halt with
@@ -334,8 +374,10 @@ it by the original queue path on completion.
        guarantee — always the case for the installed CLI archive mapping). While the item is
        still **live** in `.backlogit/queue/`, write `merge_commit_sha` into its frontmatter
        `commit` with a **commit-only** update: MCP `backlogit_update_item` carrying **only**
-       `commit`, or CLI `backlogit update {id} --commit {sha}` (registry `track_commit`
-       maps to that same CLI form). **No other field** may be set in that call — no status,
+       `commit`, or CLI `backlogit update {id} --commit {sha}` — which is exactly what the
+       installed registry's `track_commit` CLI mapping resolves to, so on CLI that single
+       command **is** the canonical frontmatter write. **No other field** may be set in that
+       call — no status,
        title, description, labels, assignee, priority, section, or any other planning field.
        Then **verify** that the live record's frontmatter `commit` equals `merge_commit_sha`
        **before any terminal mutation** — this is the last point at which the source record is
@@ -347,30 +389,88 @@ it by the original queue path on completion.
        already **relocates** the file out of `.backlogit/queue/` before the final
        archive-marker operation, the record is no longer writable at its original path, so this
        contract **never** writes evidence after that move. Classify `matched` with evidence
-       source `frontmatter-commit-update`. An optional `backlogit_track_commit` commit-link
-       entry may be recorded **in addition**; commit_links are **supplemental** provenance and
-       **never substitute** for the canonical frontmatter `commit`.
+       source `frontmatter-commit-update`. On **MCP** an optional `backlogit_track_commit`
+       commit-link entry may be recorded **in addition**; commit_links are **supplemental**
+       provenance and **never substitute** for the canonical frontmatter `commit`. On
+       **CLI** there is no such extra call to make — `track_commit` maps to the same
+       `backlogit update {id} --commit {sha}` already executed above, so it is **never**
+       double-called as a supplemental step.
      * **Neither path available.** If the selected transport neither guarantees atomic
        frontmatter-`commit` persistence **nor** offers a commit-only frontmatter update on the
        live record, **halt** with `RECONCILE_FAIL` and report the missing capability **before
        any terminal mutation** — do not move, archive, or otherwise close the item. Never
        attempt to write commit evidence **after archival**, and never treat a report-only note
-       or a supplemental commit_link as a substitute for frontmatter `commit` on the item.
+       or a supplemental MCP commit_link as a substitute for frontmatter `commit` on the item.
      * **Verify after either successful path** (one shared invariant, whichever branch ran):
        confirm the item now appears in `.backlogit/archive/` **exactly once** and
        carries frontmatter `commit` equal to `merge_commit_sha`, confirm it is gone from
        `.backlogit/queue/`, and record the evidence **source**
        (`atomic-archive-metadata` or `frontmatter-commit-update`) and the SHA **value** in the
        report before moving to the next item.
-   * If the item's file is already in `.backlogit/archive/` (a **pre-archived** member):
+   * If the item's file is already in `.backlogit/archive/`, it is **not** automatically an
+     earlier shipment's delivery. The installed status routing relocates a task into the
+     archive directory the moment it reaches the terminal status `done` — before the PR
+     merge SHA exists — and Ship applies that transition when it completes the task, so this
+     shipment's own members routinely land there mid-run. Decide **which** of the two
+     archived cases applies **before** touching the record; never assume either one.
+   * **Case A — `current-delivery-pending-finalization`** (this shipment's own in-flight
+     delivery): the task reached terminal `status: done` during **this** shipment's
+     execution, was relocated into `.backlogit/archive/` by that status routing, and its
+     final archive markers/evidence are not yet complete. This case is **fail-closed**: it
+     applies only when **all** of the following conditions are proven **before** anything is
+     written to the record, and **ambiguous** provenance **halts** with `RECONCILE_FAIL`
+     instead of defaulting into it:
+     * **Membership** — the ID is in **this** shipment's `custom_fields.items`. Membership
+       alone is **never** sufficient proof, and a **missing** `commit` alone is **never**
+       proof of current delivery — an earlier shipment's member can be listed here too, and
+       can equally lack evidence.
+     * **Ship-owned completion evidence** — a **Ship-owned** checkpoint or task-completion
+       record, from the current session or a prior session in the **same** scope, ties this
+       item's `done` transition to **this exact shipment's** execution.
+     * **No foreign delivery** — there is no evidence that another or earlier shipment
+       delivered this item; it appears as a delivered member of no other shipment manifest,
+       live or archived.
+     * **Merge proven** — this shipment's delivered-work merge SHA is already confirmed
+       present on `origin/main` by the caller's merge-confirmation gate.
+     * **Record consistent** — the archived record is terminal `done` (terminal-relocated,
+       **not** final-marker archived) and carries no existing `commit` that would
+       **contradict** this shipment's delivered-work SHA.
+     If **every** condition above holds, finalize the record in place:
+     * Write the SHA with a **commit-only** frontmatter update on the **archived** record —
+       MCP `backlogit_update_item` carrying **only** `commit`, or CLI
+       `backlogit update {id} --commit {sha}`. **Even when** the artifact already lives in
+       `.backlogit/archive/`, that command still updates its frontmatter `commit`. **No
+       other field** may be set — no status, title, description, labels, assignee,
+       priority, section, or any other planning field.
+     * **Verify** that the archived record's frontmatter `commit` **equals** the exact
+       `merge_commit_sha` before continuing.
+     * Then apply the final archive markers with `backlogit_archive_item` **exactly once**,
+       and only **if they are not already applied** — never re-run markers on a record that
+       already carries them.
+     * Classify the member closed with evidence source `current-delivery-post-terminal`, and
+       record the **provenance proof** (which conditions were satisfied, and from which
+       artifacts) alongside the **exact SHA** value in the report.
+     * This is an **explicit exception** to the live-before-terminal evidence rule, forced by
+       the installed status routing relocating the task before the merge SHA exists. It is
+       **not** silent inference and **not** a backfill: it writes only an authoritatively
+       proven, `origin/main`-confirmed SHA for **this** shipment's own delivery, and records
+       on what proof it was permitted.
+     * If the record is instead **fully** `status: archived` (final markers already applied)
+       but **lacks** or **contradicts** the expected `commit`, **halt** with
+       `RECONCILE_FAIL` and route it to the separate **historical evidence-remediation**
+       workflow described below. Safe-close **never silently rewrites fully archived
+       provenance** during closure.
+   * **Case B — `pre-archived`** (delivered by an earlier shipment, or otherwise predating
+     this shipment; the Case A proof above did **not** hold):
      classify `pre-archived` and **skip** — do not re-archive. Reusing the `pre-archived`
      classification prevents false-positive cascade flags on items that were legitimately
      shipped earlier. Its commit evidence belongs to the earlier shipment that delivered
      it, so:
      * **Preserve** the item's existing actual merge commit as the **authoritative** existing
        delivery evidence. **Verify and report** it — never **overwrite** it with this run's
-       closure SHA. A pre-archived member was delivered by a different merge, so applying the
-       current closure SHA would falsify its provenance.
+       closure SHA. A foreign (earlier-shipment) archived member is **never** overwritten
+       with the current shipment's SHA, because it was delivered by a different merge and
+       applying this closure SHA would falsify its provenance.
      * Record the preserved value and its evidence source (`pre-existing`) in the report.
      * If the required evidence is **missing** (no commit recorded on the pre-archived
        item) or **contradictory** (a recorded commit that conflicts with the item's
@@ -464,9 +564,11 @@ it by the original queue path on completion.
      used in step 4. Where that terminal transition **relocates** the record out of
      `.backlogit/queue/` before the archive-marker operation, the record is no longer
      writable at its original path, so this contract **never** writes evidence after that
-     transition. Evidence source: `frontmatter-commit-update`. An optional
+     transition. Evidence source: `frontmatter-commit-update`. On **MCP** an optional
      `backlogit_track_commit` commit-link entry is **supplemental** only and never
-     substitutes for frontmatter `commit`.
+     substitutes for frontmatter `commit`; on **CLI** `track_commit` maps to the same
+     `backlogit update {shipment_id} --commit {sha}` already executed above, so it is
+     **never** double-called as a supplemental step.
    * **Neither path available.** If the selected transport neither guarantees atomic
      frontmatter-`commit` persistence **nor** offers a commit-only frontmatter update on the
      live record, **halt** with `RECONCILE_FAIL` **before any terminal mutation** rather than
@@ -487,14 +589,18 @@ it by the original queue path on completion.
 9. **Produce safe-close report** per the same schema, recording the protected set, each
    item's classification, the shipment-record archival, and the recommendation. For **each
    member and for the shipment record**, record the commit **evidence source** — one of
-   `atomic-archive-metadata`, `frontmatter-commit-update`, or `pre-existing` (preserved from
-   an earlier shipment) — alongside the exact SHA **value** recorded or preserved, and note
-   any supplemental commit_link recorded in addition, so a reviewer can audit per member
-   where each piece of commit evidence came from.
+   `atomic-archive-metadata`, `frontmatter-commit-update`, `current-delivery-post-terminal`
+   (this shipment's own terminal-relocated member, finalized after its provenance proof), or
+   `pre-existing` (preserved from an earlier shipment) — alongside the exact SHA **value**
+   recorded or preserved, the provenance proof behind any
+   `current-delivery-post-terminal` write, and any supplemental MCP commit_link recorded in
+   addition, so a reviewer can audit per member where each piece of commit evidence came
+   from.
 
 10. **Gate decision**:
-    * All manifest items `matched` or `pre-archived`, the shipment record archived,
-      and the protected set intact → `recommendation: CLOSED`. Proceed to post-mode.
+    * All manifest items `matched`, `current-delivery-pending-finalization`, or
+      `pre-archived`, the shipment record archived, and the protected set intact →
+      `recommendation: CLOSED`. Proceed to post-mode.
     * Any cascade detected → `recommendation: HALT — cascade detected, revert required`
       (see step 6). Do not proceed to the commit step.
 
@@ -526,6 +632,11 @@ If pre-mode cannot acquire the logical shipment lock because another process hol
 * The atomic path calls `archive_item` exactly once with commit metadata and never follows it with `backlogit_move_item` / `backlogit_archive_item` / `backlogit_update_item` / `backlogit_track_commit` on that same artifact
 * The live-update path writes frontmatter `commit` with a commit-only update (no other field), verifies it while the artifact is still live, then runs the non-atomic terminal/archival sequence exactly once — `done` for a task member, `shipped` for the shipment record — and never writes evidence after a terminal transition that relocates the file
 * `backlogit_track_commit` / commit_links are supplemental provenance only and never substitute for the canonical frontmatter `commit`
+* The CLI `track_commit` mapping resolves to the **same** `backlogit update {id} --commit {sha}` command as the canonical frontmatter write, so on CLI it is executed **once** and classified as the canonical write, never double-called as a supplemental commit-link; only on MCP is `backlogit_track_commit` a distinct supplemental commit_links call
+* An archived manifest member is split into exactly two cases: `current-delivery-pending-finalization` (this shipment's own member, terminal-relocated by its `done` transition before the merge SHA existed) and `pre-archived` (an earlier shipment's delivery) — never one blanket case
+* `current-delivery-pending-finalization` is fail-closed: it requires current-shipment `custom_fields.items` membership, Ship-owned same-scope completion evidence tying the `done` transition to this exact shipment, no evidence of delivery by another shipment, the merge SHA confirmed on `origin/main`, and a non-contradictory terminal `done` record — membership alone and a missing commit alone are never proof, and ambiguous provenance halts
+* A proven `current-delivery-pending-finalization` member is finalized with a commit-only frontmatter update on the archived record, verified against the exact SHA, then final archive markers applied exactly once only if not already applied, recorded with evidence source `current-delivery-post-terminal` plus its provenance proof — an explicit, evidence-bound exception to live-before-terminal evidence, never silent inference or backfill
+* A record already fully `status: archived` that lacks or contradicts its commit halts and routes to historical evidence remediation; safe-close never silently rewrites fully archived provenance
 * If **neither** the atomic guarantee **nor** a commit-only live frontmatter update is available, safe-close **halts** with `RECONCILE_FAIL` before any terminal mutation
 * After either successful path, one shared verify-after-each invariant confirms the artifact is archived exactly once with the expected frontmatter `commit`, and records the evidence source and SHA value
 * Safe-close preserves a pre-archived member's authoritative existing merge commit — verifying and reporting it rather than overwriting it with the current closure SHA — and halts rather than fabricating missing or contradictory evidence
@@ -534,7 +645,7 @@ If pre-mode cannot acquire the logical shipment lock because another process hol
 * Safe-close halts on cascade detection and executes `git restore`/`git revert` recovery only after explicit real-time operator approval, scoped to the exact identified paths or exact revert commit, with a P-005 violation event; it never force/resets, never broadens to unrelated paths or history, and never auto-prunes the manifest
 * `mode: post` runs after the safe-close archive sequence in Ship Step 6
 * Pre-mode's duplicate-assignment check is a forward overlap scan across live (`queued` and `active`) shipment `custom_fields.items`, run as one status per list call; the skill makes no reverse-orphan claim the schema cannot support
-* All five item classifications are represented in the schema
+* All six item classifications are represented in the schema
 * The canonical logical shipment lock `.backlogit/queue/.{shipment_id}.md.lock` is acquired before pre-mode, honored by every conforming writer across relocation, and released by the original queue path after post-mode (or on any halt)
 * Report-and-halt in pre/post mode; safe-close mutation is strictly manifest-scoped with no auto-prune
 
