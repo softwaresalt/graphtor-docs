@@ -229,10 +229,13 @@ real-directory replacement of the root — so either that parent namespace must 
 protected too or the opened root's identity must be verified after open.
 This requirement is **not** limited to an active `serve` window, and **not** to
 write-mode commands: it applies whenever **any store-opening command** opens the
-store. Read-only `status` and query opens are exposed too — a redirected read is
-bounded to information exposure — while a redirected write-mode open (`serve`
-generation, `sync`, `prewarm`) can additionally read, write, or create an
-external target.
+store. The read-only `status`/query opens are **not** bounded to information
+exposure — cozo always opens connections `SQLITE_OPEN_READWRITE |
+SQLITE_OPEN_CREATE`, and `open_sqlite_readonly` blocks only explicit
+`DataStore::mutate` calls, not engine-side effects, so a redirected read can
+still incur engine-side writes/creation on the swapped target. The write-mode
+opens (`serve` generation, `sync`, `prewarm`) additionally perform
+application-level read/write/create.
 
 This boundary exists because the storage engine re-resolves the database **by
 bare path**: cozo's `SqliteStorage` re-opens SQLite by path on every pool-empty

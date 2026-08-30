@@ -214,7 +214,7 @@ U1/U6 to wait on U8 so U1 would adopt one consistent dependency set.
 Add or await an upstream cozo API (or maintain a fork) that accepts an identity-bound /
 capability open honored throughout the `DataStore` lifetime (including `transact()` reopen).
 
-* **Pros**: Only option that fully closes the engine-open intermediate-directory redirection;
+* **Pros**: Only option that fully closes the engine-open leaf and intermediate-directory redirection;
   restores the expanded PR #107 fail-closed bar in full.
 * **Cons**: External dependency on an upstream maintainer's timeline (unknown, not
   investigated to acceptance); a maintained fork is a standing supply-chain + maintenance
@@ -228,7 +228,7 @@ Land the identity-bound, no-follow, root-relative permission-mutation fix for th
 originally-reported vulnerabilities — **leaf primitives (U2) AND intermediate-directory
 containment of the `chmod` paths (U6), both proven feasible by U7** — and **explicitly accept
 and document** the residual "cozo re-resolves the db path on every `transact()`" engine-open
-intermediate-directory redirection as a known, bounded gap with compensating controls. Defer
+leaf and intermediate-directory redirection as a known, bounded gap with compensating controls. Defer
 the engine-open closure to Option A as a separate, later, non-blocking follow-up.
 
 * **Pros**: Ships the real security value now (closes both reported findings, fully contained
@@ -237,7 +237,7 @@ the engine-open closure to Option A as a separate, later, non-blocking follow-up
   directory for the permission paths; honest — does **not** claim the expanded engine-open bar
   is met; keeps Option A open as tracked future work; unblocks `049-S`/`7BF1961D`.
 * **Cons**: Principles III/IV are **PASSED only for the permission-mutation threat**, NOT for
-  the engine-open intermediate-directory redirection — this must be stated plainly and signed
+  the engine-open leaf and intermediate-directory redirection — this must be stated plainly and signed
   off. Requires an amended DoD, an accepted-residual-risk record, and operator sign-off before
   implementation.
 * **Effort**: medium (the already-decomposed feasible U1–U6/U3–U5/U10/U11 tasks, minus U9).
@@ -270,7 +270,7 @@ Shelve the security feature and remove the `049-S → 051-S` block.
 | Criterion | A: upstream/fork cozo | B: scoped permission fix + accepted residual (CHOSEN) | C: alt engine/arch | D: abandon + decouple |
 |---|---|---|---|---|
 | Closes 2 reported permission TOCTOUs | Yes | **Yes** | Yes | No (abandons) |
-| Closes engine-open intermediate redirect | Yes | No (accepted residual) | Yes | No |
+| Closes engine-open leaf + intermediate redirect | Yes | No (accepted residual) | Yes | No |
 | Feasible now under MSRV 1.75 / no `unsafe` | No (upstream/fork) | **Yes** | No | n/a |
 | Honest III/IV claim | Full pass (eventually) | **Scoped pass, explicit residual** | Full pass | n/a |
 | Principle VI (deps/complexity) cost | High (fork) | **Low** | Very high | Low |
@@ -295,13 +295,13 @@ Concretely:
    directory) — no permission mutation can be redirected outside the workspace.
 
 2. **Remove the engine-open binding (U9) from the near-term critical path.** The engine-open
-   intermediate-directory redirection becomes an **accepted residual** (see the record below),
+   leaf and intermediate-directory redirection becomes an **accepted residual** (see the record below),
    tracked for closure by Option A (a new upstream-cozo item, `059.013-T`), on a later separate
    shipment. Nothing in the near-term feasible path depends on U9.
 
 3. **Honest Principles III/IV posture.** Principles III (Workspace Isolation) and IV (CLI
    Containment) are **PASSED for the permission-mutation threat only** once U2/U3/U4/U5/U6/U10/U11
-   land. They remain **NOT-PASSED for the engine-open intermediate-directory redirection**,
+   land. They remain **NOT-PASSED for the engine-open leaf and intermediate-directory redirection**,
    which is the named accepted residual. The original `059-F` fail-closed DoD (which required
    U8 PASS and U6/U9 to land) is **not** claimed as satisfied and is explicitly amended.
 
@@ -331,11 +331,12 @@ record itself says has no causal basis and no schedule benefit.
   `status`, or any query subcommand) can still cause cozo's `SqliteStorage::transact()`
   bare-path reopen to resolve the database to a different file. Because cozo re-resolves the
   **original `PathBuf` by path on every pool-empty transaction**, this redirection is reachable by
-  a **leaf swap as well as an intermediate-directory swap** (read on `open_engine_readonly` for
-  the serve read posture and on `open_sqlite_readonly` for `status` and every query subcommand —
-  both reach the same bare-path `open_sqlite_instance` constructor; **read/write, including
-  external file creation/write, on `open_sqlite`** for `serve` generation, `sync`, and
-  `prewarm`). This is the cozo
+  a **leaf swap as well as an intermediate-directory swap**. The read-intent branches
+  (`open_engine_readonly` for the serve read posture; `open_sqlite_readonly` for `status` and every
+  query subcommand) and the read/write branch (`open_sqlite` for `serve` generation, `sync`, and
+  `prewarm`) all reach the same bare-path `open_sqlite_instance` constructor, which cozo opens
+  `SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE` — so even the read-intent branches can incur
+  engine-side writes/creation on a redirected target (see the impact-by-branch note below). This is the cozo
   bare-path re-resolution gap proven by U8, and it includes the residual **engine-open-follows-link**
   consequence originally noted in reported finding `E86A6E56` ("the write-mode open could proceed
   against the linked file").
@@ -363,12 +364,17 @@ record itself says has no causal basis and no schedule benefit.
   `with_locked_database_store` (`src/main.rs:603-617`), and `status` plus every query subcommand
   reach the same bare-path `open_sqlite_instance` via `DataStore::open_sqlite_readonly`
   (`src/main.rs:2768`, `2978`), so the store is exposed even when no server is running. Impact
-  by branch: `open_engine_readonly` (serve read posture) and `open_sqlite_readonly` (`status` and
-  every query subcommand) are bounded to reading a redirected file (information exposure) at the
-  `DataStore` boundary; **`open_sqlite` (write-mode, reached by `serve` generation posture,
-  `sync`, and `prewarm`) is the higher-impact branch** — a redirected engine open
-  could read/write or create an external target, so operational guidance (control #3) MUST cover
-  every store open — read-only `status`/query included — not only the read serve path. Note that
+  by branch: the `DataStore`-level read-only guards do **not** bound the redirect to information
+  exposure — cozo always opens its `SQLite` connections `SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE`
+  and `open_sqlite_readonly` blocks only explicit `DataStore::mutate` calls, not engine-side effects
+  (`src/db/store.rs:189-198`). So a redirected `open_sqlite_readonly` (`status`, query subcommands)
+  or `open_engine_readonly` (serve read; its filesystem read-only guard was captured on the
+  *original* file, not the swapped target) open can still incur engine-side writes/creation on the
+  redirected target, not information exposure alone. **`open_sqlite` (write-mode, reached by `serve`
+  generation posture, `sync`, and `prewarm`) is the highest-impact branch** — it additionally
+  performs application-level read/write and can create/write an external target. Because every
+  branch reaches the same bare-path RW_CREATE engine open, operational guidance (control #3) MUST
+  cover every store open — read-only `status`/query included — not only the read serve path. Note that
   swapping a leaf requires
   authority on its **parent directory**, so the root directory namespace and every parent component
   must be protected, not just the leaf's write bit (for a `root/graph.db` layout the root directory

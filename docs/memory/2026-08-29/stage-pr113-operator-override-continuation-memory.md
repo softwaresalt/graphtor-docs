@@ -13,7 +13,7 @@ pr: 113
 repo: "softwaresalt/graphtor-docs"
 branch: "chore/stage-059-f-redeliberation"
 head_before: "f8d0d2202d523026a2b33016cd3dc96a0c7abe98"
-status: "remediation applied; awaiting commit/push + thread reply/resolve + CI"
+status: "remediation applied + committed (8c22f3d) + pushed; 7 original threads replied and resolved; PR body refreshed to HEAD 8c22f3d, READY_WITH_FOLLOWUPS, P0=0/P1=0; addressing cycle-1 re-review follow-ups"
 ---
 
 ## Operator Override (explicit, bounded)
@@ -85,10 +85,23 @@ explicitly-superseded "nine-task U1–U9 DAG" review-finding records unchanged
   events (that queue tracks create/status/title/lifecycle deltas), so there were
   no generated hook events to persist for these content edits.
 
+## Exceptional correction cycle 1 (re-review of 8c22f3d)
+
+The auto-triggered Copilot re-review of `8c22f3d` surfaced 6 new threads; all
+adjudicated **Valid** and fixed:
+
+| Thread / comment | Surface | Fix |
+|---|---|---|
+| `PRRT_kwDORiB5E86deJ0X` / 3888247730 | deliberation `:370` impact | Corrected: read-only `status`/query (`open_sqlite_readonly`) are **not** bounded to information exposure — cozo opens RW_CREATE and the guard only blocks `DataStore::mutate`, so a redirect can incur engine-side writes/creation (`src/db/store.rs:189-198`). |
+| `PRRT_kwDORiB5E86deJ0e` / 3888247740 | design doc `:235` | Same correction in the trust-boundary subsection. |
+| `PRRT_kwDORiB5E86deJ0k` / 3888247751 | deliberation `:232` + trade-off table + III/IV posture | Aligned every residual-scope occurrence (Option A pros, Option B summary/cons, trade-off row, Decision steps 2/3) to "leaf and intermediate-directory redirection". |
+| `PRRT_kwDORiB5E86deJ0n` / 3888247755 | `.backlogit/queue/059-F.md` DoD | Amended DoD now names both leaf and intermediate-directory redirection. |
+| `PRRT_kwDORiB5E86deJ0p` / 3888247758 | `.backlogit/hooks_queue.jsonl` | Applied the `059.014-T` title change through backlogit so an `update_artifact` `title_delta` event is emitted (stale intermediate-only title in the append-only stream). |
+| `PRRT_kwDORiB5E86deJ0s` / 3888247763 | continuation memory `:16` | PR body already refreshed to HEAD 8c22f3d / READY_WITH_FOLLOWUPS; updated this memory's stale `status` field to reflect completion. |
+
 ## Next steps
 
-Focused plan review (correctness/security/constitution/scope/template-integrity)
-→ commit/push → reply to each of the 7 threads with the fixing commit → resolve
-each thread via GraphQL → update PR body readiness to current HEAD → wait CI +
-inspect auto review threads → address genuinely valid new comments within ≤3
-exceptional cycles (stop on same-error×3). No merge.
+Commit/push cycle-1 fixes → reply to each of the 6 new threads with the fixing
+commit → resolve via GraphQL → refresh PR body readiness to the new HEAD → wait
+CI + inspect any further auto re-review. Cap: ≤3 exceptional cycles; stop on
+same-error recurrence ×3. No merge (Stage does not merge).
