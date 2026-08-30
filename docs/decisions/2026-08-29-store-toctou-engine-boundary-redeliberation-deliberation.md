@@ -348,8 +348,12 @@ record itself says has no causal basis and no schedule benefit.
 * **Severity bounding (threat model)**: The graphtor-docs operating model is single-developer,
   local-only (`AGENTS.md`, `docs/design-docs/…consumption-first-serve-and-trust-boundary`). The
   residual requires a **local** attacker with write/delete/rename authority on a leaf entry or on
-  **any parent directory component up to and including the workspace root**, while a store-opening
-  command holds the store. It is **not** limited to an active `serve` window: `cmd_sync` reaches the
+  **any parent directory component up to and including the workspace root — and on the workspace
+  root's own parent directory** (the directory that contains the workspace root, which the U7
+  no-follow bootstrap ambiently opens and trusts, `.backlogit/archive/059.007-T.md:47`; a
+  real-directory replacement of the root is **not** rejected by `open_dir_nofollow`, which only
+  refuses symlinks/reparse points, so either that parent namespace must be protected too or the
+  opened root's identity must be verified after open), while a store-opening command holds the store. It is **not** limited to an active `serve` window: `cmd_sync` reaches the
   same `DataStore::open_sqlite` bare-path reopen via `with_locked_database_store`
   (`src/main.rs:603-617`), so a write-mode `sync` is exposed even when no server is running. Impact
   by branch: `open_engine_readonly` (read serve) is bounded to reading a redirected file (information
@@ -374,9 +378,11 @@ record itself says has no causal basis and no schedule benefit.
      for the local-only model). The acceptance rests on controls #1, #3, and #4.
   3. **Operational guidance**: document that every store-opening command — graphtor-docs `serve`
      AND every write-mode command that reaches `DataStore::open_sqlite` (for example `sync`, via
-     `with_locked_database_store`) — must run against a workspace whose **root directory namespace
-     and every parent directory component leading to each database**, as well as the leaf entries,
-     are not attacker-writable (consistent with the local-only trust boundary). Directory authority
+     `with_locked_database_store`) — must run against a workspace whose **root directory namespace,
+     the workspace root's own parent directory (ambiently opened and trusted by the U7 bootstrap;
+     `open_dir_nofollow` does not reject a real-directory replacement of the root), and every parent
+     directory component leading to each database**, as well as the leaf entries, are not
+     attacker-writable (consistent with the local-only trust boundary). Directory authority
      is load-bearing: replacing a leaf requires write/delete/rename authority on its parent
      directory, so protecting only the leaf's write bit is insufficient, and the requirement is
      **not** limited to an active serve window. Surface this in the serve trust-boundary design doc.

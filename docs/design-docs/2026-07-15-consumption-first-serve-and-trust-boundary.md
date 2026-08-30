@@ -191,16 +191,22 @@ Every command that opens a database — `serve` **and** every write-mode command
 that reaches `DataStore::open_sqlite` (for example `sync`, via
 `with_locked_database_store`, `src/main.rs:603-617`) — requires a trusted
 workspace. The operator MUST ensure that the **workspace root directory
-namespace and every parent directory component leading to each database** are
-not writable by an untrusted party, **and** that the database leaf entries
-themselves (the `.db` file and any `-wal`/`-shm`/`-journal` sidecars) are not
-attacker-writable. Directory authority is the load-bearing requirement:
-replacing a leaf entry requires write/delete/rename authority on its **parent
-directory**, not write permission on the file, so for the common `root/graph.db`
-layout — where no intermediate directory exists — an attacker who can mutate the
-root directory can still swap the leaf even if the file's write bit is protected.
+namespace, the workspace root's own parent directory, and every parent directory
+component leading to each database** are not writable by an untrusted party,
+**and** that the database leaf entries themselves (the `.db` file and any
+`-wal`/`-shm`/`-journal` sidecars) are not attacker-writable. Directory authority
+is the load-bearing requirement: replacing a leaf entry requires
+write/delete/rename authority on its **parent directory**, not write permission
+on the file, so for the common `root/graph.db` layout — where no intermediate
+directory exists — an attacker who can mutate the root directory can still swap
+the leaf even if the file's write bit is protected.
 Protecting only the leaf's permission bit is therefore insufficient; the parent
-directory chain, up to and including the workspace root, must be protected too.
+directory chain, up to and including the workspace root **and the workspace
+root's own parent directory**, must be protected too. The workspace-root
+no-follow bootstrap ambiently opens and trusts the root's parent, and
+`open_dir_nofollow` only refuses symlinks/reparse points — it cannot reject a
+real-directory replacement of the root — so either that parent namespace must be
+protected too or the opened root's identity must be verified after open.
 This requirement is **not** limited to an active `serve` window: it applies
 whenever any write-mode command opens the store, because a redirected write-mode
 open can read, write, or create an external target.
@@ -219,8 +225,9 @@ the `chmod`/read-only permission paths are fully contained (no permission
 mutation can escape the workspace), but the engine's own path re-resolution is
 not, and closing it fully is tracked as later upstream-cozo work (`059.013-T`).
 Until that closure lands, run `serve` and every write-mode command only against a
-workspace whose root directory namespace, every parent directory component, and
-leaf entries are not writable by an untrusted party.
+workspace whose root directory namespace, the workspace root's own parent
+directory, every parent directory component, and leaf entries are not writable by
+an untrusted party.
 
 ## `--read-only` escape hatch
 
