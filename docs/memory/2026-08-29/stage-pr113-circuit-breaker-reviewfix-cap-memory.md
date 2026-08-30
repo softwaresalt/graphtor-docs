@@ -17,6 +17,13 @@ branch: "chore/stage-059-f-redeliberation"
 head: "46ab09461968523e9482d156e34e5814440e962e"
 ---
 
+> **CONTINUATION (2026-08-30 UTC):** The operator subsequently issued an
+> **explicit, bounded override** of this halt, authorizing an exceptional
+> continuation to fix all seven threads. The outcome is recorded in the linked
+> continuation memory
+> [`stage-pr113-operator-override-continuation-memory.md`](./stage-pr113-operator-override-continuation-memory.md).
+> This halt record below is preserved unaltered as historical evidence.
+
 ## Operation
 
 PR #113 (`chore/stage-059-f-redeliberation`) Stage review-fix convergence against

@@ -187,10 +187,30 @@ change the guarantee described above and is tracked independently.
 
 ### Operator trust boundary: workspace directory write access
 
-Every command that opens a database — `serve` **and** every write-mode command
-that reaches `DataStore::open_sqlite` (for example `sync`, via
-`with_locked_database_store`, `src/main.rs:603-617`) — requires a trusted
-workspace. The operator MUST ensure that the **workspace root directory
+**Every** command that opens a database requires a trusted workspace — this
+covers every store constructor and call path, **not only `serve` and write-mode
+commands**:
+
+* **`serve`** opens `DataStore::open_sqlite` (generation posture, read/write)
+  plus a read-only companion via `DataStore::open_sqlite_readonly`, or
+  `DataStore::open_engine_readonly` (read-only posture).
+* **`sync`** and **`prewarm`** are write-mode opens that reach
+  `DataStore::open_sqlite` via `with_locked_database_store`
+  (`src/main.rs:603-617`).
+* **`status`** and **every query subcommand** (`search`, `search-semantic`,
+  `research`, `traverse`, `list-sources`, `get-chunk`, `get-document`) are
+  read-only opens via `DataStore::open_sqlite_readonly` (`src/main.rs:2768`,
+  `2978`).
+
+All three constructors — `open_sqlite`, `open_sqlite_readonly`, and
+`open_engine_readonly` — funnel through the same bare-path `open_sqlite_instance`
+engine open (`src/db/store.rs`), so the cozo per-`transact()` re-resolution
+redirection reaches read-only `status`/query reads exactly as it reaches
+write-mode opens. (`open_sqlite_readonly` enforces read-only only at the
+`DataStore` boundary; its underlying cozo connection still opens with the
+engine's hard-coded read-write-create flags.)
+
+The operator MUST ensure that the **workspace root directory
 namespace, the workspace root's own parent directory, and every parent directory
 component leading to each database** are not writable by an untrusted party,
 **and** that the database leaf entries themselves (the `.db` file and any
@@ -207,9 +227,12 @@ no-follow bootstrap ambiently opens and trusts the root's parent, and
 `open_dir_nofollow` only refuses symlinks/reparse points — it cannot reject a
 real-directory replacement of the root — so either that parent namespace must be
 protected too or the opened root's identity must be verified after open.
-This requirement is **not** limited to an active `serve` window: it applies
-whenever any write-mode command opens the store, because a redirected write-mode
-open can read, write, or create an external target.
+This requirement is **not** limited to an active `serve` window, and **not** to
+write-mode commands: it applies whenever **any store-opening command** opens the
+store. Read-only `status` and query opens are exposed too — a redirected read is
+bounded to information exposure — while a redirected write-mode open (`serve`
+generation, `sync`, `prewarm`) can additionally read, write, or create an
+external target.
 
 This boundary exists because the storage engine re-resolves the database **by
 bare path**: cozo's `SqliteStorage` re-opens SQLite by path on every pool-empty
@@ -224,7 +247,8 @@ residual** recorded in the
 the `chmod`/read-only permission paths are fully contained (no permission
 mutation can escape the workspace), but the engine's own path re-resolution is
 not, and closing it fully is tracked as later upstream-cozo work (`059.013-T`).
-Until that closure lands, run `serve` and every write-mode command only against a
+Until that closure lands, run `serve` and every other store-opening command
+(`sync`, `prewarm`, `status`, and all query subcommands) only against a
 workspace whose root directory namespace, the workspace root's own parent
 directory, every parent directory component, and leaf entries are not writable by
 an untrusted party.

@@ -327,11 +327,15 @@ record itself says has no causal basis and no schedule benefit.
 
 * **Residual**: After the permission-mutation paths are fully contained, an attacker who can
   **swap either the db file/sidecar (leaf) or an intermediate parent directory beneath the
-  workspace root during an active serve** can still cause cozo's `SqliteStorage::transact()`
+  workspace root while any store-opening command holds the store** (`serve`, `sync`, `prewarm`,
+  `status`, or any query subcommand) can still cause cozo's `SqliteStorage::transact()`
   bare-path reopen to resolve the database to a different file. Because cozo re-resolves the
   **original `PathBuf` by path on every pool-empty transaction**, this redirection is reachable by
-  a **leaf swap as well as an intermediate-directory swap** (read on `open_engine_readonly`;
-  **read/write, including external file creation/write, on `open_sqlite`**). This is the cozo
+  a **leaf swap as well as an intermediate-directory swap** (read on `open_engine_readonly` for
+  the serve read posture and on `open_sqlite_readonly` for `status` and every query subcommand —
+  both reach the same bare-path `open_sqlite_instance` constructor; **read/write, including
+  external file creation/write, on `open_sqlite`** for `serve` generation, `sync`, and
+  `prewarm`). This is the cozo
   bare-path re-resolution gap proven by U8, and it includes the residual **engine-open-follows-link**
   consequence originally noted in reported finding `E86A6E56` ("the write-mode open could proceed
   against the linked file").
@@ -353,18 +357,24 @@ record itself says has no causal basis and no schedule benefit.
   no-follow bootstrap ambiently opens and trusts, `.backlogit/archive/059.007-T.md:47`; a
   real-directory replacement of the root is **not** rejected by `open_dir_nofollow`, which only
   refuses symlinks/reparse points, so either that parent namespace must be protected too or the
-  opened root's identity must be verified after open), while a store-opening command holds the store. It is **not** limited to an active `serve` window: `cmd_sync` reaches the
-  same `DataStore::open_sqlite` bare-path reopen via `with_locked_database_store`
-  (`src/main.rs:603-617`), so a write-mode `sync` is exposed even when no server is running. Impact
-  by branch: `open_engine_readonly` (read serve) is bounded to reading a redirected file (information
-  exposure), since the serve read path sets files read-only; **`open_sqlite` (write-mode, reached by
-  `serve` generation posture and by `sync`) is the higher-impact branch** — a redirected engine open
+  opened root's identity must be verified after open), while a store-opening command holds the
+  store. It is **not** limited to an active `serve` window, nor to write-mode commands: `cmd_sync`
+  and `cmd_prewarm` reach the same `DataStore::open_sqlite` bare-path reopen via
+  `with_locked_database_store` (`src/main.rs:603-617`), and `status` plus every query subcommand
+  reach the same bare-path `open_sqlite_instance` via `DataStore::open_sqlite_readonly`
+  (`src/main.rs:2768`, `2978`), so the store is exposed even when no server is running. Impact
+  by branch: `open_engine_readonly` (serve read posture) and `open_sqlite_readonly` (`status` and
+  every query subcommand) are bounded to reading a redirected file (information exposure) at the
+  `DataStore` boundary; **`open_sqlite` (write-mode, reached by `serve` generation posture,
+  `sync`, and `prewarm`) is the higher-impact branch** — a redirected engine open
   could read/write or create an external target, so operational guidance (control #3) MUST cover
-  every write-mode store open, not only the read serve path. Note that swapping a leaf requires
+  every store open — read-only `status`/query included — not only the read serve path. Note that
+  swapping a leaf requires
   authority on its **parent directory**, so the root directory namespace and every parent component
   must be protected, not just the leaf's write bit (for a `root/graph.db` layout the root directory
-  itself is the relevant parent). This is a local-only threat that spans every write-mode store open
-  (serve and sync), and it is **not** "narrower than a leaf swap".
+  itself is the relevant parent). This is a local-only threat that spans every store-opening command
+  (`serve`, `sync`, `prewarm`, `status`, and every query subcommand), and it is **not** "narrower
+  than a leaf swap".
 * **Compensating controls** (to accompany the accepted residual):
   1. **Full permission-path containment** (this fix): no `chmod` can escape the workspace,
      removing the highest-impact (privilege/permission) branch of the original threat. This is the
@@ -376,16 +386,19 @@ record itself says has no causal basis and no schedule benefit.
      `transact()` reopen window. This is a best-effort detection aid only; it is **not** load-bearing
      for the acceptance decision, and no serve-time monitoring task is added to this shipment (YAGNI
      for the local-only model). The acceptance rests on controls #1, #3, and #4.
-  3. **Operational guidance**: document that every store-opening command — graphtor-docs `serve`
-     AND every write-mode command that reaches `DataStore::open_sqlite` (for example `sync`, via
-     `with_locked_database_store`) — must run against a workspace whose **root directory namespace,
+  3. **Operational guidance**: document that every store-opening command — graphtor-docs `serve`,
+     every write-mode command that reaches `DataStore::open_sqlite` (`sync` and `prewarm`, via
+     `with_locked_database_store`), AND every read-only command that reaches
+     `DataStore::open_sqlite_readonly` (`status` and every query subcommand, `src/main.rs:2768`,
+     `2978`) — must run against a workspace whose **root directory namespace,
      the workspace root's own parent directory (ambiently opened and trusted by the U7 bootstrap;
      `open_dir_nofollow` does not reject a real-directory replacement of the root), and every parent
      directory component leading to each database**, as well as the leaf entries, are not
      attacker-writable (consistent with the local-only trust boundary). Directory authority
      is load-bearing: replacing a leaf requires write/delete/rename authority on its parent
      directory, so protecting only the leaf's write bit is insufficient, and the requirement is
-     **not** limited to an active serve window. Surface this in the serve trust-boundary design doc.
+     **not** limited to an active serve window or to write-mode commands (it equally covers the
+     read-only `status`/query opens). Surface this in the serve trust-boundary design doc.
      **Enacted 2026-08-29:** this guidance is now committed in
      `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md` under the
      "Operator trust boundary: workspace directory write access" subsection, and `059.014-T`
@@ -407,14 +420,17 @@ precise transition for Ship, on its next cycle, is:
    decided input (this document). Its feasibility deliverable is complete.
 2. **Re-scope `051-S` (owner operation)**: As the owner of the active in-flight release unit,
    Ship re-scopes `051-S`'s manifest to the rescoped feasible implementation task set
-   (`059-F` + U1/U2/U6/U3/U4/U5/U10/U11), which the nine returned-blocked tasks already exist
+   (`059-F` + U1/U2/U6/U3/U4/U5/U10/U11), which the eight returned-blocked tasks already exist
    for, and proceeds through harness → build → review under the amended DoD. **Before proceeding,
    Ship confirms the enacted member-task dependency edits (the U8/U9 edge-drops on
    059.001/003/004/005/006/010-T and the U9 re-point to 059.013-T) are consistent with the
    manifest it re-scopes**, so the "051-S manifest untouched by Stage" assertion and the enacted
    DAG stay coherent. U9 (`059.009-T`)
-   and U12 (`059.012-T`) are **excluded** and remain for a later separate shipment; the Option A
-   item (`059.013-T`) and the sign-off gate (`059.014-T`) are the preconditions.
+   and U12 (`059.012-T`) are **excluded** and remain for a later separate shipment. The **only**
+   near-term precondition for beginning the rescoped implementation (U1 onward) is the operator
+   sign-off gate (`059.014-T`). The Option A item (`059.013-T`) is a later, **non-blocking**
+   follow-up on a separate shipment and MUST NOT be treated as a prerequisite for the near-term
+   rescope.
    * **Alternative (operator's choice)**: if a fresh shipment ID is preferred, Ship instead
      closes `051-S` recording "feasibility complete; engine-open binding infeasible/accepted as
      residual; full fix superseded by the rescoped plan", and Stage then assembles a new
