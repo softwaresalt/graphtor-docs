@@ -222,7 +222,18 @@ No async rollout.
   its own single artifact; merge SHA `92de025` recorded; never the cascade
   `backlogit_ship_shipment`).
 * Post-mode: `.backlogit/reconcile/051-S-post-20260829-203815.md` —
-  `PROCEED`.
+  `PROCEED`. **Annotation (holistic correctness review, see Post-Closure
+  Correction below)**: this immutable, timestamped snapshot truthfully
+  reports `059-F` as still `status: blocked` at its own capture time
+  (`20:38:15 -07:00`) — that observation predates the Review-Fix Cycle 1
+  `blocked → queued` normalization commit `16186d0` (`20:58:43 -07:00`)
+  and Stage's independent ratification of that disposition. Do not read
+  this report as reflecting current queued state; it is intentionally
+  pre-normalization evidence and is not rewritten. Current backlog state
+  is established by the later hook events (Cycle 1 normalization) and
+  Stage's ratification
+  (`docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`),
+  not by this snapshot.
 * Rescoped scope: 10 dependency-closed items, **all 10 confirmed
   `status: queued`** (intake-valid — see Review-Fix Cycle 1 below),
   **unshipped** (no successor shipment created by Ship — see Review-Fix
@@ -466,6 +477,105 @@ six review threads across Cycles 3 and 4 (`3888455427`, `3888455435`,
 this fix commit SHA and resolved via the GraphQL `resolveReviewThread`
 mutation.
 
+## Post-Closure Correction (Holistic Correctness Review)
+
+A follow-up holistic correctness review (independent of the Copilot
+shadow-review cycles above) identified two further documentation-
+consistency gaps in this closure's evidentiary record. Both are
+corrections to how existing, already-accurate evidence is *read*, not
+corrections to the evidence itself — no append-only/tool-managed file was
+hand-edited, and no immutable snapshot was rewritten.
+
+### Finding 1 — backlogit audit-trail limitation: deletion emits no tombstone
+
+`.backlogit/hooks_queue.jsonl` seq `1157` and `.backlogit/logs/054-S.jsonl`
+record only the `create_artifact`/`shipment_created` event for `054-S`
+(`2026-08-29T20:39:07 -07:00`, actor `backlogit`) — confirmed by direct
+inspection of both files. The subsequent `backlogit delete 054-S --force`
+(Review-Fix Cycle 2, remediating the P-010 shipment-creation violation
+above) emitted **no** corresponding deletion or tombstone event in either
+file. Read in isolation, replaying `hooks_queue.jsonl`/`logs/054-S.jsonl`
+event-by-event would therefore **falsely infer that `054-S` remains
+queued**, because the log's last known state for that artifact is
+"created," never "deleted."
+
+This is a **backlogit audit-trail limitation**, not a data-integrity defect
+introduced by this session's remediation, and it must **not** be worked
+around by hand-editing the append-only hook or log files, and must **not**
+be "fixed" by inventing a synthetic tombstone event — either action would
+corrupt tool-managed state that this workspace's `backlogit` overlay
+treats as authoritative history. The P-005 deletion itself is already
+recorded correctly in prose, in this document (Review-Fix Cycle 2 and the
+Consolidated Risky Action Record in Review-Fix Cycle 4) and in the
+transition memory checkpoint. The current, ground-truth state was
+independently confirmed by **direct structured query**, not by hook
+replay: `.backlogit/queue/054-S.md` does not exist on disk; `backlogit get
+054-S` returns not found; `backlogit sync` returns `517` artifacts,
+matching the pre-session baseline.
+
+**Source-of-truth ordering (recorded here for future audits)**: when
+reconciling backlogit state for an artifact that was deleted mid-session,
+the **artifact store and current query results** (`backlogit get`,
+`backlogit sync` artifact count, direct file existence under
+`.backlogit/queue/` and `.backlogit/archive/`) are authoritative over
+**replay-only hook/log history** for delete events, because `backlogit
+delete --force` is not guaranteed to emit a corresponding lifecycle event
+in `hooks_queue.jsonl`/`logs/<id>.jsonl`. Hook/log replay remains
+authoritative for creation, status-change, and other non-delete
+mutations, where events are reliably emitted (as observed here for
+`054-S`'s own creation).
+
+**Requirement for future approved destructive recovery**: because delete
+may not emit a tombstone, any future operator-approved destructive
+recovery of a mistakenly created backlog artifact MUST capture explicit
+**before/after structured query evidence** (e.g. `backlogit get <id>`
+before and after; `backlogit sync` artifact count before and after;
+file-existence/`git status --short` on the artifact's queue/archive path
+before and after) at the time of the action, rather than relying on the
+hook/log stream to prove the deletion occurred after the fact. This
+session's own evidence (`backlogit sync`: `517` pre-session baseline and
+post-deletion count; `backlogit get 054-S` → not found) happens to satisfy
+this requirement, but it was not captured under an explicit before/after
+protocol at the time — future sessions should do so deliberately, and the
+reusable compound procedure has been updated accordingly (see
+Documentation / Knowledge Graduation Review below).
+
+### Finding 2 — reconcile post-mode snapshot predates Cycle 1 normalization
+
+See the annotation added to the Backlog Closure Evidence post-mode bullet
+above: `.backlogit/reconcile/051-S-post-20260829-203815.md` is accurate
+for its own `20:38:15 -07:00` capture and remains unmodified; it predates
+the later `20:58:43 -07:00` Review-Fix Cycle 1 normalization (`16186d0`)
+and Stage's ratification. No content in that immutable report was, or
+should be, changed — only this closure's citation of it gains an
+explicit pre-normalization timing note.
+
+### Root-cause fix and continuity-repair references
+
+* The P-010 shipment-creation violation recorded in Review-Fix Cycle 2/4
+  above (an operator-confirmed direct-assembly path was incorrectly
+  treated as a valid exception) has since been **structurally fixed at
+  the agent-definition level**, not merely documented as a violation:
+  `ea47df004755e155947a51be0e36e362601279de` (`fix(agents): remove Ship
+  fallback shipment creation; halt-and-redirect to Stage (P-010)`) deleted
+  the fallback creation/assembly/broadcast path from
+  `.github/agents/.ship.agent.md` entirely. Direct Ship invocation can now
+  only **select an existing Stage-prepared shipment**; if none is
+  suitable, Ship halts and redirects to Stage. **No
+  operator-confirmation creation bypass remains** — the root cause of this
+  closure's P-010 finding cannot recur via that path.
+* `af1547074234364f3bdd9439871c568f6bf2f8aa` (`fix(harness): supersede
+  stale 051-S stage continuity memory`) is the Stage continuity repair
+  that marks the prior `stage-051-S-store-toctou-nofollow` continuity
+  memory `SUPERSEDED`, reflecting `051-S` archived (manifest
+  `[059.007-T]`) via PR #114, `059.008-T` blocked, and the `059-F` scope
+  individually queued — keeping Stage's own session-continuity record
+  aligned with the final state this closure documents.
+
+Neither finding changes this closure's `READY_WITH_FOLLOWUPS` status or
+any Risky Action Record row above; both are read/citation corrections
+plus forward-looking procedure guidance, not new risky actions.
+
 ## Releasability Evidence
 
 | Evidence | Status |
@@ -526,12 +636,19 @@ archive under this protocol — logged as "not present → skip."
     Ship's own steps entirely (it is Stage-exclusive, per Stage's
     independent ratification) and added explicit guidance never to
     instruct Ship to delete a mistakenly created shipment without
-    real-time operator approval.
+    real-time operator approval; the Post-Closure Correction pass above
+    added an audit-trail caveat documenting that `backlogit delete --force`
+    may not emit a tombstone event, plus the before/after
+    structured-query-evidence requirement for future destructive recovery.
 
 ## Cross-References
 
 * `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
 * `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+* `ea47df004755e155947a51be0e36e362601279de` — root-cause fix removing
+  Ship's fallback shipment-creation path (`.github/agents/.ship.agent.md`)
+* `af1547074234364f3bdd9439871c568f6bf2f8aa` — Stage continuity repair
+  superseding the stale `051-S` continuity memory (`.backlogit/memories.json`)
 * `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`
 * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`
 * `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`

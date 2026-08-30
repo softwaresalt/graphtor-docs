@@ -14,6 +14,7 @@ citations:
   - "docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md"
   - "docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md"
   - "docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md"
+  - "docs/closure/2026-08-29-051-s-toctou-transition-closure.md"
   - "https://github.com/softwaresalt/graphtor-docs/pull/113"
   - "https://github.com/softwaresalt/graphtor-docs/pull/114"
 tags:
@@ -22,6 +23,7 @@ tags:
   - "ship-workflow"
   - "reconciliation"
   - "role-boundary"
+  - "audit-trail"
 ---
 
 ## Problem
@@ -185,6 +187,42 @@ first — regardless of *when* it was returned or how it came to be
    Step 0.5 will perform when Stage's successor shipment is later claimed
    — so the handoff is genuinely actionable, not just structurally
    present.
+
+## Audit-Trail Caveat: Destructive Delete May Not Emit a Tombstone
+
+A later holistic correctness review of PR #114 (2026-08-29, post-closure)
+confirmed a **backlogit audit-trail limitation** directly relevant to
+step 6's `backlogit delete <id> --force` remediation path:
+`.backlogit/hooks_queue.jsonl` (seq `1157`) and
+`.backlogit/logs/054-S.jsonl` record only the artifact's
+`create_artifact`/`shipment_created` event — the subsequent `backlogit
+delete 054-S --force` emitted **no** deletion or tombstone event in
+either file. Replaying either file in isolation would therefore falsely
+infer the deleted artifact remains queued.
+
+**This is a tool limitation, not something to work around by hand-editing
+append-only hook/log files or inventing a synthetic tombstone event** —
+either action would corrupt tool-managed state this workspace's
+`backlogit` overlay treats as authoritative.
+
+**Source-of-truth ordering for deletes**: prefer the **artifact store and
+current structured query state** (`backlogit get <id>`, `backlogit sync`
+artifact count, direct file existence / `git status --short` against
+`.backlogit/queue/<id>.md` and `.backlogit/archive/<id>.md`) over
+**replay-only hook/log history** whenever confirming that a delete
+occurred and completed. Hook/log replay remains reliable for creation,
+status-change, and other non-delete mutations, where events are
+consistently emitted.
+
+**Required evidence going forward**: any future operator-approved
+destructive recovery of a mistakenly created backlog artifact MUST
+capture explicit **before/after structured query evidence** at the time
+of the action (e.g. `backlogit get <id>` before and after; `backlogit
+sync` artifact count before and after; file-existence/`git status
+--short` on the artifact's queue/archive path before and after) — do not
+rely on the hook/log stream alone to prove the deletion occurred, since
+`backlogit delete --force` is not guaranteed to emit a corresponding
+lifecycle event.
 
 ## Prevention
 

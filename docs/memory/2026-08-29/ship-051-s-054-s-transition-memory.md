@@ -343,7 +343,13 @@ Confirmed independently ready, no residual dependency on `051-S`:
   single artifact with commit SHA recorded; never the cascade
   `backlogit_ship_shipment`).
 * `.backlogit/reconcile/051-S-post-20260829-203815.md` — `PROCEED` (archive
-  file present, no deletions).
+  file present, no deletions). **Annotation (holistic correctness review,
+  see Post-Closure Correction below)**: this immutable snapshot's
+  `059-F remains status: blocked` observation is truthful as of its own
+  `20:38:15 -07:00` capture, which predates the `20:58:43 -07:00`
+  Review-Fix Cycle 1 normalization (`16186d0`) and Stage's ratification;
+  current queued state is established by those later events, not by this
+  report, which is not rewritten.
 * `backlogit doctor`: 140 pre-existing issues found both before and after
   this session's mutations, none newly introduced, none touching `051-S`,
   `059-F`, any `059.*` task, or `049-S` (all pre-existing
@@ -467,3 +473,53 @@ Confirmed independently ready, no residual dependency on `051-S`:
 * `049-S` evidence work — **not started**; only readiness was verified.
 * `059.013-T` (Option A upstream cozo investigation) — untouched, remains
   queued for its own later, non-blocking shipment.
+
+## Post-Closure Correction (Holistic Correctness Review)
+
+A follow-up holistic correctness review, independent of the Copilot
+shadow-review cycles above, identified two documentation-consistency gaps
+in this checkpoint's own citations. Both are read/citation corrections —
+no append-only/tool-managed file was hand-edited, no immutable snapshot
+was rewritten, and neither finding is a new risky action.
+
+**Finding 1 — backlogit audit-trail limitation (delete emits no
+tombstone)**: `.backlogit/hooks_queue.jsonl` seq `1157` and
+`.backlogit/logs/054-S.jsonl` record only the creation event for `054-S`
+(`2026-08-29T20:39:07 -07:00`); the later `backlogit delete 054-S --force`
+emitted no deletion/tombstone event in either file — confirmed by direct
+inspection. Replaying either file alone would falsely infer `054-S`
+remains queued. This is a backlogit tool limitation, not something to
+remediate by hand-editing hook/log files or inventing a synthetic
+tombstone. **Source-of-truth ordering**: for deletes, prefer the artifact
+store and current structured query results (`backlogit get`, `backlogit
+sync` count, direct file existence) over replay-only hook/log history;
+hook/log replay remains reliable for creation and status-change events
+(as observed here for `054-S`'s own creation). **Forward requirement**:
+future operator-approved destructive recovery MUST capture explicit
+before/after structured query evidence at the time of the action, since
+delete may not emit a tombstone. Full detail and the resulting compound-
+procedure update are in
+`docs/closure/2026-08-29-051-s-toctou-transition-closure.md`'s
+"Post-Closure Correction" section and
+`docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`'s
+new "Audit-Trail Caveat" section.
+
+**Finding 2 — reconcile post-mode snapshot timing**: the annotation added
+above to the `.backlogit/reconcile/051-S-post-20260829-203815.md`
+reconciliation bullet clarifies that its `059-F remains status: blocked`
+observation is accurate for its own `20:38:15 -07:00` capture and predates
+the `20:58:43 -07:00` Cycle 1 normalization (`16186d0`) and Stage's
+ratification. The report itself is not, and was not, rewritten.
+
+**Root-cause fix and continuity-repair references**: the P-010
+shipment-creation violation recorded above has since been structurally
+fixed at the agent-definition level by
+`ea47df004755e155947a51be0e36e362601279de` (`fix(agents): remove Ship
+fallback shipment creation; halt-and-redirect to Stage (P-010)`) — direct
+Ship invocation can now only select an existing Stage-prepared shipment;
+no operator-confirmed creation bypass remains.
+`af1547074234364f3bdd9439871c568f6bf2f8aa` (`fix(harness): supersede
+stale 051-S stage continuity memory`) is the Stage continuity repair that
+marks the prior `stage-051-S-store-toctou-nofollow` continuity memory
+`SUPERSEDED`, reflecting the final `051-S`/`059-F` state this checkpoint
+documents.
