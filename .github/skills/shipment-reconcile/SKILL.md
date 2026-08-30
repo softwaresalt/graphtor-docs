@@ -1,6 +1,6 @@
 ---
 name: shipment-reconcile
-description: "GI/GR reconciliation gate for shipment manifests — verifies every manifest item exists in queue (pre-mode) or archive (post-mode) with the expected status, and closes shipments with the single-artifact safe-close procedure that archives ONLY manifest item IDs with a verify-after-each invariant + git-revert-on-cascade instead of the destructive cascade backlogit_ship_shipment."
+description: "GI/GR reconciliation gate for shipment manifests — verifies every manifest item exists in queue (pre-mode) or archive (post-mode) with the expected status, and closes shipments with the single-artifact safe-close procedure that records commit evidence before archival, archives ONLY manifest item IDs with a verify-after-each invariant, and halts for approval-gated recovery on cascade instead of the destructive cascade backlogit_ship_shipment."
 ---
 
 # Shipment Reconcile
@@ -38,7 +38,7 @@ feature and any unshipped sibling tasks survive.
 | `mode` | yes | `pre` \| `post` \| `safe-close` | Controls which check/close phase runs |
 | `shipment_id` | yes | e.g. `004-S` | The shipment to reconcile |
 | `expected_status` | pre-mode only | `queued` \| `active` \| `done` | `queued` for fresh intake; `active` when shipment already claimed in a prior session; `done` for pre-ship check |
-| `merge_commit_sha` | post-mode and safe-close | git SHA | The merge commit that closed the PR; recorded on archived items for traceability |
+| `merge_commit_sha` | post-mode and safe-close | git SHA | The **actual delivered-work merge commit**: the commit that merged the shipped work into `main`, already confirmed present on `origin/main` by the caller's merge-confirmation gate. In safe-close it is recorded as closure evidence on each item **before** that item is archived. It is never an anticipated, reconstructed, or branch-tip SHA, and never a PR planning or decision/closure-authority SHA |
 
 ## Output
 
@@ -74,6 +74,20 @@ per manifest item, whether it was `matched` (archived by this run) or
 `pre-archived` (already archived before this run; skipped to avoid
 double-archival and false-positive cascade flags).
 
+Safe-close additionally records, for **each member and for the shipment record**, the
+commit **evidence source** and the SHA **value**:
+
+| Evidence source | Meaning |
+|---|---|
+| `atomic-archive-metadata` | The archive operation carried commit metadata, so archival and evidence committed together |
+| `track_commit` | `backlogit_track_commit` recorded the delivered-work merge SHA on the item before it was archived |
+| `pre-existing` | A pre-archived member's own earlier merge commit, preserved and verified — never overwritten with this run's closure SHA |
+
+> The recorded SHA is always the **actual delivered-work merge commit** (the commit that
+> merged the shipped work into `main`). It is distinct from any **decision/closure-authority
+> SHA** — the commit that recorded the decision or approval to close. The latter authorizes
+> the closure; it is never written as delivered-work evidence.
+
 ## Behavioral Constraints
 
 * **Report-and-halt only.** This skill NEVER modifies the shipment manifest or
@@ -87,8 +101,17 @@ double-archival and false-positive cascade flags).
   `backlogit_ship_shipment`; the shipment record is closed as its own single artifact.
 * **No prune / no auto-repair.** Auto-mutation of the manifest itself is reserved
   for a future version. Safe-close never prunes the manifest and never
-  auto-deletes non-manifest artifacts; on cascade detection it reverts the
-  unintended change and halts.
+  auto-deletes non-manifest artifacts. On cascade detection it **halts** and records a
+  `ProposedAction` for recovery; the `git restore` / `git revert` recovery is
+  `ActionRisk: destructive` and requires explicit real-time operator **approval** before
+  it executes, scoped to the exact identified paths or the exact revert commit. Without
+  approval the skill stays halted and never commits the corrupt state.
+* **Commit evidence before archival.** Safe-close records the actual delivered-work merge
+  commit on each live manifest item and on the shipment record **before** that artifact is
+  archived — via atomic archive commit metadata when available, otherwise via
+  `backlogit_track_commit`. It never writes evidence after archival, never overwrites a
+  pre-archived member's existing merge commit with the current closure SHA, and halts
+  rather than fabricating missing or contradictory evidence.
 * **Single-writer lock.** When invoked from Ship Step 6, this skill holds the
   `.backlogit/queue/{shipment_id}.md` file lock (via the `file-lock` skill) for
   the duration of pre-mode → safe-close → post-mode. See lock protocol in the
@@ -145,8 +168,11 @@ double-archival and false-positive cascade flags).
 
 3. **Deleted-file guard** (known `backlogit_ship_shipment` quirk — see P-007):
    Run `git status -- ".backlogit/archive/"` and inspect for deletions.
-   If any archive files are reported as deleted, recommend
-   `git restore .backlogit/archive/` before the commit step.
+   If any archive files are reported as deleted, report them and **recommend** the
+   approval-gated recovery `git restore -- {exact deleted archive paths}` before the
+   commit step. Post-mode only reports: it never executes the restore itself, and the
+   caller must obtain explicit operator approval (`ActionRisk: destructive`) before
+   running it, scoped to exactly those paths.
 
 4. **Produce post-mode report** per the same schema.
 
@@ -198,17 +224,38 @@ step 1 first and release it on completion.
    NOT archive any manifest item. The `pre-archived` exemption (step 4) applies to
    **manifest items only** — never to the protected set.
 
-4. **Archive each manifest item individually** (loop over `items` ONLY):
-   * If the item's file is in `.backlogit/queue/`: move it to
-     `done` via `backlogit_move_item`, then archive that single artifact via
-     `backlogit_archive_item` (CLI fallback `backlogit archive {id}`). When the
-     backlog registry's `archive_item` operation supports commit metadata, record
-     the merge SHA using that tool's configured field (for backlogit, `commit_sha`);
-     otherwise record the merge SHA in the closure report. Classify `matched`.
-   * If the item's file is already in `.backlogit/archive/`: classify
-     `pre-archived` and **skip** — do not re-archive. Reusing the `pre-archived`
-     classification prevents false-positive cascade flags on items that were
-     legitimately shipped earlier.
+4. **Record commit evidence, then archive, each manifest item individually** (loop over
+   `items` ONLY). Commit evidence is always written **before** the artifact moves, because
+   once an item is archived its source record may no longer be mutable:
+   * If the item's file is in `.backlogit/queue/` (a **live** manifest item):
+     * **Evidence first.** If the backlog registry's `archive_item` operation supports
+       **atomic commit metadata**, pass `merge_commit_sha` to that operation using the
+       tool's configured field (for backlogit, `commit_sha`) so archival and evidence
+       commit together. Otherwise call `backlogit_track_commit` (registry `track_commit`;
+       CLI mapping `backlogit update {id} --commit {sha}`) to record `merge_commit_sha` on
+       the item **BEFORE** the `backlogit_move_item` / `backlogit_archive_item` calls.
+     * If neither an atomic archive field nor a source-mutating `track_commit` is
+       available, **halt** with `RECONCILE_FAIL` and report the missing capability. Never
+       attempt to write commit evidence **after archival**, and never treat a
+       report-only note as a substitute for evidence on the item.
+     * **Then archive.** Move the item to `done` via `backlogit_move_item`, then archive
+       that single artifact via `backlogit_archive_item` (CLI fallback
+       `backlogit archive {id}`). Classify `matched` and record the evidence source
+       (`atomic-archive-metadata` or `track_commit`) and the recorded SHA value.
+   * If the item's file is already in `.backlogit/archive/` (a **pre-archived** member):
+     classify `pre-archived` and **skip** — do not re-archive. Reusing the `pre-archived`
+     classification prevents false-positive cascade flags on items that were legitimately
+     shipped earlier. Its commit evidence belongs to the earlier shipment that delivered
+     it, so:
+     * **Preserve** the item's existing actual merge commit. **Verify and report** it —
+       never **overwrite** it with this run's closure SHA. A pre-archived member was
+       delivered by a different merge, so applying the current closure SHA would
+       falsify its provenance.
+     * Record the preserved value and its evidence source (`pre-existing`) in the report.
+     * If the required evidence is **missing** (no commit recorded on the pre-archived
+       item) or **contradictory** (a recorded commit that conflicts with the item's
+       documented delivery), **halt** with `RECONCILE_FAIL` and name the item. Never
+       fabricate, infer, or backfill a SHA to close the gap.
    * If the item's file is in neither location: classify `missing`, halt with
      `RECONCILE_FAIL`, and do not continue archiving.
 
@@ -224,30 +271,61 @@ step 1 first and release it on completion.
      the working tree is a cascade. There is **no** pre-archived exemption for the
      protected set — the exemption in step 4 covers manifest items only.
 
-6. **git-revert-on-cascade**: If the invariant fails (a protected-set artifact was
-   archived or deleted by the preceding archival):
-   * **Cascade detected.** Immediately restore the unintended change:
-     `git restore -- .backlogit/queue/ .backlogit/archive/`
-     for working-tree moves/deletions, or `git revert <commit>` if the cascade was
-     already committed.
-   * Re-run the invariant to confirm the protected set is intact again.
-   * Halt with `HALT — cascade detected, revert required`, emit a **P-005**
-     violation event (naming the cascaded artifact IDs), and do **NOT** commit the
-     backlog state. Do not auto-prune the manifest.
+6. **Approval-gated cascade recovery** (never automatic): If the invariant fails (a
+   protected-set artifact was archived or deleted by the preceding archival):
+   * **Cascade detected. Stop.** Do **not** run any recovery command yet. Recovery here is
+     a Git mutation (`git restore` / `git revert`) and is therefore
+     `ActionRisk: destructive` with `change_kind: rollback`, which Constitution VII
+     (Destructive Command Approval) requires an operator to approve first.
+   * **Record a `ProposedAction`** naming the **exact** identified protected-set paths to
+     restore, or the **exact** revert commit that introduced the cascade, plus the
+     `rollback` field and `approval_required: true`. Set `ActionResult: blocked`.
+   * **Emit a P-005 violation event** naming the cascaded artifact IDs and **request
+     explicit real-time operator approval** for that exact recovery — via `agent-intercom`
+     when that capability pack is installed, otherwise via a direct operator prompt.
+   * **Only after approval**, execute exactly the approved recovery:
+     `git restore -- {exact identified protected-set paths}` for working-tree
+     moves/deletions, or `git revert {exact cascade commit}` if the cascade was already
+     committed. Never broaden to unrelated paths or unrelated history, never touch paths
+     outside the identified protected-set artifacts, and never use `git reset` or any force
+     operation. Set `ActionResult: applied`.
+   * **Re-run the invariant** to confirm the protected set is intact again, and record that
+     verification in the report.
+   * **Halt** with `HALT — cascade detected, revert required` and do **NOT** commit the
+     backlog state. Do not auto-prune the manifest. Recovery restores the protected set; it
+     does not resume closure.
+   * If approval is **unavailable, withheld, or denied**, remain halted with
+     `ActionResult: blocked`, leave the recovery unexecuted, and do **NOT** commit the
+     corrupt backlog state.
 
 7. **Final invariant re-check**: After the loop completes, re-confirm the full
    protected set is intact in `.backlogit/queue/`.
 
-8. **Archive the shipment record itself** (single artifact, non-cascading): archive
-   only the `{shipment_id}` artifact via `backlogit_archive_item` (CLI fallback
-   `backlogit archive {id}`), recording `merge_commit_sha` for traceability. Closing
-   the shipment record is the point of safe-close, so it is **not** in the protected
-   set — but it must be archived as its own single artifact, **never** via the cascade
-   `backlogit_ship_shipment`. Then re-run the verify-after-each invariant (step 5) to
-   confirm archiving the shipment record did not disturb the protected set.
+8. **Record the shipment record's own commit evidence, then archive it** (single artifact,
+   non-cascading):
+   * **Evidence first.** Record the shipment record's **actual delivered-work merge
+     commit** — the `merge_commit_sha` input, which merged this shipment's delivered work
+     into `main` — **BEFORE** archiving the record. Use the `archive_item` operation's
+     atomic commit metadata field when it supports one; otherwise call
+     `backlogit_track_commit` on `{shipment_id}` first. If neither is available, halt with
+     `RECONCILE_FAIL` rather than archiving without evidence — never write the evidence
+     after archival.
+   * Do not substitute a decision or closure-authority SHA here. The commit that recorded
+     the decision or approval to close authorizes the closure; it is not the delivered
+     work.
+   * **Then archive** only the `{shipment_id}` artifact via `backlogit_archive_item` (CLI
+     fallback `backlogit archive {id}`). Closing the shipment record is the point of
+     safe-close, so it is **not** in the protected set — but it must be archived as its own
+     single artifact, **never** via the cascade `backlogit_ship_shipment`.
+   * Then re-run the verify-after-each invariant (step 5) to confirm archiving the shipment
+     record did not disturb the protected set.
 
-9. **Produce safe-close report** per the same schema, recording the protected set,
-   each item's classification, the shipment-record archival, and the recommendation.
+9. **Produce safe-close report** per the same schema, recording the protected set, each
+   item's classification, the shipment-record archival, and the recommendation. For **each
+   member and for the shipment record**, record the commit **evidence source** — one of
+   `atomic-archive-metadata`, `track_commit`, or `pre-existing` (preserved from an earlier
+   shipment) — alongside the exact SHA **value** recorded or preserved, so a reviewer can
+   audit per member where each piece of commit evidence came from.
 
 10. **Gate decision**:
     * All manifest items `matched` or `pre-archived`, the shipment record archived,
@@ -272,7 +350,10 @@ If pre-mode cannot acquire the lock because another process holds it:
 * Safe-close computes the protected set (parent feature + unshipped siblings) from expected IDs and proves it is fully present in queue at a baseline gate before archiving anything
 * Safe-close verifies the protected set survives after every single-item archival (verify-after-each invariant), with no pre-archived exemption for protected-set members
 * Safe-close archives the shipment record as its own single artifact and never via the cascade op
-* Safe-close reverts on cascade detection (`git restore`/`git revert`) and halts with a P-005 violation; it never auto-prunes the manifest
+* Safe-close records commit evidence (actual delivered-work merge SHA) on each live manifest item and on the shipment record **before** archiving that artifact, via atomic archive commit metadata or `backlogit_track_commit`, and never after archival
+* Safe-close preserves a pre-archived member's existing merge commit — verifying and reporting it rather than overwriting it with the current closure SHA — and halts rather than fabricating missing or contradictory evidence
+* Safe-close reports the commit evidence source and value per member and for the shipment record
+* Safe-close halts on cascade detection and executes `git restore`/`git revert` recovery only after explicit real-time operator approval, scoped to the exact identified paths or exact revert commit, with a P-005 violation event; it never force/resets, never broadens to unrelated paths or history, and never auto-prunes the manifest
 * `mode: post` runs after the safe-close archive sequence in Ship Step 6
 * All five item classifications are represented in the schema
 * Lock is acquired before pre-mode and released after post-mode (or on any halt)
