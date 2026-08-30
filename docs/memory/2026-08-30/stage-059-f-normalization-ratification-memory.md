@@ -19,9 +19,10 @@ assembly to Stage.
 
 ### What Stage did (planning/backlog only)
 
-* Verified — via `backlogit sync` + `backlogit query` — that the 10-item near-term scope is
-  semantically correct: `059-F` + `059.001/002/003/004/005/006/010/011-T` all `queued`
-  (queued-but-not-ready behind sign-off gate `059.014-T`); `059.014-T` the sole ready gate;
+* Verified — via `backlogit sync` + `backlogit query` — that the near-term scope is semantically
+  correct. The **nine normalized members** are `059-F` + `059.001/002/003/004/005/006/010/011-T`,
+  all `queued` (queued-but-not-ready behind sign-off gate `059.014-T`). `059.014-T` is the sole
+  ready gate — a prerequisite, never normalized and never a shipment member;
   `059.008-T`/`059.009-T` stay `blocked`; `059.012-T`/`059.013-T` deferred; near-term DAG acyclic
   (Kahn ordering `U7(done)/U14 → U1 → U2 → U6 → U3/U4 → U5/U10`, `U11` after `U2`). **No status
   change needed.**
@@ -58,29 +59,32 @@ Final Stage planning/audit convergence pass over the frozen diff. No subagents, 
 Engram unavailable — used structured `backlogit` queries + exact reads only. Four Stage-owned
 corrections applied:
 
-1. **`059.014-T` ratification now durable in tracked source-of-truth.** The prior note that
+1. **`059.014-T` convergence ratification recorded — local-only at this point.** The prior note that
    Stage recorded ratification comments on *both* `059-F` and `059.014-T` was only partly reflected
-   in tool history. Wrote a concise Stage convergence-ratification into a durable tracked
-   `stage-ratification` body section on `059.014-T` via the supported source-of-truth mutation
-   `backlogit update 059.014-T --section stage-ratification=<content>` (no hand-editing of
-   tool-managed history): it remains the **sole** dependency-ready queued sign-off gate — status
-   `queued`, **not** `done` and **not** bypassed — and after sign-off Stage (not Ship) exclusively
-   owns normalization + successor-shipment assembly (Step 5.5).
+   in tool history. This pass recorded a concise Stage convergence-ratification for `059.014-T` via
+   `backlogit comment add` only: it remains the **sole** dependency-ready queued sign-off gate —
+   status `queued`, **not** `done` and **not** bypassed — and after sign-off Stage (not Ship)
+   exclusively owns normalization + successor-shipment assembly (Step 5.5). That comment landed
+   solely in gitignored `.backlogit/logs/*.jsonl` and the disposable index; it was **not** tracked
+   PR evidence. The durable tracked `stage-ratification` body section was written later, by the
+   persistence-defect correction pass below — not by this pass.
 2. **`059.008-T` blocked-reason ratification + fourth P-010.** Ship previously changed
    `059.008-T`'s `blocked_reason` planning field/body **after** the task was returned from `051-S` —
    an unclassified Ship item-planning mutation, fail-closed **P-010**. Independently reviewed and
    ratified the current terminal blocked reason as **semantically correct** (U8 terminally BLOCKED;
    engine-open closure deferred to `059.013-T` Option A; stays `blocked`, remains in
-   `.backlogit/queue/`) and wrote it into a durable tracked `stage-ratification` body section via
-   `backlogit update 059.008-T --section stage-ratification=<content>`. The section records
-   that ratification **does not** retroactively legalize the Ship mutation; status stays `blocked`,
-   dependencies (`059.007-T`) unchanged.
+   `.backlogit/queue/`). That ratification was recorded via `backlogit comment add` only — local-only
+   and gitignored at this point; the durable tracked `stage-ratification` body section for
+   `059.008-T` was written later, by the persistence-defect correction pass below. The section
+   records that ratification **does not** retroactively legalize the Ship mutation; status stays
+   `blocked`, dependencies (`059.007-T`) unchanged.
 3. **Decision + plan superseded/enacted wording and four-entry violation record.** In
    `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md` and
    `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`, the forward-looking
    *Ship-Side Transition (planned/not executed)* and the operator/Ship "alternative" wording are now
    marked **SUPERSEDED / ENACTED** (original text struck, not silently rewritten): `051-S` is safely
-   closed and `archived`; the Ship-created `054-S` was reverted and does not exist; **Ship did not,
+   closed and `archived`; the Ship-created `054-S` does not exist — its deletion was an **unapproved
+   destructive P-005 violation, not compliant remediation**; **Ship did not,
    and cannot, re-scope `051-S` or create a successor**; Stage exclusively normalizes and assembles
    after `059.014-T` sign-off. Extended the historical violation record from **three to four**
    distinct entries by adding the Ship `blocked_reason` mutation P-010, with Stage's independent
@@ -129,15 +133,15 @@ review threads. No subagents, no merge, no shipment creation, no sign-off comple
 1. **Durable Step 5.5 Mode R authorization** (threads `3888677640`, `3888851260`). Added
    § *Mode R Authorization for Successor-Shipment Assembly* to
    `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`, naming
-   covering feature `059-F` and the exact 10-ID `handoff_ids` set
-   (`059-F`, `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`,
-   `059.010-T`, `059.011-T`, `059.014-T`) with the parent-first assembly order
-   `059-F → 059.014-T → 059.001-T → 059.002-T → 059.006-T → 059.003-T → 059.004-T → 059.005-T →
-   059.010-T → 059.011-T`, the exclusions (`059.008-T` terminal, `059.009-T` deferred,
-   `059.012-T`/`059.013-T` later shipments), and `059.007-T` (`done`/archived) cited as an
-   intentional terminal prerequisite rather than a member. After `059.014-T` sign-off Stage may
+   covering feature `059-F`. As first written this pass expressed the scope as a single 10-ID
+   `handoff_ids` set that folded the sign-off gate `059.014-T` into the member list and the
+   assembly order; the partition-alignment pass below corrected that to the disjoint
+   `member_ids` / `prerequisite_ids` sets the Mode R contract requires. The exclusions
+   (`059.008-T` terminal, `059.009-T` deferred, `059.012-T`/`059.013-T` later shipments) and
+   `059.007-T` (`done`/archived) as an intentional terminal prerequisite rather than a member were
+   recorded here and are unchanged. Once the gates are satisfied Stage may
    enter Step 5.5 directly under Mode R citing that section, with Steps 1–5 logged not applicable,
-   re-validate the exact set, then assemble. No stash entry or synthetic harvest is manufactured;
+   re-validate the exact sets, then assemble. No stash entry or synthetic harvest is manufactured;
    no shipment is assembled now.
 2. **PR #113 `051-S` closure-timing supersession** (thread `3888809409`). Added
    § *Supersession of the PR #113 `051-S` Closure-Timing Requirement*. Evidence-based rationale:
@@ -157,8 +161,9 @@ review threads. No subagents, no merge, no shipment creation, no sign-off comple
    paragraph (`051-S` "stays active/blocked", transition "executed only by Ship after sign-off") is
    struck in place with an enacted note; via
    `backlogit update 059-F --section stage-ratify-2026-08-30=…`, the ratification section now
-   explicitly declares itself the superseding authority and records the archived `051-S` state,
-   absent `054-S`, Stage-only ownership, and the Mode R handoff set.
+   explicitly declares itself the superseding authority and records the archived `051-S` state, the
+   absent `054-S` (deleted by an unapproved destructive P-005 action, not compliant remediation),
+   Stage-only ownership, and the Mode R scope sets.
 5. **Normalization vs assembly/implementation separated** (threads `3888860326`, `3888860333`,
    `3888860341`). The exec plan
    (`docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`), the re-deliberation decision
@@ -178,9 +183,10 @@ review threads. No subagents, no merge, no shipment creation, no sign-off comple
 * `backlogit sync` clean; family query re-confirms `059-F`/`059.001–006`/`059.010–014` unchanged
   statuses, `059.007-T` `done`, `059.008-T`/`059.009-T` `blocked`.
 * `item_deps` edge set unchanged (21 edges); Kahn ordering over the near-term DAG still acyclic.
-* Mode R validation snapshot: all 10 IDs live in `.backlogit/queue/`, all under `059-F`, none in any
-  open shipment manifest (open shipments are `049-S`, `052-S`, `053-S` — all `056.*`), only
-  out-of-set dependency edges are on the terminal prerequisite `059.007-T`.
+* Mode R validation snapshot: the 9 `member_ids` live in `.backlogit/queue/`, all under `059-F`,
+  none in any open shipment manifest (open shipments are `049-S`, `052-S`, `053-S` — all `056.*`);
+  the only out-of-set dependency edges are on the `prerequisite_ids` entries `059.007-T`
+  (`done`/archived, satisfied) and `059.014-T` (`queued`, not satisfied).
 * Markdown lint clean on all changed files.
 
 ### Invariants held
@@ -190,3 +196,79 @@ marked `done`, no source/test/config edits. Ship closure, compound, transition-m
 and agent files untouched — the superseding authority for the `051-S` timing lives in the
 Stage-owned decision instead. `.gitignore` and all untracked/ignored scratch/session files
 preserved.
+
+## Mode R partition-alignment pass (2026-08-30, PR #114 HEAD `378444e`)
+
+Commit `378444e` corrected the Step 5.5 Mode R contract in `.github/agents/.stage.agent.md` to
+require **two disjoint exact sets** instead of one handoff list. This Stage pass realigned the
+downstream durable authorization and state records to that contract. No subagents, no merge, no
+shipment, no status/dependency/sign-off change. Dirty `.gitignore` and all untracked/ignored
+scratch/session files preserved.
+
+### Corrections applied
+
+1. **Disjoint Mode R sets in the durable authorization** (threads `3888940607`, `3888969327`).
+   § *Mode R Authorization for Successor-Shipment Assembly* in
+   `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md` now names
+   `member_ids` exactly 9 (`059-F`, `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`,
+   `059.006-T`, `059.010-T`, `059.011-T`) and `prerequisite_ids` exactly 2 (`059.007-T`, already
+   `done`/archived and satisfied; `059.014-T`, `queued` until operator sign-off moves it to
+   `done`/archived). `handoff_ids` is documented as their 11-ID auditable union only — never
+   `assembly_ids`. The assembly order now lists the 9 member IDs only; `059.014-T` was removed from
+   position 2. No shipment may be created, populated, or handed off until both prerequisites are
+   satisfied. The same partition was propagated to `.backlogit/queue/059-F.md`
+   (`stage-ratify-2026-08-30`), `.backlogit/queue/059.014-T.md` (`stage-ratification`),
+   `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`, and
+   `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`.
+2. **Normalized-scope count corrected to nine** (thread `3888969335`). The normalization row and the
+   surrounding prose now read *covering feature + eight implementation tasks = nine normalized
+   members*. `059.014-T` is not normalized — it was never `blocked`, has been `queued` since
+   creation, and is a prerequisite, not a member. Where a "10-item near-term context" survives it is
+   explicitly defined as the 9 future members plus the queued gate, a verification convenience and
+   never a Mode R assembly set.
+3. **`054-S` wording corrected in Stage memory** (thread `3888940646`). The convergence-pass entry
+   above no longer characterizes `054-S` as "reverted"; it records the deletion as an **unapproved
+   destructive P-005 violation, not compliant remediation**, matching the decision and queue-file
+   wording.
+4. **Chronology corrected in Stage memory** (thread `3888940657`). The convergence pass is now
+   recorded as having written **local-only, gitignored `backlogit comment add`** ratifications for
+   `059.014-T` and `059.008-T`; the tracked `stage-ratification` body sections were written later by
+   the persistence-defect correction pass. The memory no longer claims both were tracked initially.
+5. **`059.014-T` prerequisite semantics made explicit in the tracked section.** Its
+   `stage-ratification` section now states that it is an external prerequisite that never enters
+   `assembly_ids` or the manifest, leaves the queue on `done` after sign-off (so it could never
+   satisfy the live-queue member check in condition 2a(a)), was never normalized, and gates assembly
+   through the `blocks` edge `059.001-T ← 059.014-T` rather than through membership.
+
+### Verification
+
+* Authorization re-checked against `.github/agents/.stage.agent.md` at HEAD `378444e`
+  (Step 5.5 items 1–3, 6.d, 7 and the 059-F handoff block): sets disjoint, member count 9,
+  prerequisite count 2, union 11, assembly order member-only.
+* `backlogit sync` clean (517 artifacts); `059.*` statuses byte-identical to the pre-pass snapshot —
+  `059-F`/`059.001–006`/`059.010–014` unchanged, `059.007-T` `done`, `059.008-T`/`059.009-T`
+  `blocked`, `059.014-T` `queued`.
+* `item_deps` edge set byte-identical to the pre-pass snapshot; no dependency added or removed.
+* Markdown lint clean on all changed files.
+
+### Invariants held
+
+No status change, no dependency change, no shipment created/claimed/closed/archived, no sign-off
+marked `done`, no source/test/config edits, no PR body or thread edits, no merge. Only Stage-owned
+docs and backlog artifacts were modified; Ship closure/compound/transition-memory/reconcile files
+and the agent definitions were left untouched.
+
+### Follow-ups left to their owners (stale 10-ID references outside Stage ownership)
+
+Two non-Stage-owned artifacts still quote the superseded single-set Mode R wording and should be
+corrected by their owning agents:
+
+* `docs/closure/2026-08-29-051-s-toctou-transition-closure.md` (Ship-owned closure) — quotes the
+  old assembly order `059-F → 059.014-T → …`.
+* `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` (Orchestrator-owned
+  checkpoint) — describes the authorization as "exact-10-ID" with `059.014-T` inside `handoff_ids`
+  and inside the assembly order.
+
+Stage does not edit other agents' closure or memory artifacts; the authoritative partition lives in
+`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+§ *Mode R Authorization for Successor-Shipment Assembly*.

@@ -997,15 +997,19 @@ ratified the current terminal blocked reason as semantically correct without leg
 (see the *Historical Ship role-boundary violation record* in
 `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`).
 
-**Successor-shipment assembly path (Step 5.5 Mode R; added 2026-08-30).** The ten near-term items
+**Successor-shipment assembly path (Step 5.5 Mode R; added 2026-08-30).** The near-term items
 were harvested in an earlier session and already exist in the queue, so Step 5.5's default Mode H
-scope guard (harvest-only IDs) cannot admit them. The durable Mode R authorization — covering
-feature `059-F`, exact `handoff_ids` `059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
-059.005-T, 059.006-T, 059.010-T, 059.011-T, 059.014-T`, with the parent-first assembly order and
-the exclusion of `059.008-T`/`059.009-T`/`059.012-T`/`059.013-T` and the terminal external
-prerequisite `059.007-T` — is recorded in
+scope guard (harvest-only IDs) cannot admit them. The durable Mode R authorization names **two
+disjoint exact sets** — covering feature `059-F`; `member_ids` exactly the 9 IDs `059-F,
+059.001-T, 059.002-T, 059.003-T, 059.004-T, 059.005-T, 059.006-T, 059.010-T, 059.011-T` (these and
+only these become `assembly_ids`, in the parent-first assembly order recorded there); and
+`prerequisite_ids` exactly `059.007-T` (`done`/archived, satisfied) and `059.014-T` (the `queued`
+sign-off gate), neither of which is ever a shipment member. `handoff_ids` is only the 11-ID
+auditable union of those sets and is never the assembly set. Exclusions
+`059.008-T`/`059.009-T`/`059.012-T`/`059.013-T` are recorded alongside them in
 `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
-§ *Mode R Authorization for Successor-Shipment Assembly*. After `059.014-T` is `done`, Stage enters
+§ *Mode R Authorization for Successor-Shipment Assembly*. Once both prerequisites are satisfied —
+which requires `059.014-T` to reach `done`/archived after sign-off — Stage enters
 Step 5.5 directly under Mode R citing that section, logs Steps 1–5 as not applicable, re-validates
-the exact set, and assembles. No stash entry or synthetic harvest may be manufactured, and no
-shipment is assembled while the gate is open.
+each set against its own rules, and assembles the 9 members only. No stash entry or synthetic
+harvest may be manufactured, and no shipment is assembled while the gate is open.

@@ -1,6 +1,6 @@
 ---
 title: "Stage ratification: 059-F rescoped-scope status normalization and successor-shipment assembly are Stage-owned (P-010 remediation)"
-description: "Independent Stage review that ratifies the already-queued dispositions of the 059-F feasible scope, assigns blocked-to-queued status normalization and successor-shipment assembly to Stage, issues the durable Step 5.5 Mode R authorization naming the exact 10-item handoff set, supersedes the PR #113 051-S closure-timing precondition, and records the prior Ship-performed normalization as an un-legalized P-010 violation"
+description: "Independent Stage review that ratifies the already-queued dispositions of the 059-F feasible scope, assigns blocked-to-queued status normalization and successor-shipment assembly to Stage, issues the durable Step 5.5 Mode R authorization naming two disjoint exact sets (9 member_ids plus 2 prerequisite_ids), supersedes the PR #113 051-S closure-timing precondition, and records the prior Ship-performed normalization as an un-legalized P-010 violation"
 topic: "Ownership of superseded-chain status normalization and successor-shipment assembly for feature 059-F after the 2026-08-29 re-deliberation, following Copilot review comment 3888455427 on PR #114"
 depth: "standard"
 doc_type: "decision"
@@ -92,8 +92,11 @@ closure/compound/memory artifacts.
 ## Independent Verification of the Ratified Dispositions
 
 Stage re-read the governing re-deliberation and re-queried the live backlog index
-(`backlogit sync` then `backlogit query`) for the 10-item near-term scope. Authoritative status and
-dependency edges:
+(`backlogit sync` then `backlogit query`) for the 10-item near-term context — defined here, and
+only here, as the **9 future shipment members** (`059-F` + `059.001/002/003/004/005/006/010/011-T`)
+plus the **queued sign-off gate** `059.014-T`. That count is a verification convenience, never a
+Mode R assembly set: the gate is a prerequisite and is excluded from shipment membership.
+Authoritative status and dependency edges:
 
 | Item | Status | Depends on (blocks edges) | Correct? |
 |---|---|---|---|
@@ -144,10 +147,16 @@ re-deliberation did conflate them:
 
 | Act | Owner | State as of this decision | Gated on `059.014-T`? |
 |---|---|---|---|
-| `blocked → queued` status normalization of the 9 feasible units + covering feature | Stage-only (P-010) | **Already completed** — performed by Ship in violation, then **independently reviewed and ratified by Stage** on 2026-08-30 while `059.014-T` is still `queued` | **No** |
+| `blocked → queued` status normalization of the covering feature + eight implementation tasks = **nine normalized members** (`059-F`, `059.001-T`, `059.002-T`, `059.003-T`, `059.004-T`, `059.005-T`, `059.006-T`, `059.010-T`, `059.011-T`) | Stage-only (P-010) | **Already completed** — performed by Ship in violation, then **independently reviewed and ratified by Stage** on 2026-08-30 while `059.014-T` is still `queued` | **No** |
 | Rewire of the feasible DAG (U8/U9 edge drops, U12 re-point) | Stage-only | **Already completed** and ratified | **No** |
 | Successor-shipment assembly (Step 5.5) | Stage-only | **Not started** | **Yes** |
 | Implementation of the rescoped `059-F` (U1 onward) | Ship, after assembly | **Not started** | **Yes** |
+
+**The normalized scope is nine members, not ten.** `059.014-T` is **not** one of the normalized
+members: it was never `blocked`, was never normalized, and has remained `queued` throughout. It is
+the operator sign-off gate — a **prerequisite**, not a member of the normalized scope and not a
+member of the successor shipment. Any count that reaches ten by adding `059.014-T` to the nine
+normalized members is conflating the member set with the gate set.
 
 Normalization was never conditioned on sign-off. A `queued`-but-not-ready status is exactly the
 intake-valid disposition that lets the sign-off gate function as a dependency edge: `059.001-T`
@@ -164,36 +173,65 @@ in `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-delibe
 
 This section is the **durable, citable Step 5.5 Mode R authorization** required by
 `.github/agents/.stage.agent.md` (Step 5.5, item 1, *Mode R — ratified existing-scope handoff*).
-It exists because the ten items below were harvested in an earlier session, already exist in the
+It exists because the items below were harvested in an earlier session, already exist in the
 queue, and this PR intentionally creates **no** stash entry and **no** new harvest. Under Mode H the
 scope guard would exclude them; Mode R is the sanctioned path for exactly this case. Manufacturing a
 stash entry or a synthetic harvest to make Steps 1–5 look executed would itself be a P-005
 violation, so no such input is created.
 
+Per the Mode R contract, this authorization names **two disjoint exact sets** — `member_ids` and
+`prerequisite_ids` — and nothing else. `handoff_ids` is their union and exists only as an audit and
+citation convenience; it is never an assembly set. `assembly_ids` is exactly the validated
+`member_ids`.
+
 **Covering feature:** `059-F` — *Identity-bound no-follow handle for store.rs read-only permission
 ops (sibling TOCTOU fix)*, rescoped by the 2026-08-29 re-deliberation (Option B).
 
-**Authorized `handoff_ids` — exactly 10 IDs, canonical (ID-sorted) member set:**
+**Authorized `member_ids` — exactly 9 IDs (covering feature + eight implementation tasks), canonical
+(ID-sorted). These and only these become `assembly_ids`:**
 
 ```text
 059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
-059.005-T, 059.006-T, 059.010-T, 059.011-T, 059.014-T
+059.005-T, 059.006-T, 059.010-T, 059.011-T
 ```
 
-**Exact assembly order (parent-first, then dependency order, per Step 5.5 item 6):**
+**Authorized `prerequisite_ids` — exactly 2 IDs. Gates, never members, never counted in the
+manifest:**
+
+| ID | State at authorization time | Satisfaction condition |
+|---|---|---|
+| `059.007-T` (U7) | `done` and archived (`.backlogit/archive/059.007-T.md`) | **Already satisfied.** Absence from the live queue is expected for a satisfied prerequisite and is not a validation failure — Step 5.5 condition 2a(a) does not apply to prerequisites. `059.001-T` and `059.006-T` depend on it; condition 2a(e) permits that out-of-set edge because this decision records it as an intentionally terminal prerequisite. |
+| `059.014-T` (U14) | `queued` — the operator sign-off gate | **Not yet satisfied.** It must itself become `done` and archived after operator sign-off before it counts as satisfied. It is never normalized into a member to make assembly proceed. |
+
+**`handoff_ids` — the auditable union of the two sets above (11 IDs) and nothing more:**
+
+```text
+059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T, 059.005-T,
+059.006-T, 059.007-T, 059.010-T, 059.011-T, 059.014-T
+```
+
+`handoff_ids` is a citation and audit convenience only. It is **never** `assembly_ids`, no ID is
+added to a shipment merely because it appears in the union, and neither set is derived from the
+other. The two sets are disjoint: no ID appears in both.
+
+**No shipment is created, populated, or handed off until BOTH prerequisites are satisfied** —
+`059.007-T` already is; `059.014-T` is not, and stays a gate until operator sign-off moves it to
+`done`/archived.
+
+**Exact assembly order — the 9 `member_ids` only (parent-first, then dependency order, per Step 5.5
+item 6). No `prerequisite_ids` entry appears in this order:**
 
 | # | ID | Unit | Why this position |
 |---|---|---|---|
 | 1 | `059-F` | covering feature | parent-first; supplied as the initial `items` list at creation |
-| 2 | `059.014-T` | U14 sign-off gate | no in-set dependencies; must precede `059.001-T`, which depends on it |
-| 3 | `059.001-T` | U1 | deps `059.014-T` (in set) + `059.007-T` (terminal prerequisite, see below) |
-| 4 | `059.002-T` | U2 | deps `059.001-T` |
-| 5 | `059.006-T` | U6 | deps `059.001-T`, `059.002-T`, `059.007-T` |
-| 6 | `059.003-T` | U3 | deps `059.002-T`, `059.006-T` |
-| 7 | `059.004-T` | U4 | deps `059.002-T`, `059.006-T` |
-| 8 | `059.005-T` | U5 | deps `059.003-T`, `059.004-T`, `059.006-T` |
-| 9 | `059.010-T` | U10 | deps `059.003-T`, `059.004-T`, `059.006-T` |
-| 10 | `059.011-T` | U11 | deps `059.002-T` |
+| 2 | `059.001-T` | U1 | first implementation unit; both its dependencies (`059.007-T`, `059.014-T`) are prerequisites outside the member set, satisfied before assembly begins |
+| 3 | `059.002-T` | U2 | deps `059.001-T` |
+| 4 | `059.006-T` | U6 | deps `059.001-T`, `059.002-T` (in set) + `059.007-T` (prerequisite) |
+| 5 | `059.003-T` | U3 | deps `059.002-T`, `059.006-T` |
+| 6 | `059.004-T` | U4 | deps `059.002-T`, `059.006-T` |
+| 7 | `059.005-T` | U5 | deps `059.003-T`, `059.004-T`, `059.006-T` |
+| 8 | `059.010-T` | U10 | deps `059.003-T`, `059.004-T`, `059.006-T` |
+| 9 | `059.011-T` | U11 | deps `059.002-T` |
 
 **Explicitly excluded — already decided, and never to be swept in by queue scanning:**
 
@@ -204,39 +242,54 @@ ops (sibling TOCTOU fix)*, rescoped by the 2026-08-29 re-deliberation (Option B)
 | `059.012-T` (U12) | deferred, `queued` | later separate shipment; dependency repointed to `059.014-T` so it becomes ready at the correct later gate |
 | `059.013-T` (Option A) | deferred, `queued` | upstream/fork engine-open closure; later separate shipment; it is ready **only** in the family-wide query above |
 
-**External terminal prerequisite (cited, NOT a member):** `059.007-T` (U7) is `done` and archived
-(`.backlogit/archive/059.007-T.md`). `059.001-T` and `059.006-T` depend on it. Step 5.5 validation
-condition (e) permits an out-of-set dependency on *an intentionally terminal prerequisite*; this
-decision records `059.007-T` as exactly that. It is **not** added to the successor shipment — a
-`done`/archived item is not re-shipped.
+**Why `059.014-T` is a prerequisite and never a member:** once sign-off lands it moves to `done` and
+is archived, so it can never satisfy the live-queue member validation in Step 5.5 condition 2a(a).
+Treating it as a member would force either a validation failure or an illegitimate exception. Its
+gating force comes from the `blocks` dependency edge `059.001-T ← 059.014-T`, not from shipment
+membership. Restating the prerequisite rules from the table above: a prerequisite is satisfied,
+never shipped, and never converted into a member to make assembly proceed; and `059.007-T` being
+`done`/archived — absent from the live queue — is the expected shape of a satisfied prerequisite,
+not a validation failure.
 
 **Authorized Stage behaviour after `059.014-T` sign-off:**
 
-Once `059.014-T` is `done`, Stage MAY enter Step 5.5 **directly under Mode R**, citing this section
+Once `059.014-T` is `done` and archived — and therefore both `prerequisite_ids` entries are
+satisfied — Stage MAY enter Step 5.5 **directly under Mode R**, citing this section
 by path, with Steps 1–5 logged as *not applicable — Mode R recovery path, authorized by
 `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`*. Stage MUST
 NOT invent stash entries, re-run `harvest` over these already-harvested items, or stand up any
 synthetic harvest. Stage MUST then, in order:
 
-1. Record the 10 IDs above verbatim as `handoff_ids` — the set is exactly this list; never widen it
-   by scanning the queue for unassigned, ready-looking, or topically related `059.*` items.
-2. Re-run the full Step 5.5 item-2 validation against live state at that time:
-   (a) each ID exists as a live queue item; (b) each belongs to the `059-F` hierarchy named here;
-   (c) none is a member of another queued/active shipment; (d) each carries a status ratified in a
-   citable artifact — this decision; (e) no unresolved dependency outside the set except
-   `059.007-T` (terminal prerequisite) and `059.014-T` (in-set gate). Reject on duplicates or any ID
-   this section did not name. **Halt fail-closed** on any failure — no partial assembly.
-3. Set `assembly_ids` = the validated `handoff_ids`, then create/reuse the shipment and add members
-   in the exact order tabled above, and verify the read-back manifest matches the 10 IDs exactly.
+1. Record the two sets above verbatim — the 9 `member_ids` and the 2 `prerequisite_ids`. Never
+   widen either set by scanning the queue for unassigned, ready-looking, or topically related
+   `059.*` items, and never promote a prerequisite into the member set.
+2. Re-run the full Step 5.5 item-2 validation, applying each set's own rules against live state at
+   that time. **2a — every `member_ids` entry:** (a) exists as a live queue item; (b) belongs to the
+   `059-F` hierarchy named here; (c) is not a member of another queued/active shipment; (d) carries
+   a status ratified in a citable artifact — this decision; (e) has no unresolved dependency outside
+   the declared sets except the `prerequisite_ids` entries `059.007-T` and `059.014-T`.
+   **2b — every `prerequisite_ids` entry:** (a) is `done` or otherwise satisfied, resolved in the
+   queue *and* the archive (absence from the live queue is expected, not a failure — condition
+   2a(a) must not be applied here); (b) is never added to the shipment or counted in the manifest;
+   (c) if still queued or unsatisfied, assembly halts and waits. Reject on duplicates, on any
+   intersection between the sets, or on any ID this section did not name. **Halt fail-closed** on
+   any failure — no partial assembly.
+3. Set `assembly_ids` = the validated `member_ids` (never `handoff_ids`, and never including a
+   `prerequisite_ids` entry), then create/reuse the shipment and add members in the exact 9-item
+   order tabled above, and verify the read-back manifest matches those 9 IDs exactly — same count,
+   same IDs, no extras, and no prerequisite present.
 
 **Validation snapshot at the time of this decision** (informational; re-verify at assembly time):
-(a) all 10 present in `.backlogit/queue/`; (b) all under `059-F`; (c) no `059.*` item appears in any
-open shipment manifest — the only queued shipments are `049-S`, `052-S`, `053-S`, all `056.*`;
-(d) statuses ratified above; (e) the only out-of-set dependency edges are on `059.007-T`.
+(a) all 9 `member_ids` present as live items in `.backlogit/queue/`; (b) all under `059-F`; (c) no
+`059.*` item appears in any open shipment manifest — the only queued shipments are `049-S`, `052-S`,
+`053-S`, all `056.*`; (d) statuses ratified above; (e) the only out-of-set dependency edges are on
+the `prerequisite_ids` entries `059.007-T` and `059.014-T`. Prerequisite state: `059.007-T` is
+`done`/archived (satisfied); `059.014-T` is `queued` (**not** satisfied), so assembly stays blocked.
 
 **Gate, restated:** this authorization supplies *scope*, never *gate relief*. It does not permit
-assembly now. `059.014-T` is `queued`; until it is `done`, Stage assembles nothing. No shipment is
-created, claimed, reused, or modified by this pass.
+assembly now. Assembly stays blocked while any `prerequisite_ids` entry is unsatisfied: `059.007-T`
+is satisfied (`done`/archived), but `059.014-T` is `queued`, so until it is `done` and archived
+Stage assembles nothing. No shipment is created, claimed, reused, or modified by this pass.
 
 ## Supersession of the PR #113 `051-S` Closure-Timing Requirement
 
@@ -309,14 +362,33 @@ unaffected.
 
 This decision was extended in a follow-on Stage reconciliation pass that added, above: the
 feature-family-wide relabel of the readiness query; the normalization-complete vs
-assembly/implementation-gated split; the durable Step 5.5 Mode R authorization with the exact
-10-ID handoff set and assembly order; and the supersession of the PR #113 `051-S` closure-timing
+assembly/implementation-gated split; the durable Step 5.5 Mode R authorization and assembly order;
+and the supersession of the PR #113 `051-S` closure-timing
 precondition. That pass changed **no** item status, **no** dependency edge, and **no** shipment;
 `059.014-T` remains `queued` and unsigned. It touched only Stage-owned
 decision/plan/memory/backlog artifacts — the Ship-owned reconcile record
 `.backlogit/reconcile/051-S-safe-close-20260829-203729.md`, closure artifacts, compound
 best-practice docs, Ship transition memory, and agent definitions were left unmodified; the
 superseding authority is recorded here instead.
+
+### Mode R partition-alignment addendum (2026-08-30, PR #114 HEAD `378444e`)
+
+The Mode R contract in `.github/agents/.stage.agent.md` was corrected by commit `378444e` to require
+**two disjoint exact sets** rather than a single handoff list. That reconciliation pass had written
+the authorization as one 10-ID `handoff_ids` set that folded the sign-off gate `059.014-T` into the
+member list and into the assembly order. This addendum records the alignment applied here:
+
+* `member_ids` is exactly 9 — the covering feature plus eight implementation tasks — and is the only
+  thing that becomes `assembly_ids`.
+* `prerequisite_ids` is exactly 2 — `059.007-T` (already `done`/archived, satisfied) and
+  `059.014-T` (`queued` until operator sign-off, then `done`/archived). Neither is ever a member.
+* `handoff_ids` is the 11-ID auditable union of those two sets and nothing more; it is never an
+  assembly set.
+* The assembly order lists the 9 member IDs only; `059.014-T` was removed from position 2.
+* The normalized-scope count is nine members. `059.014-T` was never normalized: it has been `queued`
+  since creation and is a prerequisite, not a member.
+
+No item status, dependency edge, shipment, or sign-off state changed in this pass either.
 
 ## Follow-up Left to Ship
 

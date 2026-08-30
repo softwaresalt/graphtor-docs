@@ -513,10 +513,14 @@ completed normalization therefore grants no early execution authority.
 
 **Assembly path.** Because these items were harvested in an earlier session, Step 5.5's default
 Mode H harvest-only scope guard cannot admit them. The durable **Mode R** authorization — covering
-feature `059-F` and the exact 10-ID handoff set, with assembly order, exclusions, and the terminal
-external prerequisite `059.007-T` — is recorded in
+feature `059-F`, with two disjoint exact sets: `member_ids` (the 9 shipment members `059-F` +
+`059.001/002/003/004/005/006/010/011-T`, which alone become `assembly_ids`) and `prerequisite_ids`
+(`059.007-T`, `done`/archived and satisfied; `059.014-T`, the `queued` sign-off gate), plus the
+9-member assembly order and the exclusions — is recorded in
 `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
-§ *Mode R Authorization for Successor-Shipment Assembly*. That same decision also supersedes the
+§ *Mode R Authorization for Successor-Shipment Assembly*. `handoff_ids` there is only the 11-ID
+auditable union of the two sets, never the assembly set, and no shipment may be assembled until
+both prerequisites are satisfied. That same decision also supersedes the
 PR #113 `051-S` closure-timing precondition (§ *Supersession of the PR #113 `051-S` Closure-Timing
 Requirement*): evidence-shipment closure may precede sign-off; `059.014-T` gates successor
 assembly and implementation only.
