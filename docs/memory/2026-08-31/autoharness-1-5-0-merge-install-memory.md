@@ -99,7 +99,7 @@ runtime fill-ins (each file's count is at most its own template's count).
 * MD041 fires on 15 `SKILL.md` files that open with `##`. Pre-existing: 14 such
   files at HEAD before this change. Upstream template convention; not a regression.
 
-## Follow-up: agent-intercom pack removal (`d6dd31d`)
+## Follow-up: agent-intercom pack removal (`d6dd31d` + `87fc508`)
 
 The operator asked to remove `agent-intercom` from the installed capability
 packs. No autoharness subcommand manages pack selection, so this was done
@@ -148,6 +148,24 @@ artifacts 109 → 108, and — the decisive signal — **0 uninstalled templates
 confirming the deselection propagated so the renderer no longer expects the
 intercom instruction file. `gate pipeline-topology` PASS.
 
+### Gotcha: PowerShell parse error silently split the commit
+
+The first commit attempt used a bash heredoc (`git commit -F - <<'EOF'`).
+PowerShell has no heredoc, and the resulting **parse** error aborts the entire
+script block *before any statement runs* — so the `git add` on the preceding
+line never executed. The two deletions were already staged by `git rm`, so
+`git commit` still succeeded and produced `d6dd31d` containing **only the
+deletions**. The branch was briefly in a worse state than either endpoint: the
+instruction file was gone while the pack was still listed as enabled.
+
+Caught by re-checking `git status` after the "done" report; fixed in `87fc508`.
+
+**Lesson:** a PowerShell parse error is all-or-nothing for the whole block —
+never assume earlier commands in a failed block ran. After any commit, verify
+with `git show --stat <sha>` and `git show HEAD:<file>` rather than trusting a
+clean-looking working tree, since staged-but-uncommitted and
+never-staged changes look identical in a filtered `git status`.
+
 ## Next steps
 
 1. Open a PR from `chore/autoharness-merge-install-1.5.0`.
@@ -157,7 +175,6 @@ intercom instruction file. `gate pipeline-topology` PASS.
    Done in `d6dd31d` alongside the agent-intercom pack removal.
 4. Consider adopting the new `pre-push-quality-gates` hook (installed, opt-in;
    profile sets `pre_push_gates: [format, lint, test, build]`).
-5. `copilot_review.enforcement` is `auto` (max wait 900s). Under P-018, PRs
-   where Copilot never engages return NOT_APPLICABLE, but once engaged,
-   unresolved threads BLOCK merge — PR #114 currently has 57 open threads.
-   Switch to `disabled` if that is not wanted.
+5. `copilot_review.enforcement` stays `auto` (max wait 900s) — operator
+   confirmed on 2026-08-31 that P-018 blocking on unresolved Copilot threads is
+   the desired behavior. No change required.
