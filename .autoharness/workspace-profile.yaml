@@ -81,7 +81,6 @@ conventions:
 harness_recommendations:
   preset: full
   capability_packs:
-  - agent-intercom
   - agent-engram
   - backlogit
   - adversarial-review
@@ -98,14 +97,9 @@ harness_recommendations:
     preset:
     - Mature project with existing comprehensive harness (13 agents, 10 instructions, 2 skills)
     - Full CI pipeline with GitHub Actions
-    - Multiple MCP integrations (engram, backlogit, intercom)
+    - Multiple MCP integrations (engram, backlogit, graphtor-docs)
     - Established code conventions and quality gates
     capability_packs:
-    - item: agent-intercom
-      because: agent-intercom MCP server configured in .vscode/mcp.json
-      signals:
-      - .vscode/mcp.json references agent-intercom
-      - copilot-instructions.md describes remote approval workflow
     - item: agent-engram
       because: .engram/ directory exists with full configuration
       signals:
@@ -133,7 +127,7 @@ harness_recommendations:
     - item: instructions
       because: 14 instruction files missing for capability packs and additional guidance
       signals:
-      - No agent-intercom, agent-engram, backlogit, or adversarial-review instructions
+      - No agent-engram, backlogit, or adversarial-review instructions
     - item: workflow
       because: 17 skills missing that power the stage/ship pipeline
       signals:
@@ -153,15 +147,7 @@ harness_recommendations:
     - item: overlays
       because: 4 capability packs require overlay composition
       signals:
-      - agent-intercom, agent-engram, backlogit, adversarial-review packs selected
-agent_intercom:
-  detected: true
-  mcp_configured: true
-  config_paths:
-  - .vscode/mcp.json
-  instruction_markers:
-  - .github/copilot-instructions.md describes remote approval workflow
-  recommended: true
+      - agent-engram, backlogit, adversarial-review, graphtor-docs packs selected
 agent_engram:
   detected: true
   mcp_configured: true
@@ -258,9 +244,6 @@ existing_harness:
   - path: .github/instructions/writing-style.instructions.md
     type: instruction
     description: Writing style conventions
-  - path: .github/prompts/ping-loop.prompt.md
-    type: prompt
-    description: Ping loop prompt
   - path: AGENTS.md
     type: foundation
     description: Root agent instructions

@@ -1,10 +1,10 @@
 schema_version: 1.0.0
 installed_at: '2026-05-10T08:42:00-07:00'
-tuned_at: '2026-08-31T09:54:37.383343-07:00'
+tuned_at: '2026-08-31T11:23:18.800142-07:00'
 autoharness_version: 1.5.0
 autoharness_home: C:\Python\Python314\Lib\site-packages\autoharness\data
-profile_hash: 94c4c3fadf5a9486ff17268838c45cf93d1e774d5b5a3a1a860f487922de5454
-config_hash: 147b3eca503f399036cd00267617edd24c80f51250495487c961ef9cad1daf9e
+profile_hash: 5dc93a6858eade11ee8eb17137cd53253e3852c2bdd43e02f0171abde38f264e
+config_hash: 2f76caa98f824abb3a18985a36f45f3707e0ede08c4e1db9a3004681a83f7427
 install_preset: full
 primary_stack_pack: mcp-server
 stack_packs:
@@ -19,22 +19,11 @@ install_layers:
 - knowledge
 - overlays
 capability_packs:
-- agent-intercom
 - agent-engram
 - backlogit
 - adversarial-review
 - graphtor-docs
 capability_pack_overlays:
-- pack: agent-intercom
-  overlay_targets:
-  - .github/instructions/agent-intercom.instructions.md
-  - .github/skills/deliberate/SKILL.md
-  - .github/skills/spike/SKILL.md
-  - .github/skills/review/SKILL.md
-  - .github/skills/operational-closure/SKILL.md
-  verification_checks:
-  - agent-intercom.instructions.md installed
-  - affected skills reference intercom workflow
 - pack: agent-engram
   overlay_targets:
   - .github/instructions/agent-engram.instructions.md
@@ -97,7 +86,7 @@ artifacts:
   artifact_type: config
   primitive: 3
   template: harness-config.yaml.tmpl
-  checksum: 147b3eca503f399036cd00267617edd24c80f51250495487c961ef9cad1daf9e
+  checksum: 2f76caa98f824abb3a18985a36f45f3707e0ede08c4e1db9a3004681a83f7427
 - path: .github/agents/_orchestrator.agent.md
   artifact_type: agent
   primitive: 4
@@ -213,11 +202,6 @@ artifacts:
   primitive: 6
   template: instructions/agent-engram.instructions.md.tmpl
   checksum: 250ea21f662a28324a5f806ea28f69d224385ee432869e1f3895ea4449968954
-- path: .github/instructions/agent-intercom.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/agent-intercom.instructions.md.tmpl
-  checksum: aec84160bddbe0833b09ae763bb759927829c8070f9ccdb173bdfb95a2af6cdf
 - path: .github/instructions/architecture-doc.instructions.md
   artifact_type: instruction
   primitive: 9

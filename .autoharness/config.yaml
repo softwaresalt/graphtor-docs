@@ -29,7 +29,6 @@ install_layers:
 
 # Capability packs enabled for this workspace
 capability_packs: 
-  - agent-intercom
   - agent-engram
   - backlogit
   - adversarial-review
