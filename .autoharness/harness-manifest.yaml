@@ -3,7 +3,7 @@ installed_at: '2026-05-10T08:42:00-07:00'
 tuned_at: '2026-08-31T09:54:37.383343-07:00'
 autoharness_version: 1.5.0
 autoharness_home: C:\Python\Python314\Lib\site-packages\autoharness\data
-profile_hash: 7d1b749aeaa5fa02e97481c7f069b2a54bde568a072b703255bc00ff9c8f13f1
+profile_hash: 94c4c3fadf5a9486ff17268838c45cf93d1e774d5b5a3a1a860f487922de5454
 config_hash: 147b3eca503f399036cd00267617edd24c80f51250495487c961ef9cad1daf9e
 install_preset: full
 primary_stack_pack: mcp-server
@@ -617,12 +617,12 @@ artifacts:
   artifact_type: script
   primitive: 6
   template: scripts/pre-push-quality-gates.ps1.tmpl
-  checksum: e753700374816c9c6abf987f988f535593d897b1e0e1e1daf572e442c45b5076
+  checksum: 84057b504ccc8a949b7b8f690e5399521ef323ab517063583529bf41e268359b
 - path: scripts/pre-push-quality-gates.sh
   artifact_type: script
   primitive: 6
   template: scripts/pre-push-quality-gates.sh.tmpl
-  checksum: e08fee10cf14add792d8709336eaa685410666f0075f6102434c7d8d8460aa91
+  checksum: dd46bacdb35cf150923ee91928c71d069603ee80731052dc03293371c584b82b
 - path: start.ps1
   artifact_type: script
   primitive: 5

@@ -87,7 +87,8 @@ Write-Host "Running local pre-push quality gates..."
 
 Invoke-Gate "Lint" "cargo" "cargo clippy --all-targets -- -D warnings -D clippy::pedantic"
 Invoke-Gate "Format" "cargo" "cargo fmt --all -- --check"
-Invoke-Gate "Typecheck" "" ""
+# No Typecheck gate: Rust has no type-check step distinct from `cargo check`,
+# which the Build gate below already runs.
 Invoke-Gate "Test" "cargo" "cargo test"
 Invoke-Gate "Build" "cargo" "cargo check"
 

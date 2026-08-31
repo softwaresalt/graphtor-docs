@@ -83,7 +83,8 @@ echo "Running local pre-push quality gates..."
 
 run_gate "Lint" "cargo" "cargo clippy --all-targets -- -D warnings -D clippy::pedantic"
 run_gate "Format" "cargo" "cargo fmt --all -- --check"
-run_gate "Typecheck" "" ""
+# No Typecheck gate: Rust has no type-check step distinct from `cargo check`,
+# which the Build gate below already runs.
 run_gate "Test" "cargo" "cargo test"
 run_gate "Build" "cargo" "cargo check"
 

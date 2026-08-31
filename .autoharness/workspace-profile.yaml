@@ -324,13 +324,14 @@ graphtor_docs:
   recommended: true
 typecheck:
   tool: cargo
-  command: cargo check --all-targets
+  command: null
 local_gating:
   pre_push_enabled: true
   pre_push_gates:
   - format
   - lint
   - test
+  - build
 copilot_review:
   enforcement: auto
   max_wait_seconds: 900
