@@ -99,12 +99,65 @@ runtime fill-ins (each file's count is at most its own template's count).
 * MD041 fires on 15 `SKILL.md` files that open with `##`. Pre-existing: 14 such
   files at HEAD before this change. Upstream template convention; not a regression.
 
+## Follow-up: agent-intercom pack removal (`d6dd31d`)
+
+The operator asked to remove `agent-intercom` from the installed capability
+packs. No autoharness subcommand manages pack selection, so this was done
+manually.
+
+**Scope determination.** 37 files mentioned `intercom`. Comparing installed
+reference counts against the 1.5.0 templates showed near-exact parity
+(`_ship` 29/30, `_stage` 13/13, `_orchestrator` 11/11,
+`copilot-instructions.md` 9/9, `AGENTS.md` 8/8, `constitution` 5/5, skills
+identical). Diffing `AGENTS.md` against its template confirmed the
+`### Capability Overlay — agent-intercom` block sits at the *same line numbers*
+upstream, and `copilot-instructions.md` documents all nine packs — including
+ones this workspace never enabled.
+
+**Conclusion: those references are template-native conditional guards**
+("When the `agent-intercom` capability pack is installed…"). They self-disable
+via the pack list and were deliberately left untouched — editing them would
+diverge from upstream and force a manual conflict on every future
+tune/merge-install.
+
+**Actual removal surface (5 files):**
+
+* `.autoharness/config.yaml` — dropped from `capability_packs`
+* `.autoharness/harness-manifest.yaml` — dropped from `capability_packs`,
+  `capability_pack_overlays`, and the artifact entry
+* `.autoharness/workspace-profile.yaml` — dropped from
+  `harness_recommendations.capability_packs`, the recommendation rationale, and
+  the `agent_intercom:` detection block
+* deleted `.github/instructions/agent-intercom.instructions.md` (pack overlay
+  instruction)
+* deleted `.github/prompts/ping-loop.prompt.md` (intercom-only; upstream
+  removed it in their own `ping-loop-removal-acp-consolidation` work, so it had
+  no 1.5.0 template and was already unmanaged)
+
+**Stale-justification note.** The profile claimed the pack was recommended
+`because: agent-intercom MCP server configured in .vscode/mcp.json`. That file
+does not exist, and root `.mcp.json` registers only
+`backlogit, engram, context7, tavily, github`. The detection block asserting
+`detected: true, mcp_configured: true` was therefore factually wrong and was
+removed rather than merely deselected.
+
+**Verification.** `profile_hash` / `config_hash` recomputed; both YAML files
+re-validated against their JSON schemas; `verify-workspace` reports blockers 0,
+warnings 2 (the known upstream `_orchestrator` false positives), rendered
+artifacts 109 → 108, and — the decisive signal — **0 uninstalled templates**,
+confirming the deselection propagated so the renderer no longer expects the
+intercom instruction file. `gate pipeline-topology` PASS.
+
 ## Next steps
 
 1. Open a PR from `chore/autoharness-merge-install-1.5.0`.
 2. Decide whether to wire `scripts/ci-topology-check.sh` into CI (installed
    additively, not referenced by any workflow).
-3. Decide whether `.github/prompts/ping-loop.prompt.md` should be deleted now
-   that no 1.5.0 content references it.
+3. ~~Decide whether `.github/prompts/ping-loop.prompt.md` should be deleted.~~
+   Done in `d6dd31d` alongside the agent-intercom pack removal.
 4. Consider adopting the new `pre-push-quality-gates` hook (installed, opt-in;
-   profile sets `pre_push_gates: [format, lint, test]`).
+   profile sets `pre_push_gates: [format, lint, test, build]`).
+5. `copilot_review.enforcement` is `auto` (max wait 900s). Under P-018, PRs
+   where Copilot never engages return NOT_APPLICABLE, but once engaged,
+   unresolved threads BLOCK merge — PR #114 currently has 57 open threads.
+   Switch to `disabled` if that is not wanted.
