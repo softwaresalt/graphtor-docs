@@ -4,7 +4,6 @@ description: "Expert Rust implementation agent — applies language idioms, safe
 maturity: stable
 tools: vscode, execute, read, edit, search
 model_routing: "Tier 2 (Standard)"  # DEPRECATED — use model_tier
-model_tier: 2
 max_subagent_tier: 2
 reasoning_effort: ""
 model_provider: ""

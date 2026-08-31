@@ -6,7 +6,7 @@
 #
 # Schema: schemas/harness-config.schema.json
 
-schema_version: "1.0.0"
+schema_version: "1.1.0"
 
 # Installation preset: starter | standard | full
 preset: full
@@ -88,7 +88,7 @@ model_routing:
     model_provider: "anthropic"
     model_family: "claude-sonnet-5"
   tier3:
-    model: claude-opus-4.8              # Frontier: planning, architecture, analysis (e.g., claude-opus-4.6)
+    model: claude-opus-4.8              # Frontier: planning, architecture, analysis (e.g., claude-opus-5)
     reasoning_effort: "high"
     model_provider: "anthropic"
     model_family: "claude-opus-4.8"
@@ -96,17 +96,76 @@ model_routing:
     model_family: "gpt-5.6-sol"     # Orchestrator model override (default: claude-opus-4.8)
     reasoning_effort: "xhigh"
     model_provider: "openai"
+  # P-013.5: optional role routes for Stage/Ship invocation-time model routing.
+  # Absent/empty sub-fields fall back to tier3 (stage) / tier2 (ship) — do not
+  # remove this block to "disable" routing; leave sub-fields empty instead.
+  stage:
+    model_family: "claude-opus-4.8"             # Stage role route (falls back to tier3 when empty)
+    model_provider: "anthropic"
+    reasoning_effort: "high"
+    # F02FD596: optional nested per-role escalation override for Stage.
+    # Takes precedence over the legacy flat model_routing.escalation below;
+    # missing sub-fields fall back per-field to tier3 (never to the legacy
+    # flat route). MUST NOT be declared alongside a non-empty legacy flat
+    # escalation (both-present is AMBIGUOUS and fails closed, H2). Always
+    # rendered (like the flat escalation block below) so Step 3.4 can
+    # preserve an existing operator value through re-render/tune; leave
+    # sub-fields empty to omit this override.
+    escalation:
+      model_family: "claude-opus-4.8"
+      model_provider: "anthropic"
+      reasoning_effort: "xhigh"
+  ship:
+    model_family: "claude-sonnet-5"               # Ship role route (falls back to tier2 when empty)
+    model_provider: "anthropic"
+    reasoning_effort: "xhigh"
+    # F02FD596: optional nested per-role escalation override for Ship. Same
+    # precedence/ambiguity/always-rendered rules as Stage's nested
+    # escalation above.
+    escalation:
+      model_family: "claude-opus-4.8"
+      model_provider: "anthropic"
+      reasoning_effort: "xhigh"
+  # P-013.6: optional escalation route for telemetry-driven auto-escalation.
+  # Absent/empty sub-fields fall back per-field to tier3. If the resolved
+  # route equals a declared role route's resolved route, that is
+  # ESCALATION_DEGRADED (same-route no-op) -- declare a distinct family here
+  # to keep genuine escalation available; do not remove this block to
+  # "disable" escalation, leave sub-fields empty instead.
+  # F02FD596 -- DEPRECATED-LEGACY: prefer nested per-role escalation
+  # (stage.escalation / ship.escalation above) instead of this flat,
+  # role-agnostic block. Retained for backward compatibility (H9); MUST NOT
+  # coexist with any nested <role>.escalation override -- both-present is
+  # AMBIGUOUS and fails closed (H2). Migrate fully to nested per-role
+  # escalation, or remove the nested override(s), before declaring both.
+  escalation:
+    model_family: ""          # Escalation route (falls back to tier3 when empty)
+    model_provider: ""
+    reasoning_effort: ""
+  anchor_review:
+    model_provider: "openai"       # Anchor reviewer provider (default: openai)
+    model_family: "gpt-5.6-sol"           # Anchor reviewer family (default: gpt-5.6-sol)
+    reasoning_effort: "high"  # Leave empty to use model default
   adversarial_review:
     alt_provider: "google"    # e.g., google — leave empty to disable alternate-provider reviewer slot
     alt_family: "gemini-2.5-pro"      # e.g., gemini-2.5-pro — leave empty to disable
 
 # AI CLI tool startup configuration
-# Resolves copilot in the generated start.ps1 and start.sh scripts.
-# Set exe_path to the full path if copilot is not on PATH.
+# Resolves copilot in the generated start.ps1 and start.sh scripts,
+# and is read directly by `autoharness run`. Set exe_path to the full path if
+# copilot is not on PATH. Use args for flags that should always be passed, e.g.
+# ["--remote"].
 ai_tools:
   copilot_cli:
     exe_path: "copilot"  # Default: "copilot" (expects it on PATH)
                                       # Example: "C:\\Tools\\ghcpcli\\copilot.exe"
+    args: ["--yolo"]  # Default: []
+
+# Sidecar syncs `autoharness run` performs before launching the AI CLI tool.
+# Derived at merge-install time from the capability packs enabled for this
+# workspace. Omit this key to run every known sidecar (backward-compatible
+# default).
+sidecars: ["backlogit", "engram", "graphtor-docs"]
 
 # Optional browser-automation capability configuration (used when browser-verification is enabled)
 browser:

@@ -1,0 +1,165 @@
+---
+description: "Telemetry-driven auto-escalation protocol (P-013.6) — the escalation-payload contract, the config-resolved escalation route, and the single canonical ESCALATION_DEGRADED definition shared by Stage and Ship"
+applyTo: '**'
+---
+
+# Escalation Protocol Instructions
+
+This instruction is installed whenever `_stage.agent.md` **or** `_ship.agent.md`
+is present in the workspace (either-agent condition — distinct from the
+two-agent-only `role-enforcement.instructions.md` gate). It defines the
+**escalation-payload contract** that a halting agent compiles when a
+consecutive-failure threshold is crossed, and the single canonical definition of
+`ESCALATION_DEGRADED` referenced by both agent templates so the term is defined
+once and never drifts between them.
+
+## Status: Protocol Contract Active Now; Runtime Telemetry Substrate External (P-013.6)
+
+This document defines the **auto-escalation protocol contract** — the payload
+shape, the routing resolution rule, and the degraded-state fallback. The
+**agent-directed steps are active now**: when an installed `_stage.agent.md`
+or `_ship.agent.md` crosses its own already-existing, agent-observed
+consecutive-failure/iteration threshold (each pipeline agent's own Stop
+Conditions table — no new runtime component is required for the agent itself
+to follow this directive), the halting agent compiles the escalation payload,
+resolves the escalation route, applies the same-route guard, hands the payload
+off for analysis, and halts without executing the failed operation again. This
+is a real, present-tense behavior change to each agent's own stop-condition
+handling, not a future one.
+
+What remains **external and dormant** (routed OUT, per the 106-F plan) is
+narrower than "the whole protocol": specifically, (a) a standing, independent
+**runtime telemetry event emitter/sink/queryable store** that autonomously
+records events outside the acting agent's own reasoning loop, and (b) an
+**automated, non-agent threshold-evaluation engine** that would watch that
+telemetry substrate and fire escalation without any acting agent participating
+in the decision. Until that substrate exists, `evidence_path` /
+`artifact_refs` in the payload contract below are best-effort references (or
+absent, when telemetry is disabled) rather than guaranteed pointers into a
+live event store; the protocol does not depend on that substrate to function
+today. Operators must not be misled into believing a machine independently
+monitors and fires this protocol — it is always the acting agent, following
+its own already-tracked failure counters, that compiles the payload and
+resolves the route.
+
+## Authority-Preservation Invariant (NON-NEGOTIABLE)
+
+Escalation under this protocol is a **reasoning escalation** — a request for
+analysis of the failed unit of work by a stronger/deeper reasoning model — and
+is **never an authority escalation**. Compiling an escalation payload, resolving
+an escalation route, or handing off to engram MUST NOT, by itself:
+
+* authorize a shipment claim or task claim,
+* authorize a merge or admin-fallback merge,
+* authorize a source, template, schema, or backlog mutation beyond what the
+  invoking agent's own Role Boundary already permits,
+* bypass P-001 (release-unit sequencing), P-009 (merge-commit-only), P-014
+  (local review readiness), P-017 (dark factory contract), or P-020 (post-merge
+  compaction).
+
+The terminal state of an escalation is a **halt + engram handoff** for
+operator/asynchronous review. The handoff is for asynchronous or operator
+review, not a fourth attempt. It is never a silent, unsupervised expansion of
+what the halting agent is allowed to do.
+
+## Escalation-Payload Contract
+
+When a halting agent crosses its consecutive-failure threshold (see the
+invoking agent's own Stop Conditions table), it MUST compile an escalation
+payload containing the following fields before handing off and halting:
+
+| Field | Description |
+|---|---|
+| `threshold_kind` | The stop-condition category that triggered escalation (e.g., `build_fix_attempts`, `consecutive_task_failures`, `review_fix_cycles`, `fix_ci_cycles`). |
+| `threshold_count` | The observed count that crossed the configured limit for `threshold_kind`. |
+| `failure_summary` | A concise, human-readable summary of what failed and the immediate suspected cause(s). |
+| `last_n_action_refs` | References (tool-call identifiers, commit SHAs, or log offsets) to the last N actions attempted, so a reviewer or handoff analyst can reconstruct recent history without replaying it blind. |
+| `last_n_observation_refs` | References to the last N observed results (build/test output, review findings, CI check results) corresponding to `last_n_action_refs`. |
+| `artifact_refs` | Paths or identifiers of artifacts touched by the failing unit of work (files, backlog item IDs, PR number). Field name aligns with `schemas/tool-telemetry-event.schema.json#artifact_refs` so escalation payloads and tool telemetry events can be cross-referenced. |
+| `evidence_path` | Path to any structured telemetry evidence backing the failure (when telemetry is enabled), aligned with `schemas/tool-telemetry-event.schema.json#evidence_path`. Absent/empty when telemetry is disabled — this is not itself a failure condition. |
+| `resumption_checkpoint_ref` | A reference (checkpoint filename, memory doc path, or backlog comment) that lets the resolved escalation route (or the operator) resume the unit of work without losing state. |
+| `resolved_escalation_route` | The `(model_family, model_provider, reasoning_effort)` tuple actually resolved for this handoff, per the Escalation Route Resolution section below. Recorded here — not merely resolved in-memory — so a handoff consumer has a contract-defined route on which to run the promised independent analysis without re-deriving the resolution precedence itself. Present only when the resolution is not `ESCALATION_DEGRADED` (see below); a degraded route is never recorded in this field. |
+
+## Escalation Route Resolution (P-013.6 / F02FD596 nested per-role hierarchy)
+
+The escalation route resolves via a role-scoped precedence:
+
+1. **Nested per-role override**: `model_routing.<role>.escalation`
+   (`stage.escalation` or `ship.escalation`, matching the acting agent's own
+   role). When declared, the acting role resolves its escalation route from
+   this nested block. A nested override that declares only some fields falls
+   back **per field** to `model_routing.tier3` for the missing fields —
+   **never** to the legacy flat route below; an explicit nested override
+   never silently defers to the shared legacy route.
+2. **Legacy flat fallback (DEPRECATED)**: when the acting role has no nested
+   `escalation` override, `model_routing.escalation`
+   (`claude-opus-4.8` / `anthropic` / `xhigh`
+   — the pre-F02FD596 flat, role-agnostic route) resolves instead, with a
+   deprecation notice. This is retained, unremoved, for backward
+   compatibility. Whether this fallback is actually active for the acting
+   role in this installed workspace depends on whether a nested override is
+   declared for that role — check `model_routing.<role>.escalation` at
+   session-start reload time (H6) rather than assuming either shape from this
+   static instruction text, which describes the general precedence rule for
+   any workspace, not a fixed installed fact about this one.
+3. **Tier3 fallback**: any field still unresolved after (1)/(2) falls back
+   per-field to `model_routing.tier3`
+   (`claude-opus-4.8` / `anthropic` / `high`).
+
+This mirrors the P-013.5 `stage`/`ship` role-route fallback pattern: a
+targeted override, never a parallel tier taxonomy.
+
+**Both-present fail-closed (H2)**: the legacy flat `model_routing.escalation`
+and any nested `<role>.escalation` (for either role) MUST NOT both declare a
+non-empty field. When both are present, resolution is **AMBIGUOUS** and MUST
+fail closed — a schema-level constraint rejects this shape where expressible,
+and the loader/verification layer enforces the same rule as a backstop.
+Never auto-pick a winner; migrate fully to nested per-role escalation, or
+remove the nested override(s), to resolve the ambiguity.
+
+
+## `ESCALATION_DEGRADED` (canonical definition — defined once, referenced elsewhere)
+
+`ESCALATION_DEGRADED` is declared when **any** of the following hold:
+
+1. **Route unavailable.** The resolved escalation route cannot be dispatched by
+   the runtime (the model/provider is not available in this environment).
+2. **Engram unavailable.** The terminal engram handoff surface cannot be reached
+   (no MCP tool, no file-based fallback capable of receiving the handoff).
+3. **Same-route no-op (role-scoped, H3).** The fully-resolved escalation
+   tuple `(model_family, model_provider, reasoning_effort)` for the ACTING
+   role's own effective escalation route (nested `<role>.escalation` if
+   declared, else legacy flat, else tier3 fallback) equals that SAME acting
+   role's own already-resolved role route tuple (P-013.5) for this session —
+   compared only against the acting role's own route, never a different
+   role's route. For example, an agent whose role route is already pinned to
+   `tier3` receiving an unset `escalation` route that also falls back to
+   `tier3` would "escalate" to an identical model, which is not a real
+   escalation.
+
+When `ESCALATION_DEGRADED` is declared, the halting agent MUST fall back to its
+existing **operator-halt** path (the Stop Conditions escalation prompt already
+defined in its own agent template) rather than proceeding as though escalation
+succeeded. `_stage.agent.md` and `_ship.agent.md` both reference this single
+definition rather than re-declaring it, preventing drift between the two
+templates.
+
+## Terminal Engram Handoff
+
+When the resolved route is available and not degraded, the halting agent
+records the route in the payload's `resolved_escalation_route` field, hands
+the compiled payload to engram for asynchronous or operator review, and
+halts. It MUST NOT re-execute the failing
+operation after its circuit is open. The handoff is for asynchronous or
+operator review, not a fourth attempt. This handoff is
+informational/diagnostic — it carries no authority of its own (see the
+Authority-Preservation Invariant above).
+
+## Relationship to Other Policies
+
+* **P-013 / P-013.5**: This protocol extends the existing tier-escalation and
+  invocation-time routing enforcement machinery; it does not replace either.
+* **P-001 / P-009 / P-014 / P-017 / P-020**: Explicitly preserved — see the
+  Authority-Preservation Invariant.
+* **P-006 (Plan Hardening)**: Same-route degradation and dormant-until-runtime
+  status are documented failure modes for any plan extending this protocol.

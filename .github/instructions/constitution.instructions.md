@@ -138,29 +138,36 @@ creating parallel task state outside the configured backlog workspace.
 ordering, and durable execution traces. Treating it as a thin file store would discard the very
 capabilities that justify enabling the overlay.
 
-### Capability Overlay — adversarial-review
+### Capability Overlay — graphtor-docs
 
+When the workspace enables the `graphtor-docs` capability pack, agents MUST use the configured
+graphtor-docs workflow for indexed local documentation search, semantic retrieval, doc-link
+traversal, and source-index status checks. Agents MUST prefer graphtor-docs indexed retrieval over
+broad web search or raw filesystem scanning for conceptual, API-oriented, or documentation
+questions, MUST verify server reachability and index freshness before trusting results, and MUST
+not hand-edit tool-managed `.graphtor/` artifacts as a substitute for re-indexing or configuration
+updates.
+
+**Rationale**: graphtor-docs exists to resolve domain concepts and referenced APIs from an indexed
+local documentation corpus. Defaulting immediately to broad web search or raw file scanning wastes
+context budget and discards the retrieval leverage the overlay was meant to provide.
+
+### Capability Overlay — adversarial-review
 When the workspace enables the `adversarial-review` capability pack, agents MUST use the
 configured multi-model dispatch workflow for security-sensitive or compliance-critical work.
 Agents MUST escalate from standard review when 3+ P0/P1 findings are surfaced, dispatch parallel
 reviewer instances across different model tiers, and assemble consensus-weighted findings before
 treating HIGH-confidence P0/P1 findings as gate-blocking.
-
 **Rationale**: A single-model review has blind spots. Multi-model consensus review exists to
 raise confidence on the highest-risk changes before they merge.
-
-### Capability Overlay — graphtor-docs
-
 When the workspace enables the `graphtor-docs` capability pack, agents MUST prefer indexed
 semantic and keyword search (`search_local_docs`, `search_semantic`, `research_topic`) over raw
 file scans for documentation lookups, MUST verify server reachability before trusting query
 results, and MUST treat `.graphtor/` generated artifacts as tool-managed state rather than files
 to hand-edit directly.
-
 **Rationale**: graphtor-docs exists to compress documentation cross-referencing into a queryable
 local index. Bypassing it discards the token-efficiency and freshness guarantees the overlay was
 meant to provide.
-
 ### IX. Git-Friendly Persistence
 
 All workspace state managed by the agent harness MUST be serializable to
@@ -243,7 +250,9 @@ cargo audit
 5. **No dead code**: Placeholder modules MUST be replaced or removed before a
    release unit is considered complete.
 6. **Operational closure**: Work is not complete at “green CI” if runtime validation,
-   monitoring setup, or release handoff remains unresolved.
+   monitoring setup, or release handoff remains unresolved. Required post-merge context
+   compaction (**P-020**) is part of the mandatory closure set: Ship MUST invoke the
+   compact-context skill at every post-merge closure.
 
 ### Task Granularity (NON-NEGOTIABLE)
 
@@ -308,7 +317,7 @@ with these principles.
 | II. Test-First Development | NON-NEGOTIABLE | P-002/P-004 policies; harness-architect red phase; build-feature green phase |
 | III. Workspace Isolation | MUST | Agent runtime path resolution within workspace root |
 | IV. CLI Containment | NON-NEGOTIABLE | Agent runtime cwd boundary enforcement |
-| V. Structured Observability | MUST | Broadcasting, commit messages, structured reporting |
+| V. Structured Observability | MUST | Broadcasting, commit messages, structured reporting; P-020 post-merge compaction closure gate |
 | VI. Single Responsibility | SHOULD | Code review persona checks on dependency additions |
 | VII. Destructive Approval | NON-NEGOTIABLE | P-005 violation telemetry; strict-safety enforcement when enabled |
 | VIII. Safety Modes | MUST | safety-modes skill invocation; strict-safety decision gate when enabled |

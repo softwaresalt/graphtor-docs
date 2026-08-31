@@ -304,19 +304,22 @@ P-005 violation event.
 | Applies To | All agents and skills                    |
 | Gate Point | Session start (Step 0.0) before any pipeline work |
 
-**Statement**: Agents must probe configured tools before relying on them and must explicitly declare degraded mode when a configured tool is unavailable. Silent fallback to ad hoc filesystem operations (grep, cat, find) when a configured tool is expected is a policy violation.
+**Statement**: Agents must probe configured tools and required workflow capabilities before relying on them, and must explicitly declare degraded mode when a configured tool or required capability is unavailable. Silent fallback to ad hoc filesystem operations (`grep`, `cat`, `find`), silent reviewer-dispatch skips, or other undeclared substitutions when a configured surface is expected is a policy violation.
 
-**Required actions at session start**:
-1. Check for `.autoharness/backlog-registry.yaml`. If present, identify required operations.
-2. Probe each required tool with a read-only lightweight operation.
-3. On failure: check for a registry-declared CLI fallback (`cli_command` field).
-   - If CLI fallback exists: log `TOOL_DEGRADED: {tool_name} — using CLI fallback` and proceed.
-   - If no fallback: halt with `TOOL_UNAVAILABLE: {tool_name}`.
-4. On success: log `TOOL_OK: {tool_name}`.
+**Required actions at session start or before a skill depends on the surface**:
+1. Check for `.autoharness/backlog-registry.yaml`. If present, identify required backlog operations.
+2. Identify required non-registry workflow capabilities for the current phase, such as reviewer subagent dispatch, model-specific reviewer routing, intercom approval routing, indexed retrieval, or CI/PR automation.
+3. Probe each required tool or capability with a read-only lightweight operation when a probe exists. On success, log `TOOL_OK: {tool_or_capability}`.
+4. For registry-backed backlog tools that fail: check for a registry-declared CLI fallback (`cli_command` field).
+   - If CLI fallback exists: log `TOOL_DEGRADED: {tool_name} — using CLI fallback: {cli_command}` and proceed through that fallback.
+   - If no fallback exists: halt with `TOOL_UNAVAILABLE: {tool_name}`.
+5. For required non-registry workflow capabilities that fail or cannot be probed:
+   - If the skill defines a safe deterministic fallback (for example, `dispatch_mode: single-agent-declared-degradation` with the same persona rubric applied inline), log `TOOL_DEGRADED: {capability} — declared fallback: {fallback_mode}`, record the degraded mode in the skill output, and continue only if the skill's minimum coverage and decision rules are still satisfiable.
+   - If no safe fallback exists, halt with `TOOL_UNAVAILABLE: {capability}` before depending on that capability.
 
-**Forbidden**: Silently bypassing a configured tool with ad hoc `grep`, `cat`, or directory scans when the backlog tool is registered but unavailable. This masks configuration problems and produces incorrect results.
+**Forbidden**: Silently bypassing a configured backlog tool with ad hoc filesystem scans, silently skipping required reviewer subagent dispatch, or silently replacing a model-specific/capability-specific workflow with same-model inline work without a `TOOL_DEGRADED` record and a machine-readable fallback marker. These mask configuration problems and produce incorrect readiness signals.
 
-**Exception**: When no backlog tool is registered (no `.autoharness/backlog-registry.yaml` or empty registry), file-backed manual mode is the intentional operating mode, not a degradation.
+**Exception**: When no backlog tool is registered (no `.autoharness/backlog-registry.yaml` or empty registry), file-backed manual mode is the intentional operating mode, not a degradation. Optional capabilities that are not selected for the current phase are not degradations; once a skill declares a capability required, P-012 applies.
 
 **Violation Action**: Log `POLICY_VIOLATION: P-012 — silent fallback detected` (via P-005 telemetry), surface the degradation explicitly, and re-evaluate whether the session can continue safely.
 
@@ -324,7 +327,7 @@ P-005 violation event.
 
 ## P-013: Agent Tier Hierarchy and Escalation
 
-**Purpose**: Enforce consistent model tier usage across the harness — agents must operate at their declared tier, subagents must not exceed the invoking agent's `max_subagent_tier`, and escalation to higher tiers follows a defined circuit before halting.
+**Purpose**: Enforce consistent model tier usage across the harness — agents must operate at their config-resolved tier, subagents must not exceed the invoking agent's `max_subagent_tier`, and escalation to higher tiers follows a defined circuit before halting.
 
 | Field      | Value                                    |
 |------------|------------------------------------------|
@@ -333,9 +336,9 @@ P-005 violation event.
 | Gate Point | Before every subagent invocation; before escalation requests |
 | Owner      | Orchestrator                             |
 
-### P-013.1 — Declared Tier Compliance
+### P-013.1 — Resolved Tier Compliance
 
-Every agent must operate at the tier declared in its frontmatter `model_tier` field. An agent must not request a lower-capability model than its declared tier to reduce cost, nor a higher-capability model than its declared tier without following the escalation path in P-013.3.
+Every agent operates at the tier bound to it by the config-driven `model_routing` map in `.autoharness/config.yaml`. That binding is resolved at install time into the agent's `model_family` / `model_provider` / `reasoning_effort` frontmatter (its effective model) and is documented in the agent's persona prose (for example, "operates at Tier 2 (Standard)"). An agent must not request a lower-capability model than its resolved tier to reduce cost, nor a higher-capability model than its resolved tier without following the escalation path in P-013.3.
 
 ### P-013.2 — Subagent Tier Ceiling
 
@@ -343,19 +346,55 @@ An agent must not invoke a subagent at a tier higher than its own `max_subagent_
 
 ### P-013.3 — Escalation Path Before Halt
 
-When a Tier 1 or Tier 2 agent fails the same unit of work 3 consecutive times, the agent must escalate to the next tier before halting:
+When a Tier 1 or Tier 2 agent fails the same unit of work 3 consecutive times, the agent must route the failure evidence to the next tier for analysis and then halt:
 
-1. **Tier 1 → Tier 2 escalation**: Re-attempt with a Tier 2 model.
-2. **Tier 2 → Tier 3 escalation**: Re-attempt with a Tier 3 model (requires operator confirmation if `strict_safety` is enabled).
+1. **Tier 1 → Tier 2 escalation**: Hand off the failure evidence to a Tier 2 model for analysis.
+2. **Tier 2 → Tier 3 escalation**: Hand off the failure evidence to a Tier 3 model for analysis (requires operator confirmation if `strict_safety` is enabled).
 3. **Tier 3 → Halt**: Record a P-013 violation (P-005 telemetry) and surface the failure to the operator with full context.
 
-Skipping escalation steps and halting prematurely is a P-013 violation.
+The analyzing tier MUST NOT re-execute the failing operation after its circuit is open. Skipping the escalation handoff is a P-013 violation.
 
 ### P-013.4 — Tier Annotation in Agent Definitions
 
-Every agent definition (installed `.agent.md` or `.agent.md.tmpl`) must declare `model_tier` and `max_subagent_tier` as integer frontmatter fields. Agents that omit these structured fields are non-conformant and must be updated before the next harness verification pass.
+Every agent definition (installed `.agent.md` or `.agent.md.tmpl`) must declare `max_subagent_tier` as an integer frontmatter field. The agent's base tier is expressed by its install-resolved `model_family` / `model_provider` / `reasoning_effort` frontmatter (populated from the `model_routing` map) together with the tier selection baked into its template — it is not duplicated as a standalone `model_tier` integer. Agents that omit `max_subagent_tier` are non-conformant and must be updated before the next harness verification pass.
 
 **Violation Action**: Record a P-013 violation (via P-005 telemetry) with the specific sub-policy identifier (P-013.1–P-013.4), halt the violating invocation, and surface the violation to the operator.
+
+### P-013.5 — Invocation-Time Model-Routing Enforcement
+
+**Purpose**: Close the gap between "the desired role→model mapping exists in config" and "the mapping is actually honored at invocation time." Role-based model routing must be resolved, declared, and verified — never an informal per-session promise that the operator has to remember to apply manually.
+
+**Resolve**: The Orchestrator resolves an optional first-class role route (`config.model_routing.stage` / `config.model_routing.ship`) before invoking Stage or Ship. Each sub-field (`model_family`, `model_provider`, `reasoning_effort`) falls back independently to the agent's config-bound tier (Stage → `tier3`, Ship → `tier2`) when the role route or that sub-field is absent or empty. This preserves the P-013.2/P-013.4 tier taxonomy — a role route is a targeted override, not a parallel tier system, and does not reintroduce a `model_tier` integer.
+
+**Declare**: The Orchestrator declares the resolved `model_family` / `model_provider` / `reasoning_effort` as an explicit invocation-time directive when invoking the subagent. Per Core Rule 3 (Environment Agnosticism), this is an intent directive plus resolved fields the runtime may honor — never a baked, environment-specific `--model` CLI flag.
+
+**Degrade explicitly, never silently default**: When the runtime cannot honor a per-invocation model override, the Orchestrator MUST emit `ROUTING_DEGRADED` naming the subagent and the resolved route that could not be honored, and surface it to the operator. Silently continuing on the current session model without declaring the degradation is a P-013.5 violation.
+
+**Skill inheritance**: Skills invoked by a routed agent inherit that agent's already-resolved session model; they are leaf executors and do not carry their own `model_family` field or re-resolve routing per skill call (see the skill-delegation contract in `role-enforcement.instructions.md`). A `ROUTING_DEGRADED` state on the invoking agent's session carries forward to every skill it invokes.
+
+**Fail-closed verification**: Harness verification fails when (a) an installed pipeline agent's (`_stage`, `_ship`, `_orchestrator`) `model_family` / `model_provider` is empty or an unresolved `{{...}}` placeholder; (b) the installed Orchestrator definition lacks the invocation-time routing directive; or (c) a declared `stage`/`ship` role route does not resolve (missing tier fallback target). These assertions are backed by red-green tests that fail against the pre-P-013.5 tree.
+
+**Violation Action**: Record a P-013.5 violation (via P-005 telemetry), halt the violating invocation, and surface the violation to the operator with the unresolved or silently-defaulted route named explicitly.
+
+### P-013.6 — Telemetry-driven Auto-escalation Protocol
+
+**Purpose**: Extend the existing manual escalation seam (P-013.3, and each pipeline agent's own consecutive-failure Stop Condition) into a **telemetry-driven auto-escalation protocol**: on a consecutive-failure/iteration threshold, the halting agent compiles a structured escalation payload, resolves a config-driven escalation route, hands the payload off for analysis, and halts. This is a **reasoning escalation**, never an **authority escalation** — it never self-authorizes a shipment/task claim, merge, admin fallback, or any mutation beyond what the halting agent's own Role Boundary already permits, and it never bypasses P-001/P-009/P-014/P-017/P-020.
+
+**Status — agent-directed steps active now, runtime telemetry substrate external**: P-013.6 defines the payload contract, the route-resolution rule, and the `ESCALATION_DEGRADED` fallback. The agent-directed steps (compile payload, resolve route, same-route guard, hand off for analysis, halt) are **active now**, triggered by each pipeline agent's own already-existing, agent-observed consecutive-failure/iteration threshold — no new runtime component is required for the agent itself to follow this directive. What remains external-guard territory (routed OUT) until a future runtime substrate exists is narrower: a standing, independent runtime telemetry event emitter/sink/queryable store, and an automated, non-agent threshold-evaluation engine that would fire escalation without any acting agent participating. Operators must not be misled into believing a machine independently monitors and fires this protocol — it is always the acting agent that compiles the payload and resolves the route.
+
+**Resolve (F02FD596 nested per-role hierarchy)**: The halting agent resolves its own escalation route via precedence: `model_routing.<role>.escalation` (nested per-role override; `stage.escalation` / `ship.escalation`) → legacy flat `model_routing.escalation` (**DEPRECATED**, resolvable by any role lacking a nested override, with a deprecation notice) → per-field fallback to `model_routing.tier3`. A nested override that declares only some fields falls back per-field to `tier3` for the missing fields — **never** to the legacy flat route; an explicit nested override never silently defers to the shared legacy route. This mirrors the P-013.5 `stage`/`ship` role-route fallback pattern (a targeted override, never a parallel tier taxonomy).
+
+**Both-present fail-closed (H2)**: When the legacy flat `model_routing.escalation` AND at least one nested `<role>.escalation` both declare a non-empty field, the configuration is **AMBIGUOUS** — resolution MUST fail closed (schema-invalid where expressible, loader hard-error/halt otherwise) rather than silently pick a winner. Migrate fully to nested per-role escalation, or remove the nested override(s) to keep the legacy shared route, before proceeding.
+
+**Declare (payload contract)**: Before handing off and halting, the agent compiles an escalation payload containing: threshold-kind + count, a failure summary, references to the last N actions and observations, artifact references, telemetry-evidence pointers (`evidence_path` / `artifact_refs`, aligned with `schemas/tool-telemetry-event.schema.json`), and a resumption checkpoint reference. This payload is defined once in `escalation-protocol.instructions.md` and referenced — never re-defined — by each pipeline agent template.
+
+**Degrade explicitly, never silently no-op (`ESCALATION_DEGRADED`)**: Resolution is degraded when any of the following hold: (a) the resolved escalation route cannot be dispatched by the runtime; (b) the terminal engram handoff surface is unavailable; or (c) the fully-resolved escalation tuple `(model_family, model_provider, reasoning_effort)` equals the acting agent's **own** already-resolved role route tuple (P-013.5) for this session — a **same-route no-op**, compared role-scoped (the acting role's own nested-or-legacy-resolved escalation against that same role's own resolved route, never a different role's route) that would silently "escalate" to an identical model. When degraded, the agent MUST fall back to its existing operator-halt path rather than proceeding as though escalation succeeded.
+
+**Authority-preservation invariant**: Compiling a payload, resolving a route, or handing off to engram never authorizes claim, merge, admin fallback, or any mutation the halting agent's Role Boundary does not already permit. The terminal state is halt + engram handoff for operator/asynchronous review — never a silent, unsupervised expansion of authority. The agent MUST NOT re-execute the failing operation after its circuit is open. The handoff is for asynchronous or operator review, not a fourth attempt.
+
+**Fail-closed verification**: Harness verification fails when (a) a role's escalation route (nested, legacy flat, or tier3-fallback) does not resolve to a usable route; (b) the legacy flat `escalation` and any nested `<role>.escalation` both declare a non-empty field (AMBIGUOUS_ESCALATION_CONFIG, H2); (c) a role's own resolved escalation tuple equals that same role's own resolved role route without being flagged `ESCALATION_DEGRADED` (role-scoped, H3); (d) an installed pipeline agent's template lacks the auto-escalation directive and reference to P-013.6; or (e) `escalation-protocol.instructions.md` is not installed when either `_stage` or `_ship` is present. These checks are existence-gated so default/legacy installs (no `escalation` route declared) pass via tier3 fallback.
+
+**Violation Action**: Record a P-013.6 violation (via P-005 telemetry), halt the violating invocation or verification pass, and surface the violation to the operator with the unresolved route, same-route no-op, or missing directive named explicitly.
 
 ---
 
@@ -421,6 +460,20 @@ Neither condition may be waived by the agent. Green CI alone is not approval. Op
 
 **Relationship to P-007**: P-015 complements **P-007** (backlogit archive integrity after shipment). P-007 restores archive files silently deleted from the working tree by the archival step; P-015 prevents the distinct parent-cascade failure where the covering feature and unshipped siblings — artifacts outside the manifest — are archived at all. Both are enforced at Ship Step 6 closure.
 
+**VERIFIED FULLY-COVERED-ROOT EXCEPTION**: The single-artifact safe-close prohibition above remains the DEFAULT for every shipment closure. A narrow, machine-checkable exception permits the cascade `backlogit_ship_shipment` close path **only** when every one of the following preconditions holds. This exception is quantified over **every feature member of the manifest**, never a single covering feature chosen in isolation:
+
+1. **Root-and-fully-covered, for every feature member.** Each feature member of the manifest MUST be a **root** (it declares no `parent_id`) AND MUST be **fully covered** (every one of its **descendants — at every depth, not only direct children** — enumerated by walking the full `parent_id` graph live from `.backlogit/queue/` and `.backlogit/archive/` starting at the feature, is also present as a manifest member). A feature member that is not a root, or whose descendants (at any depth) are not entirely present in the manifest, disqualifies the exception for the **whole** manifest. A check limited to direct children is insufficient (155-S, PR #407 review, thread PRRT_kwDORzpWpM6b2MJv): Backlogit's own `releaseScopeItemIDs` recursively adds every descendant of each manifest item — regardless of `artifact_type` — before `collectArchiveCandidateIDs` archives terminal descendants, so a manifest such as `[feature, task]` where that task itself has an out-of-manifest subtask would otherwise wrongly qualify, letting the destructive cascade archive that subtask before the `shipment-reconcile` skill's Cascade Close Sub-Procedure post-condition gate ever runs.
+2. **Childlessness is positively verified, never inferred.** When a root feature member enumerates to zero descendants (at any depth), that childlessness MUST be **positively verified** against the live workspace (query the backlog for the feature id's full descendant tree and assert the count is exactly zero) — it MUST NEVER be inferred merely from "no missing descendants were found" in an incomplete or failed enumeration. A feature member whose descendant tree cannot be reliably enumerated (a query error, an unindexed backlog directory, a malformed record encountered during the scan, or any other ambiguous outcome) is **not verified childless**, and this exception does not apply — the manifest falls back to the default safe-close prohibition.
+3. **Childless roots must additionally be terminal.** A childless root feature member must also be **terminal**: it parents nothing (already implied by zero descendants) and no manifest member independently declares it as `parent_id` (a redundant cross-check against a scan/manifest inconsistency).
+4. **The manifest contains nothing extra.** The manifest MUST contain **nothing** beyond the qualifying root feature member(s) and their (fully covered) descendants at every depth. Any additional manifest member — a non-root feature, or a task whose ancestry does not lead back to one of the qualifying root features — disqualifies the exception for the whole manifest.
+5. **Per-member qualification is not partial.** If **any** feature member of the manifest fails **any** of the preconditions above, the **whole manifest** falls back to the default safe-close prohibition. Qualification is never granted per-member; it is all-or-nothing across the entire manifest.
+6. **When all preconditions hold**, the cascade `backlogit_ship_shipment` close operation IS permitted for that shipment's closure, in place of the single-artifact safe-close procedure.
+7. **Pre-archived manifest members do not disqualify this exception.** A manifest member (task or feature) already present in `.backlogit/archive/` when these preconditions are evaluated is expected and tolerated: it satisfies precondition 1's coverage/root checks the same as a `queued` member (both `queue/` and `archive/` are scanned), and its pre-archived state does not disqualify the cascade close path, does not constitute an unresolved precondition, and does not authorize falling back to the default single-artifact safe-close procedure. `archived_ids` is a **transition log**: it reports the artifacts **actually transitioned** to archived during that invocation. A manifest task item, or a qualifying feature member's validated linked deliberation, whose declared `status` is already truly `archived` before the invocation has no transition to report and is **correctly absent** from `archived_ids` — this is expected, not an anomaly, and never disqualifies the `CASCADE` verdict. **This never extends to the shipment record or to a qualifying feature member itself** (155-S, PR #407 review, thread PRRT_kwDORzpWpM6b0kjI): both remain unconditionally required regardless of their own pre-close declared status, as stated later in this item — an already-archived qualifying feature is never "correctly absent" the way a task item or linked deliberation can be. The live fail-closed guard over this result is the two-set `allowed_ids` / `required_ids` gate specified in the `shipment-reconcile` skill's Cascade Close Sub-Procedure (step 3): `archived_ids` must never contain an ID outside `allowed_ids`, and every `allowed_ids` member that was **not** truly `status: archived` in the Step 0(b)/0(c) pre-close snapshot must appear in `archived_ids`. **The shipment record is a `required_ids` member unconditionally, regardless of its own pre-close declared status** — this policy summary and the skill's binding rule are the same contract and MUST NOT diverge: a pre-close shipment record that itself declared `status: archived` (an anomalous state for an artifact this same closure step is actively transitioning to `shipped`) does not satisfy this exception's checks merely by that declared status, and its absence from `archived_ids` still fails the missing-required-artifact check exactly as any other missing `required_ids` member would; no pre-close status ever exempts the shipment record from this requirement. **The same unconditional-required_ids rule applies to every qualifying feature member** (155-S, PR #407 review): Backlogit's own `ShipShipment` engine unconditionally forces every explicit qualifying feature member through `status: done` before the cascade's archive-candidate collection (`collectArchiveCandidateIDs`) ever runs, regardless of that feature's own pre-close declared status — including an already truly `status: archived` one — so a qualifying feature member is never still `status: archived` by the time `archived_ids` is computed, unlike a manifest task item or a qualifying feature's linked deliberation, neither of which is forced through any such unconditional pre-collection status change. Its absence from `archived_ids` therefore always fails the missing-required-artifact check exactly as a missing shipment record would; no pre-close status ever exempts a qualifying feature member from this requirement either. Once this classification returns `CASCADE`, that close path is fixed for this shipment's closure: substituting the default single-artifact safe-close procedure between the classification and the cascade invocation is a **P-005 process deviation**, never a permitted fallback, regardless of the manifest's archival state -- this no-substitution rule applies identically whether or not any manifest member happens to be pre-archived.
+
+   **SUPERSESSION NOTE (155-S, 2026-08-31).** This item previously asserted that the cascade operation "returns \[pre-archived members] in its `archived_ids` result exactly as it does newly-archived members", and pinned an exact-match, full-set-equality post-condition against the full manifest as one "which must never be relaxed to exclude them". **That claim was false and is WITHDRAWN.** Reading the backlogit engine source (`internal/core/shipment_lifecycle.go` `archiveItems()`) shows a truly `status: archived` item is skipped and never appended to the slice that becomes `archived_ids` — it has no transition to report. The claim was never true of the engine; the black-box spike that appeared to corroborate it (`docs/spikes/2026-08-18-cascade-close-pre-archived-member-behavior.md`, since superseded) had in fact only ever exercised inputs relocated to `status: done`, never a genuinely archived input. The two safety properties the withdrawn clause protected — nothing out-of-scope is archived, and nothing that still needed archiving is skipped — are now carried, at full strength, by the two-set `allowed_ids` / `required_ids` gate described above and specified in full in the `shipment-reconcile` skill.
+
+This exception is defined entirely in terms of the general shape above (root-ness, full coverage, verified childlessness, terminality, manifest completeness). It MUST NOT be narrowed or special-cased to any particular feature ID, shipment ID, or manifest shape anywhere in this policy text or in any implementation of it. The machine-checkable precondition check is implemented as a pure classification function (see the `shipment-reconcile` skill and the ship agent's closure-tasks references) that Ship consults to select the close path — the close path is never chosen from prose judgment alone.
+
 ---
 
 ## P-016: No Parallel Branch/Worktree Execution
@@ -477,7 +530,7 @@ Do not infer dark factory mode from vague autonomy language such as `run everyth
 **Activation contract**: On activation, Orchestrator MUST record `DARK_MODE_ACTIVE`
 and surface:
 
-1. the bounded scope (stash IDs, feature ID, shipment ID, or explicit backlog selection);
+1. the bounded scope (stash IDs, feature ID, shipment ID, or explicit backlog selection). For a **multi-shipment dark run**, record this scope as an **ordered shipment sequence** — the execution order resolved from the backlog tool's queue ordering and its dependency (blocks) relationships — rather than an unordered set. This is the same queue-ordering + dependency mechanism the Orchestrator shipment-selection rule (Step 2, "Route to Ship") consumes, so selection and recorded scope stay in agreement; when backlogit is the configured tool, the concrete recipe (`queue view`, `item_deps`, `queue_position`) lives in the backlogit **Shipment Sequencing Protocol**;
 2. whether PR merge approval is pre-authorized for that scope;
 3. whether admin fallback is pre-authorized for branch-protection review requirements;
 4. required stop conditions;
@@ -532,6 +585,23 @@ unavailable, the same event evidence must be recorded in the session/PR summary.
 Approval-dependent destructive actions, admin fallback, scope expansion,
 secrets-risk work, and ambiguous branch-protection states must halt.
 
+**`DARK_MODE_SCOPE` resume/audit evidence**: For a multi-shipment dark run,
+`DARK_MODE_SCOPE` MUST carry restartable resume/audit evidence — the **ordered
+shipment list**, the **last completed shipment**, and the **next shipment to
+claim** — a deterministic cursor derived from the backlog tool's queue ordering
+and dependency (blocks) relationships, with **no new scheduler and no
+sequence-manifest file**. Because a ready-work/queued-status listing surfaces
+only currently eligible shipments and omits dependency-gated (blocked)
+successors, the full ordered list cannot be read from a ready-work query alone:
+deriving and recording the complete ordered scope and restart cursor requires
+listing shipments across **both the queued and blocked statuses** (or an
+unfiltered shipment listing) plus dependency (blocks) traversal, since
+dependency-gated successors sit at `status: blocked` and a queued-only listing
+truncates the chain. The ready-work/queue query stays reserved for selecting the
+next *eligible* shipment (the Orchestrator selection rule in Step 2 "Route to
+Ship"). See the backlogit **Shipment Sequencing Protocol** for the derivation
+recipe.
+
 Dark-mode closure summaries MUST list decisions, gates, reviewed HEADs,
 merge/fallback status, admin fallback result if any, closure status, and
 follow-up items before `DARK_MODE_COMPLETE` is emitted.
@@ -543,6 +613,160 @@ follow-up items before `DARK_MODE_COMPLETE` is emitted.
 **Relationship to P-016**: Dark mode does not permit parallel implementation branches or worktrees. Stage spike/research worktrees remain the only exception and only under P-016's limits.
 
 **Violation Action**: Record a P-017 violation through P-005 telemetry and halt dark-mode execution. Leave the active task/shipment in its current backlog state unless a separate safe-close or rollback policy explicitly applies.
+
+---
+
+## P-018: Copilot Review Completion & Thread Resolution Merge Gate
+
+| Field      | Value                                             |
+|------------|---------------------------------------------------|
+| Policy ID  | P-018                                             |
+| Applies To | `ship`, `pr-lifecycle`, `fix-ci`                  |
+| Gate Point | Pre-merge (Ship Step 4), including the dark-mode admin fallback path |
+
+**Statement**: When GitHub Copilot review is **enabled** for a pull request, merge — including an `--admin` merge — MUST be held until (1) Copilot has completed a review for the **current** `headRefOid` and (2) every Copilot-authored review thread is resolved. This invariant is enforced deterministically by the `autoharness gate copilot-review <pr>` gate, not by prose alone. The gate is **fail-closed**: when review is enabled and completion or thread resolution is incomplete or unverifiable, it BLOCKS. `--admin` addresses branch-protection blocks; it does **not** satisfy or bypass this gate.
+
+* **Multi-round handling (by construction)**: because the gate requires a completed Copilot review for the *current* HEAD plus zero unresolved Copilot threads, every new push (new HEAD) that re-triggers Copilot naturally re-arms the gate. N rounds are handled without a round counter — the gate passes only when the latest HEAD is reviewed and clean.
+* **Enablement detection**: `auto` (default) treats a Copilot review request or an existing Copilot review as engagement; with no per-PR engagement signal the gate is not-applicable (PASS), so the harness is never wedged waiting for a reviewer that will never come. `required` forces the gate on and holds merge even before Copilot is requested. `disabled` turns the gate off.
+* **Bounded-timeout escape (logged, still fails safe)**: a bounded `--max-wait` window governs how long the harness waits for an engaged reviewer to complete for the current HEAD. On expiry the gate emits a distinct `REVIEW_TIMEOUT` outcome that is logged and **still BLOCKS**. Only an explicit, audited `--force` overrides a BLOCK, recorded to the gitignored `.autoharness/gates/copilot-review-force-audit.log`. Timeout never equals silent merge.
+
+**Precondition**: The PR is being prepared for or presented for merge, the current-HEAD local review readiness gate (P-014) has passed, and `copilot_review.enforcement` is resolved (`auto` | `required` | `disabled`, default `auto`).
+
+**Postcondition**: Either the gate returns a PASS verdict (`SATISFIED` or `NOT_APPLICABLE`) for the current HEAD, or an audited `--force` override has been recorded, before any `gh pr merge` (with or without `--admin`) executes. A BLOCK verdict (`WAITING_FOR_REVIEW`, `UNRESOLVED_THREADS`, `REVIEW_TIMEOUT`, `DETECTION_AMBIGUOUS`, `VERIFY_FAILED`) with no recorded `--force` means no merge.
+
+**Relationship to P-014**: P-014 requires a current-HEAD *local* review readiness record. P-018 adds an independent, conditional dependency on *Copilot* review completion when Copilot review is enabled. Both gates must be satisfied for the same HEAD; neither substitutes for the other.
+
+**Relationship to P-017**: In dark factory mode, P-018 is preserved in full. The dark-mode merge-approval and admin-fallback state machine gains a `COPILOT_REVIEW_BLOCK` classification that admin fallback may **never** bypass. A `DARK_MODE_ACTIVE` activation record does not satisfy P-018; the gate must independently return PASS for the current HEAD (or an audited `--force` must be recorded).
+
+**Violation Action**: If a merge is attempted or presented as merge-ready while the gate returns a BLOCK verdict with no recorded `--force`, record a P-018 violation through P-005 telemetry (`violation_policy: P-018`, `gate: Ship Step 4`, `action: halted`) and halt. Do not merge.
+
+---
+
+## P-019: Local Pre-Push Quality-Gate Enforcement
+
+| Field      | Value                                             |
+|------------|---------------------------------------------------|
+| Policy ID  | P-019                                             |
+| Applies To | pre-push hook, `ship`, contributor local workflow |
+| Gate Point | Local `git push` (client-side), before remote CI  |
+
+**Statement**: When the pre-push quality-gate hook is **enabled** (opt-in via `core.hooksPath`), a `git push` MUST run the workspace-discovered quality gates (build, test, lint, format, typecheck — whichever the profile resolved) in a single deterministic pass and MUST block the push on any gate failure. The hook is a **local guardrail that shifts the fast-feedback gates left**, ahead of remote CI; it is not a replacement for the CI aggregation gate (see P-009 / the CI required-check contract). A gate whose tool is not installed is **skipped with a warning**, never treated as a failure, so a partial toolchain never wedges a contributor's push.
+
+* **Opt-in by construction**: the hook is committed but inactive until a developer runs `git config core.hooksPath <hook-dir>`. Nothing in the harness activates it automatically, so automated agents (including Ship) are never intercepted by a half-configured hook during their own push loop.
+* **Single deterministic pass (circuit-breaker safe)**: the hook runs each gate exactly once with no internal retry loop, consistent with the circuit-breaker discipline. Push either passes all present gates or is blocked with a clear per-gate report.
+* **Cross-platform parity**: the `.sh` and `.ps1` hook variants enforce the same gate set so the guarantee holds regardless of the contributor's shell.
+* **Advisory, not a merge gate**: P-019 governs the *local* push experience. It does not substitute for P-014 (local review readiness), P-018 (Copilot review), or the remote CI required check. A workspace with the hook disabled still relies entirely on those remote gates.
+
+**Precondition**: The pre-push hook is installed in the workspace (`local_gating.pre_push_enabled: true`) and a contributor has opted in via `core.hooksPath`.
+
+**Postcondition**: Either every present quality gate passed for the pushed commits, or the push was blocked locally with an actionable per-gate failure report. Absent tools are reported as skipped, not failed.
+
+**Relationship to the CI required-check contract**: P-019 is the local, shift-left counterpart of the remote CI aggregation gate. The harness produces both the pre-push hook (local) and the aggregation-gate CI job (remote); re-adding or renaming a **required** status check in a branch ruleset remains an operator configuration action — the harness never edits rulesets.
+
+**Violation Action**: If the hook is enabled but a push proceeds despite a failed present gate (e.g., the hook was bypassed with `--no-verify` outside an approved exception), record the bypass through P-005 telemetry (`violation_policy: P-019`, `gate: local pre-push`, `action: bypassed`) so the local-gate skip is visible. Local bypass does not exempt the change from remote CI or the merge gates.
+
+---
+
+## P-020: Post-Merge Context Compaction
+
+| Field      | Value                                             |
+|------------|---------------------------------------------------|
+| Policy ID  | P-020                                             |
+| Applies To | `ship`, `orchestrator`, `compact-context`         |
+| Gate Point | Ship post-merge closure (Step 6)                  |
+
+**Statement**: At every post-merge closure, the ship agent MUST invoke the
+environment-agnostic **compact-context skill** (`target: all`) so session memory,
+plan, and closure artifacts are consolidated into durable docs-root files and
+verbose originals are archived. The mechanism is the compact-context skill, not
+any environment-specific in-conversation compaction command — no such literal
+command is hard-wired into any harness artifact (autoharness is
+environment-agnostic and cannot hook environment-controlled conversation
+commands; the compact-context skill is the file-level analog).
+
+**Invocation vs. candidate selection (decoupled)**: This policy mandates
+**INVOCATION** of the skill at the closure boundary (guaranteed per-merge). It
+does **not** mandate heavy compaction work. The skill's **CANDIDATE SELECTION**
+remains threshold-gated and unchanged (`threshold_days`, `max_files`,
+`max_size_kb`; active checkpoints are never compacted). The just-closed release
+unit's memory is the one intended per-merge candidate (eligible under the
+completed-work rule), so the guaranteed call performs a bounded, cheap Tier-1
+consolidation of that fresh memory and degrades to a scan-only no-op only when no
+completed-work memory exists and nothing else exceeds the thresholds. Guaranteed
+invocation neutralizes the cost/latency objection while providing a consolidation
+floor and preventing silent drift.
+
+**Precondition**: The PR has merged and Ship Step 6 post-merge closure has been
+entered.
+
+**Postcondition**: compact-context has been invoked with `target: all` and its
+outcome recorded as the operational-closure artifact's compaction status before
+the post-merge closure is declared complete.
+
+**Violation Action**: **SKIPPING** the invocation is a P-020 violation recorded
+through P-005 telemetry (`violation_policy: P-020`, `gate: Ship Step 6 closure`,
+`action: closure-incomplete`). Because backlog and shipment archival run earlier
+in closure, completeness is NOT tracked by shipment active-state; it is tracked by
+the operational-closure artifact's recorded **compaction status**. Skipping
+compaction leaves that status unset, so the post-merge release closure is
+**incomplete** and the Orchestrator's closure-gated routing (P-001 + P-020) holds
+the next shipment until compaction is completed and its status recorded — rather
+than hard-halting in a way that strands the merged PR. A compact-context run that
+**FAILS** is **NON-BLOCKING**: record `compaction: degraded` in the closure
+artifact, log a warning, and continue closure — the merge has already landed and
+the Tier-1 skill is non-destructive (it archives, never deletes).
+
+**Relationship to P-001**: Required post-merge compaction is part of the closure
+set that keeps a merged shipment in-flight until closure is complete. P-020
+composes with P-001; it does not restate or duplicate it.
+
+**Relationship to P-017**: In dark factory mode, post-merge closure MUST report
+compaction status as part of the closure summary before `DARK_MODE_COMPLETE` is
+emitted.
+
+---
+
+## P-021: Bounded Fix-Cycle Scope Containment and Deferred Expansion Capture
+
+| Field      | Value                                    |
+|------------|-------------------------------------------|
+| Policy ID  | P-021                                     |
+| Applies To | `ship`, `stage`, `orchestrator`, `pr-lifecycle`, `fix-ci` |
+| Gate Point | Any bug-fix, CI-fix, or review-comment fix cycle, and Stage stash triage |
+
+**Statement**: An expansion beyond the currently approved feature/task scope MUST NOT be implemented in the fix cycle that discovered it — regardless of whether the expansion surfaced through a review comment, a CI failure, or an incidental observation made while performing an authorized fix.
+
+* **C1 — scope test**: A finding is in scope only if the fix requires ONLY completing the exact change already authorized — the same contract surface. "Same file", "same function", "same PR", "same subsystem", and "related" are NOT sufficient tests of scope. Genuine ambiguity resolves OUT of scope (fail-safe default).
+  * **C1 worked discrimination** (hardening H6; provenance: `docs/compound/2026-08-16-bounded-review-fix-cycle-scope-and-mechanical-consequence-judgment.md`):
+    (a) "the verifier does not require the field we just added" -> same surface -> fix.
+    (b) "the regex does not handle an object-separated form" -> different surface -> defer, EVEN THOUGH same function, same file, same PR, and in scope for an earlier authorized cycle.
+    (c) "a policy interaction is unresolved" -> different surface and a different kind of work (a design decision, not a mechanical fix) -> defer.
+* **C2 — mandatory capture** (hardening H7): Capture is a PRECONDITION for closing an out-of-scope finding, and capture is NEVER conditional on a PR or a review thread existing. Record a stash entry with, at minimum, the following payload:
+  1. The literal, greppable token `DEFERRED SCOPE EXPANSION`.
+  2. A one-sentence statement of the expansion.
+  3. Why it is out of scope, citing C1.
+  4. Source refs — PR number when applicable, review-thread ID when applicable, task ID, feature ID, shipment ID — with availability judged INDEPENDENTLY PER FIELD: each identifier that exists at capture is recorded, and each identifier that does not exist at capture is recorded as an explicit `N/A`. The PR number and the review-thread ID are SEPARATE refs and MUST NOT be fused into a single `PR/thread` ref or treated as jointly available: a build/CI finding has an open PR but no thread, and a pre-PR local-review finding has neither.
+  5. A `requires deliberation` flag.
+  6. Kind and provisional priority.
+* **C3 — bounded resolution**: Resolve the in-scope defect/comment as far as possible WITHOUT the expansion. WHERE A REVIEW THREAD EXISTS for the finding, reference the deferred entry ID in the review-thread reply (posted BEFORE the thread is resolved) and in the PR/closure residual-risk record. WHERE NO REVIEW THREAD EXISTS — pre-PR local-review findings, because Ship's local review runs before PR creation, and build/CI findings, which have no thread even on an open PR — the reference obligation is discharged IN FULL by citing the deferred entry ID in the task-level, run-level, and closure residual-risk record; the absence of a reply is NOT a C3 shortfall. C3 MUST NOT be stated as an unconditional thread-reply requirement: it has to be satisfiable on every surface Ship actually operates, and 134.004-T and 134.007-T already implement exactly this conditional disposition.
+  * **C3 symmetric guard** (hardening H12): A same-contract-surface completion of the authorized change IS in scope and MUST be fixed, not deferred; deferral without a captured entry and a residual-risk record is itself a violation.
+  * **C3 cycle-limit disposition** (hardening H14): A bounded fix-cycle limit's "accept remaining findings as backlog items" disposition (see the circuit-breaker instruction's Review-Fix Cycle Definition and the various Stop Conditions tables) applies ONLY to findings that FAIL C1. An in-scope (C1-passing) finding left unresolved solely because a cycle-count budget is exhausted is NEVER captured as a `DEFERRED SCOPE EXPANSION` entry — it was never out of scope — and, per the symmetric guard immediately above, MUST NOT be silently closed as an ordinary backlog item either: the cycle halts and that remaining in-scope finding is escalated to the operator for explicit disposition (extend the cycle-count limit, or explicitly accept documented residual risk) before the task or PR is presented as complete or merge-ready.
+* **C4 — non-bypass**: This is a BOUNDARY ON THE ACTIVE FIX CYCLE, not a list of insufficient authorizations ending in a sufficient one. Review pressure, finding severity, dark factory mode, circuit-breaker exhaustion, and convenience never authorize expansion — AND NEITHER DOES ANY AUTHORIZATION, INCLUDING EXPLICIT OPERATOR AUTHORIZATION. Nothing expands the fix cycle that discovered the expansion; the Statement's boundary is unconditional and admits no override. What explicit operator authorization CAN do is create or approve a SEPARATE work unit for the expansion, and only through the normal intake path: the C2 capture, then the mandatory C6 Stage deliberation/research/planning, then a new or expanded approved scope carried by that separate unit. Authorization is therefore a FORWARD act that opens new work, never a RETROACTIVE one that makes an already-discovered expansion in-scope for the cycle in flight.
+* **C5 — Ship capture-only carve-out** (hardening H2): Ship MAY create stash entries for capture only, and MUST NOT triage, prioritize, re-classify, edit, harvest, deliberate on, DISCRETIONARILY remove, or DISCRETIONARILY archive them — while the manifest-derived retirement of the source stash entry that fed the shipped scope, after a successful merge (Ship's existing post-merge Step 7 `backlogit_stash_archive` on `custom_fields.source_stash_id`), remains explicitly ALLOWED. Removal and archival are named as SEPARATE prohibited discretionary dispositions: archival is a distinct backlogit operation that also takes a Stage-owned deferred entry out of Stage's triage queue, so a prohibition naming only removal would leave the same loss reachable by another verb. The DISCRETIONARY qualifier governs BOTH verbs, and the manifest-derived post-merge cleanup exception survives unchanged. This capture-only creation grant and its accompanying prohibitions govern ONLY the P-021 C2 deferred-scope-expansion stash entries this policy introduces; they do not narrow, restrict, or otherwise apply to Ship's separate, pre-existing stash-entry creation allowances (for example, the Ship agent's pre-merge Step 9 / post-merge Step 6 follow-up-stash steps), which remain governed solely by P-010's Role Boundary and are unaffected by this clause.
+* **C6 — Stage intake obligation**: A DEFERRED SCOPE EXPANSION entry MUST route to the `deliberate` skill before any planning, regardless of shape, size, priority, or apparent triviality.
+* **C7 — Violation Action**: Implementing an out-of-scope expansion inside a fix cycle, or closing an out-of-scope finding with no captured deferred entry, records a P-021 violation via P-005 telemetry (`violation_policy: P-021`) and halts.
+
+**Precondition**: A fix cycle (bug-fix, CI-fix, or review-comment fix) is active, or Stage is triaging a stash entry that may describe a deferred scope expansion.
+
+**Postcondition**: Every finding discovered during the fix cycle has been classified under C1; every out-of-scope finding has a captured C2 entry and a C3-conditional disposition; no out-of-scope expansion has been implemented in the discovering cycle.
+
+**Relationship to P-010**: The C5 Ship capture-only carve-out narrows, rather than conflicts with, P-010's Ship Role Boundary. Ship's Forbidden column already prohibits stash triage, prioritization, and deliberation; P-021 adds a single narrow Allowed-column exception — creating a capture-only stash entry — while every other stash verb named in P-010's Forbidden column, including the discretionary removal/archival named there, remains forbidden to Ship.
+
+**Relationship to P-017**: Modeled on P-018's wording (hardening H9): in dark factory mode P-021 is preserved in full. A `DARK_MODE_ACTIVE` activation record does not satisfy or waive it; capture (C2), bounded resolution (C3), and non-bypass (C4) apply exactly as they do outside dark mode.
+
+**Relationship to P-018**: WHERE A REVIEW THREAD EXISTS, C3's reply + resolve + residual-risk disposition satisfies P-018's zero-unresolved-threads requirement honestly, without fabricating scope. Because P-018 governs review threads only, a threadless C3 discharge leaves no unresolved thread and therefore raises no P-018 obligation to satisfy.
+
+**Violation Action**: See C7 — implementing an out-of-scope expansion inside a fix cycle, or closing an out-of-scope finding with no captured deferred entry, records a P-021 violation via P-005 telemetry (`violation_policy: P-021`) and halts.
 
 ---
 
@@ -564,3 +788,15 @@ follow-up items before `DARK_MODE_COMPLETE` is emitted.
 | 1.11.0  | 2026-07-08     | Added P-016      | No parallel branch/worktree execution, with only explicit Stage spike/research worktrees exempt |
 | 1.12.0  | 2026-07-08     | Added P-017      | Dark factory autonomy contract — bounded autonomous execution, local-review authority, and audited merge approval |
 | 1.13.0  | 2026-08-30     | Amended P-007, P-010, P-015 | Selected-transport frontmatter-commit evidence and exactly-once closure paths; logical shipment lock held across relocation; halt-first, approval-gated, exact-path destructive recovery replacing broad directory restore; Stage/Ship authority split corrected (Stage never closes or archives shipments; Ship gets commit-only `update_item`, `return-blocked`, and the `shipped` terminal transition); literal capability conditions named |
+| 1.13.0  | 2026-08-31     | Added P-018      | Copilot review completion & thread resolution merge gate — deterministic, fail-closed, admin non-bypass, multi-round, bounded-timeout escape |
+| 1.14.0  | 2026-08-31     | Added P-019      | Local pre-push quality-gate enforcement — opt-in, single-pass, tool-absent→skip, shift-left counterpart of the CI aggregation gate |
+| 1.15.0  | 2026-08-31     | Added P-020      | Post-merge context compaction — mandatory compact-context invocation at Ship closure, invocation-vs-candidate-selection decoupling, skip=violation/closure-incomplete, failed-run non-blocking |
+| 1.16.0  | 2026-08-31     | Added P-013.5    | Invocation-time model-routing enforcement — resolve stage/ship role routes with per-sub-field tier fallback, declare-or-degrade invocation directive, fail-closed verification; preserves P-013 tier taxonomy |
+| 1.17.0  | 2026-08-31     | Added P-013.6    | Telemetry-driven auto-escalation protocol — escalation-payload contract, config-resolved escalation route with per-field tier3 fallback, canonical ESCALATION_DEGRADED (route/engram unavailable or same-route no-op), authority-preservation invariant; runtime trigger evaluator remains external-guard until a telemetry substrate ships |
+| 1.18.0  | 2026-08-31     | Updated P-013.6  | F02FD596: nested per-role escalation hierarchy (`stage.escalation` / `ship.escalation`) with legacy flat `model_routing.escalation` retained as deprecated fallback; both-present (flat + nested) fail-closed as AMBIGUOUS_ESCALATION_CONFIG; ESCALATION_DEGRADED same-route guard now role-scoped |
+| 1.19.0  | 2026-08-31     | Updated P-015    | Verified fully-covered-root exception item 7: a pre-archived manifest member does not disqualify the cascade close path — it satisfies coverage/root checks the same as a queued member, does not authorize safe-close fallback, and remains included in the idempotent cascade operation's `archived_ids` result under the unchanged exact-match post-condition |
+| 1.20.0  | 2026-08-31     | Added P-021      | Bounded fix-cycle scope containment and deferred expansion capture — C1 same-contract-surface scope test with worked discrimination, C2 mandatory six-field capture (never conditional on a PR or review thread), C3 bounded resolution conditional on thread availability with a symmetric guard, C4 non-bypass (no authorization, including operator authorization, expands the active fix cycle), C5 Ship capture-only carve-out, C6 mandatory Stage deliberation intake |
+| 1.21.0  | 2026-08-31     | Corrected P-015  | 155-S: fully-covered-root exception item 7's false full-set-equality claim over `archived_ids` withdrawn and replaced with a two-set `allowed_ids`/`required_ids` gate — `archived_ids` is a transition log (a truly `status: archived` member has no transition to report and is correctly absent), and the live guard is now: fail on `archived_ids - allowed_ids` (unexpected artifact) and fail on `required_ids - archived_ids` (required artifact not archived), evaluated as two separately-labelled, independently-failing conditions. Corrects, and does not delete or edit, the 1.19.0 row above |
+| 1.22.0  | 2026-08-31     | Corrected P-015  | 155-S (PR #407 review): item 7's `required_ids` summary now states, identically to the `shipment-reconcile` skill, that the shipment record is a `required_ids` member unconditionally regardless of its own pre-close declared status. Companion skill correction extends Step 0(c)'s classification/snapshot and the two-set gate so `allowed_ids` includes each qualifying feature member's existing, validated linked deliberation IDs (Backlogit's own `collectArchiveCandidateIDs`/`linkedDeliberationIDs` sources), with `required_ids` including such a deliberation only when it was not truly `status: archived` pre-close — preventing a qualifying feature's live linked deliberation from deterministically tripping the unexpected-artifact check after the engine archives it |
+| 1.23.0  | 2026-08-31     | Corrected P-015  | 155-S (PR #407 review): item 7's `required_ids` summary and the companion `shipment-reconcile` skill now state that a qualifying feature member is a `required_ids` member unconditionally, exactly like the shipment record — never eligible for the pre-archived tolerance previously (incorrectly) extended to it — because Backlogit's own `ShipShipment` engine forces every explicit qualifying feature member through `status: done` before archive-candidate collection runs, regardless of its own pre-close declared status. Only manifest task items and a qualifying feature member's validated linked deliberations retain the pre-archived tolerance. Additive; does not rewrite the 1.22.0 row above |
+| 1.24.0  | 2026-08-31     | Corrected P-015  | 155-S (PR #407 review, thread PRRT_kwDORzpWpM6b2MJv): item 1's "fully covered" precondition now requires walking the feature's FULL descendant tree (every depth via the `parent_id` graph), not only direct children. Backlogit's own `releaseScopeItemIDs` recursively adds every descendant of each manifest item before `collectArchiveCandidateIDs` archives terminal descendants, so a direct-children-only check could wrongly qualify a manifest such as `[feature, task]` when that task itself has an out-of-manifest subtask, letting the destructive cascade archive it before the skill's post-condition gate ever ran. `classify_shipment_close_path` (`src/autoharness/gates/shipment_closure.py`) now builds a full parent/child index and walks it transitively per qualifying-root candidate; regression coverage added in `tests/test_shipment_closure_classification.py`. Corrects, and does not delete or edit, the 1.19.0–1.23.0 rows above |
