@@ -356,25 +356,25 @@ runtime_validation:
         - exit-code
         - log-line
         notes: Expensive. Run when the change touches acquire/chunk/embed/db or the schema version.
-      - id: mcp-stdio-handshake
+      - id: mcp-stdio-startup
         kind: command
         target: graphtor-docs serve (MCP STDIO)
-        command: cargo run --release -- serve
+        command: cargo run --release -- serve < /dev/null
         url: null
         route: null
-        expected_signal: initialize response advertises the tool surface; server stays alive on STDIO.
+        expected_signal: server starts, binds STDIO, logs no startup error, and exits cleanly on stdin EOF.
         required: true
         evidence_types:
         - stdout
         - exit-code
         - log-line
-        notes: 'Primary runtime surface. Regression-prone: see the serve/initialize handshake plan in docs/exec-plans/.'
+        notes: 'Startup smoke only. This probe supplies NO JSON-RPC initialize request, so it does NOT validate the initialize handshake or the advertised tool surface — stdin is redirected from /dev/null so the server terminates on EOF instead of hanging the probe. Handshake coverage is carried by the required mcp-client-smoke manual checkpoint below. Automating it needs a harness that writes a valid initialize request and asserts on the response; no such harness exists in tests/ yet (deferred, see PR #114). Primary runtime surface, regression-prone: see the serve/initialize handshake plan in docs/exec-plans/.'
       manual_checkpoints:
       - id: mcp-client-smoke
         label: Query the server from a live MCP client
-        reason: STDIO transport, tool registration, and result shaping are only fully exercised by a real client session.
-        required_for_release: false
+        reason: STDIO transport, tool registration, and result shaping are only fully exercised by a real client session. This is now the ONLY validation covering the initialize handshake and the advertised tool surface — the mcp-stdio-startup command probe deliberately sends no initialize request — so it is required for release until an automated handshake harness exists.
+        required_for_release: true
         evidence_types:
         - operator-note
         notes: Call get_status, then search_local_docs and search_semantic against an indexed source.
-        fallback: Record the cli-status and mcp-stdio-handshake probe evidence and note the client check as deferred.
+        fallback: Record the cli-status and mcp-stdio-startup probe evidence and note the client check as deferred. Because this checkpoint is required_for_release, that fallback yields READY_WITH_CONDITIONS at best — the initialize handshake stays unvalidated — and never a clean READY.

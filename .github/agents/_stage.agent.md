@@ -871,6 +871,20 @@ directing the operator to Ship without a shipment ID is a **P-005 policy violati
       * **Mode H (fresh harvest)**: if an item cannot be added (duplicate, already assigned to
         another shipment, or blocked), skip it and record the reason. Do not abort assembly
         over a single skipped item. This tolerance is intentional and applies to Mode H only.
+      * **Mode H partial-coverage reconciliation (NON-NEGOTIABLE)**: step 5 seeds the covering
+        feature into `items` before coverage is known, so **any** skip recorded above converts
+        the shipment into a partial-feature shipment and invalidates that seeding. When one or
+        more items were skipped, Stage MUST remove the covering feature from the manifest and
+        move it into the protected set before handoff, restoring the invariant stated in step 5
+        that the covering feature is a manifest member **only** when the shipment fully covers
+        it (P-015). Leaving a partially covered feature in the manifest strands the skipped
+        descendant: `shipment-reconcile` protects only the protected set, so safe-close would
+        archive the covering feature while a live child remains outside it. If the covering
+        feature cannot be removed from the manifest — the registry exposes no removal
+        operation, or the call fails — **halt fail-closed**, leave the shipment unpublished and
+        un-handed-off, report the capability gap with the offending IDs, and hand recovery to
+        the operator. Never hand off a partial-coverage Mode H shipment whose manifest still
+        contains the covering feature.
 
 7. **Verify the manifest** by reading back the shipment using `backlogit_get_shipment` and
    confirming that its `custom_fields.items` membership matches `assembly_ids` exactly: same
@@ -880,7 +894,13 @@ directing the operator to Ship without a shipment ID is a **P-005 policy violati
      `shipment_id` becomes the authoritative handoff token only after this check succeeds. Any
      discrepancy — missing member, extra ID, count mismatch, order mismatch, or a prerequisite
      that leaked into the manifest — is a halt under step 6.d, not a report-and-proceed.
-   * **Mode H**: report any discrepancy alongside the items skipped in step 6.d.
+   * **Mode H**: report any discrepancy alongside the items skipped in step 6.d. Reporting is
+     sufficient only for the skipped members themselves; it is **not** sufficient for covering-
+     feature membership. Verify the step 6.d partial-coverage reconciliation held: if any item
+     was skipped, the covering feature MUST be absent from `custom_fields.items` and present in
+     the protected set. A partial-coverage shipment whose manifest still contains the covering
+     feature is a **halt**, not a reportable discrepancy — handing it off would let safe-close
+     archive the covering feature while a skipped descendant is still live.
 
 8. **Record `shipment_id`** in the session memory checkpoint and the session summary as the
    authoritative handoff to the Ship agent — in Mode R, only after step 7's exact-equality
