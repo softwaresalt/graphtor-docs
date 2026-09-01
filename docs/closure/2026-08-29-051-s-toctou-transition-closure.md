@@ -1029,11 +1029,14 @@ now resolved at the agent-contract/Stage-decision level:
   security sign-off** — the Accepted-Residual-Risk Record and
   `059.014-T` itself remain untouched and `queued`.
 * **(C) `return-blocked` role-boundary classification** — resolved by
-  `.github/agents/.ship.agent.md`'s Role Boundary Allowed column, which now
-  explicitly names the narrow, status-preserving `return-blocked`
-  operation (scoped to `shipment-reconcile`/safe-close, recording only the
-  exact blocked reason required, no broader item-planning authority) and a
-  companion Mutation Classification (P-010 fail-closed) table.
+  `.github/agents/_ship.agent.md`'s Role Boundary section (the file this
+  record cited as `.ship.agent.md`; PR #114 renamed it), whose companion
+  Mutation Classification (P-010 fail-closed) table now carries a
+  `backlogit_return_blocked` row explicitly naming the narrow,
+  status-preserving `return-blocked` operation (scoped to
+  `shipment-reconcile`/safe-close, recording only the exact blocked reason
+  required, no broader item-planning authority); the Allowed column itself
+  states the general `close shipments` authority the row narrows.
 * **(D) Continuity scoped to "current session" only** — resolved by
   broadening both agents' Continuity row to Ship-/Stage-owned checkpoints
   from the current *or a prior* session for the same shipment/PR/scope,
