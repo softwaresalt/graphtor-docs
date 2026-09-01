@@ -93,13 +93,21 @@ harness legitimately contains two disjoint families of double-brace tokens.
 
 | Family | Test | Severity |
 |---|---|---|
-| **Installer-owned** — a variable the installer was supposed to substitute | Token name appears in the variable table of `.github/skills/install-harness/SKILL.md` | **P0** |
-| **Authoring / interpolation** — a field filled in at runtime, not install time | Token name is absent from that table | **Not a finding** (advisory at most) |
+| **Installer-owned** — a variable the installer was supposed to substitute | Token name is a key of `variables_used` in `.autoharness/harness-manifest.yaml` | **P0** |
+| **Authoring / interpolation** — a field filled in at runtime, not install time | Token name is absent from `variables_used` | **Not a finding** (advisory at most) |
 
-Membership in the installer variable table is the discriminator. Authoring
-placeholders belong to artifact templates the skills themselves emit — the
-`compound` learnings frontmatter, `deliberate` decision artifacts, and
-`.github/policies/policy-proposal.md` — plus runtime message-interpolation
+Membership in the manifest's `variables_used` map is the discriminator. That
+map is written by the installer at install time and records exactly which
+variables were resolved into this workspace, so it is authoritative for this
+install and — unlike the `install-harness` skill's variable table — it is
+guaranteed to be present in the repository. Do not depend on
+`.github/skills/install-harness/SKILL.md`: that skill ships with the
+`autoharness` distribution and is not installed into target workspaces, so a
+report-only run cannot read it and would silently fail to classify.
+
+Authoring placeholders belong to artifact templates the skills themselves
+emit — the `compound` learnings frontmatter, `deliberate` decision artifacts,
+and `.github/policies/policy-proposal.md` — plus runtime message-interpolation
 fields in reviewer subagents. They are correct output, not drift, and flagging
 them makes every run emit false P0 blockers.
 
@@ -111,9 +119,16 @@ by location.
 
 ```text
 Pattern:  \{\{[A-Z_][A-Z0-9_]*\}\}
-Scope:    installed harness files (exclude *.tmpl, exclude .backlogit/)
-Classify: P0 only if the token name is in the install-harness variable table;
-          otherwise it is an authoring/interpolation field — not a finding
+Scope:    git-tracked installed harness files only (exclude *.tmpl and
+          .backlogit/). Restricting to tracked files is what keeps the check
+          honest: the vendored distribution under .copilot/installed-plugins/
+          is gitignored and the installer's preview render under
+          .autoharness/staging/ is untracked, and both legitimately carry
+          unsubstituted installer variables. Scanning them yields hundreds of
+          false P0 blockers.
+Classify: P0 only if the token name is a key of variables_used in
+          .autoharness/harness-manifest.yaml; otherwise it is an
+          authoring/interpolation field — not a finding
 Severity: P0 (installer-owned only)
 Action:   manual — the installer must re-run or the variable must be resolved
 ```
