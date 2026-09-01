@@ -187,13 +187,26 @@ citation convenience; it is never an assembly set. `assembly_ids` is exactly the
 **Covering feature:** `059-F` — *Identity-bound no-follow handle for store.rs read-only permission
 ops (sibling TOCTOU fix)*, rescoped by the 2026-08-29 re-deliberation (Option B).
 
-**Authorized `member_ids` — exactly 9 IDs (covering feature + eight implementation tasks), canonical
-(ID-sorted). These and only these become `assembly_ids`:**
+**Authorized `member_ids` — exactly 8 task IDs, listed in the authoritative parent-first
+dependency assembly order. These and only these become `assembly_ids`:**
 
 ```text
-059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T,
-059.005-T, 059.006-T, 059.010-T, 059.011-T
+059.001-T, 059.002-T, 059.006-T, 059.003-T,
+059.004-T, 059.005-T, 059.010-T, 059.011-T
 ```
+
+`059.006-T` precedes `059.003-T`, `059.004-T`, `059.005-T`, and `059.010-T` because each of those
+depends on it. This list is published in dependency order — not ID-sorted — because Mode R records
+`member_ids` verbatim and treats them as the ordered candidate `assembly_ids` and as the CLI
+`--items` string, so the set and the ordered transport input must be one and the same.
+
+**The covering feature `059-F` is deliberately NOT a member.** This is a **partial-feature
+shipment**: `059-F` retains five live children outside the manifest (`059.008-T` and `059.009-T`
+are `blocked`; `059.012-T`, `059.013-T`, and `059.014-T` are `queued`). Under P-015 the covering
+feature plus every unshipped sibling form the **protected set**, which safe-close must leave intact
+in `.backlogit/queue/`. Including `059-F` in the manifest would make safe-close archive it and
+strand those queued children under an archived parent. The `049-S` precedent likewise excluded its
+covering feature `056-F`.
 
 **Authorized `prerequisite_ids` — exactly 2 IDs. Gates, never members, never counted in the
 manifest:**
@@ -203,10 +216,10 @@ manifest:**
 | `059.007-T` (U7) | `done` and archived (`.backlogit/archive/059.007-T.md`) | **Already satisfied.** Absence from the live queue is expected for a satisfied prerequisite and is not a validation failure — Step 5.5 condition 2a(a) does not apply to prerequisites. `059.001-T` and `059.006-T` depend on it; condition 2a(e) permits that out-of-set edge because this decision records it as an intentionally terminal prerequisite. |
 | `059.014-T` (U14) | `queued` — the operator sign-off gate | **Not yet satisfied.** It must itself become `done` and archived after operator sign-off before it counts as satisfied. It is never normalized into a member to make assembly proceed. |
 
-**`handoff_ids` — the auditable union of the two sets above (11 IDs) and nothing more:**
+**`handoff_ids` — the auditable union of the two sets above (10 IDs) and nothing more:**
 
 ```text
-059-F, 059.001-T, 059.002-T, 059.003-T, 059.004-T, 059.005-T,
+059.001-T, 059.002-T, 059.003-T, 059.004-T, 059.005-T,
 059.006-T, 059.007-T, 059.010-T, 059.011-T, 059.014-T
 ```
 
@@ -218,20 +231,23 @@ other. The two sets are disjoint: no ID appears in both.
 `059.007-T` already is; `059.014-T` is not, and stays a gate until operator sign-off moves it to
 `done`/archived.
 
-**Exact assembly order — the 9 `member_ids` only (parent-first, then dependency order, per Step 5.5
-item 6). No `prerequisite_ids` entry appears in this order:**
+**Exact assembly order — the 8 `member_ids` only (parent-first, then dependency order, per Step 5.5
+item 6). Neither a `prerequisite_ids` entry nor the covering feature appears in this order:**
 
 | # | ID | Unit | Why this position |
 |---|---|---|---|
-| 1 | `059-F` | covering feature | parent-first; supplied as the initial `items` list at creation |
-| 2 | `059.001-T` | U1 | first implementation unit; both its dependencies (`059.007-T`, `059.014-T`) are prerequisites outside the member set, satisfied before assembly begins |
-| 3 | `059.002-T` | U2 | deps `059.001-T` |
-| 4 | `059.006-T` | U6 | deps `059.001-T`, `059.002-T` (in set) + `059.007-T` (prerequisite) |
-| 5 | `059.003-T` | U3 | deps `059.002-T`, `059.006-T` |
-| 6 | `059.004-T` | U4 | deps `059.002-T`, `059.006-T` |
-| 7 | `059.005-T` | U5 | deps `059.003-T`, `059.004-T`, `059.006-T` |
-| 8 | `059.010-T` | U10 | deps `059.003-T`, `059.004-T`, `059.006-T` |
-| 9 | `059.011-T` | U11 | deps `059.002-T` |
+| 1 | `059.001-T` | U1 | first implementation unit; both its dependencies (`059.007-T`, `059.014-T`) are prerequisites outside the member set, satisfied before assembly begins |
+| 2 | `059.002-T` | U2 | deps `059.001-T` |
+| 3 | `059.006-T` | U6 | deps `059.001-T`, `059.002-T` (in set) + `059.007-T` (prerequisite) |
+| 4 | `059.003-T` | U3 | deps `059.002-T`, `059.006-T` |
+| 5 | `059.004-T` | U4 | deps `059.002-T`, `059.006-T` |
+| 6 | `059.005-T` | U5 | deps `059.003-T`, `059.004-T`, `059.006-T` |
+| 7 | `059.010-T` | U10 | deps `059.003-T`, `059.004-T`, `059.006-T` |
+| 8 | `059.011-T` | U11 | deps `059.002-T` |
+
+The covering feature `059-F` is **not** supplied as the initial `items` list at creation: this is a
+partial-feature shipment, so `059-F` stays in the P-015 protected set (see the membership
+correction addendum below).
 
 **Explicitly excluded — already decided, and never to be swept in by queue scanning:**
 
@@ -275,12 +291,12 @@ synthetic harvest. Stage MUST then, in order:
    intersection between the sets, or on any ID this section did not name. **Halt fail-closed** on
    any failure — no partial assembly.
 3. Set `assembly_ids` = the validated `member_ids` (never `handoff_ids`, and never including a
-   `prerequisite_ids` entry), then create/reuse the shipment and add members in the exact 9-item
-   order tabled above, and verify the read-back manifest matches those 9 IDs exactly — same count,
-   same IDs, no extras, and no prerequisite present.
+   `prerequisite_ids` entry), then create/reuse the shipment and add members in the exact 8-item
+   order tabled above, and verify the read-back manifest matches those 8 IDs exactly — same count,
+   same IDs, no extras, no prerequisite present, and no covering feature.
 
 **Validation snapshot at the time of this decision** (informational; re-verify at assembly time):
-(a) all 9 `member_ids` present as live items in `.backlogit/queue/`; (b) all under `059-F`; (c) no
+(a) all 8 `member_ids` present as live items in `.backlogit/queue/`; (b) all under `059-F`; (c) no
 `059.*` item appears in any open shipment manifest — the only queued shipments are `049-S`, `052-S`,
 `053-S`, all `056.*`; (d) statuses ratified above; (e) the only out-of-set dependency edges are on
 the `prerequisite_ids` entries `059.007-T` and `059.014-T`. Prerequisite state: `059.007-T` is
@@ -378,15 +394,34 @@ The Mode R contract in `.github/agents/.stage.agent.md` was corrected by commit 
 the authorization as one 10-ID `handoff_ids` set that folded the sign-off gate `059.014-T` into the
 member list and into the assembly order. This addendum records the alignment applied here:
 
-* `member_ids` is exactly 9 — the covering feature plus eight implementation tasks — and is the only
+* `member_ids` is exactly 8 — the eight implementation tasks — and is the only
   thing that becomes `assembly_ids`.
 * `prerequisite_ids` is exactly 2 — `059.007-T` (already `done`/archived, satisfied) and
   `059.014-T` (`queued` until operator sign-off, then `done`/archived). Neither is ever a member.
-* `handoff_ids` is the 11-ID auditable union of those two sets and nothing more; it is never an
+* `handoff_ids` is the 10-ID auditable union of those two sets and nothing more; it is never an
   assembly set.
-* The assembly order lists the 9 member IDs only; `059.014-T` was removed from position 2.
+* The assembly order lists the 8 member IDs only, in parent-first dependency order;
+  `059.014-T` was removed from position 2.
 * The normalized-scope count is nine members. `059.014-T` was never normalized: it has been `queued`
   since creation and is a prerequisite, not a member.
+
+### Partial-feature membership correction addendum (2026-08-31, PR #114 review)
+
+A later PR #114 review finding established that the covering feature `059-F` MUST NOT be a shipment
+member. `059-F` retains five live children outside the manifest (`059.008-T`, `059.009-T`,
+`059.012-T`, `059.013-T`, `059.014-T`), which makes this a **partial-feature shipment**. Under
+P-015 the covering feature and every unshipped sibling form the protected set that safe-close must
+leave intact; including `059-F` in the manifest would archive it and strand those children under an
+archived parent. Superseding the counts recorded immediately above:
+
+* `member_ids` is exactly **8** task IDs — `059-F` removed.
+* `handoff_ids` is therefore a **10**-ID union (8 members + 2 prerequisites), a different
+  composition from the earlier, unrelated 10-ID set that had folded `059.014-T` into the members.
+* `member_ids` is published in **dependency order**, not ID order, because Mode R consumes the list
+  verbatim as the ordered `assembly_ids` and CLI `--items` string.
+* Mode R assembly may be **task-only**; `.github/agents/_stage.agent.md` was corrected in the same
+  pass to include a covering feature only when the shipment fully covers it.
+* The `049-S` precedent, which excluded its covering feature `056-F`, is the governing pattern.
 
 No item status, dependency edge, shipment, or sign-off state changed in this pass either.
 

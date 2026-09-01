@@ -54,7 +54,7 @@ fail-closed rule in `.github/instructions/role-enforcement.instructions.md`.
 
 | Operation | Classification |
 |---|---|
-| `backlogit_create_item` | Allowed — create the backlog items harvest produces (covering feature, sub-epics, tasks, subtasks), always with a `parent_id` naming an existing covering feature (Steps 5.1–5.3) |
+| `backlogit_create_item` | Allowed — create the backlog items harvest produces (covering feature, sub-epics, tasks, subtasks). A **root** item — the covering feature created in Step 5.1, which by definition has no parent — is created **without** `parent_id`; this root case is explicitly allowed and is never treated as an unclassified mutation. Every **non-root** item (sub-epic, task, subtask) MUST carry a `parent_id` naming an already-existing ancestor created earlier in the same hierarchy (Steps 5.1–5.3) |
 | `backlogit_update_item` | Allowed — write Stage-owned planning fields on items Stage owns: title, description, scope, acceptance criteria, priority, execution posture, template-backed body sections (`--section name=value`), and provenance custom fields (`source_stash_id(s)`, `source_deliberation_id(s)`) |
 | `backlogit_append_comment` | Allowed — append triage, deliberation, plan-review, and ratification notes to items Stage owns. Comments are audit trail and never status authority: a comment never advances, blocks, or normalizes an item |
 | `backlogit_add_dependency` / `backlogit_remove_dependency` | Allowed — maintain explicit dependency edges between Stage-created items so execution ordering is data rather than prose (Step 5.3) |
@@ -802,9 +802,14 @@ directing the operator to Ship without a shipment ID is a **P-005 policy violati
 5. **Create the shipment** (only when step 4 found no reusable shipment) — creation branches by mode:
    * **Mode R (atomic creation — the only permitted Mode R create)**: issue exactly one
      `backlogit_create_shipment` call whose initial `items` list is the **complete ordered
-     `assembly_ids` list** — the covering feature first, then every task in parent-first
-     dependency order — so the shipment is complete and correct the instant it becomes visible
-     to Ship. Never create a feature-only (or otherwise partial) shipment and then add the
+     `assembly_ids` list** — every member in parent-first dependency order — so the shipment
+     is complete and correct the instant it becomes visible
+     to Ship. Mode R assembly MAY be **task-only**: the covering feature is a member **only
+     when the shipment fully covers it** (every descendant at every depth is also a member).
+     For a **partial-feature** shipment the covering feature and every unshipped sibling form
+     the P-015 protected set and MUST NOT appear in the manifest, because safe-close archives
+     manifest members and would otherwise strand the remaining children under an archived
+     parent. Never create a feature-only (or otherwise partial) shipment and then add the
      remaining Mode R members: with no unpublished shipment state, a partial create is a
      partial shipment Ship can already claim, and Stage may not delete it.
    * **Registry capability gate (Mode R, evaluated before creating anything)**: confirm the
@@ -812,7 +817,7 @@ directing the operator to Ship without a shipment ID is a **P-005 policy violati
      single call, and pin the **transport format** before issuing it. On the CLI,
      `backlogit shipment create --title {title} --items {items}` takes `--items` as **one
      complete comma-separated string** in dependency order (for example
-     `--items 059-F,059.001-T,059.002-T`) — never repeated flags and never a partial string.
+     `--items 059.001-T,059.002-T,059.006-T`) — never repeated flags and never a partial string.
      On MCP, `backlogit_create_shipment` takes the documented list/array form **only if its
      tool contract says so**; if the tool contract does not document a list-valued `items`,
      do not assume one. If it cannot create with the complete list atomically — the parameter
@@ -824,8 +829,10 @@ directing the operator to Ship without a shipment ID is a **P-005 policy violati
      explicitly supports empty shipment creation, an empty `items` list is acceptable;
      otherwise prefer `[feature_id]` so the create call is fully specified and parent-first
      ordering is satisfied at creation time. The remaining items are added in step 6.
-   * In both modes the title derives from the covering feature title, and the covering feature
-     ID used here must itself be a member of `assembly_ids`.
+   * In both modes the title derives from the covering feature title. The covering feature ID
+     is used in the title regardless, but it is included in `assembly_ids` **only** when the
+     shipment fully covers that feature; in a partial-feature shipment it stays in the
+     protected set and out of the manifest (P-015).
    * Record the resulting `shipment_id` as the session output token — in Mode R it stays a
      candidate token until step 7's exact-equality verification passes.
    * Broadcast `[STAGE] Created shipment: {shipment_id} — "{title}"`.
@@ -889,12 +896,21 @@ blocked while any `prerequisite_ids` entry is unsatisfied.
 
 For the 059-F handoff specifically:
 
-* `member_ids` are exactly these 9 IDs — the covering feature plus eight tasks, listed in the
+* `member_ids` are exactly these 8 task IDs, listed in the
   authoritative parent-first dependency order used for `assembly_ids` and for the CLI
-  `--items` string: `059-F`, `059.001-T`, `059.002-T`, `059.006-T`, `059.003-T`,
+  `--items` string: `059.001-T`, `059.002-T`, `059.006-T`, `059.003-T`,
   `059.004-T`, `059.005-T`, `059.010-T`, `059.011-T`. `059.006-T` precedes `059.003-T`,
   `059.004-T`, `059.005-T`, and `059.010-T` because each of those depends on it. They are the
   shipment members and become `assembly_ids`.
+* **`059-F` is NOT a shipment member — it belongs to the protected set.** This is a
+  **partial-feature shipment**: the covering feature retains five live children outside the
+  manifest (`059.008-T` and `059.009-T` are `blocked`; `059.012-T`, `059.013-T`, and
+  `059.014-T` are `queued`). Adding `059-F` to the manifest would make safe-close archive the
+  covering feature while those children remain in `.backlogit/queue/`, stranding queued items
+  under an archived parent — exactly the corruption P-015 exists to prevent. Under P-015 the
+  covering feature plus every unshipped sibling is the protected set and MUST survive closure,
+  so this handoff is a **task-only** Mode R assembly. This matches the `049-S` precedent, which
+  likewise excluded its covering feature `056-F`.
 * `prerequisite_ids` are exactly `059.007-T` and `059.014-T`, and neither is ever a shipment
   member.
   `059.007-T` is already `done` and archived (`.backlogit/archive/059.007-T.md`), so it is

@@ -1000,11 +1000,13 @@ ratified the current terminal blocked reason as semantically correct without leg
 **Successor-shipment assembly path (Step 5.5 Mode R; added 2026-08-30).** The near-term items
 were harvested in an earlier session and already exist in the queue, so Step 5.5's default Mode H
 scope guard (harvest-only IDs) cannot admit them. The durable Mode R authorization names **two
-disjoint exact sets** — covering feature `059-F`; `member_ids` exactly the 9 IDs `059-F,
-059.001-T, 059.002-T, 059.003-T, 059.004-T, 059.005-T, 059.006-T, 059.010-T, 059.011-T` (these and
-only these become `assembly_ids`, in the parent-first assembly order recorded there); and
+disjoint exact sets** — covering feature `059-F`; `member_ids` exactly the 8 IDs
+`059.001-T, 059.002-T, 059.006-T, 059.003-T, 059.004-T, 059.005-T, 059.010-T, 059.011-T` (these and
+only these become `assembly_ids`, in that parent-first dependency assembly order); and
 `prerequisite_ids` exactly `059.007-T` (`done`/archived, satisfied) and `059.014-T` (the `queued`
-sign-off gate), neither of which is ever a shipment member. `handoff_ids` is only the 11-ID
+sign-off gate), neither of which is ever a shipment member. The covering feature `059-F` is **not**
+a member — this is a partial-feature shipment, so `059-F` and every unshipped sibling remain in the
+P-015 protected set. `handoff_ids` is only the 10-ID
 auditable union of those sets and is never the assembly set. Exclusions
 `059.008-T`/`059.009-T`/`059.012-T`/`059.013-T` are recorded alongside them in
 `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
