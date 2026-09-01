@@ -1547,15 +1547,44 @@ invocation is mandatory but candidate selection stays threshold-gated
   Boundary, is recorded in the compaction summary itself).
 * **Result**: 1 memory checkpoint compacted and archived (under the narrow
   explicit-consent exception above); 6 closure records compacted into 1
-  consolidated summary and archived (44,784 bytes); 2 compaction reports
-  added (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
+  consolidated summary and archived (44,784 bytes archived); 2 compaction
+  reports added (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
   `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`); 0 files
   deleted; 0 plan artifacts touched (structurally outside Ship's authority)
-  and 0 Stage-authored memory files mutated. All still-active work streams
-  (`049-S`, `052-S`, `053-S`, `056-F`, `059-F`) retain every checkpoint
-  untouched, the two sole remaining checkpoints for the completed
-  `047-S`/`048-S` shipments are preserved under the "most recent checkpoint"
-  constraint, and every Stage-authored memory candidate (including the
+  and 0 Stage-authored memory files mutated.
+  **Space recovered** (per the skill's Phase 4 report contract,
+  `.github/skills/compact-context/SKILL.md` lines 103-111), computed
+  directly from on-disk byte sizes, not estimated: the closure
+  consolidation recovered 30,515 bytes net (44,784-byte originals minus
+  the 14,269-byte `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`);
+  the memory-checkpoint consolidation recovered 31,620 bytes net (the
+  40,680-byte `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+  original minus the 9,060-byte
+  `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`
+  summary) — **62,135 bytes (~60.7 KiB) recovered in total**.
+  **Active task checkpoints preserved**: 36 of the 42 files currently in
+  `docs/memory/` (excluding `docs/memory/compacted/`) reference at least
+  one of the five currently-`queued` backlog IDs (`049-S`, `052-S`,
+  `053-S`, `056-F`, `059-F`, verified against `.backlogit/queue/`), and all
+  36 were left untouched this pass. The remaining 6 files
+  (`docs/memory/2026-08-16/dark-stage-session-complete-memory.md`,
+  `docs/memory/2026-08-17/047-s-session-closure-memory.md`,
+  `docs/memory/2026-08-17/048-s-session-closure-memory.md`,
+  `docs/memory/2026-08-22/circuit-break-engram-context-search.md`,
+  `docs/memory/2026-08-29/ship-050-s-post-merge-closure-memory.md`, and
+  `docs/memory/2026-08-31/autoharness-1-5-0-merge-install-memory.md`) name
+  no currently-active backlog ID and were preserved for other reasons
+  (most-recent-checkpoint-for-a-completed-item, or no shipment/feature tie
+  at all) rather than under the active-item constraint — they are not
+  counted in the 36 above. All still-active work streams (`049-S`,
+  `052-S`, `053-S`, `056-F`, `059-F`) retain every checkpoint untouched,
+  the most recent checkpoints for the completed `047-S`/`048-S` shipments
+  — Ship's own `047-s-session-closure-memory.md` /
+  `048-s-session-closure-memory.md`, plus the earlier Stage-authored
+  `docs/memory/2026-08-16/dark-stage-session-complete-memory.md` (a third
+  live checkpoint covering both shipments, preserved under Ship's Role
+  Boundary independent of the "most recent checkpoint" constraint) — are
+  preserved, and every Stage-authored memory candidate (including the
   three named above and the two named in the paired closure summary) is
   preserved under Ship's Role Boundary rather than compacted. The
   `docs/memory/` file-count threshold (53 > 40) is unchanged by this pass:
