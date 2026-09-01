@@ -1,10 +1,9 @@
 ---
-name: .Ship
+name: _Ship
 id: autoharness/pipeline/ship
 description: "Manages the backlog-to-shipped pipeline: harness generation, build execution, review, CI remediation, and PR lifecycle"
 maturity: stable
 tools: vscode, execute, read, agent, edit, search, todo, memory, backlogit
-model_tier: 2
 max_subagent_tier: 2
 reasoning_effort: "xhigh"
 model_provider: "anthropic"
@@ -36,7 +35,7 @@ Ship is an execution and delivery agent. Acting outside this boundary is a **P-0
 
 | Category | Allowed | Forbidden |
 |---|---|---|
-| Backlog | Claim the Stage-prepared shipment that scopes this session; move members of that shipment through `active` / `done` execution status; close **that one** shipment record by transitioning it to the valid terminal shipment status `shipped` and archiving that same shipment record as its own single artifact through the `shipment-reconcile` safe-close procedure, plus archiving each of its manifest members as its own single artifact; return a non-terminal member of Ship's current shipment through the status-preserving `return-blocked` operation, only as part of `shipment-reconcile` / safe-close, recording only the exact blocked reason that operation requires; write the actual delivered-work merge commit of Ship's current shipment or its current manifest members into that artifact's frontmatter `commit` with a **commit-only** `backlogit_update_item` (or the CLI equivalent `backlogit update {id} --commit {sha}`), recorded by `shipment-reconcile` safe-close **before** any terminal mutation of that artifact — or, for a member the shipment's own terminal `done` transition already relocated into `.backlogit/archive/` before the merge SHA existed, on that archived record **after** its fail-closed provenance validation passes — with an optional **MCP** `backlogit_track_commit` commit-link as **supplemental** provenance only (on CLI `track_commit` is the same canonical command, executed once, never double-called); create, update, and resolve Ship-owned checkpoints for the current or a prior session in the same scope after owner/scope validation; rebuild derived state via `backlogit_sync_index` and acknowledge Ship-addressed hook events; note that protected-artifact restore of `.backlogit/` queue or archive files after cascade detection (P-007) is a **Git-category** mutation classified in the Git row below — approval-gated there, and never a Backlog-category authority | Create backlog items, create shipments, update item planning fields (scope, acceptance criteria, dependencies, priority, title, description, labels, sections) — including as a side effect of `return-blocked`, of commit tracking, or of commit evidence; any `backlogit_update_item` call carrying a field other than `commit`; normalize a returned item from blocked back to queued; transition the shipment record to `done` (not a shipment status) or to any status outside the shipment enum; move, archive, or otherwise mutate any shipment record other than Ship's current one; delete a mistakenly created or mismatched shipment or backlog item; call the cascade `backlogit_ship_shipment` op (P-015); stash operations, triage, deliberate |
+| Backlog | Claim shipments, move tasks to active/done, close shipments, archive completed items; create a capture-only stash entry (P-021 C5) for a C2 deferred-scope-expansion capture or an existing pre-merge Step 9 / post-merge Step 6 follow-up-stash step; retire the source stash entry that fed the shipped scope via `backlogit_stash_archive` on `custom_fields.source_stash_id` at post-merge Step 7 (a manifest-derived closure operation, distinct from discretionary removal) | Create backlog items, create shipments, update item planning fields (scope, acceptance criteria); triage, prioritize/re-prioritize, re-classify, edit, harvest, or deliberate on stash entries; discretionary removal or archival of stash entries |
 | Source code | Delegate reads and writes to build/fix skills | — |
 | Git | Create and checkout feature/chore branches, commit, push; **backlog recovery only**: restore or revert `.backlogit/` queue or archive artifacts via `git restore` / `git revert`, solely to recover a protected-set artifact after `shipment-reconcile` cascade detection or to restore archive files lost as working-tree deletions (P-007), bounded to the exact identified paths or the exact revert commit, and only after explicit real-time operator approval | Commit or push directly to `main`; executing any recovery command before approval is granted; broadening recovery to unrelated paths or unrelated history; `git reset` in any form, force-push, or any other history rewrite — never permitted, even for recovery |
 | Build | Run build systems, test suites, linters, format checks | — |
@@ -211,8 +210,59 @@ build work begins:
       e. Log `BRANCH_CREATED: {branch_name}`.
     - If on an unrelated non-default branch: halt with `BRANCH_MISMATCH: currently on {branch_name} — does not match shipment scope. Checkout the correct branch or create one manually.`
     - Note: All git commands above are run as separate sequential steps, not chained.
+    - **TOPOLOGY_GATE: pre_claim (immediately before claim)** — if the gate is installed, immediately before the claim in
+      step 4, re-run `autoharness gate pipeline-topology --mode agent --shipment {shipment_id} --phase pre_claim --json`
+      to narrow the TOCTOU window between branch/worktree setup and the claim. Same exit-code handling as above: exit 0
+      proceeds to the claim; exit 1/2 halts immediately.
 4. If the shipment is still in `queued` status, claim it using `backlogit_claim_shipment` before
    build work begins. Broadcast `[SHIP] Shipment claimed: {shipment_id}`.
+4a. **TOPOLOGY_GATE: post_claim (immediately after claim, GLOBAL verification) — Post-claim shipment-status verification (Unit A — P-005 fail-closed)**:
+   Immediately after the claim and **before** the Step 4.1 Claim Task step moves any task to `active`:
+    - If the `pipeline-topology` gate is installed for this workspace, run
+      `autoharness gate pipeline-topology --mode agent --shipment {shipment_id} --phase post_claim --json`. This is the
+      GLOBAL verification contract: it re-reads **all** shipment records (not just this one) and requires exactly one
+      active shipment, the claimed target — not merely a target-status-only check.
+      - Exit 0: log `CLAIM_VERIFY_OK: shipment {shipment_id} reached active and is the sole active shipment` and proceed.
+      - Token `CLAIM_NOT_OBSERVED` (exit 3, `retry_required`, **not** `blocked`): pre-claim topology was valid but the
+        claim is not yet observed (the target is still `queued` with zero active shipments) — a single
+        stateless read cannot distinguish a merely-delayed claim from a genuinely failed one. This is **not** a terminal
+        halt. Perform the following bounded, double-claim-guarded reclaim-and-reverify sequence **at most once** --
+        reused from the existing backlogit re-read/retry-once logic below rather than introducing a new claim primitive, CAS, or lease:
+        a. **Double-claim guard (first)**: re-read the shipment's own status (CLI fallback
+           `backlogit shipment get {shipment_id}`). If it is already `active`, re-run the `--phase post_claim`
+           GLOBAL verification: if that now reports exit 0 (sole active target), the original claim actually succeeded
+           despite the token — treat as converged (`CLAIM_VERIFY_OK`) and do **not** reclaim. If the re-read is
+           `active` but post_claim now shows ambiguity or `SHIPMENT_STATE_INCONSISTENT`, halt terminally with
+           `CLAIM_VERIFY_FAILED` — **no reclaim**.
+        b. Only if still `queued` with zero active shipments: re-run the full `--phase pre_claim` GLOBAL
+           topology/readiness/zero-active check. Any non-zero pre_claim verdict is terminal fail-closed — never reclaim
+           into an invalidated topology.
+        c. **Perform the actual claim exactly once** (CLI fallback `backlogit shipment claim {shipment_id}`) — this is
+           backlogit's existing unlocked read/check/write claim (the same single claim-retry this section has always
+           performed); it introduces no CAS, lock, or lease.
+        d. **Re-run the immediate `--phase post_claim`** GLOBAL verification. Exit 0 (sole-active-target): converged,
+           proceed. A **second** `CLAIM_NOT_OBSERVED` (bound exhausted), or any other non-zero/ambiguous verdict: halt
+           terminally with `CLAIM_VERIFY_FAILED: shipment {shipment_id} did not converge after bounded reclaim` and
+           record a P-005 event.
+        The cycle above runs **at most once** — it is not an unbounded retry loop, and it fires **only** for
+        `CLAIM_NOT_OBSERVED` at this immediate post-claim point. It is never applied to any pre_claim, lifecycle, build,
+        PR, or closure invocation.
+      - Any **other** non-zero verdict from the gate is terminal at this invocation point: halt immediately with
+        `CLAIM_VERIFY_FAILED: shipment {shipment_id} returned {token}` and record a P-005 event -- no retry, no reclaim
+        — the `CLAIM_NOT_OBSERVED` carve-out above is the **only** retry-required outcome.
+    - Independent of gate installation, re-read the shipment record's own
+   status and assert it reached `active`. Prefer the CLI fallback (`backlogit shipment get {shipment_id}`) for this re-read —
+   MCP is the unreliable surface this guard exists to catch (the `Transport closed` drops observed live), so a
+   verify that trusts the same MCP path could be defeated by the very transient it is checking for.
+    - If the re-read status is `active`: log `CLAIM_VERIFY_OK: shipment {shipment_id} reached active`
+      and proceed.
+    - If the re-read status is `queued`: retry the claim exactly once (CLI fallback
+      `backlogit shipment claim {shipment_id}`) and re-read. If it still is not `active`, halt
+      fail-closed with `CLAIM_VERIFY_FAILED: shipment {shipment_id} did not reach active after claim` and record a
+      P-005 event. Retry-once applies **only** to a `queued` re-read.
+    - If the re-read status is anything other than `active` or `queued`: halt **immediately** with `CLAIM_VERIFY_FAILED: shipment {shipment_id} returned unexpected status {status}` — **no retry, no claim**. Any value outside `{active, queued}` is a fail-closed anomaly and must record a P-005 event. Backlogit 1.8.0 does not define a shipment `blocked` status; see `docs/compound/2026-05-07-backlogit-shipment-status-constraints.md`.
+    Both halts fire **before** the Step 4.1 Claim Task step moves any task to `active`. Broadcast the
+    claim-verify result when intercom is available.
 5. Record `shipment_id` as the session scope. All build execution and PR scope is bounded
    by this shipment.
 6. **Intake reconciliation check**: Invoke `shipment-reconcile` with `mode: pre` and
@@ -223,6 +273,16 @@ build work begins:
    means Stage swept
    non-harvest items into the manifest; reconcile before proceeding to Step 1. (Lock is not
    held at intake — this is a lightweight early-warning check only.)
+   **Scope note (139-F/139.001-T)**: this single-`expected_status` check applies to true
+   session-start intake, where every manifest task still shares one uniform status (all
+   `queued` pre-claim, or all `active` immediately after this session's
+   own claim in item 4 above). `shipment-reconcile`'s `mode: pre` accepts only one
+   `expected_status` value and classifies any other status as `status-mismatch`, so it cannot
+   represent a legitimately mixed manifest. Do not invoke this check on a resumed session where
+   manifest tasks have already diverged in status from prior partial execution (some
+   `done`, some `active`, some still `queued`) — rely instead
+   on the Step 3 item 1 executable-task-set derivation's own per-task status handling (C1–C6),
+   which is built for exactly that mixed state.
 
 **Direct-invocation path — select an existing Stage-prepared shipment (no creation)**:
 
@@ -337,9 +397,37 @@ dependency graph before proceeding rather than assuming the backlog ordering is 
 
 Now that all tasks are harnessed, construct the execution queue:
 
-1. List all tasks with `harness-ready` label and `queued` status for the target feature or chore.
-2. Sort the queue by dependency order (tasks with no unfinished dependencies first).
-3. If the queue is empty after harness generation, halt and report — there is nothing to build.
+1. **Shipment-manifest executable-set derivation (when operating under a Stage-prepared shipment; C1–C6,
+   139-F/139.001-T)**: The shipment manifest (`custom_fields.items` recorded at Step 0.5) is the **closure
+   membership record** — it is never the executable task set and is never mutated to make execution proceed. Before
+   assembling the queue in item 2 below, filter the manifest to task artifacts (IDs ending `T`; the covering
+   feature is resolved through `parent_id` and is never executed — the 097-S task-only-manifest precedent), THEN
+   read each task record's status; artifact-type filtering always precedes any status read. Apply the exhaustive,
+   positive status rule: KEEP `queued` and `active`; SKIP-AND-REPORT an archived member as
+   `pre_archived_skipped` — expressed through the `pre-archived` classification already defined by
+   `shipment-reconcile` (record archived / archive file present), never through a new archived-status template
+   variable (no new `{{VARIABLE}}` placeholder is introduced); REPORT an already-`done` member separately
+   as `already_done`; ANY OTHER, MISSING, OR UNREADABLE status is a FAIL-CLOSED HALT, never a skip. `already_done`
+   and `pre_archived_skipped` are distinct reported outcomes — a `done` member must never be laundered as
+   a tolerated pre-archived skip. A `pre-archived` member is EXPECTED AND TOLERATED, not an error: it must not halt
+   the run, and it is never claimed, never moved to `active`, never unarchived, and never removed from
+   the manifest. This derivation is a work-SELECTION step, never an integrity-guard step: the Step 0.5 item 1a
+   queued-with-active-work early-warning is UNCHANGED and continues to run strictly BEFORE this derivation; the
+   derivation never suppresses, replaces, softens, or pre-empts item 1a's `SHIPMENT_STATE_INCONSISTENT` halt. If the
+   derived executable set is EMPTY while the manifest is non-empty, HALT and report — do NOT advance to build or PR,
+   and do NOT trigger any closure path; this is an operator-disposition case only. **This derived set — not a
+   queued-status-only list — is wired into item 2's ready queue below**: it is the actual task-membership boundary
+   that Step 4 executes, so an `active` member of this derived set is never omitted from the ready queue,
+   and a `pre_archived_skipped` / `already_done` member is never included in it merely because some other queued
+   task elsewhere happens to share its label or status.
+2. List all tasks with `harness-ready` label and `queued` status for the target feature or chore. When
+   operating under a Stage-prepared shipment (item 1 above ran), replace this queued-only membership with item 1's
+   derived executable set: include every task in that set regardless of whether its status is `queued` or
+   `active`, and exclude any manifest task that item 1 classified as `pre_archived_skipped` or
+   `already_done` even if it would otherwise match `queued`/`active` elsewhere. Tasks outside
+   the shipment's manifest are never added by this substitution.
+3. Sort the queue by dependency order (tasks with no unfinished dependencies first).
+4. If the queue is empty after harness generation, halt and report — there is nothing to build.
 
 When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Pre-flight passed, ready queue: {count} tasks` with the count of queued items.
 
@@ -352,6 +440,47 @@ For each task in the ready queue:
 Update task status to `active` using the backlog tool's move operation.
 
 When the `agent-intercom` capability pack is installed, broadcast the task claim and current task ID.
+
+#### Step 4.1a: Begin Telemetry Context
+
+Immediately after claim and before Pre-build knowledge retrieval, build-feature delegation,
+implementation tool work, or review feedback, start a stable telemetry context:
+
+```text
+autoharness telemetry begin --task-id {item_id} --backlog-item-id {item_id} \
+  --feature-id {parent_id} --shipment-id {shipment_id} --capture-backlogit-sizing --json
+```
+
+* Parse the structured result and carry `context_ref` plus the stable `epoch_id`
+  through the task loop **only when `status` is `created` or `idempotent_begin`**.
+* If the result is `disabled`, `unavailable`, or `conflict`, skip context carry
+  and record close for this task without failing the lifecycle or creating
+  telemetry artifacts. A `conflict` returns `enabled: true` but points
+  `context_ref` at a different-keyed pre-existing context, so carrying and closing
+  against it would mis-attribute the task roll-up to the wrong epoch.
+* Do not re-read backlogit size, hierarchy, or shipment membership after this
+  pre-execution capture; the context's `WorkSizingSnapshot` is immutable.
+
+#### Step 4.1b: Optional Tool-Event Emission
+
+When Step 4.1a carried a `context_ref` (`created`/`idempotent_begin`), tool use during
+Step 4.2's build-feature loop MAY optionally emit sanitized ToolTelemetryEvent records:
+
+```text
+autoharness telemetry event --context-ref {context_ref} --from-json {event_payload_path} --json
+```
+
+* Only schema-shaped fields belong in the event payload
+  (`schemas/tool-telemetry-event.schema.json`) — never raw tool output, prompts,
+  stderr, or credentials.
+* Track whether at least one `telemetry event` call reported `written: true`
+  during this task. Step 4.5 uses this observed-success signal — not the mere
+  presence of a `context_ref` — to decide whether `--compose-tool-events` is
+  safe to request at close.
+* Event emission is entirely observational: a failed, skipped, or degraded
+  `telemetry event` call is reported but NEVER blocks the build-feature loop,
+  quality gates, review, or task completion — proceed exactly as if telemetry
+  were disabled.
 
 #### Step 4.2: Delegate to Build Feature
 
@@ -399,14 +528,87 @@ substitute while the operator is AFK.
 
 When the `adversarial-review` capability pack is installed, Ship invokes the **adversarial-review** agent in place of the standard review skill, with `mode: report-only` and `reviewers: 3`. HIGH-confidence consensus findings block the gate identically to standard review P0/P1 findings. MEDIUM-confidence findings are advisory but must be acknowledged in the task completion note.
 
+#### Step 4.4a: P-021 Scope Classification and Defer-Capture Procedure
+
+Before applying any fix in the review-fix loop (this Step 4.4, and the Step 5 optional shadow-review loop) or the build/CI-fix loop (Step 5 item 7 `fix-ci` invocation), classify EVERY finding against the **P-021 C1** same-contract-surface scope test. Only findings that pass C1 (the fix requires ONLY completing the exact change already authorized) may be fixed directly; every other finding is out of scope and MUST follow the defer-capture procedure below instead of being fixed. Path selection below is determined by whether a review thread ACTUALLY EXISTS for the finding at the moment it is classified — not by which loop raised it.
+
+**Deferred-entry discovery (performed BEFORE any capture, so reuse is enforceable across run boundaries)**:
+
+* **Lookup sources**: the active stash AND the archived stash (a prior-run entry may already have been triaged or archived by Stage — an active-only query would report a false absence), plus the task-level, run-level, and PR/closure residual-risk records of the current task and PR.
+* **Join keys**: narrow candidates by the literal `DEFERRED SCOPE EXPANSION` token, then by the source refs always populated at capture (task ID, feature ID, shipment ID), then by PR number where both the candidate and the finding in hand carry one, then by the entry's one-sentence expansion statement naming the same contract surface. The deferred entry ID is the entry's stable identity for its whole lifetime; these refs are only the discovery key used to find that identity when it is not already in hand — the two roles MUST NOT be conflated.
+* **Disposition — a complete four-case truth table over (candidate count, identity confirmation)**:
+  * Zero matches — proceed to the C2 capture below.
+  * Exactly one match whose expansion statement is POSITIVELY CONFIRMED to describe the SAME expansion on the SAME contract surface — reuse it, cite its ID, create NO new entry.
+  * Exactly one match that CANNOT be so confirmed — not a match for reuse purposes; follow the discovery fail-safe below.
+  * More than one match — follow the discovery fail-safe below.
+  * Positive confirmation is a required predicate for reuse and is never inferred from proximity, recency, or a partial key hit: reuse attaches this finding permanently to another finding's entry, so an unconfirmed reuse is unrecoverable, whereas an unnecessary capture is a recoverable duplicate.
+
+**Discovery fail-safe (both failure modes still capture)**: capture is NEVER suppressed by a discovery failure — C2 is capture-first in every case, and the discovery lookup exists only to avoid duplicates, never as a precondition for recording a finding.
+
+* **Ambiguous or unconfirmed identity** (more than one candidate, or a single candidate that cannot be positively confirmed): capture a DISTINCT C2 entry with the full six-field payload below, and append to field (2) — the one-sentence expansion statement — the literal token `DISCOVERY-STATUS: AMBIGUOUS` followed by every candidate entry ID found; cite the same candidate IDs in the reply (thread-present path) and in the residual-risk record. Do NOT reuse any candidate and do NOT guess which is "the" entry.
+* **Lookup unavailable** (the stash or the residual-risk records cannot be queried at all): capture and append to field (2) the literal token `DISCOVERY-STATUS: LOOKUP-UNAVAILABLE`.
+* In both cases the token lives inside the existing six-field payload's field (2) — it is not a seventh field — and is also noted in the residual-risk record, with the entry itself as the authoritative carrier since Stage triages entries. Both fail-safe modes rely on Stage's unconditional duplicate detection (see the `_stage.agent.md` deferred-scope-expansion triage step) to remediate any resulting duplicate.
+
+**C2 mandatory capture — the SINGLE-WRITE CAPTURE INVARIANT**: For every out-of-scope finding with no confirmed reusable entry, capture BEFORE any thread reply and BEFORE the finding is closed in any form — capture is a precondition for closing the finding under P-021 C2, and it is NEVER conditional on a PR or thread existing. This is the ONLY write Ship ever makes to the entry: Ship MUST NOT edit, amend, back-fill, re-classify, or re-prioritize a captured entry afterwards, and MUST NOT create a second entry for the same expansion — this follows directly from the P-021 C5 capture-only carve-out (134.002-T / 134.003-T), which grants Ship entry CREATION only. Record the full six-field payload, with every field POPULATED IN FULL AT CAPTURE TIME:
+
+1. The literal token `DEFERRED SCOPE EXPANSION`.
+2. A one-sentence statement of the expansion.
+3. Why it is out of scope, citing P-021 C1.
+4. Source refs, with availability judged INDEPENDENTLY PER FIELD: task ID, feature ID, and shipment ID are always populated. The PR number is populated with its actual value whenever a PR is already open — the normal case for a build/CI finding, since `fix-ci` runs against an open PR — and is recorded as `N/A` only for a genuinely pre-PR finding. The review-thread ID is populated whenever the finding already has a thread and is recorded as `N/A` whenever no thread exists. `N/A` is a PER-FIELD availability marker, never a path-level default: a field known at capture MUST carry that value, because the single-write invariant forbids supplying it later. The PR number and the review-thread ID are `N/A` together only for a genuinely pre-PR finding.
+5. A `requires deliberation` flag.
+6. Kind and a PROVISIONAL priority only — re-prioritization remains Stage-only.
+
+**Thread-present path** (a PR exists and the finding already has a review thread at classification time) — contains NO write-back to the entry:
+
+* (a) Capture, per above.
+* (b) Post a substantive thread reply explaining the finding, why it is out of scope citing the P-021 C1 boundary, that no code change was made, and CITING THE DEFERRED ENTRY ID returned by the capture, per C3.
+* (c) Resolve the thread — permitted only after that reply is posted.
+* (d) Name the SAME deferred entry ID in the PR/closure residual-risk record.
+
+Replying to or resolving the thread BEFORE the capture exists is prohibited: the reply cannot cite an entry ID that has not been generated yet, and a reply omitting the deferred entry ID does not satisfy C3.
+
+**Threadless path** (no review thread exists for the finding at classification time — pre-PR local-review findings, because Ship's local review runs BEFORE PR creation, and build/CI findings, which have no review thread even when a PR is already open):
+
+* (a) Capture, per above, with source-ref availability evaluated independently per field.
+* The generated deferred entry ID is cited in the task-level, run-level, and closure residual-risk records. No thread reply and no thread resolution are required or possible on this path, and their absence is NOT a C3 shortfall — C3's reference obligation is discharged in full by the residual-risk citations.
+
+**Late-surfacing thread** (a threadless-captured finding later surfaces on a PR review thread): perform ONLY the thread-present reply-and-resolve steps — post a reply CITING THE ALREADY-CAPTURED deferred entry ID, then resolve the thread. Ship MUST NOT create a second entry and MUST NOT revise ANY recorded field of the entry, including any field recorded as `N/A`. Record the newly available identifiers (the review-thread ID, plus the PR number in the genuinely pre-PR case where it too was `N/A` at capture) in the Ship-owned PR/closure residual-risk record alongside the deferred entry ID — reconciling the entry itself is Stage's C6 intake responsibility, not Ship's.
+
+Both paths preserve identically: the mandatory capture-first ordering, the full six-field payload, the C1-cited out-of-scope rationale, and the provisional-priority / Stage-only reprioritization rule. Neither path may be described as a relaxation of C2.
+
+**C3 symmetric guard**: (i) a same-contract-surface completion of the authorized change IS in scope and MUST be fixed, not deferred; AND (ii) deferring such a completion WITHOUT a captured deferred entry and a residual-risk record is itself a P-021 violation, actioned per C7.
+
 #### Step 4.5: Complete Task
 
 1. Commit changes with a conventional commit message
-2. Update task status to `done` using the backlog tool's complete operation
-3. If the `backlogit` capability pack is installed and commit-tracking is supported, associate the commit with the task
-4. Write a memory checkpoint to `docs/memory/`
-5. If the task required 3+ attempts, invoke the compound skill to capture learnings
-6. When the `continuous-learning` capability pack is installed, invoke the **observe** skill for any recurring patterns encountered during the task — repeated review findings, recurring build failures, operator corrections, or workarounds that kept appearing. Skip if the task was routine.
+2. If telemetry begin returned `status` `created` or `idempotent_begin` with an
+   enabled `context_ref`, create a close-time epoch payload from the task roll-up
+   metrics and record it before marking the task done:
+   `autoharness telemetry record --context-ref {context_ref} --from-json {epoch_payload_path} [--compose-tool-events] --json`.
+   Add `--compose-tool-events` only when Step 4.1b observed at least one
+   successful (`written: true`) `telemetry event` call during this task;
+   otherwise omit the flag and record the close payload exactly as today.
+   Capture the close timestamp once and reuse that exact value on every retry
+   of this record call — never regenerate it per attempt. This keeps the
+   payload digest stable across retries so a retried record replays as
+   `idempotent_replay` rather than `conflict_rejected`.
+   Skip the record close on `disabled`, `unavailable`, or `conflict`.
+   The record path must preserve the same stable epoch_id and must not re-read
+   backlogit size, hierarchy, or shipment membership at close.
+   A missing/unreadable event journal, or any other tool-event composition
+   failure, fails open and is reported without blocking: the close payload is
+   still recorded exactly as it would be without `--compose-tool-events`, so a
+   missing event journal never blocks task completion — the existing
+   close-payload-only path always remains fully valid. A `--compose-tool-events`
+   request rejected as a hybrid payload (composer-owned fields already
+   populated in the close payload) is reported as a task-loop diagnostic and the
+   task still proceeds to completion without composition — telemetry never
+   gates the lifecycle.
+3. Move the task to done by updating status to `done` using the backlog tool's complete operation
+4. If the `backlogit` capability pack is installed and commit-tracking is supported, associate the commit with the task
+5. Write a memory checkpoint to `docs/memory/`
+6. If the task required 3+ attempts, invoke the compound skill to capture learnings
+7. When the `continuous-learning` capability pack is installed, invoke the **observe** skill for any recurring patterns encountered during the task — repeated review findings, recurring build failures, operator corrections, or workarounds that kept appearing. Skip if the task was routine.
 
 If the `agent-intercom` capability pack is installed, broadcast task completion and any blocked / retry conditions.
 
@@ -418,6 +620,10 @@ task comment summarizing the outcome.
 After all tasks in the queue are complete:
 
 1. Run the full quality gate sequence one final time
+1a. **TOPOLOGY_GATE: lifecycle (before build)** — if the `pipeline-topology` gate is installed for this workspace,
+    before running the full local build below, run
+    `autoharness gate pipeline-topology --mode agent --shipment {shipment_id} --phase lifecycle --json`. Exit 0 proceeds;
+    exit 1/2 halts immediately with the reported token/message (never inferred, never fail-open).
 2. Write a session memory summary to `docs/memory/` capturing: items completed, items blocked, branch state, decisions with rationale, and next steps
 3. Before creating or updating any PR that adds, removes, or changes source code,
    run the full local build command for the codebase in addition to targeted checks.
@@ -426,10 +632,14 @@ After all tasks in the queue are complete:
    readiness evidence.
 4. Confirm the most recent local review readiness result covers the current HEAD and records any residual follow-up handling
 5. Prepare the PR body so it includes the `## Local Review Readiness` block required by `.github/instructions/github-pr-automation.instructions.md` §1.9 (reviewed HEAD SHA, outcome, blocking-finding summary, full-build evidence or non-applicability, and follow-up handling)
+5a. **TOPOLOGY_GATE: lifecycle (before PR creation)** — if the `pipeline-topology` gate is installed for this workspace,
+    before invoking `pr-lifecycle` below, run
+    `autoharness gate pipeline-topology --mode agent --shipment {shipment_id} --phase lifecycle --json`. Same exit-code
+    handling as above.
 6. Invoke the **pr-lifecycle** skill to create or update the pull request
 7. If CI or optional shadow-review comments fail:
    * When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Invoking fix-ci for shipment PR` before invoking the skill.
-   * Invoke the **fix-ci** skill before proceeding.
+   * Invoke the **fix-ci** skill before proceeding. The build/CI-fix loop carries the SAME P-021 classification requirement as the review-fix loop: classify every CI/build failure against **P-021 C1** before fixing it, per Step 4.4a above. A build or CI failure whose real fix lies outside the approved scope is deferred via the Step 4.4a defer-capture procedure, never expanded into.
 7a. **Optional Shadow Review Loop**: If GitHub-hosted automated review is enabled in advisory shadow mode, address actionable bot comments with bounded fix cycles. Treat unresolved shadow-review comments as advisory follow-up items by default unless the operator explicitly elevates them to blocking status for the current PR.
     In dark mode, wait patiently for requested hosted review to complete or time
     out per the GitHub automation instructions. For each actionable bot comment,
@@ -457,6 +667,13 @@ After all tasks in the queue are complete:
     failed check and affected shipment/PR.
 
     When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Pre-merge review gate: {PASS|HALT} — {detail}` with the gate outcome.
+7c. **P-018 Copilot-Review Completion Gate (NON-NEGOTIABLE, fail-closed)**: Before presenting the PR as merge-ready and before any `gh pr merge` — including `--admin` — run the deterministic gate `autoharness gate copilot-review <pr> --repo softwaresalt/graphtor-docs --enforcement <mode> [--max-wait <seconds>]`, where `<mode>` comes from `copilot_review.enforcement` in `.autoharness/workspace-profile.yaml` (`auto` | `required` | `disabled`, default `auto`) and `<seconds>` comes from `copilot_review.max_wait_seconds` (integer ≥ 0, default `0`). See `.github/instructions/github-pr-automation.instructions.md` §1.9.4 Check 5.
+
+    * `SATISFIED` / `NOT_APPLICABLE` (exit 0): Copilot review is complete for the current HEAD with no open Copilot threads, or Copilot is not in play. Proceed.
+    * Any BLOCK verdict — `WAITING_FOR_REVIEW`, `UNRESOLVED_THREADS`, `REVIEW_TIMEOUT`, `DETECTION_AMBIGUOUS`, `VERIFY_FAILED` (non-zero exit): halt, emit `COPILOT_REVIEW_BLOCK` (with PR number, verdict, and current HEAD), and record a P-018 event via P-005 telemetry. **`--admin` does NOT bypass this block.** Wait for review completion, resolve every Copilot-authored thread, then re-run. `REVIEW_TIMEOUT` still blocks; only an explicit, operator-authored, audited `autoharness gate copilot-review ... --force` (logged under `.autoharness/gates/`) may override.
+    * This gate re-runs whenever the branch HEAD advances (each push re-arms Copilot), exactly like the §1.9 readiness gate.
+
+    When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Copilot-review gate: {PASS|BLOCK} — {verdict}` with the gate outcome.
 8. If the changed work touches runtime surfaces, load `.autoharness/workspace-profile.yaml` and invoke **runtime-verification** with `runtime_validation.validator_manifest` plus `runtime_validation.validation_expectations` so the skill produces validator evidence for surface adapters, probe outcomes, manual checkpoint evidence, and blocked prerequisites. Do not fake unsupported automation.
 9. Invoke **operational-closure** with the validator evidence plus `runtime_validation.releasability` so closure produces explicit releasability evidence (`READY`, `READY_WITH_CONDITIONS`, or `BLOCKED`) covering monitoring, rollback, owner, validation-window, and follow-up requirements.
 10. **Record follow-up handoff for Stage**: If the closure artifact, runtime-verification report, or local review readiness result identified follow-up tasks, record every follow-up for a future Stage session. Ship must NOT create, update, or append any stash or backlog artifact — stash operations and backlog-item creation are Ship-forbidden under the Role Boundary (P-010); creating stash/backlog entries belongs to Stage:
@@ -505,14 +722,17 @@ After all tasks in the queue are complete:
 18. **Dark-mode merge/admin fallback state machine (P-017)**: When `DARK_MODE_ACTIVE`
     is present, attempt the normal merge path first. If it is rejected, classify the
     result as `REVIEW_REQUIRED_BLOCK`, `CONVERSATION_RESOLUTION_BLOCK`, `CHECKS_BLOCK`,
-    `MERGE_STRATEGY_BLOCK`, `MISSING_ADMIN_RIGHTS`, or `UNKNOWN_MERGE_BLOCK`.
+    `MERGE_STRATEGY_BLOCK`, `MISSING_ADMIN_RIGHTS`, `COPILOT_REVIEW_BLOCK`, or
+    `UNKNOWN_MERGE_BLOCK`.
     Admin fallback may be attempted only when `admin_fallback_pre_authorized` is true
     and the block is an explicitly covered branch-protection review/conversation block.
     Never use admin fallback for failed/pending/missing required checks, stale local
-    readiness, unresolved local P0/P1 findings, P-009 violations, P-016 violations,
-    secrets-safety risk, scope mismatch, or unknown merge blocks. Record every normal
-    merge and admin fallback attempt as operator-visible audit evidence, including the
-    state, decision, command/API used, and result.
+    readiness, unresolved local P0/P1 findings, a P-018 `COPILOT_REVIEW_BLOCK`, P-009
+    violations, P-016 violations, secrets-safety risk, scope mismatch, or unknown merge
+    blocks. A `COPILOT_REVIEW_BLOCK` is resolved only by Copilot review completion for
+    the current HEAD plus resolution of every Copilot-authored thread — never by
+    `--admin`. Record every normal merge and admin fallback attempt as operator-visible
+    audit evidence, including the state, decision, command/API used, and result.
     Emit `ADMIN_FALLBACK_ATTEMPTED` after any authorized fallback command/API returns
     and include the block classification, fallback authority, command/API, and actual
     result. Emit `DARK_MODE_HALTED` instead of fallback when the block is not
@@ -557,6 +777,10 @@ When a post-merge closure branch and PR are created:
 2. Optional Copilot shadow review may run per §1.1–§1.7 of
    `.github/instructions/github-pr-automation.instructions.md`, but it is advisory by default unless the operator explicitly elevates it.
 3. Run §1.9 readiness gate before presenting the post-merge closure PR for merge.
+   The §1.9.4 Check 5 P-018 copilot-review gate applies to the closure PR as well:
+   if Copilot review is engaged on the closure PR, `autoharness gate copilot-review`
+   must return a PASS verdict for the current HEAD before merge, and `--admin` may
+   not bypass a `COPILOT_REVIEW_BLOCK`.
 4. Obtain explicit operator approval — the prior main PR approval does not transfer.
 5. P-014 applies in full. Record a P-014 violation via P-005 telemetry if this gate is skipped.
 
@@ -590,7 +814,23 @@ refreshes, and knowledge graduation. These changes deserve the same review cycle
 work. Committing directly to `main` bypasses code review and violates the
 branch-per-release-unit principle.
 
+**Mandatory pre-self-close context reload**: after this shipment's PR merges to `main`
+and **before** Ship closes that same shipment, re-read the freshly merged `main` Ship
+agent instructions and the `shipment-reconcile` skill. Close under the just-merged
+contract, not a stale in-context copy — especially when the merged shipment itself
+updated the safe-close algorithm. Backlogit 1.8.0 supports only
+`queued -> active`, `active -> shipped`, and
+`active -> abandoned` for shipments; there is no shipment `blocked`
+lifecycle to transition out of. See
+`docs/compound/2026-05-07-backlogit-shipment-status-constraints.md`.
+
 1. **Close the shipment** (when the `backlogit` capability pack is installed and the registry advertises `features.shipments: true`):
+   a0. **TOPOLOGY_GATE: lifecycle (before closure/safe-close)** — if the `pipeline-topology` gate is installed for this
+       workspace, before the pre-archive reconciliation gate below, run
+       `autoharness gate pipeline-topology --mode agent --shipment {shipment_id} --phase lifecycle --json`. Exit 0
+       proceeds; exit 1/2 halts immediately with the reported token/message (never inferred, never fail-open). Ambient
+       git hooks independently cover the intervening commit/push activity in closure work; this lifecycle invocation is
+       the shipment-scoped check immediately preceding the safe-close mutation itself.
    a. **Pre-archive reconciliation gate (mandatory)**: Invoke the `shipment-reconcile`
       skill with `mode: pre`, `shipment_id`, and `expected_status: done`.
       This acquires the canonical logical shipment lock
@@ -603,101 +843,51 @@ branch-per-release-unit principle.
       * If the skill returns `PROCEED`: continue. That original queue-path lock stays held
         across the safe-close relocation until post-mode releases it by the original queue
         path in step 1.d.
-   b. **Safe-close (single-artifact archival — NEVER the cascade op, P-015)**: Invoke the
+   b. **Safe-close (thin pointer; `shipment-reconcile` is authoritative)**: Invoke the
       `shipment-reconcile` skill with `mode: safe-close`, `shipment_id`, and the
-      `merge_commit_sha`. This archives the shipment manifest's explicit item IDs one
-      artifact at a time and finally the shipment record itself as its own single artifact —
-      all to `.backlogit/archive/`.
-      * **Ship does not prescribe the closure sequence — the skill selects it.** For every
-        artifact the skill dispatches once, before any mutation, on whether the **selected
-        invocation transport** for `archive_item` itself accepts the delivered SHA and
-        guarantees it is persisted to the archived artifact's frontmatter `commit`
-        atomically. It then follows exactly one of two **mutually exclusive** paths and
-        archives that artifact **exactly once**: the atomic archive call, after which no
-        later move or archive runs at all; or a commit-only frontmatter `commit` update on
-        the still-live record, verified before the non-atomic terminal/archive sequence runs
-        once. Ship must not add, reorder, or substitute steps around whichever path the
-        skill selects, and must not assume a move-to-`done`-then-archive sequence: the task
-        terminal status is `done`, the shipment record's terminal status is `shipped`, and on
-        the atomic path neither transition happens at all.
-      * **Members already relocated by their own `done` transition are still THIS
-        shipment's delivery.** The installed status routing relocates a task into the
-        archive directory the moment it reaches terminal `done` — which Ship applies when it
-        completes the task, before the PR merge SHA exists. Such members live in
-        `.backlogit/archive/` and are classified
-        `current-delivery-pending-finalization`, **not** `pre-archived`: they must **never**
-        be misclassified as an earlier shipment's delivery, because that would forbid
-        writing this shipment's SHA and then halt on the resulting missing evidence. The
-        skill decides the split with a fail-closed provenance proof (current-manifest
-        membership, Ship-owned same-scope completion evidence, no foreign delivery, merge
-        SHA confirmed on `origin/main`, non-contradictory terminal `done` record);
-        membership alone is never proof, ambiguous provenance halts, and a genuinely
-        `pre-archived` member's own merge commit is preserved and never overwritten.
-      * Moving the current shipment record to its terminal `shipped` status and then
-        archiving it are both classified allowances that reach Ship's current shipment record
-        and no other shipment.
-      Before archiving anything, the skill computes the **protected set** (partial-feature
-      detection from **expected IDs**: the parent feature plus every unshipped sibling task
-      not in the manifest) and proves it is fully present in `.backlogit/queue/`
-      at a **baseline gate**; after each single-item archival it runs the
-      **verify-after-each invariant** confirming every protected-set member still exists in
-      `.backlogit/queue/`.
-      * **Do NOT call `backlogit_ship_shipment`.** The cascade op treats the shipment as a
-        proxy for its covering feature and archives the parent feature and any unshipped
-        siblings — corrupting the backlog on partial-feature shipments (see P-015 in
-        workflow-policies).
-      * **Cascade recovery is approval-gated, never automatic**: If the skill returns
-        `HALT — cascade detected, revert required`, a non-manifest artifact (parent feature or
-        a sibling task) was archived/deleted. Ship **stops** here and does **not** run any
-        recovery command yet. Under Constitution VII (Destructive Command Approval) and the
-        Git recovery row of the Mutation Classification table (which is `ActionRisk:
-        destructive`, so it is never automatic and never uses `git reset` or a force
-        operation):
-        1. Record a `ProposedAction` with `ActionRisk: destructive` and
-           `change_kind: rollback`, naming the exact identified protected-set paths to
-           restore, or the exact revert commit that introduced the cascade, plus the
-           `rollback` field and `approval_required: true`. Set `ActionResult: blocked`.
-        2. Broadcast a **P-005** violation event naming the cascaded artifact IDs, and
-           request **explicit real-time operator approval** for that exact recovery — via
-           `agent-intercom` when that capability pack is installed, otherwise via a direct
-           operator prompt. Do not execute the recovery before approval is granted.
-        3. **Only after** approval is granted, execute exactly the approved recovery:
-           `git restore -- {exact identified protected-set paths}`, or
-           `git revert {exact cascade commit}` if the cascade was already committed. Never
-           broaden to unrelated paths or unrelated history, and never use `git reset` or any
-           force operation. Set `ActionResult: applied`.
-        4. Verify the protected set is intact again, record the verification in the closure
-           report, then **halt** for operator reconciliation. Recovery restores the protected
-           set; it does not resume closure.
-        * If approval is **unavailable, withheld, or denied**, remain halted with
-          `ActionResult: blocked`. Do NOT execute the recovery and do NOT commit a corrupt
-          backlog.
-      * On `CLOSED`: the manifest items are archived, each carries its commit evidence, and
-        the protected set is intact; continue to step 1.c.
-      * **Commit evidence is recorded by the skill, before any terminal mutation (evidence
-        only)**: Ship does not record commit evidence after closure, and never after
-        archival — once an item is archived its source record may no longer be mutable.
-        Ship's only responsibility is to pass the correct `merge_commit_sha` into safe-close;
-        the skill writes it into the artifact's frontmatter `commit` — either atomically with
-        archival when the selected transport guarantees that, with a **commit-only**
-        `backlogit_update_item` / `backlogit update {id} --commit {sha}` on the still-live
-        record before any terminal mutation, or — for a
-        `current-delivery-pending-finalization` member the terminal `done` transition already
-        relocated into `.backlogit/archive/` before the merge SHA existed — with that same
-        commit-only update on the archived record once its provenance proof passes, per its
-        Safe-Close Mode steps 4 and 8. An optional **MCP** `backlogit_track_commit`
-        commit-link is supplemental provenance only and never substitutes for frontmatter
-        `commit`; on **CLI**, `track_commit` maps to that same
-        `backlogit update {id} --commit {sha}` canonical command, so it is executed once and
-        never double-called as a supplemental step. The SHA Ship passes
-        MUST be the **actual delivered-work merge
-        commit** — the commit that merged the shipped work into `main`, already confirmed on
-        `origin/main` by the Merge Confirmation Gate. It is **never** an anticipated,
-        reconstructed, or branch-tip SHA, and **never** a PR planning or
-        decision/closure-authority SHA (the commit that recorded the decision or approval to
-        close): those authorize the closure, they are not the delivered work. Delegating this
-        to the skill grants no planning-field authority and no status authority (P-010), and
-        applies to no item outside this shipment.
+      `merge_commit_sha`. Keep this agent file at pointer level only — the full,
+      step-by-step safe-close algorithm lives in the `shipment-reconcile` skill and
+      must not be re-derived here.
+      At the summary level, the skill:
+      * archives only the shipment manifest's explicit item IDs;
+      * closes only the shipment record via the non-cascading sequence `backlogit move
+        <shipment_id> --status shipped` -> verify live `status: shipped` ->
+        `backlogit archive <shipment_id>` -> verify `archived_status: shipped`;
+      * proves the protected set and halts fail-closed on any cascade or provenance
+        ambiguity.
+      * **Do NOT call `backlogit shipment ship` / `backlogit_ship_shipment`** unless
+        the P-015 **VERIFIED FULLY-COVERED-ROOT EXCEPTION** below applies. Outside that
+        narrow exception, this cascade operation requeues + detaches unshipped
+        descendant tasks back to the backlog with `parent_id` cleared, archives
+        release-scope members outside the manifest-scoped ordering, and
+        preserves/restores a non-member covering feature via snapshot. It is
+        P-015-forbidden for partial-feature shipments because it can requeue/detach
+        downstream siblings and close outside the safe-close ordering.
+      * **P-015 verified fully-covered-root exception (select the close path from the
+        verified check, never from prose alone)**: safe-close remains the default.
+        Before closing, run the machine-checkable classification described in P-015
+        over the shipment manifest's items (workspaces with a Python implementation
+        installed can reuse a `classify_shipment_close_path(manifest_items,
+        workspace_backlog_dir)`-shaped function; the classification is defined in
+        prose here since this is a generic template). The cascade close path is
+        permitted **only** when, for **every** feature member of the manifest: it is a
+        root (no `parent_id`); it is fully covered (every one of its children,
+        enumerated live from `.backlogit/queue/` +
+        `.backlogit/archive/`, is also a manifest member); and, if it
+        enumerates to zero children, that childlessness is **positively verified**
+        against the live workspace (never inferred from an incomplete or failed
+        enumeration) and the feature is additionally terminal (no manifest member
+        declares it as parent). The manifest must contain nothing beyond the
+        qualifying root feature(s) and their children. If **any** feature member fails
+        **any** precondition, the **whole manifest** falls back to safe-close —
+        qualification is never per-member, and no feature ID is ever special-cased.
+        When (and only when) the classification confirms every precondition holds,
+        invoke the cascade `backlogit shipment ship` / `backlogit_ship_shipment`
+        operation in place of the safe-close sequence above for this shipment's
+        closure.
+      * If the skill returns `HALT — cascade detected, revert required`, restore
+        `.backlogit/queue/` + `.backlogit/archive/`, surface the
+        protected-set violation, and halt. Do NOT commit a corrupt backlog.
    c. **Verify archive integrity (P-007)**: Run `git status -- ".backlogit/archive/"`.
       If any archive files appear as working-tree deletions, restoring them is the same
       approval-gated Git recovery classified above: record the `ProposedAction`
@@ -720,10 +910,10 @@ branch-per-release-unit principle.
       step 1.b is complete). Use two separate terminal commands:
       `git add .backlogit/`
       `git commit -m "chore: archive {shipment_id} backlog artifacts"`
-2. Invoke `operational-closure` in `mode=post-merge` to produce release-readiness, monitoring, and rollback artifacts in `docs/closure/`.
+2. Invoke `operational-closure` in `mode=post-merge` to produce release-readiness, monitoring, and rollback artifacts in `docs/closure/`. The closure artifact carries a **compaction status** field (initialized `pending`) that step 8 finalizes to `done`/`degraded`; the Orchestrator's closure-gated routing treats a `pending`/unset compaction status as an incomplete post-merge closure (P-020).
    In dark mode, the closure summary must list decisions, gates, reviewed HEADs,
-   merge/fallback status, admin fallback result if any, closure status, and
-   follow-up items before `DARK_MODE_COMPLETE` can be emitted.
+   merge/fallback status, admin fallback result if any, **compaction status (P-020)**,
+   closure status, and follow-up items before `DARK_MODE_COMPLETE` can be emitted.
 3. Evaluate whether documentation or compound learnings need updates for the shipped scope:
    * `docs/ARCHITECTURE.md` for structural changes
    * `AGENTS.md` for agent or skill changes
@@ -741,12 +931,19 @@ branch-per-release-unit principle.
    * Record every source stash ID and source deliberation ID, paired with the shipped item it fed, in the operator-visible closure/memory/readiness handoff fields: the closure artifact's `Source-artifact retirement handoff` section and the session memory checkpoint, so the closure report remains the traceable system of record.
    * Explicitly redirect the recorded handoff to a future Stage session, which owns source-artifact retirement. Record the expected default Stage action as the state-appropriate archive that preserves traceability — `stash_archive` for an active stash entry, or the equivalent artifact archive for a deliberation artifact — and never as stash removal. Per `.github/instructions/backlogit.instructions.md`, `stash_remove` is destructive and deprecated; any exceptional deletion stays destructive and separately approval-gated, and is never the recorded default. Do NOT mutate stash or backlog state.
    * When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Source-artifact retirement handoff ready: {stash_count} stash, {delib_count} deliberation(s) recorded for Stage`.
-8. **Mandatory**: Invoke **compact-context** with `target: all` to consolidate memory checkpoints, finalize any decided-plans, and compact closure artifacts. This is required because built-in AI assistant memory features do not write to the repository's `docs/` directory — compact-context is the mechanism that ensures durable persistence.
+8. **Mandatory (P-020)**: Invoke **compact-context** with `target: all` to consolidate memory checkpoints, finalize any decided-plans, and compact closure artifacts, then record the outcome as the compaction status of the step-2 operational-closure artifact. This is required because built-in AI assistant memory features do not write to the repository's `docs/` directory — compact-context is the mechanism that ensures durable persistence. **Invocation is mandatory per merge; candidate selection stays threshold-gated** — the just-closed release unit's memory is the one intended candidate (eligible under the completed-work rule), so the guaranteed call is a bounded, cheap Tier-1 consolidation of that fresh memory and degrades to a scan-only no-op only when nothing else qualifies. **Failure semantics (P-020)**: SKIPPING this invocation is a P-020 violation recorded via P-005 telemetry. Because backlog/shipment archival ran in step 1, completeness is tracked by the operational-closure artifact's compaction status, not shipment active-state: skipping leaves that status unset so post-merge closure is **incomplete** and the Orchestrator's closure-gated routing (P-001 + P-020) holds the next shipment until compaction is completed — it does not strand the merged PR. A compact-context run that **FAILS** is **NON-BLOCKING**: record `compaction: degraded` in the closure artifact, log a warning, and continue closure (the merge already landed and the skill is non-destructive).
 9. **Backlog index resync** (backlogit only): After all archival and knowledge graduation are complete, call `backlogit_sync_index` (or CLI fallback `backlogit sync`) to rebuild the backlogit index so it reflects all closure mutations. This rebuilds a disposable derived query cache over source-of-truth mutations that were already permitted and applied; it is derived state, not work-item authority, and grants no additional backlog mutation rights.
    - On success: log `CLOSURE_INDEX_SYNC_OK`. When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Backlog index resynced after closure`.
    - On failure: log `CLOSURE_INDEX_SYNC_WARN`. When the `agent-intercom` capability pack is installed, broadcast `[WARN] Closure index sync failed — backlogit index may not reflect archived items. Run \`backlogit sync\` manually.` Otherwise write the warning to session output only. Proceed — this is a degraded completion, not a halt.
-10. When the `continuous-learning` capability pack is installed, invoke the **learn** skill with `scope: recent` to cluster observations accumulated during this session into instincts. If any instinct has reached the promotion threshold (`3`), invoke the **evolve** skill in `mode: propose` for each mature instinct and include the proposal paths in the session summary.
-11. When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Session complete: {outcome}`.
+10. **Return to the default branch** (when a `post-merge/{feature_slug}` closure branch was used): after
+    the post-merge closure PR itself merges, run `git checkout main`, then `git pull`, as the
+    final step before ending the session or handing off. This is defense-in-depth hygiene, not a required
+    unblock: the `pipeline-topology` gate's branch-ownership check already treats `post-merge/*` branches as
+    ownership-eligible (see the `a0.` topology-gate lifecycle marker above), so a subsequent cursor-advance or
+    ambient hook check does not depend on this step having run first. Leaving the checkout on a stale
+    `post-merge/*` branch indefinitely after its PR has merged is still undesirable workspace hygiene.
+11. When the `continuous-learning` capability pack is installed, invoke the **learn** skill with `scope: recent` to cluster observations accumulated during this session into instincts. If any instinct has reached the promotion threshold (`3`), invoke the **evolve** skill in `mode: propose` for each mature instinct and include the proposal paths in the session summary.
+12. When the `agent-intercom` capability pack is installed, broadcast `[SHIP] Session complete: {outcome}`.
 
 ## Circuit Breakers
 
@@ -759,19 +956,67 @@ branch-per-release-unit principle.
 | Review comment fix cycles  | 3     | Present PR with remaining unresolved comments listed for operator |
 | Session stalls             | 3     | Halt, write checkpoint, prompt operator            |
 
+**P-021 C4 annotation — Review-fix cycles per task**: Reaching the 3-cycle limit does not authorize expanding into an out-of-scope finding, and neither does an operator instruction to continue. The halt-and-prompt at the cycle limit is exactly where a same-cycle "go ahead" is most likely to be solicited; remaining out-of-scope findings are accepted as captured P-021 deferred entries (Step 4.4a), never as silently expanded fixes. Operator authorization at the limit can only open a SEPARATE work unit through P-021 C2 capture plus C6 Stage deliberation — it never makes the expansion in-scope for the cycle already in flight (P-021 C4).
+
 ### Escalation Protocol — Consecutive Task Failures
 
-Upon 3 consecutive task failures:
+Upon 3 consecutive task failures, follow the auto-escalation directive
+below (P-013.6, `escalation-protocol.instructions.md` when installed)
+before falling back to the operator-halt checkpoint:
 
-1. Write a checkpoint to `docs/memory/` capturing:
-   * Task IDs that failed
-   * Root causes for each failure
-   * Attempts made to resolve
-   * Current branch state
-2. Prompt the operator:
-   `3 consecutive task failures. Session state preserved at docs/memory/. Please review failure patterns and advise.`
-3. Halt and await operator guidance. Do not attempt further tasks without
-   operator direction.
+1. **Compile the escalation payload** per the escalation-payload contract
+   (threshold-kind + count = `consecutive_task_failures` / 3, failure
+   summary, last-N action/observation refs, artifact refs, telemetry-
+   evidence pointers, resumption checkpoint ref).
+2. **Resolve the escalation route**: `claude-opus-4.8` /
+   `anthropic` / `xhigh`, resolving
+   this workspace's currently-effective escalation route per the nested
+   per-role -> legacy flat (DEPRECATED) -> tier3 precedence defined in
+   `escalation-protocol.instructions.md` (F02FD596). This resolution always
+   reads the freshly session-start-reloaded config (never a value cached
+   earlier in a long session or a route resolved by a prior session) — see
+   the Orchestrator's Session-Start Dynamic Reload (E8B5B3C5/H6/H7) section;
+   a stale escalation directive surviving a reload is a defect. **Session-Start
+   Dynamic Reload (H6) — self-contained for direct invocation**: Ship supports
+   being invoked directly without an installed Orchestrator (see the Fallback
+   path above). When invoked this way, Ship independently applies the same
+   fail-closed reload contract at its own session start rather than relying on
+   an Orchestrator that may not be present: re-read `.autoharness/config.yaml`
+   fresh at the start of the session, validate it against schema before
+   resolving any route, and HALT to the operator on invalid, missing, or
+   schema-failing config — Ship MUST NOT continue on a stale/baked route
+   carried over from this file's frontmatter or a prior session's resolved
+   value, and MUST NOT invent a last-known-good fallback. Falls back per
+   field to
+   `claude-opus-4.8` / `anthropic` /
+   `high` when no override for a field is declared at
+   any tier. This is the config-resolved successor to ad hoc "suggest a
+   frontier-tier model" prose — the route is now declared, not improvised.
+3. **Same-route guard**: if the resolved escalation tuple equals this
+   agent's own role route tuple (P-013.5), treat this as
+   `ESCALATION_DEGRADED` (same-route no-op) per the canonical definition in
+   `escalation-protocol.instructions.md`.
+4. **Hand off and halt**: when the route is not degraded, record it in the
+   compiled payload's `resolved_escalation_route` field, hand that payload to
+   engram for analysis, and halt. The
+   agent MUST NOT re-execute the failing operation after its circuit is open.
+   The handoff is for asynchronous or operator review, not a fourth attempt.
+5. **`ESCALATION_DEGRADED` fallback / existing operator-halt path** (route
+   unavailable, engram unavailable, or same-route no-op):
+   a. Write a checkpoint to `docs/memory/` capturing:
+      * Task IDs that failed
+      * Root causes for each failure
+      * Attempts made to resolve
+      * Current branch state
+   b. Prompt the operator:
+      `3 consecutive task failures. Session state preserved at docs/memory/. Please review failure patterns and advise.`
+   c. Halt and await operator guidance. Do not attempt further tasks
+      without operator direction.
+
+This is a **reasoning escalation only** — it never self-authorizes a
+shipment claim, task claim, merge, admin fallback, or any mutation this
+agent's Role Boundary does not already permit; it does not alter dark-mode
+merge/approval semantics (P-001/P-009/P-014/P-017/P-020 preserved).
 
 ## Remote Operator Integration (agent-intercom)
 
@@ -810,9 +1055,16 @@ Every checkpoint and memory operation below stays within the `Continuity` allowe
 2. If a relevant memory file exists, restore context: completed items, branch context, PR status, and prior build decisions.
 3. When the `backlogit` capability pack is installed and the registry advertises checkpoint recovery operations, run the recovery state machine below before shipment validation.
 
-### Session-start recovery protocol
+### Crash-Resumption / Startup Recovery Protocol (fail-closed, owner-exclusive)
 
-When checkpoint recovery operations are available through the installed backlog registry:
+When checkpoint recovery operations are available through the installed backlog registry,
+Ship applies this fail-closed lifecycle to its OWN (`agent: ship`) checkpoints before
+shipment validation. This is the owner-agent half of the crash-resumption contract whose
+routing is defined in the Orchestrator agent template's Crash-Resumption Protocol step, and
+whose bounded prune-on-restore behavior is defined in the backlogit-pack overlay
+instruction's Checkpoint-Recovery / Prune-on-Restore Protocol section. Ship never resolves,
+restores, resumes, or prunes a `stage`-owned checkpoint — cross-role handling of any kind
+is prohibited (P-001 role separation).
 
 Checkpoint recovery is Continuity-scoped, not backlog authority. Ship may list, load, and
 resolve only Ship-owned checkpoints (`consumer_id: "ship"`) whose recorded scope is the
@@ -821,26 +1073,33 @@ subject of stale-checkpoint recovery. Validate owner and scope on every checkpoi
 resolving it; skip and report any checkpoint owned by another agent or bound to a different
 shipment or PR scope, and never treat a checkpoint as approval or backlog state.
 
-**SESSION_START**
-1. Call `backlogit_list_checkpoints` with `consumer_id: "ship"`, `status: "active"`, and `max_age_hours: 168`.
-2. If no active checkpoints are returned, continue with a fresh start.
-3. If active checkpoints exist, present checkpoint summaries to the operator: phase, shipment or feature context, tasks completed, resume hint, and validation status.
+**ZERO-CANDIDATE NORMAL STARTUP**
+1. Call `backlogit_list_checkpoints` with `consumer_id: "ship"` and NO `status` or `agent` filter (enumerate ALL checkpoint summaries). A `status`/`agent` filter applied at the API call is unsafe for this fail-closed scan: a parse-failure or schema-invalid checkpoint record is commonly returned as a quarantined summary with an empty `agent`/`status`, and such filters would silently exclude it — letting Ship incorrectly report zero candidates and begin fresh work while an unresolved malformed checkpoint exists.
+2. **Fail closed on validation/quarantine anomalies FIRST**: inspect every enumerated summary for a validation error, quarantine flag, or missing/malformed required field, regardless of its (possibly empty) `agent`/`status` value. If ANY such anomaly is present, FAIL CLOSED to operator handoff immediately — surface the anomaly, do not continue to normal shipment validation, and do not proceed to the zero-candidate check below. This check runs on the full enumeration, never on a pre-filtered subset.
+3. Only after step 2 finds no anomalies, partition the valid records to entries whose `agent` field is exactly `ship` AND `status` is `active` (Ship's own active candidates only; no age bound — an unresolved active checkpoint remains a candidate regardless of age, since age alone can never prove a prior session dead). Stale-checkpoint cleanup is a separate, explicit hygiene operation and never a filter on candidate enumeration here.
+4. If NO active `ship`-owned checkpoint exists among the valid records, there is nothing to recover. Continue directly with normal shipment validation. This is EXPLICITLY NOT a failure and NOT an operator handoff — it is the expected steady state on most session starts.
 
-**RECOVERY_DECISION**
-1. Surface quarantined checkpoints (entries with validation errors) as warnings instead of silently skipping them.
-2. Ask whether to resume from a specific checkpoint or start fresh.
-3. If the operator chooses resume, load the selected checkpoint with `backlogit_get_checkpoint`.
-4. If the operator chooses fresh, resolve stale checkpoints with `backlogit_resolve_checkpoint` and continue to shipment validation.
+**EXPLICIT OPERATOR SELECTION (only when one or more `ship`-owned candidates exist)**
+1. Never auto-pick, even when only one candidate is returned. Present the full list of `ship`-owned active checkpoints (filename, phase, shipment/feature context, tasks completed, `resume_hint`, and validation status) to the operator, including quarantined entries (validation errors) surfaced as warnings rather than silently skipped.
+2. REQUIRE the operator to EXPLICITLY SELECT a SINGLE checkpoint by filename. A non-unique or ambiguous selection among these existing candidates FAILS CLOSED to operator handoff — no restore, no resume, no prune, no resolve.
 
-**RESUME_FROM_CHECKPOINT**
-1. If `backlogit_get_checkpoint` returns an error or invalid payload, warn and fall back to a fresh start.
-2. Restore the recorded phase, shipment or feature context, task IDs, branch state, and next-step intent from the selected checkpoint.
-3. Resolve all other still-active Ship-owned checkpoints from this or prior sessions with `backlogit_resolve_checkpoint`, after validating owner and scope on each one.
-4. Resume from the recorded phase instead of restarting execution from scratch.
+**OWNER VALIDATION**
+1. Validate the selected checkpoint's CheckpointV1 `agent` field. It MUST be exactly `ship` (backlogit schema: `agent` is `required,oneof=ship stage`). A missing, empty, or non-`ship` value FAILS CLOSED to operator handoff.
+2. A checkpoint whose `agent` is `stage` is never selectable here — that checkpoint belongs to the Stage agent's own recovery protocol, routed there by the Orchestrator, never handled directly by Ship.
 
-**FRESH_START**
-1. Resolve any active Ship-owned checkpoints left over from prior sessions with `backlogit_resolve_checkpoint`, after validating owner and scope on each one.
-2. Continue with normal shipment validation.
+**OWNER-EXCLUSIVE, OPERATOR-CONFIRMED RESTORE (no automatic resume)**
+1. After a valid unique selection and ownership match, present the checkpoint's `resume_hint` and recorded state to the operator and REQUIRE EXPLICIT OPERATOR CONFIRMATION before any restore or prune. There is no automatic resume under any condition, and no dead-session auto-recovery — checkpoint schema V1 exposes no heartbeat/session-lock/lease (only `created_at`/`updated_at`), so age alone can never prove a prior session dead.
+2. Only on explicit operator confirmation, load the selected checkpoint with `backlogit_get_checkpoint` and restore the recorded phase, shipment or feature context, task IDs, branch state, and next-step intent.
+3. Apply bounded prune-on-restore per the backlogit-pack overlay instruction's Checkpoint-Recovery / Prune-on-Restore Protocol (read-select-summarize; never prune the active cursor, the unresolved-checkpoint pointer, or gate verdicts). If engram is unreachable while attempting this, FAIL CLOSED to operator handoff — no prune, no resume.
+4. Resume from the recorded phase instead of restarting execution from scratch. Single-active preserved: pick up the same single-active cursor; no parallel resume, no new worktree (P-001/P-016).
+
+**OWNER-SCOPED RESOLUTION (only after confirmed successful resume)**
+1. `backlogit_resolve_checkpoint` is invoked ONLY AFTER Ship confirms a successful resume of the selected checkpoint — never before, never on ambiguous or torn state.
+2. Resolve ONLY the single explicitly operator-selected, ownership-matched (`ship`-owned) checkpoint. NEVER perform a bulk or broad resolution sweep of other active checkpoints, and NEVER resolve a `stage`-owned checkpoint (cross-role resolution is prohibited in addition to cross-role restore/resume/prune).
+
+**FAIL CLOSED — NO FRESH-START FALLBACK**
+1. An invalid, ambiguous, torn, malformed, or unreadable checkpoint read FAILS CLOSED to operator handoff. Do NOT silently discard an invalid/ambiguous checkpoint and start a fresh session — the prior behavior of falling back to a fresh start on an invalid or errored read is removed.
+2. This fail-closed path applies among existing candidates only; the zero-candidate case in the ZERO-CANDIDATE NORMAL STARTUP block above is the no-recovery-needed continuation, not a failure.
 
 ### Hook event consumption
 
@@ -866,7 +1125,7 @@ Write a checkpoint to `docs/memory/` after any of these milestones:
 
 Each checkpoint captures: items completed, items blocked, branch state, decisions with rationale, errors encountered and how they were resolved, and next steps.
 
-When the `backlogit` capability pack is installed and `backlogit_create_checkpoint` is available, also persist a phase-tagged structured checkpoint through backlogit. Include shipment or feature IDs, completed and blocked item IDs, branch state, next step, and a `resume_hint` specific enough for a later recovery decision.
+When the `backlogit` capability pack is installed and `backlogit_create_checkpoint` is available, also persist a phase-tagged structured checkpoint through backlogit. The payload MUST declare `schema_version: 1` and be written only through the official create operation. `agent`, `session_id`, `phase`, and `resume_hint` (a `resume_hint` specific enough for a later recovery decision) stay top-level; nest only the domain data — shipment or feature IDs, completed and blocked item IDs, and branch state — under `context`, never at the top level. See the backlogit overlay instruction's Checkpoint Payload Contract for the full rule set.
 
 ### Learnings capture
 
@@ -880,7 +1139,7 @@ After build execution (Step 4) and CI remediation, evaluate whether the work unc
 ### Session end
 
 1. Write a final memory file to `docs/memory/` capturing: items completed, blocked conditions, branch state, PR status, and any pending merge approval.
-2. When the `backlogit` capability pack is installed and the registry advertises checkpoint recovery operations, resolve any still-active checkpoints from the current session with `backlogit_resolve_checkpoint`. When merge approval or closure work must survive a context-window shutdown, leave at most one final best-effort checkpoint written via `backlogit_create_checkpoint` with a clear `resume_hint`.
+2. When the `backlogit` capability pack is installed and the registry advertises checkpoint recovery operations, resolve any still-active checkpoints from the current session with `backlogit_resolve_checkpoint`. When merge approval or closure work must survive a context-window shutdown, leave at most one final best-effort checkpoint written via `backlogit_create_checkpoint` with a clear `resume_hint`. Any such checkpoint MUST conform to the Checkpoint Payload Contract (`schema_version: 1`, official create operation, domain data under `context`).
 3. Capture compound learnings via the compound skill when hard-won solutions were discovered.
 4. If tracking context has accumulated beyond thresholds, invoke the `compact-context` skill.
 
@@ -919,7 +1178,13 @@ from the recorded next step rather than restarting the pipeline.
 
 This agent operates at **Tier 2 (Standard)** — orchestration, coordination, and quality verification.
 
-**Escalation**: When 3 consecutive task failures occur, escalate to operator: present the failures with context, request guidance on whether to retry with a different approach, skip the task, or halt the session. If the environment supports model selection, suggest retrying the failing task with a frontier-tier model.
+**Escalation**: When 3 consecutive task failures occur, follow the
+**Escalation Protocol — Consecutive Task Failures** above (P-013.6): compile
+the escalation payload, resolve the escalation route, hand off for analysis,
+and halt when not `ESCALATION_DEGRADED`. If that flow degrades, present the
+failures with context and halt for operator guidance. This paragraph does not
+independently improvise a model-selection suggestion or authorize another
+execution attempt — the single flow above is authoritative.
 
 ## Subagent Depth
 

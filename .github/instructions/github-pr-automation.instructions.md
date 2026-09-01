@@ -45,12 +45,29 @@ Shadow review is advisory by default. It can help catch residual issues after th
 local review gate, but it is not a required dependency for merge readiness unless
 the operator explicitly elevates it for the current PR.
 
+**Conditional hard gate when Copilot review is enabled (P-018).** When Copilot
+review IS enabled for this PR — Copilot is a requested reviewer, a Copilot review
+already exists on the PR, or the workspace sets `copilot_review.enforcement:
+required` — shadow review stops being advisory and becomes a **fail-closed
+pre-merge gate**. Merge (including `--admin`) is held until Copilot has completed a
+review for the current `headRefOid` AND every Copilot-authored review thread is
+resolved. This is enforced deterministically by
+`autoharness gate copilot-review <pr> --repo <owner/name>` (§1.9.4, Check 5), not by
+prose: a BLOCK verdict is a hard stop that `--admin` does not bypass. The gate is
+not-applicable (PASS) only when `enforcement` is `auto` and Copilot never engaged
+on the PR, or when `enforcement` is `disabled` — this is how "advisory by default"
+is preserved for repositories where Copilot review is not in play.
+
 When `DARK_MODE_ACTIVE` is present under P-017, keep the workflow local-review-first:
 the current-HEAD local review readiness record is the authoritative merge gate,
 and Copilot/GitHub-hosted review remains optional advisory shadow review unless
 the dark-mode activation contract or operator explicitly elevates it. A clean
 shadow review cannot compensate for stale or missing local readiness, and shadow
-review timeout or unavailability does not block by default.
+review timeout or unavailability does not block by default. However, once Copilot
+review is actually engaged on the PR (or `copilot_review.enforcement: required`),
+the P-018 copilot-review gate still applies in dark mode: an incomplete review for
+the current HEAD or unresolved Copilot threads is a `COPILOT_REVIEW_BLOCK` that
+admin fallback may never bypass (§1.9.4, §1.9.6).
 
 ### 1.2 Poll for Review Completion
 
@@ -143,6 +160,68 @@ body: "Partially addressed in <commit_sha>. Applied: <what was fixed>.
 Not applied: <what was declined and why>."
 ```
 
+#### Shell-Safe Comment Body Construction
+
+Reply and resolution bodies frequently contain markdown code spans and shell
+metacharacters. On PowerShell, inlining such a body in a **double-quoted**
+`gh api ... -f body="..."` argument corrupts the posted text — this is the root
+cause of the "escape-character typos" seen in resolution comments. (PowerShell is
+the observed root cause here; Bash/Zsh have the equivalent hazard — backticks
+perform command substitution and `$` expands variables inside double quotes.)
+
+**Why it corrupts** (the shell pre-processes the string before `gh` sees it):
+
+* The backtick (`` ` ``) is PowerShell's escape character. Review replies almost
+  always contain code spans such as `` `types` `` or `` `--strict` ``; PowerShell
+  consumes the backticks and may escape the following character, dropping or
+  mangling the code-span text.
+* `$` triggers variable expansion, so `$result` or `$PATH` in a body expands to
+  an empty or unexpected value.
+* An embedded double quote terminates the argument early.
+
+The corruption happens the moment the body is placed in a double-quoted string,
+so do not even *construct* it that way. Author the body with a single-quoted
+here-string, a structured tool argument, or a pre-written file.
+
+**Required practice:**
+
+1. **Prefer the structured tool.** `mcp_github_add_reply_to_pull_request_comment`
+   passes `body` as a structured argument with no shell parsing, so markdown is
+   preserved verbatim. Use it whenever available.
+2. **File-backed body (safe `gh api` fallback).** Write the exact body to a
+   **BOM-less** UTF-8 file, then pass it by reference with `--field`/`-F`, whose
+   `@file` value is read as a raw string (no `$`/backtick interpolation and no
+   `true`/`false`/`null`/number type coercion):
+
+   ```powershell
+   # PS7+ accepts -Encoding utf8NoBOM; Windows PowerShell 5.1 -Encoding utf8
+   # writes a BOM (a stray U+FEFF at the start of the comment), so use the .NET
+   # writer for a BOM-less file that works on both:
+   [System.IO.File]::WriteAllText((Join-Path $PWD 'reply-body.md'), $bodyText, (New-Object System.Text.UTF8Encoding $false))
+   gh api repos/softwaresalt/graphtor-docs/pulls/<pr>/comments/<id>/replies `
+     -X POST --field body=@reply-body.md
+   Remove-Item reply-body.md
+   ```
+
+   Use `--field`/`-F`, not `-f`/`--raw-field`: `-f body=@file` sends the literal
+   text `@file`. The same `--field body=@file` reference works for any
+   `gh api graphql` mutation that carries a markdown body.
+3. **Single-quoted here-string** (when authoring inline). Single-quoted
+   PowerShell strings are literal — no backtick escaping and no `$` expansion:
+
+   ```powershell
+   $bodyText = @'
+   Fixed in <commit_sha>. Removed the unused `types` import.
+   '@
+   ```
+
+   The one caveat is a body line that is exactly `'@` at column 0, which closes
+   the here-string early; for arbitrary markdown, write it to a file (pattern 2).
+
+**Never** hand-escape or strip markdown backticks to make a command run — that
+corrupts the very text being posted. Change the *transport*, not the *content*,
+and keep review-reply bodies verbatim.
+
 ### 1.6 Resolve Review Threads
 
 After the fixing commit has been pushed and the explanatory reply has been
@@ -220,18 +299,82 @@ actionable bot comment must receive a reply after the fix commit is pushed, and
 every fixed or explicitly declined bot-authored thread must be resolved via
 GraphQL before merge readiness is presented.
 
+**P-021 Scope Classification and Out-of-Scope Disposition**: Before applying any
+fix in this autonomous comment-handling loop, classify EVERY comment against the
+**P-021 C1** same-contract-surface test (see also the operational restatement in
+the circuit-breaker instruction's "Review-Fix Cycle Definition" section). Only a
+comment that passes C1 — fixing it requires ONLY completing the exact change
+already authorized — may be fixed directly. Every other comment is out of scope
+and MUST follow the disposition sequence below instead of being fixed.
+
+Out-of-scope disposition is a REQUIRED ORDERED, capture-first sequence:
+
+* (a) **Capture per P-021 C2** with the full payload — the literal
+  `DEFERRED SCOPE EXPANSION` token, a one-sentence expansion statement, the
+  C1-cited out-of-scope rationale, source refs (PR number, review-thread ID,
+  task ID, feature ID, shipment ID), a `requires deliberation` flag, and kind
+  plus a PROVISIONAL priority — performed BEFORE any thread reply, because C2
+  makes capture a precondition for closing the finding.
+* (b) Post a substantive thread reply explaining the finding, why it is out of
+  scope citing the C1 boundary, that no code change was made, and CITING THE
+  GENERATED DEFERRED ENTRY ID returned by the (a) capture, per P-021 C3.
+* (c) Resolve the thread via the review-thread resolution mechanism (Section
+  1.6), permitted only after the reply citing that ID is posted.
+* (d) Add a residual-risk record entry in the PR body naming the SAME deferred
+  entry ID.
+
+Replying to or resolving an out-of-scope thread BEFORE the C2 capture exists is
+PROHIBITED, since the reply cannot cite an entry ID that has not been generated
+yet; a reply omitting the deferred entry ID does not satisfy C3. This ordering
+matches the Ship agent's defer-capture sequence (capture → reply citing the ID
+→ resolve → residual-risk record) — the two surfaces MUST NOT diverge.
+
+This loop sets only a PROVISIONAL priority at capture; re-prioritization and
+triage remain Stage-only, per the P-021 C5 capture-only carve-out.
+
+This disposition satisfies P-018's zero-unresolved-threads requirement
+honestly — every thread receives a substantive disposition, not a bare
+acknowledgement — without fabricating unauthorized scope.
+
+This classification gate does not change the autonomy language above: an
+autonomous, unattended loop may still resolve every actionable comment without
+operator intervention, it simply resolves out-of-scope comments through capture
+and reference rather than through a fix.
+
 ### 1.8 Stop Conditions for Shadow-Review Cycles
 
 | Counter | Limit | Action |
 |---------|-------|--------|
-| Review-fix-push cycles | 3 | Accept remaining comments as backlog follow-ups |
+| Review-fix-push cycles | 3 | For each remaining comment that FAILS P-021 C1: accept as a backlog follow-up via a full P-021 C2 capture (not an informal note). An in-scope comment unresolved solely because this cycle budget is exhausted is NOT captured this way — see the P-021 C4 annotation below. |
 | Same comment re-raised after fix | 2 | Escalate to operator — likely a fundamental disagreement |
 
-**Cycle limits do not make shadow review merge-blocking by default.** When the
-review-fix cycle limit is reached, unresolved Copilot shadow-review comments
+**P-021 C4 annotation**: reaching the review-fix-push cycle limit does not
+authorize expanding into an out-of-scope comment, and neither does an operator
+instruction to continue. "Accept remaining comments as backlog follow-ups"
+means each remaining out-of-scope comment receives the full P-021 C2 capture
+above, not an informal note. Operator authorization at the limit can only open
+a SEPARATE work unit through P-021 C2 capture plus C6 Stage deliberation — it
+never makes the expansion in-scope for the cycle already in flight (P-021 C4).
+An in-scope comment (one that PASSES P-021 C1) left unresolved purely because
+this cycle-count budget is exhausted is a different case: it is never captured
+as a `DEFERRED SCOPE EXPANSION` entry (it was never out of scope), and per the
+P-021 C3 symmetric guard it MUST NOT be silently closed as a backlog
+follow-up either — halt this comment instead and surface it to the operator
+for explicit disposition (extend the cycle-count limit, or explicitly accept
+documented residual risk) before the PR is presented as merge-ready.
+
+**Cycle limits do not make shadow review merge-blocking by default** — except when
+Copilot review is enabled (P-018). When the review-fix cycle limit is reached and
+Copilot review is NOT enabled for the PR, unresolved Copilot shadow-review comments
 must be surfaced explicitly in the readiness summary and converted into follow-up
 items or operator-visible residual-risk notes. They only remain merge-blocking if
 the operator explicitly elevated shadow review to blocking status for the current PR.
+
+When Copilot review **is** enabled (P-018), exhausting the cycle limit with
+unresolved Copilot-authored threads is a **BLOCK**, not an "accept as follow-up":
+`autoharness gate copilot-review` returns `UNRESOLVED_THREADS` and the merge is
+held. Escalate to the operator rather than merging. The bounded `--max-wait`
+`REVIEW_TIMEOUT` outcome is likewise a BLOCK; only an audited `--force` overrides it.
 
 ### 1.9 Pre-Merge Review Readiness Verification (Defense in Depth)
 
@@ -345,7 +488,7 @@ returned via GraphQL, the `author.login` field uses the no-suffix form.
 
 #### 1.9.4 Gate Checks
 
-Evaluate four checks in order. All four must pass for merge readiness.
+Evaluate five checks in order. All five must pass for merge readiness.
 
 **Check 1 — Local review coverage (record covers current HEAD)**:
 
@@ -382,11 +525,34 @@ Evaluate four checks in order. All four must pass for merge readiness.
    `Full local build: not applicable` with a short rationale.
 3. If build applicability is ambiguous, required evidence is missing, or the
    recorded full local build result failed, **GATE FAILS**.
-4. Otherwise, **GATE PASSES**. The PR is ready for merge presentation.
+4. Otherwise, proceed to Check 5.
 
-**Human and shadow-review threads**: Human review threads and non-blocking
-Copilot shadow-review threads are surfaced in the merge-readiness summary but do not
-block this local-readiness gate by default. However, if the repository has branch
+**Check 5 — Copilot-review completion & thread resolution (P-018, fail-closed)**:
+
+1. Determine `copilot_review.enforcement` from `.autoharness/workspace-profile.yaml`
+   (`auto` | `required` | `disabled`, default `auto`) and `copilot_review.max_wait_seconds`
+   (integer ≥ 0, default `0`).
+2. Run the deterministic gate:
+   `autoharness gate copilot-review <pr_number> --repo softwaresalt/graphtor-docs --enforcement <mode> [--max-wait <max_wait_seconds>]`.
+3. Interpret the verdict / exit code:
+   * `SATISFIED` or `NOT_APPLICABLE` (exit 0) — Copilot review is complete for the
+     current HEAD with no open Copilot threads, or Copilot is not in play. Proceed.
+   * `WAITING_FOR_REVIEW`, `UNRESOLVED_THREADS`, `REVIEW_TIMEOUT`,
+     `DETECTION_AMBIGUOUS`, or `VERIFY_FAILED` (non-zero) — **GATE FAILS.** Halt.
+     `--admin` does not bypass this. Wait for review completion, resolve every
+     Copilot thread, then re-run. `REVIEW_TIMEOUT` still blocks; only an explicit,
+     audited `autoharness gate copilot-review ... --force` (logged under
+     `.autoharness/gates/`) may override, and only with operator authority.
+4. Only when the gate returns a PASS verdict (or an audited `--force` is recorded)
+   does the readiness gate reach **GATE PASSES**. The PR is ready for merge presentation.
+
+**Human review threads (Check 5 precedence)**: Human review threads are surfaced
+in the merge-readiness summary but do not block this local-readiness gate by
+default. **Copilot-authored threads are not advisory here**: an existing
+Copilot review is itself an engagement signal, so Check 5 (P-018) takes precedence
+and every unresolved Copilot-authored thread BLOCKS the merge — the legacy
+"advisory shadow-review does not block" rule never applies once Copilot is engaged.
+However, if the repository has branch
 protection rules requiring conversation resolution, approved reviews,
 or if a human reviewer submitted a `CHANGES_REQUESTED` review, those
 constraints may independently block the merge at the GitHub level. The
@@ -403,12 +569,15 @@ and should be reported in the merge-readiness summary.
 | Local readiness outcome is `BLOCKED` or blocking findings remain | **Halt.** List blocking findings. Do not proceed to merge. |
 | `READY_WITH_FOLLOWUPS` omits follow-up handling | **Halt.** Report missing follow-up IDs or residual-risk notes. |
 | Code-changing PR omits successful full local build evidence | **Halt.** Run the full local build successfully or explain non-applicability only for documentation-only/backlog-only work. |
-| Shadow review unavailable or still pending | **Warning.** Note in PR summary. Shadow review remains advisory unless operator elevated it. |
-| All 4 checks pass | **Ready.** Present PR for merge approval. |
+| Copilot review enabled but incomplete for HEAD, or Copilot threads unresolved (`autoharness gate copilot-review` returns non-zero) | **Halt (P-018).** Wait for Copilot review completion and resolve every Copilot thread. `--admin` does not bypass. `REVIEW_TIMEOUT` blocks; only an audited `--force` overrides. |
+| Shadow review unavailable or still pending, Copilot not engaged (gate returns `NOT_APPLICABLE`) | **Warning.** Note in PR summary. Shadow review remains advisory when Copilot is not in play. |
+| All 5 checks pass | **Ready.** Present PR for merge approval. |
 
-Shadow-review timeout does not fail this gate by itself. The required dependency
-is local review coverage for the current HEAD. If the operator wants shadow review
-to become merge-blocking for a specific PR, that escalation must be explicit.
+Shadow-review timeout does not fail this gate when Copilot is not engaged; the
+required dependency is local review coverage for the current HEAD. If the operator
+wants shadow review to become merge-blocking for a specific PR, that escalation
+must be explicit. When Copilot review IS engaged, the §1.9.4 Check 5 copilot-review
+gate is an additional fail-closed dependency (P-018).
 
 #### 1.9.6 Dark-Mode Merge Authorization and Admin Fallback
 
@@ -420,6 +589,9 @@ the P-014 operator approval signal only when all of these are true:
 3. The §1.9 local readiness gate passed for the current `headRefOid`.
 4. Required CI/checks are green or explicitly marked non-applicable.
 5. P-009 merge-commit-only and P-016 worktree topology checks passed.
+6. The §1.9.4 Check 5 copilot-review gate returned a PASS verdict for the current
+   `headRefOid` (or an audited `--force` override is recorded). A
+   `COPILOT_REVIEW_BLOCK` is never satisfied by the activation record.
 
 If any condition is false or ambiguous, fail closed and wait for an explicit
 operator approval signal.
@@ -436,12 +608,13 @@ result:
 | `MERGE_STRATEGY_BLOCK` | Merge commit strategy is unavailable or squash/rebase is selected | Halt under P-009; admin fallback is forbidden |
 | `MISSING_ADMIN_RIGHTS` | Admin fallback was authorized but credentials lack bypass rights | Halt with an operator-visible reason |
 | `UNKNOWN_MERGE_BLOCK` | The merge rejection cannot be classified confidently | Halt; do not guess or bypass |
+| `COPILOT_REVIEW_BLOCK` | The P-018 copilot-review gate returned a BLOCK verdict (review incomplete for HEAD, unresolved Copilot threads, timeout, or unverifiable) | Halt; admin fallback may **never** bypass this. Resolve via review completion + thread resolution, not `--admin`. |
 
 Admin fallback cannot bypass stale local readiness, unresolved local P0/P1
-findings, failed required CI/checks, P-009, P-016, secrets-safety concerns, or
-scope mismatch. Every normal merge attempt and admin fallback attempt must be
-recorded in the PR readiness/merge summary with the state, decision, command/API
-used, and result.
+findings, failed required CI/checks, a P-018 `COPILOT_REVIEW_BLOCK`, P-009, P-016,
+secrets-safety concerns, or scope mismatch. Every normal merge attempt and admin
+fallback attempt must be recorded in the PR readiness/merge summary with the state,
+decision, command/API used, and result.
 
 ### 1.10 Post-Merge Closure PR Shadow Review Surveillance
 

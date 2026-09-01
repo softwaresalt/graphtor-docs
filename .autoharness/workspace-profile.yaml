@@ -48,11 +48,18 @@ ci:
   - cargo clippy --all-targets -- -D warnings -D clippy::pedantic
   - cargo test --all-targets
   - cargo audit
+  required_check_name: build
+  docs_only_paths:
+  - docs/**
+  - .backlogit/**
+  - .autoharness/**
+  linux_only: true
+  path_filter_mode: fail_closed_changes_job
+  autoharness_install_command: pip install autoharness
 structure:
   source_layout: src/ with module directories (acquire, chunk, config, error, logging, path)
   test_layout: tests/ flat layout with integration test files
-  doc_layout: docs/ with adrs, archive, cli-reference, closure, compound, decisions, exec-plans, memory,
-    research, reviews
+  doc_layout: docs/ with adrs, archive, cli-reference, closure, compound, decisions, exec-plans, memory, research, reviews
 runtime_surfaces:
   web_ui: false
   public_api: false
@@ -74,7 +81,6 @@ conventions:
 harness_recommendations:
   preset: full
   capability_packs:
-  - agent-intercom
   - agent-engram
   - backlogit
   - adversarial-review
@@ -91,14 +97,9 @@ harness_recommendations:
     preset:
     - Mature project with existing comprehensive harness (13 agents, 10 instructions, 2 skills)
     - Full CI pipeline with GitHub Actions
-    - Multiple MCP integrations (engram, backlogit, intercom)
+    - Multiple MCP integrations (engram, backlogit, graphtor-docs)
     - Established code conventions and quality gates
     capability_packs:
-    - item: agent-intercom
-      because: agent-intercom MCP server configured in .vscode/mcp.json
-      signals:
-      - .vscode/mcp.json references agent-intercom
-      - copilot-instructions.md describes remote approval workflow
     - item: agent-engram
       because: .engram/ directory exists with full configuration
       signals:
@@ -126,7 +127,7 @@ harness_recommendations:
     - item: instructions
       because: 14 instruction files missing for capability packs and additional guidance
       signals:
-      - No agent-intercom, agent-engram, backlogit, or adversarial-review instructions
+      - No agent-engram, backlogit, or adversarial-review instructions
     - item: workflow
       because: 17 skills missing that power the stage/ship pipeline
       signals:
@@ -146,15 +147,7 @@ harness_recommendations:
     - item: overlays
       because: 4 capability packs require overlay composition
       signals:
-      - agent-intercom, agent-engram, backlogit, adversarial-review packs selected
-agent_intercom:
-  detected: true
-  mcp_configured: true
-  config_paths:
-  - .vscode/mcp.json
-  instruction_markers:
-  - .github/copilot-instructions.md describes remote approval workflow
-  recommended: true
+      - agent-engram, backlogit, adversarial-review, graphtor-docs packs selected
 agent_engram:
   detected: true
   mcp_configured: true
@@ -251,9 +244,6 @@ existing_harness:
   - path: .github/instructions/writing-style.instructions.md
     type: instruction
     description: Writing style conventions
-  - path: .github/prompts/ping-loop.prompt.md
-    type: prompt
-    description: Ping loop prompt
   - path: AGENTS.md
     type: foundation
     description: Root agent instructions
@@ -315,3 +305,74 @@ graphtor_docs:
   config_paths:
   - .graphtor/config/sources.yaml
   recommended: true
+typecheck:
+  tool: cargo
+  command: null
+local_gating:
+  pre_push_enabled: true
+  pre_push_gates:
+  - format
+  - lint
+  - test
+  - build
+copilot_review:
+  enforcement: auto
+  max_wait_seconds: 900
+ai_environments:
+  detected:
+  - vscode
+  - copilot-cli
+  register_default: copilot-cli
+runtime_validation:
+  validator_manifest:
+    surfaces:
+    - surface: cli
+      adapter_hint: command
+      probe_hints:
+      - id: cli-status
+        kind: command
+        target: graphtor-docs status
+        command: cargo run --release -- status
+        url: null
+        route: null
+        expected_signal: Reports configured sources and index schema version without error.
+        required: true
+        evidence_types:
+        - stdout
+        - exit-code
+        notes: Fails closed on pre-v4 schema; a failure here means the index needs `graphtor-docs sync`.
+      - id: cli-sync
+        kind: command
+        target: graphtor-docs sync
+        command: cargo run --release -- sync
+        url: null
+        route: null
+        expected_signal: Acquisition, chunking, embedding, and indexing complete for every configured source.
+        required: false
+        evidence_types:
+        - stdout
+        - exit-code
+        - log-line
+        notes: Expensive. Run when the change touches acquire/chunk/embed/db or the schema version.
+      - id: mcp-stdio-handshake
+        kind: command
+        target: graphtor-docs serve (MCP STDIO)
+        command: cargo run --release -- serve
+        url: null
+        route: null
+        expected_signal: initialize response advertises the tool surface; server stays alive on STDIO.
+        required: true
+        evidence_types:
+        - stdout
+        - exit-code
+        - log-line
+        notes: 'Primary runtime surface. Regression-prone: see the serve/initialize handshake plan in docs/exec-plans/.'
+      manual_checkpoints:
+      - id: mcp-client-smoke
+        label: Query the server from a live MCP client
+        reason: STDIO transport, tool registration, and result shaping are only fully exercised by a real client session.
+        required_for_release: false
+        evidence_types:
+        - operator-note
+        notes: Call get_status, then search_local_docs and search_semantic against an indexed source.
+        fallback: Record the cli-status and mcp-stdio-handshake probe evidence and note the client check as deferred.

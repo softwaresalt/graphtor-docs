@@ -3,7 +3,6 @@ name: Scope Boundary Auditor
 description: "Reviews changes for scope creep, YAGNI violations, unnecessary complexity, and verification criteria gaps"
 maturity: stable
 tools: read, search
-model_tier: 1
 max_subagent_tier: 1
 reasoning_effort: ""
 model_provider: ""
