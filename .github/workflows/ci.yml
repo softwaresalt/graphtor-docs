@@ -151,7 +151,13 @@ jobs:
           python-version: '3.x'
 
       - name: Install autoharness
-        run: python -m pip install --disable-pip-version-check autoharness
+        # Pinned to the version recorded in .autoharness/harness-manifest.yaml
+        # (autoharness_version). The checked-in agents, policies, and gate
+        # contracts are written against that version, so an unpinned install
+        # would let a future release silently change the topology verdict with
+        # no repository change. Bump this in lockstep with the manifest when
+        # the harness is merge-installed to a newer version.
+        run: python -m pip install --disable-pip-version-check autoharness==1.5.0
 
       - name: Run pipeline-topology gate
         run: bash scripts/ci-topology-check.sh

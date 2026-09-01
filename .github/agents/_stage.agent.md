@@ -1060,10 +1060,17 @@ entry point differs.
 
 ### Invariants regardless of pattern
 
-* Every task in the shipment must have a covering feature as its parent.
-* The covering feature must precede its child tasks in the shipment: added to the shipment
-  first in Mode H, or listed first in the complete ordered `items` list of the single atomic
-  create call in Mode R.
+* Every task in the shipment must have a covering feature as its parent. This is a **hierarchy**
+  requirement about the task's `parent_id`, not a manifest-membership requirement — the covering
+  feature can be the parent of every member while itself staying out of `custom_fields.items`.
+* The covering feature must precede its child tasks in the shipment **whenever it is a manifest
+  member**: added to the shipment first in Mode H, or listed first in the complete ordered `items`
+  list of the single atomic create call in Mode R. It is **not** always a member: a partial-feature
+  shipment omits it from the manifest and holds it in the protected set (P-015), which covers both
+  a task-only Mode R assembly and a Mode H shipment made partial by the Step 6.d reconciliation. In
+  those cases there is no parent to precede anything and none must be added to satisfy this
+  ordering rule; membership is decided by Step 5 and Step 6.d, and this invariant only orders what
+  those steps already admitted.
 * Stage does not hand off a bare list of tasks to Ship — it hands off a `shipment_id`.
 * The shipment ID must point to a valid, queryable shipment artifact with explicit item
   membership before Stage ends the session.
@@ -1229,7 +1236,7 @@ from the recorded next step rather than restarting the pipeline.
 * Never assemble a shipment from a harvest that produced no items or has unresolved P-003 violations
 * Never assemble from a Step 5.5 Mode R handoff set that failed validation, and never expand a handoff set by scanning the queue for related or ready-looking items
 * Never treat the Step 5.5 recovery path as gate relief — an open gate task named by the ratification blocks assembly
-* Never add a child task to a shipment before its covering feature has been added (Mode H) or placed ahead of it in the atomic create list (Mode R)
+* Never add a child task to a shipment before its covering feature has been added — **Mode H only, and only while that shipment remains full-coverage**. If the Step 6.d partial-coverage reconciliation removes the covering feature from the manifest, this ordering rule no longer applies to that shipment. **Mode R manifest membership and ordering are governed solely by Step 5's atomic `assembly_ids` construction**, which omits the covering feature entirely for a partial-feature, task-only shipment (P-015); never require a covering feature to precede Mode R children, and never re-add one to satisfy this rule
 * Never create a Mode R shipment incrementally — create it atomically with the complete ordered `assembly_ids` list, reuse only an exactly equal manifest, and halt rather than leave a partial shipment visible to Ship
 * Never skip shipment assembly (Step 5.5) when `backlogit` is installed and `features.shipments: true` — the shipment ID is the mandatory handoff token to Ship
 * Never direct the operator to Ship with a feature ID instead of a shipment ID — Ship expects `shipment_id`, not `feature_id`
