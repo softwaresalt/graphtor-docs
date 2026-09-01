@@ -694,6 +694,12 @@ checkpoint's own continuity:
   member list and assembly order; the correction below (`378444e`/
   `3fb4fd0`) replaced that with the disjoint `member_ids`/`prerequisite_ids`
   sets, with `handoff_ids` demoted to their 11-ID audit union**;
+  **the `member_ids` = 9 / 11-ID figures were themselves superseded on
+  2026-08-31 (PR #114 review): `059-F` is a partial-feature covering root
+  (five live children outside the manifest) and is excluded from
+  membership, so `member_ids` is exactly 8 and `handoff_ids` their 10-ID
+  union — every other "9 members"/"11-ID" mention in this memory reads the
+  same way**;
   (B) that same decision's supersession of the PR #113 `051-S`
   closure-timing precondition — an evidence-shipment closure may precede
   `059.014-T` sign-off, which gates successor-shipment assembly and

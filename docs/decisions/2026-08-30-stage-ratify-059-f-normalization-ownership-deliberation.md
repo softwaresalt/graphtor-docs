@@ -276,7 +276,7 @@ by path, with Steps 1–5 logged as *not applicable — Mode R recovery path, au
 NOT invent stash entries, re-run `harvest` over these already-harvested items, or stand up any
 synthetic harvest. Stage MUST then, in order:
 
-1. Record the two sets above verbatim — the 9 `member_ids` and the 2 `prerequisite_ids`. Never
+1. Record the two sets above verbatim — the 8 `member_ids` and the 2 `prerequisite_ids`. Never
    widen either set by scanning the queue for unassigned, ready-looking, or topically related
    `059.*` items, and never promote a prerequisite into the member set.
 2. Re-run the full Step 5.5 item-2 validation, applying each set's own rules against live state at

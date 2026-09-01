@@ -4,6 +4,7 @@ slug: 051-s-toctou-transition-closure
 shipment: "051-S (closed)"
 mode: post-merge
 status: READY_WITH_FOLLOWUPS
+readiness_authority: "Local Review Readiness (current — 2026-08-31)"
 owner: "@softwaresalt"
 ---
 
@@ -903,6 +904,15 @@ rather than an open question. The closure PR is presented for operator
 review only; **it is not merged by this session** per explicit task
 instruction.
 
+> **Readiness note (2026-08-31).** When this paragraph was written, the
+> `READY_WITH_FOLLOWUPS` claim conflicted with the then-current review state
+> (four unresolved P1 findings) and with a Mode R member/prerequisite
+> authorization that has since been corrected to a task-only 8-member
+> manifest. Both conditions are now resolved: the Mode R authorization
+> correction is recorded above, and all four P1 blockers are fixed. See
+> "Local Review Readiness (current — 2026-08-31)" at the end of this document,
+> which is the readiness authority; the frontmatter `status` matches it.
+
 ## Source Artifact Cleanup
 
 Reviewed `custom_fields` on the covering feature `059-F`: reading both the
@@ -999,7 +1009,13 @@ now resolved at the agent-contract/Stage-decision level:
   `537daaf`) this bullet named a single 10-ID `handoff_ids` set that
   folded the sign-off gate into the member list and the assembly order;
   `378444e`/`3fb4fd0` corrected that to the disjoint sets above — see the
-  "Mode R Fail-Closed Partition Correction" section below.**
+  "Mode R Fail-Closed Partition Correction" section below. The `member_ids`
+  = 9 / 11-ID union figures were themselves superseded on 2026-08-31 (PR
+  #114 review): `059-F` is a partial-feature covering root and is excluded
+  from membership, so `member_ids` is exactly 8 (the implementation tasks,
+  order `059.001-T → 059.002-T → 059.006-T → 059.003-T → 059.004-T →
+  059.005-T → 059.010-T → 059.011-T`) and `handoff_ids` is their 10-ID
+  union.**
 * **(B) `051-S` closure-timing sequencing** — resolved by the same
   decision's § *Supersession of the PR #113 `051-S` Closure-Timing
   Requirement*: an evidence-shipment closure (this closure's own subject)
@@ -1128,6 +1144,17 @@ corrected to nine members — `059.014-T` was never `blocked`, was never
 normalized, and is a prerequisite, not a member. No item status, dependency
 edge, shipment, or sign-off state changed by either commit.
 
+> **Superseded 2026-08-31 (PR #114 review).** The `member_ids` = 9 / 11-ID
+> union framing recorded in this section is historical. `059-F` retains five
+> live children outside the manifest, making the successor a
+> **partial-feature shipment**, so the covering feature is excluded:
+> `member_ids` is exactly **8** (the implementation tasks only) and
+> `handoff_ids` is their **10-ID** union with the two `prerequisite_ids`.
+> See the "Partial-feature membership correction addendum" in
+> `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`.
+> The normalized-scope count of nine is a different quantity (the
+> status-normalization act, which did include `059-F`) and remains correct.
+
 This pass does **not** legalize any of the four historical violations
 recorded above (status normalization; `054-S` shipment creation; its
 unapproved deletion; `059.008-T` `blocked_reason` mutation) — all four
@@ -1208,7 +1235,12 @@ connection attempts, degrading indexed code-graph coverage for these three
 rounds. Review substituted a frozen SHA-qualified full diff (HEAD `45876b6`
 through current HEAD `484c5c6`) reviewed by a 9-persona pass instead.
 
-### Local Review Readiness (current)
+### Local Review Readiness (2026-08-30 review-cap checkpoint — SUPERSEDED)
+
+> **Superseded 2026-08-31** by "Local Review Readiness (current — 2026-08-31)"
+> at the end of this document. All four P1 blockers listed below have since
+> been fixed. This section is retained unaltered as historical record of the
+> 2026-08-30 review-cap state; it is **no longer** the readiness authority.
 
 - Reviewed HEAD: `484c5c63693c6a44b62b65d83563d3c8e37a726e`
 - Outcome: `BLOCKED`
@@ -1270,6 +1302,49 @@ for this checkpoint, no merge was attempted, and no GitHub review thread
 was replied to or resolved by this pass. This section does not alter,
 redact, or supersede any prior section of this closure record, all of
 which remain accurate historical record.
+
+*(End of the superseded 2026-08-30 checkpoint section. Current readiness is
+recorded in "Local Review Readiness (current — 2026-08-31)" below.)*
+
+### Local Review Readiness (current — 2026-08-31)
+
+This section supersedes the 2026-08-30 review-cap checkpoint above and is the
+readiness authority for this closure record.
+
+- Reviewed HEAD: recorded in the **PR #114 body** `## Local Review Readiness`
+  block, which is the authority the §1.9 merge gate reads and the only place
+  the exact `headRefOid` can be stated without self-invalidating on the next
+  commit. This document does not duplicate that SHA.
+- Outcome: `READY_WITH_FOLLOWUPS`
+- Blocking findings: `P0=0, P1=0` — all four accepted P1 blockers from the
+  superseded checkpoint are fixed in this branch:
+  1. Stage root-feature creation dead path — fixed: the fail-closed
+     `backlogit_create_item` row now permits root feature creation without
+     `parent_id` while still requiring it for child tasks/subtasks.
+  2. Reconcile phase-input deadlock — fixed: pre-mode now emits the
+     `archived-provenance-deferred` preflight candidate and never evaluates
+     the merge-proof it cannot receive; safe-close performs the
+     authoritative split once `merge_commit_sha` exists.
+  3. Lock halt/resume gap — fixed: a single Halt Recovery Protocol now
+     governs every halt after lock acquisition (persist handoff record,
+     release the canonical lock by its original queue path, resume only on
+     owner validation), so a post-mutation halt can no longer strand the
+     lock.
+  4. Foreign pre-archive evidence timing — fixed: all archived members are
+     evidence-preflighted before the first mutation (zero items archived on
+     failure), and the Historical Evidence-Remediation Workflow now has a
+     defined entry point and procedure.
+- Full local build: applicable and run — this branch changes
+  `.github/` harness contracts and `.backlogit/` state, plus `start.ps1` /
+  `start.sh`. Gate results are recorded in the PR body readiness block.
+- Follow-ups: the permanent historical audit residuals (three P-010 and one
+  P-005 violation, and the two historical process gaps) remain recorded and
+  un-legalized; they are not curable and are not blockers. No new backlog
+  IDs are required for the four resolved P1 items.
+- Shadow review / hosted threads: the outstanding Copilot review threads on
+  PR #114 were addressed in this pass — each fixed or explicitly declined
+  with rationale, replied to after the fixing commit was pushed, and then
+  resolved via the `resolveReviewThread` GraphQL mutation.
 
 ## Cross-References
 

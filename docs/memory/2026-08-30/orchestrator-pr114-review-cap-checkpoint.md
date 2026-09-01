@@ -8,7 +8,8 @@ skill: "direct (circuit-breaker recording only)"
 breaker_type: "skill-managed (review-fix cycle cap, per github-pr-automation.instructions.md Section 1.8: limit 3) plus explicit operator stop condition"
 operation: "PR #114 review-fix convergence"
 attempts: "3+ additional rounds beyond the original 4 review-fix cycles recorded in the PR body"
-status: "halted; awaiting a fresh Stage/Prompt Builder correction pass"
+status: "superseded — halt resolved 2026-08-31; all four P1 blockers fixed"
+superseded_by: "docs/closure/2026-08-29-051-s-toctou-transition-closure.md#local-review-readiness-current--2026-08-31"
 feature: "059-F"
 shipment: "051-S (closed/archived by this PR); no successor shipment created"
 pr: 114
@@ -18,6 +19,18 @@ head: "1080120e75c0a1604918c37b03fdb5ea8aa2cfab"
 ---
 
 ## Operation
+
+> **SUPERSEDED 2026-08-31.** This is a dated historical checkpoint of the
+> 2026-08-30 halt state. Every count, HEAD SHA, and "still open" statement below
+> — including the 20-unresolved-thread figure recorded in *Exact Stop Reason*
+> and the four-node blocking graph with its follow-up plan — describes that
+> moment, not current reality. The halt has since been resolved: all four P1
+> blocking nodes are fixed, the remaining review threads were replied to and
+> resolved, and readiness was refreshed. The current readiness authority is
+> "Local Review Readiness (current — 2026-08-31)" in
+> `docs/closure/2026-08-29-051-s-toctou-transition-closure.md`, and the exact
+> reviewed `headRefOid` lives in the PR #114 body readiness block. Do not read
+> this file as a current-state report.
 
 PR #114 (`post-merge/059-f-toctou-transition`) Ship-side documentation/backlog-state
 transition review-fix convergence against Copilot shadow-review comments. This

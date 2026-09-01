@@ -53,7 +53,8 @@ gathered: of the 10-item near-term scope (the 9 future Mode R shipment
 `member_ids` — `059-F` + the eight implementation tasks
 `059.001/002/003/004/005/006/010/011-T` — plus the then-queued sign-off
 gate `059.014-T`, a `prerequisite_ids` entry never itself a shipment
-member), **nine members — `059-F` plus the eight implementation
+member; **the 9-member figure was later corrected to 8, task-only — see the
+2026-08-31 supersession bullet at the end of this entry**), **nine members — `059-F` plus the eight implementation
 tasks — carried `status: blocked`**, not just the two returned from
 `051-S` in this same session; most of them had already been returned
 `blocked` from `051-S` in an *earlier* session, once the original
@@ -429,6 +430,20 @@ prevention step above:
   `059.014-T`, the operator sign-off gate, not yet satisfied),
   `handoff_ids` their 11-ID auditable union only, and the normalized-scope
   count corrected to nine.
+* **SUPERSEDED (2026-08-31, PR #114 review) — the 9-member framing above is
+  no longer the authorization.** A covering feature MUST NOT be a shipment
+  member when it retains live children outside the manifest. `059-F` retains
+  five (`059.008-T`, `059.009-T`, `059.012-T`, `059.013-T`, `059.014-T`), so
+  `051-S`'s successor is a **partial-feature shipment**: `member_ids` is
+  exactly **8** — the eight implementation tasks only, no covering feature —
+  and `handoff_ids` is their **10-ID** union with the two `prerequisite_ids`.
+  The reusable rule: **assemble task-only membership whenever the covering
+  feature is not fully covered by the manifest**, and keep the feature in the
+  protected set instead. Every "9 members" / "11-ID union" statement earlier
+  in this entry is historical record of the pre-correction contract; read the
+  8/10 figures as current. The normalized-scope count of nine is a **different
+  quantity** (the status-normalization act, which did include `059-F`) and
+  remains correct.
 
 None of this retroactively legalizes the four historical violations
 recorded in this entry's citations — all four remain standing,

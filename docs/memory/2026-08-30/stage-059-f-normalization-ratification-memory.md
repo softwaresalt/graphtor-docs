@@ -207,6 +207,17 @@ scratch/session files preserved.
 
 ### Corrections applied
 
+> **Superseded in part, 2026-08-31 (PR #114 review).** Correction 1 below records
+> `member_ids` = 9 (covering feature `059-F` + eight tasks) and an 11-ID
+> `handoff_ids` union. That membership is no longer authorized: `059-F` retains
+> five live children outside the manifest, so the successor is a
+> **partial-feature shipment** and the covering feature is excluded.
+> `member_ids` is exactly **8** (the implementation tasks only) and
+> `handoff_ids` is their **10-ID** union with the two `prerequisite_ids`. See the
+> "Partial-feature membership correction addendum" in the decision document.
+> Correction 2's normalized-scope count of nine is a **different quantity** (the
+> status-normalization act, which did include `059-F`) and remains correct.
+
 1. **Disjoint Mode R sets in the durable authorization** (threads `3888940607`, `3888969327`).
    § *Mode R Authorization for Successor-Shipment Assembly* in
    `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md` now names
