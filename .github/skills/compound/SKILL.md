@@ -51,7 +51,7 @@ Create the learnings file with YAML frontmatter:
 ---
 title: "{{TITLE}}"
 description: "{{ONE_LINE_DESCRIPTION}}"
-source: "{{DOCS_COMPOUND}}/{category}/{slug}-{YYYY-MM-DD}.md"
+source: "docs/compound/{category}/{slug}-{YYYY-MM-DD}.md"
 doc_type: "learning"
 problem_type: "{{TYPE}}"
 category: "{{CATEGORY}}"

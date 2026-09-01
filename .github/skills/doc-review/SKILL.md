@@ -9,8 +9,9 @@ argument-hint: "[mode:autofix|mode:report-only] [path or glob]"
 Reviews installed harness documentation and workspace docs for quality issues.
 Identifies broken cross-references, stale content, missing or malformed
 frontmatter, markdown structure violations (MD001/MD025/MD041), and unresolved
-template variable drift (double-brace placeholders remaining in installed
-output). Produces structured findings with severity tiers and action classes
+template variable drift (installer-owned double-brace placeholders remaining in
+installed output, as distinct from the authoring placeholders skills emit by
+design). Produces structured findings with severity tiers and action classes
 compatible with the standard review persona routing model.
 
 ## When to Use
@@ -85,14 +86,35 @@ Check arguments for `mode:autofix` or `mode:report-only`.
 
 ### Check 1 — Template Variable Drift (P0)
 
-Scan all Markdown and YAML files in scope for unresolved template variable
-patterns matching `\{\{[A-Z_][A-Z0-9_]*\}\}`. Any match in installed output
-files (not `.tmpl` source files) is a P0 finding.
+Scan all Markdown and YAML files in scope for double-brace placeholders
+matching `\{\{[A-Z_][A-Z0-9_]*\}\}`, then **classify each match before
+assigning severity**. A raw match is not by itself a finding: the installed
+harness legitimately contains two disjoint families of double-brace tokens.
+
+| Family | Test | Severity |
+|---|---|---|
+| **Installer-owned** — a variable the installer was supposed to substitute | Token name appears in the variable table of `.github/skills/install-harness/SKILL.md` | **P0** |
+| **Authoring / interpolation** — a field filled in at runtime, not install time | Token name is absent from that table | **Not a finding** (advisory at most) |
+
+Membership in the installer variable table is the discriminator. Authoring
+placeholders belong to artifact templates the skills themselves emit — the
+`compound` learnings frontmatter, `deliberate` decision artifacts, and
+`.github/policies/policy-proposal.md` — plus runtime message-interpolation
+fields in reviewer subagents. They are correct output, not drift, and flagging
+them makes every run emit false P0 blockers.
+
+**Do not exclude fenced code blocks to achieve this.** Fenced blocks are where
+authoring templates live, but they are also where an installer variable is most
+likely to survive substitution, so a region-based exclusion would blind the
+check to exactly the defects it exists to catch. Classify by token identity, not
+by location.
 
 ```text
-Pattern: \{\{[A-Z_][A-Z0-9_]*\}\}
+Pattern:  \{\{[A-Z_][A-Z0-9_]*\}\}
 Scope:    installed harness files (exclude *.tmpl, exclude .backlogit/)
-Severity: P0
+Classify: P0 only if the token name is in the install-harness variable table;
+          otherwise it is an authoring/interpolation field — not a finding
+Severity: P0 (installer-owned only)
 Action:   manual — the installer must re-run or the variable must be resolved
 ```
 
