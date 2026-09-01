@@ -4,6 +4,7 @@ slug: 051-s-toctou-transition-closure
 shipment: "051-S (closed)"
 mode: post-merge
 status: READY_WITH_FOLLOWUPS
+compaction_status: pending
 readiness_authority: "Local Review Readiness (current — 2026-08-31)"
 owner: "@softwaresalt"
 ---
