@@ -50,12 +50,27 @@ against compact-context Phase 2's memory rules (they qualify under "part of
 a completed feature or chore," since both `047-S` and `048-S` are fully
 archived). They are **not compacted**, per the skill's own Behavioral
 Constraint: "Preserve the most recent checkpoint for each completed task."
-A repo-wide search confirms no other, later memory checkpoint exists for
-either shipment — each of these two files is the sole remaining live
-checkpoint for its shipment, so it *is* the most recent (and only)
-checkpoint for that completed task, and archiving it would violate the
-constraint rather than satisfy it. This is a quoted skill constraint, not a
-judgement call or scope-avoidance choice.
+Both files are Ship-authored (no `agent:` frontmatter override; their body
+text is written in first-person Ship session-report style), so Ship has
+authority to compact them and this exclusion is a genuine content-based
+one, not a Role Boundary substitute.
+
+**Correction (2026-09-01, PR #116 round-3 remediation)**: the original text
+here additionally and incorrectly claimed these were the *sole* remaining
+live checkpoint for each shipment. `docs/memory/2026-08-16/dark-stage-session-complete-memory.md`
+also names both `047-S` and `048-S` (a Stage handoff memory recording both
+shipments as "ready for Ship," predating the two 2026-08-17 files). The
+correct, narrower claim is that the two 2026-08-17 files are each the *most
+recent* checkpoint for their shipment — the 2026-08-16 file is earlier, not
+later, so it does not disturb that ordering. The 2026-08-16 file itself is
+a **separate, Role-Boundary-excluded candidate**: its frontmatter declares
+`agent: Stage`, and it qualifies under Phase 2's completed-work rule on
+content grounds (both shipments it names are now fully archived) but is
+**not compacted** because Ship's Continuity row unconditionally forbids
+mutating another agent's checkpoint or memory — a different, ownership-based
+exclusion from the "most recent checkpoint" rule applied to the two
+2026-08-17 files above. Recorded as a follow-up handoff for a future Stage
+session, not acted on here.
 
 ## Consolidated Record
 
@@ -203,7 +218,12 @@ reflecting the added cross-reference annotations from the reconciliation
 above — source size and archived size are distinct measurements, not a
 discrepancy); 0 files deleted; 7 tracked external citing documents (plus
 the six files' own mutual cross-references) updated to preserve
-traceability; 2 memory checkpoints assessed and preserved under the
-"most recent checkpoint for each completed task" Behavioral Constraint
-(not compacted); 1 known Stage-owned exception (`.backlogit/stash.jsonl`)
+traceability; 2 memory checkpoints (Ship-authored) assessed and preserved
+under the "most recent checkpoint for each completed task" Behavioral
+Constraint (not compacted); 1 memory checkpoint
+(`docs/memory/2026-08-16/dark-stage-session-complete-memory.md`,
+Stage-authored) assessed as a qualifying content candidate but excluded
+under Ship's Role Boundary (Continuity row — Ship may not mutate another
+agent's checkpoint or memory), recorded as a follow-up handoff for Stage,
+not compacted; 1 known Stage-owned exception (`.backlogit/stash.jsonl`)
 documented above.

@@ -128,8 +128,17 @@ Role-Boundary Reconciliation," "Mode R Fail-Closed Partition Correction,"
 "Current-Contract Reconciliation," "Final Review-Cap Checkpoint," and
 "Cross-References" sections) to point at the new archived location, per the
 compact-context skill's "traceable path from the compacted summary back to
-the original verbose artifacts" constraint. No other tracked file cites
-this path.
+the original verbose artifacts" constraint. The original path
+(`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`)
+still appears as an annotated historical reference in a small number of
+other tracked files — `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`
+(Ship-authored, annotated "compacted 2026-09-01, now archived at...") and
+`docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`
+(Stage-authored; its citation was left in its original, un-annotated form,
+since Ship's Role Boundary bars mutating Stage-authored memory — see the
+paired closure record's Post-Merge Compaction section). These are
+annotated or as-is historical references to the former location, not
+unresolved citations to a still-live path.
 
 ## Result
 

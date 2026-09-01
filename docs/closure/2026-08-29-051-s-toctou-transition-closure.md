@@ -1381,14 +1381,46 @@ Copilot findings were verified correct against
 citation is not an exclusion (the skill's own traceability constraint is
 satisfied by rewriting the reference, not by refusing to compact), and
 `target: all` scans `docs/closure/` in full, not just the current record.
-A subsequent Copilot review pass on the fix commit itself (`324bb37`)
-raised 3 further findings, all addressed in this same revision: a
-qualifying `docs/exec-plans/` plan candidate (`057-F`) that had not yet
-been consolidated, an invalid scope-avoidance exclusion of two memory
-checkpoints that needed a genuine Behavioral Constraint instead, and 2
-accuracy/formatting corrections in the newly-added closure summary and
-memory-compaction files. This section now reports what was genuinely
-compacted.
+
+**Second correction (2026-09-01, round 2 → round 3)**: a subsequent
+Copilot review on the first fix commit (`324bb37`) raised 5 findings; all
+were addressed in a second fix commit, but that commit itself introduced a
+genuine Role Boundary problem: it created a new decided-plan artifact and
+modified an existing plan artifact (`057-F`'s hardening plan) to satisfy
+compact-context's plan-consolidation mechanic, and it rewrote citations
+inside three Stage-authored memory files
+(`stage-9CEC208C-pip-autoapprove-hardening-memory.md`,
+`stage-dark-security-pipeline-remediation-memory.md`, and — from the first
+fix commit — `stage-059-f-normalization-ratification-memory.md`) to point
+at the new archived/decided-plan paths. A third Copilot review, against
+that second fix commit, correctly identified both problems:
+Ship's Planning row unconditionally forbids Ship from creating or
+modifying *any* deliberation, spike, plan, or review artifact — this
+prohibition is not conditioned on who authored the plan, so
+compact-context's Phase 3 plan-consolidation mechanic (write a decided-plan,
+archive the original) is something Ship can **never** perform, for any
+plan candidate, under any circumstances; and Ship's Continuity row
+separately and unconditionally forbids mutating another agent's checkpoint
+or memory, which bars rewriting citations inside Stage-authored files
+regardless of what they cite. This third revision reverts the plan
+compaction and the three Stage-memory citation edits in full, and
+re-reports Phase 1-4 accordingly. The one exception is the compaction of
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+itself (see below): unlike the plan and Stage-memory cases, this specific
+action was explicitly directed by the Orchestrator — the very agent that
+authored and owns that checkpoint — via the current PR-116 remediation
+task instructions, which independently verified the underlying Copilot
+finding as correct and required this compaction as the fix. That is
+consent from the affected agent, delivered through the operator, for one
+narrow, explicitly-identified action; it is not a general license Ship
+extended to any other cross-agent artifact, and Ship's independent
+extension of that precedent to Stage's memory files and to the `057-F`
+plan was exactly the (now-reverted) overreach the reviewer caught. This
+narrow case is flagged here for operator/Orchestrator attention: the
+general Continuity Role Boundary text as currently written does not itself
+carve out an explicit-owner-consent exception, so a future amendment to
+either the role contract or the compact-context skill would remove this
+ambiguity rather than leaving it to be re-litigated by each review pass.
 
 Per P-020's "Invocation vs. candidate selection (decoupled)" clause,
 invocation is mandatory but candidate selection stays threshold-gated
@@ -1396,10 +1428,12 @@ invocation is mandatory but candidate selection stays threshold-gated
 
 * **Phase 1 (Assess)**: `docs/memory/` held 53 files (over the 40-file
   manual threshold) across several still-`queued`/in-flight work streams
-  (`049-S`, `052-S`, `053-S`, `056-F`, `059-F`) plus the just-closed `051-S`.
+  (`049-S`, `052-S`, `053-S`, `056-F`, `059-F`) plus the just-closed `051-S`,
+  and Stage-authored memory outside Ship's Role Boundary authority.
   `docs/exec-plans/` held 6 files, one of them (`057-F`'s hardening plan,
   dated 2026-08-24) carrying an appended `## Plan Review` section for a
-  now-fully-archived chore. `docs/closure/` held 9 files, six of
+  now-fully-archived chore — a Phase 2 plan candidate Ship is structurally
+  unable to act on (see below). `docs/closure/` held 9 files, six of
   them (`047-S`/`048-S`, dated 2026-08-17) already over the 14-day
   threshold at the time of this corrected pass (2026-09-01).
 * **Phase 2 (Identify Candidates) — plans**: `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`
@@ -1407,21 +1441,18 @@ invocation is mandatory but candidate selection stays threshold-gated
   covering chore `057-F` is `status: done` in `.backlogit/archive/057-F.md`
   (shipped as `050-S`, PR #109) — satisfying the skill's plan rule
   ("Feature or chore is complete AND plan has appended review content
-  ready for consolidation") with no active-work tie. **Compacted**:
-  consolidated into
-  `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`;
-  the verbose original archived to
-  `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`.
-  Every citation Ship is permitted to touch was rewritten to the archived
-  path (the 050-S post-merge closure record, an already-archived Ship
-  recovery memory, and two Stage-authored session memory files); two
-  citations were deliberately left untouched under Ship's Role Boundary —
-  `docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md`
-  (a deliberation artifact; Ship may not create or modify deliberation,
-  spike, plan, or review artifacts) and the `.backlogit/archive/057-F.md` /
-  `057.001-T.md` `references:` fields (Ship's backlog authority permits
-  only the narrow commit-only field write, not general field edits) — both
-  documented in the decided-plan's own "Known Exceptions" section.
+  ready for consolidation") on content grounds alone. **Not compacted**:
+  Ship's Role Boundary Planning row unconditionally forbids Ship from
+  creating or modifying deliberation, spike, plan, or review artifacts —
+  compact-context's plan-consolidation mechanic (write a decided-plan, move
+  the original to archive) requires exactly those two operations, so Ship
+  cannot perform Phase 3 for this or any other plan candidate regardless of
+  ownership or completeness. This is a structural exclusion, not a
+  judgment call, and applies to every future `docs/exec-plans/` candidate
+  Ship encounters until the role contract or skill is amended to name a
+  different authorized agent (Stage, which owns Planning artifacts, is the
+  natural candidate) for this specific mechanic. Recorded as a follow-up
+  handoff for a future Stage session (see Stash Follow-Up Review below).
 * **Phase 2 (Identify Candidates) — memory**: the just-closed `051-S`/PR
   #111/#113/#114 memory set was individually assessed:
   * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`,
@@ -1433,9 +1464,14 @@ invocation is mandatory but candidate selection stays threshold-gated
     correct citation (not a compaction exclusion) since these files are
     not compacted for a substantive reason: they are not superseded and
     not tied to a completed-and-archived release unit on their own (the
-    successor scope under `059-F` is still open). Not compacted.
+    successor scope under `059-F` is still open). Not compacted. (The
+    `stage-059-f-normalization-ratification-memory.md` file is additionally
+    Stage-authored and outside Ship's Continuity authority regardless of
+    the above — its citation to the archived Orchestrator checkpoint below
+    was reverted to its original, un-annotated text for this reason.)
   * `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` —
-    **compacted**. Its own frontmatter declares
+    **compacted**, under the narrow explicit-Orchestrator-consent exception
+    described above. Its own frontmatter declares
     `status: "superseded — halt resolved 2026-08-31; all four P1 blockers
     fixed"` and names this closure record's own "Local Review Readiness
     (current — 2026-08-31)" section as `superseded_by`, satisfying the
@@ -1456,9 +1492,13 @@ invocation is mandatory but candidate selection stays threshold-gated
     consolidation below) qualify under "part of a completed feature or
     chore" but are preserved, not compacted, per the skill's own
     Behavioral Constraint "Preserve the most recent checkpoint for each
-    completed task" — each is the sole remaining live checkpoint for its
-    shipment, so it *is* that shipment's most recent checkpoint. Full
-    rationale recorded in the paired closure-summary file.
+    completed task" — each is Ship's own most recent checkpoint for its
+    shipment. Full rationale, including the separate Role-Boundary-excluded
+    `docs/memory/2026-08-16/dark-stage-session-complete-memory.md` (Stage-
+    authored, predates both) and
+    `docs/memory/2026-08-24/stage-9CEC208C-pip-autoapprove-hardening-memory.md`
+    (Stage-authored, tied to completed `057-F`/`050-S`), is recorded in the
+    paired closure-summary file.
   * `docs/memory/2026-08-29/stage-059-f-engine-boundary-redeliberation-memory.md`,
     `docs/memory/2026-08-29/stage-pr113-circuit-breaker-reviewfix-cap-memory.md`
     (explicitly marked `halt preserved, not erased` by the memory file that
@@ -1468,9 +1508,11 @@ invocation is mandatory but candidate selection stays threshold-gated
     Stash Follow-Up Review section above records that a future Stage
     session must still assemble the successor shipment for this scope.
     The skill's "never compact checkpoints for active work items" /
-    "cross-reference against active backlog work items" constraint applies.
-    Not compacted. The `stage-056-011-h3a-*` (4 files, tied to active
-    `049-S`/`056-F`) and `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`
+    "cross-reference against active backlog work items" constraint applies,
+    and all three are additionally Stage-authored and outside Ship's
+    Continuity authority regardless. Not compacted. The `stage-056-011-h3a-*`
+    (4 files, tied to active `049-S`/`056-F`) and
+    `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`
     (the live plan for open `059-F` work) fall under the same constraint
     and were likewise left untouched. This same "never compact active-item
     checkpoints" constraint also covers every other `status: superseded`
@@ -1478,8 +1520,8 @@ invocation is mandatory but candidate selection stays threshold-gated
     `pr107-*`/`stage-dark-security-pipeline-remediation-memory.md` group
     and the remaining `2026-08-29` `stage-056-011-h3a-*` files) — all tied
     to `049-S`/`056-F`, both still `queued` per
-    `.backlogit/queue/049-S.md` and `.backlogit/queue/056-F.md`. None
-    compacted.
+    `.backlogit/queue/049-S.md` and `.backlogit/queue/056-F.md`, and all
+    Stage-authored. None compacted.
 * **Phase 2 (Identify Candidates) — closure records**: this closure record
   itself is 3 days old (well under the 14-day threshold) and is the object
   of the current closure, not a compaction candidate. The six 2026-08-17
@@ -1494,7 +1536,8 @@ invocation is mandatory but candidate selection stays threshold-gated
   fully complete, archived shipments (`047-S`, `048-S` present only in
   `.backlogit/archive/`, no live queue entry) — satisfying the skill's
   closure rule ("Feature or chore is complete AND more than
-  `threshold_days` old") without exception. **Compacted**: consolidated
+  `threshold_days` old") without exception; these are Ship-authored closure
+  records, within Ship's authority to compact. **Compacted**: consolidated
   into `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`; the six
   originals archived to
   `docs/archive/closure/2026-09-01-047-s-048-s-compaction/`. Every tracked
@@ -1502,29 +1545,41 @@ invocation is mandatory but candidate selection stays threshold-gated
   location (full detail, including the one known Stage-owned
   `.backlogit/stash.jsonl` exception left untouched under Ship's Role
   Boundary, is recorded in the compaction summary itself).
-* **Result**: 1 memory checkpoint compacted and archived; 1 exec-plan
-  compacted into a decided-plan and archived; 6 closure records compacted
-  into 1 consolidated summary and archived (44,784 bytes); 3 compaction
-  reports/decided-plans added
-  (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
-  `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`,
-  `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`);
-  0 files deleted. All still-active work streams (`049-S`, `052-S`, `053-S`,
-  `056-F`, `059-F`) retain every checkpoint untouched, and the two sole
-  remaining checkpoints for the completed `047-S`/`048-S` shipments are
-  preserved under the "most recent checkpoint" constraint. The broader
-  `docs/memory/` file-count threshold (53 > 40, now 52 after this pass'
-  single memory archival) still reflects several *other* still-open release
-  units' active checkpoints, not stale material from `051-S`; a dedicated
-  (non-post-merge-triggered) compaction pass once
-  `049-S`/`052-S`/`053-S`/`056-F`/`059-F` close out is the appropriate future
-  point to revisit that broader count, and is recorded as a follow-up (see
-  Stash Follow-Up Review below) rather than acted on here.
+* **Result**: 1 memory checkpoint compacted and archived (under the narrow
+  explicit-consent exception above); 6 closure records compacted into 1
+  consolidated summary and archived (44,784 bytes); 2 compaction reports
+  added (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
+  `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`); 0 files
+  deleted; 0 plan artifacts touched (structurally outside Ship's authority)
+  and 0 Stage-authored memory files mutated. All still-active work streams
+  (`049-S`, `052-S`, `053-S`, `056-F`, `059-F`) retain every checkpoint
+  untouched, the two sole remaining checkpoints for the completed
+  `047-S`/`048-S` shipments are preserved under the "most recent checkpoint"
+  constraint, and every Stage-authored memory candidate (including the
+  three named above and the two named in the paired closure summary) is
+  preserved under Ship's Role Boundary rather than compacted. The
+  `docs/memory/` file-count threshold (53 > 40) is unchanged by this pass:
+  the single memory archival removed one file from `docs/memory/2026-08-30/`
+  but the new compaction report added one file to
+  `docs/memory/compacted/`, a net-zero change within the same top-level
+  directory, so the 53-file count from Phase 1 still holds. That broader
+  threshold reflects several *other* still-open release units' active
+  checkpoints plus Stage-owned memory Ship cannot compact, not stale
+  material from `051-S`; a dedicated pass — by Stage for its own memory and
+  plan candidates, and by Ship (or a future compaction-authorized agent)
+  once `049-S`/`052-S`/`053-S`/`056-F`/`059-F` close out — is the
+  appropriate future point to revisit that count, and is recorded as a
+  follow-up (see Stash Follow-Up Review below) rather than acted on here.
 
 `compaction_status: done` — the skill was genuinely invoked and completed
-Phases 1–4 for `target: all`, with 1 memory checkpoint, 1 exec-plan, and 6
-closure records actually compacted and archived this pass (corrected from
-the originally-recorded, invalid zero-candidate claim).
+Phases 1-4 for `target: all` across every candidate within Ship's Role
+Boundary authority, with 1 memory checkpoint (explicit-consent exception)
+and 6 closure records actually compacted and archived this pass (corrected
+from the originally-recorded, invalid zero-candidate claim). Every
+candidate outside that authority (the `057-F` plan, and every
+Stage-authored memory file assessed this pass) is explicitly identified,
+excluded under a quoted Role Boundary provision rather than silently
+skipped, and recorded as a follow-up handoff for Stage.
 
 ## Cross-References
 
@@ -1649,3 +1704,25 @@ release units' active checkpoints (`049-S`, `052-S`, `053-S`, `056-F`,
 documentation-only handoff for a future Ship post-merge closure (once
 those release units close out) or a manual `compact-context` invocation —
 not a stash entry, and not created or mutated by this session.
+
+**Follow-up handoff (P-020 compaction, Role-Boundary-excluded candidates,
+recorded 2026-09-01 during PR #116 round-3 remediation)**: this pass
+identified genuine compact-context candidates that Ship is structurally or
+categorically unable to act on under its own Role Boundary, distinct from
+the active-work exclusions above. These are documentation-only handoffs
+for a future Stage session (or a future compaction-authorized agent) — not
+stash entries, and not created or mutated by this session:
+* **Plan candidate**: `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`
+  (`057-F`, `status: done`, appended `## Plan Review` PASS) qualifies for
+  Phase 2/3 plan consolidation on content grounds, but Ship's Planning row
+  unconditionally forbids creating or modifying plan artifacts — this
+  exclusion applies to every plan candidate Ship will ever encounter, not
+  just this one.
+* **Stage-authored memory candidates**: `docs/memory/2026-08-24/stage-9CEC208C-pip-autoapprove-hardening-memory.md`
+  (tied to completed `057-F`/`050-S`) and
+  `docs/memory/2026-08-16/dark-stage-session-complete-memory.md` (`agent:
+  Stage`, predates the preserved `047-S`/`048-S` 2026-08-17 session-closure
+  memories it also describes) each qualify under Phase 2's completed-work
+  rule on content grounds, but Ship's Continuity row unconditionally
+  forbids mutating another agent's checkpoint or memory. Both are left
+  untouched.

@@ -9,7 +9,6 @@ artifacts:
   deliberation: "003-DL"
   decision_doc: "docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md"
   plan_doc: "docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md"
-  plan_doc_compacted: "docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md"
   feature: "057-F"
   task: "057.001-T"
   shipment: "050-S"
@@ -45,9 +44,7 @@ unrelated stash entries. None were touched.
   (remove outright if no concrete pip command is required). Classified as a
   chore (no `chore` WIT type exists → covering **feature** used with `chore`
   label).
-- Step 3 Planning: plan `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`
-  (compacted 2026-09-01, see `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`,
-  original archived at `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`).
+- Step 3 Planning: plan `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`.
   Hardening signal (security/permission) present → `Requires plan hardening: yes`
   → plan-harden applied (`## Plan Hardening` with ProposedAction/ActionRisk: low,
   reinforced verification + git-revert rollback).
@@ -78,9 +75,7 @@ unrelated stash entries. None were touched.
 
 - Created: `docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md`
 - Created: `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`
-  (impl-plan + `## Plan Hardening` + `## Plan Review` PASS; compacted
-  2026-09-01, see `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`,
-  original archived at `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`)
+  (impl-plan + `## Plan Hardening` + `## Plan Review` PASS)
 - Created: this memory file
 - Backlog: deliberation 003-DL; feature 057-F; task 057.001-T; shipment 050-S;
   link 003-DL→057-F (informs); stash 9CEC208C archived.

@@ -10,7 +10,7 @@ backlog_refs:
   - "057.001-T"
 linked_artifacts:
   - "docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md"
-  - "docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md"
+  - "docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md"
 tags:
   - ship
   - recovery
