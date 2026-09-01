@@ -130,17 +130,10 @@ P0/P1 findings remaining.
 
 Merged as shipment `048-S`, PR #101 (feature) and PR #102 (post-merge
 closure), commits `ac8847b85ce2cea53a8f739530b35d3f6ea2ede4` and
-`0cf49a81d5471026d17c81ea09db0d92f569a94b`. Full execution record
-(compacted 2026-09-01, see
-`docs/closure/2026-09-01-047-s-048-s-closure-summary.md`): originally
+`0cf49a81d5471026d17c81ea09db0d92f569a94b`. Full execution record:
 `docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md`,
 `docs/closure/2026-08-17-serve-auto-discovery-followups-runtime-verification.md`,
-and `docs/closure/2026-08-17-serve-auto-discovery-followups-post-merge-closure.md`,
-now archived at
-`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-closure.md`,
-`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-runtime-verification.md`,
-and
-`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-post-merge-closure.md`.
+and `docs/closure/2026-08-17-serve-auto-discovery-followups-post-merge-closure.md`.
 Original plan (with full round-by-round review transcript and hardening
 detail) archived at
 `docs/archive/plans/2026-08-16-serve-auto-discovery-followups-plan.md`.

@@ -1422,6 +1422,45 @@ carve out an explicit-owner-consent exception, so a future amendment to
 either the role contract or the compact-context skill would remove this
 ambiguity rather than leaving it to be re-litigated by each review pass.
 
+**Third correction (2026-09-01, round 6 — self-reported false claim)**: a
+round-6 Copilot review correctly identified a genuine Role Boundary
+violation that the first fix commit (`324bb37`, round 1) introduced and
+that every subsequent revision through round 5 failed to catch or revert.
+That commit rewrote the "Full execution record" citation paragraphs inside
+two decided-plan artifacts —
+`docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`
+and
+`docs/exec-plans/2026-08-16-serve-auto-discovery-followups-decided-plan.md`
+— to point at the newly archived `047-S`/`048-S` closure paths. This is a
+direct instance of the same prohibition the "Second correction" above
+describes for the `057-F` plan: Ship's Planning row unconditionally
+forbids Ship from creating **or modifying** any deliberation, spike, plan,
+or review artifact, with no exception for citation-only edits, no
+exception for edits that are factually accurate, and no exception for
+edits made to these decided-plans versus the `057-F` plan or the
+Stage-authored memory files reverted above. The round-2→3 remediation
+reverted the Role-Boundary violations *it* had introduced (the new
+`057-F` decided-plan and the three Stage-memory citation rewrites) but
+never inspected round 1's own decided-plan edits for the same defect, and
+rounds 4-5 likewise did not catch it. As a direct result, the "Result"
+bullet below asserted **"0 plan artifacts touched"** across rounds 1
+through 5 while 2 plan artifacts had in fact been touched and remained
+modified in every one of those revisions — a false claim in this closure
+record's own self-report, not merely an omission. Both decided-plan files
+are reverted byte-for-byte to their pre-PR (`aa7e8ac`) state by this
+round-6 revision (verified via `git diff aa7e8ac..HEAD -- docs/exec-plans/`
+returning empty), so the "0 plan artifacts touched" claim is corrected
+here to hold going forward, and this paragraph is the permanent record of
+the interval during which it did not. The now-reverted-to-stale citations
+these two decided-plans carry again (pointing at the six pre-compaction
+`docs/closure/2026-08-17-*` paths, which this same closure record's own
+Post-Merge Compaction section above compacted and archived to
+`docs/archive/closure/2026-09-01-047-s-048-s-compaction/`) are recorded as
+a follow-up handoff for Stage in the "Stash Follow-Up Review" section
+below, since updating a plan artifact's citations is Stage's Planning
+authority, not Ship's, regardless of how factually correct the update
+would be.
+
 Per P-020's "Invocation vs. candidate selection (decoupled)" clause,
 invocation is mandatory but candidate selection stays threshold-gated
 (`threshold_days: 14`, `max_files: 40`, `max_size_kb: 500`).
@@ -1550,18 +1589,35 @@ invocation is mandatory but candidate selection stays threshold-gated
   consolidated summary and archived (44,784 bytes archived); 2 compaction
   reports added (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
   `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`); 0 files
-  deleted; 0 plan artifacts touched (structurally outside Ship's authority)
-  and 0 Stage-authored memory files mutated.
-  **Space recovered** (per the skill's Phase 4 report contract,
-  `.github/skills/compact-context/SKILL.md` lines 103-111), computed
-  directly from on-disk byte sizes, not estimated: the closure
-  consolidation recovered 30,515 bytes net (44,784-byte originals minus
-  the 14,269-byte `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`);
-  the memory-checkpoint consolidation recovered 31,620 bytes net (the
-  40,680-byte `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
-  original minus the 9,060-byte
+  deleted; **0 plan artifacts touched as of this round-6 revision** (the
+  correct final state, but a false claim as originally recorded — see the
+  "Third correction (2026-09-01, round 6 — self-reported false claim)"
+  paragraph above: round-1 commit `324bb37` in fact touched 2 plan
+  artifacts, that violation went undetected and unreported across rounds 1
+  through 5 while this bullet asserted zero, and both are now reverted to
+  their pre-PR state) and 0 Stage-authored memory files mutated.
+  **Active documentation working-set reduction** (the skill's Phase 4
+  report contract at `.github/skills/compact-context/SKILL.md` lines
+  103-111 labels this metric "Space recovered," but that label is corrected
+  here per a round-6 Copilot finding: the Behavioral Constraints for this
+  same skill require archiving, never deleting, so every original byte
+  below remains fully present on disk under `docs/archive/` — no storage is
+  reclaimed and none is claimed to be. What is reduced is the size of the
+  actively-consulted documentation working set — the compacted summaries
+  that now stand in for the archived originals in normal reading/citation
+  paths), computed directly from on-disk byte sizes, not estimated: the
+  closure consolidation reduced the active working set by 30,515 bytes net
+  (44,784-byte originals, now archived intact, minus the 14,269-byte
+  `docs/closure/2026-09-01-047-s-048-s-closure-summary.md` that replaces
+  them in the working set); the memory-checkpoint consolidation reduced it
+  by a further 31,620 bytes net (the 40,680-byte original, now archived
+  intact at
+  `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`,
+  minus the 9,060-byte
   `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`
-  summary) — **62,135 bytes (~60.7 KiB) recovered in total**.
+  summary that replaces it) — **62,135 bytes (~60.7 KiB) of active
+  documentation working set reduced in total; 0 bytes of storage recovered
+  or freed**, since every original remains retained under `docs/archive/`.
   **Active task checkpoints preserved**: 36 of the 42 files currently in
   `docs/memory/` (excluding `docs/memory/compacted/`) reference at least
   one of the five currently-`queued` backlog IDs (`049-S`, `052-S`,
@@ -1755,3 +1811,41 @@ stash entries, and not created or mutated by this session:
   rule on content grounds, but Ship's Continuity row unconditionally
   forbids mutating another agent's checkpoint or memory. Both are left
   untouched.
+
+**Follow-up handoff (P-020 compaction, stale decided-plan citations,
+recorded 2026-09-01 during PR #116 round-6 remediation)**: round-1 commit
+`324bb37` rewrote the "Full execution record" citation paragraphs in two
+decided-plan artifacts to point at the `047-S`/`048-S` closure paths this
+same pass compacted and archived; round 6 correctly identified that edit
+as a Role Boundary violation (see the "Third correction (2026-09-01,
+round 6 — self-reported false claim)" paragraph in the Post-Merge
+Compaction section above), and both files have been reverted
+byte-for-byte to their pre-PR (`aa7e8ac`) state. That revert is correct
+under Ship's Role Boundary, but it leaves both decided-plans citing their
+**original, now-archived** closure paths rather than the current archive
+location — a real, known-stale reference, not a hidden one. This is a
+documentation-only handoff for a future Stage session (which owns
+Planning-artifact edits) — not a stash entry, and not created or mutated
+by this session:
+* **Plan 1**: `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`
+  still cites `docs/closure/2026-08-17-047-s-post-merge-closure.md` and
+  `docs/closure/2026-08-17-047-s-release-observability-evidence.md`, both
+  of which now live at
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-post-merge-closure.md`
+  and
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md`
+  respectively (consolidated summary at
+  `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`).
+* **Plan 2**: `docs/exec-plans/2026-08-16-serve-auto-discovery-followups-decided-plan.md`
+  still cites `docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md`,
+  `docs/closure/2026-08-17-serve-auto-discovery-followups-runtime-verification.md`,
+  and
+  `docs/closure/2026-08-17-serve-auto-discovery-followups-post-merge-closure.md`,
+  all three of which now live under
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/` (same
+  filenames, same consolidated summary as Plan 1 above).
+* **Action for Stage**: update both decided-plans' "Full execution record"
+  citations to point at the archived paths (and/or the consolidated
+  summary), under Stage's own Planning authority — the exact edit round-1
+  attempted and round 6 reverted, now correctly routed to the agent
+  authorized to make it.
