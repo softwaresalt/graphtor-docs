@@ -68,8 +68,9 @@ Every item in the manifest is classified as one of:
 | Classification | Pre-Mode Meaning | Post-Mode Meaning |
 |---|---|---|
 | `matched` | Queue file present AND declared status matches `expected_status` | Archive file present for this item |
-| `current-delivery-pending-finalization` | No queue file found but an archive file exists because **this shipment's own execution** moved the task to terminal `status: done`, and the installed status routing relocated it into `.backlogit/archive/` immediately — before the PR merge SHA existed — so its final archive markers/evidence are not yet complete. Valid **only** when the fail-closed provenance proof in Safe-Close Mode step 4 passes; ambiguous provenance halts | N/A (all items are expected in archive; use `matched` / `missing`) |
-| `pre-archived` | No queue file found but an archive file exists because an **earlier shipment** delivered/archived the item, or it otherwise **predates** this shipment — distinct from `current-delivery-pending-finalization`, which is this shipment's own in-flight delivery; its commit evidence belongs to that earlier delivery and is never overwritten with this run's SHA | N/A (all items are expected in archive; use `matched` / `missing`) |
+| `archived-provenance-deferred` | **Pre-mode-only preflight candidate.** No queue file found but an archive file exists. Pre-mode does **not** receive `merge_commit_sha` (it is a post-mode/safe-close input), so the merge-proof half of the Safe-Close Mode step 4 provenance proof cannot be evaluated at this gate. The item is therefore recorded as archived-with-deferred-provenance rather than being forced into either archived case. The report MUST capture the decidable evidence for later use: whether the id is present in **this** shipment's `custom_fields.items`, and whether the archived record carries a frontmatter `commit` (and its value). This state is **not ambiguity** and does not halt; the authoritative split is performed in safe-close once the SHA exists | N/A (post-mode uses `matched` / `missing`) |
+| `current-delivery-pending-finalization` | Not emitted by pre-mode (see `archived-provenance-deferred`). Safe-close meaning: no queue file found but an archive file exists because **this shipment's own execution** moved the task to terminal `status: done`, and the installed status routing relocated it into `.backlogit/archive/` immediately — before the PR merge SHA existed — so its final archive markers/evidence are not yet complete. Valid **only** when the fail-closed provenance proof in Safe-Close Mode step 4 passes; ambiguous provenance halts | N/A (all items are expected in archive; use `matched` / `missing`) |
+| `pre-archived` | Not emitted by pre-mode (see `archived-provenance-deferred`). Safe-close meaning: no queue file found but an archive file exists because an **earlier shipment** delivered/archived the item, or it otherwise **predates** this shipment — distinct from `current-delivery-pending-finalization`, which is this shipment's own in-flight delivery; its commit evidence belongs to that earlier delivery and is never overwritten with this run's SHA | N/A (all items are expected in archive; use `matched` / `missing`) |
 | `missing` | No queue or archive file found for this manifest item | Archive file not found for this manifest item |
 | `status-mismatch` | Queue file present but declared status does not match `expected_status` | N/A (post-mode does not check status fields) |
 | `conflict` | This manifest item ID also appears in the `custom_fields.items` manifest of **another live shipment** (queued or active) — a duplicate/overlapping assignment | N/A (post-mode does not scan live shipment manifests) |
@@ -83,7 +84,10 @@ Every item in the manifest is classified as one of:
 > shipment's SHA and then halt on the resulting missing evidence, deadlocking closure
 > permanently. The two cases are therefore split, and the split is decided by the
 > **provenance proof** in Safe-Close Mode step 4 — never by membership or a missing commit
-> alone.
+> alone. Because that proof consumes `merge_commit_sha`, which pre-mode never receives,
+> **pre-mode never performs the split**: it emits the `archived-provenance-deferred`
+> preflight candidate and carries the decidable evidence forward, and safe-close performs
+> the authoritative classification.
 
 > Classification semantics are mode-dependent. Pre-mode checks the queue
 > for status correctness; post-mode checks the archive for file presence only.
@@ -96,7 +100,7 @@ Every item in the manifest is classified as one of:
 > manifests. A manifest ID with no queue and no archive file is not a
 > conflict — it stays `missing` through the normal per-item check in step 3.
 
-### Shipment-Record-Status Classification (record scope, distinct from the five per-item classifications above)
+### Shipment-Record-Status Classification (record scope, distinct from the six per-item classifications above)
 
 In addition to the five per-item classifications, pre-mode also classifies the
 shipment **record's own** `status` against the aggregate status of its manifest
@@ -153,7 +157,8 @@ reconcile.
 
 The report ends with a `recommendation`:
 
-* `PROCEED` — all items are `matched` or `pre-archived` AND the
+* `PROCEED` — all items are `matched`, `archived-provenance-deferred` (pre-mode), or
+  `pre-archived` AND the
   shipment-record-status classification is `record-consistent`; no action needed
 * `HALT — operator reconcile required` — one or more missing, status-mismatch, or orphan items, OR a non-`record-consistent` shipment-record-status classification (pre-mode)
 * `HALT — restore archives` — missing archive files or unrestored deletions (post-mode)
@@ -355,7 +360,9 @@ contract fixes the lock's identity explicitly:
   original lock identity for the whole sequence. Because acquisition requires the target file
   to exist, a **second acquisition** attempted on the now-missing queue target **fails
   closed** — that failure is the intended single-writer guarantee, never a signal to proceed
-  unlocked or to re-derive a lock from the artifact's new path.
+  unlocked or to re-derive a lock from the artifact's new path. The one sanctioned way past a
+  fail-closed second acquisition is the owner-validated resume defined in the Halt Recovery
+  Protocol below.
 * **Release by original path.** Release with the **original queue path**
   `.backlogit/queue/{shipment_id}.md`. Release supports a missing or moved target: it removes
   the queue-path lock file and warns (rather than failing) when the target or the lock file is
@@ -364,6 +371,42 @@ contract fixes the lock's identity explicitly:
   unknown or foreign holder, lock missing mid-sequence, or the artifact found in neither queue
   nor archive — **halt** and report. Never guess, never force-break a lock this session did
   not create, and never continue a terminal mutation under an ambiguous lock.
+
+#### Halt Recovery Protocol (every halt path, pre- and post-mutation)
+
+A halt after safe-close has relocated or partially mutated records would otherwise strand
+the canonical lock: the queue target no longer exists, so the fail-closed second-acquisition
+rule above permanently blocks the next invocation. **One** protocol therefore governs every
+halt that occurs after the lock is acquired — cascade detected, ambiguous provenance,
+missing evidence, ambiguous lock state, circuit-breaker trip, or operator abort:
+
+1. **Stop before any further mutation.** No additional item is archived, moved, or
+   evidence-written after the halt condition is recognized.
+2. **Persist the halt handoff record first**, at
+   `.backlogit/reconcile/{shipment_id}-halt-{timestamp}.md`, with frontmatter
+   `status: open`. It MUST record: the halt reason, the exact mutation point reached, the
+   ordered list of manifest items already mutated (with their evidence source and SHA), the
+   ordered list still pending, the protected-set verification result at the halt point, the
+   lock state, and the operator action required to resume or revert. Writing this record is
+   mandatory and happens **before** the lock is touched.
+3. **Release the canonical lock by the original queue path**
+   (`.backlogit/queue/{shipment_id}.md`), unconditionally, using the missing/moved-tolerant
+   release described above. The lock is never left held across process exit. Releasing it is
+   safe precisely because step 2 already moved the resumption gate off the lock.
+4. **The handoff record — not the lock — is the resumption gate.** While any
+   `status: open` handoff record exists for `{shipment_id}`, every mode of this skill MUST
+   halt on entry and surface that record.
+5. **Resume is owner-validated.** A later invocation may proceed only after the operator
+   explicitly authorizes resume against the named handoff record. On authorization the
+   sequence re-acquires the canonical lock; if `.backlogit/queue/{shipment_id}.md` no longer
+   exists, it acquires against the record's current location and records the substitution
+   (`lock_target: archive-path (authorized resume)`) in the report, while the **logical**
+   lock identity remains `{shipment_id}`. This is the **only** sanctioned exception to the
+   never-re-derive-from-the-new-path rule above; it requires the operator authorization and
+   is never taken silently or mid-sequence.
+6. **Close the record.** Mark the handoff record `status: resolved` only when the resumed
+   sequence reaches a terminal recommendation, or when the operator records an explicit
+   revert/abandon decision. Never delete it.
 
 ### Pre-Mode
 
@@ -384,12 +427,15 @@ contract fixes the lock's identity explicitly:
      compare `status` to `expected_status` — classify as `matched` or
      `status-mismatch`
    * If NOT found in queue, check `.backlogit/archive/{id}.*`
-     — if an archive file exists, decide **which** archived case it is: classify
-     `current-delivery-pending-finalization` when the Safe-Close Mode step 4 provenance
-     proof holds (this shipment's own member, terminal-relocated by its `done` transition
-     before the merge SHA existed), otherwise classify `pre-archived` (delivered by an
-     earlier shipment). Both are valid at this gate; neither is inferred from membership
-     alone, and ambiguous provenance halts
+     — if an archive file exists, classify `archived-provenance-deferred` and record the
+     evidence that **is** decidable at this gate: whether `{id}` appears in this
+     shipment's `custom_fields.items`, and whether the archived record carries a
+     frontmatter `commit` (with its value if present). Do **not** attempt the Safe-Close
+     Mode step 4 provenance proof here: that proof requires `merge_commit_sha`, which is a
+     post-mode/safe-close input and does not exist during intake or resume. Deferring is
+     the defined outcome, not an ambiguity — it neither halts nor blocks `PROCEED`. The
+     authoritative split into `current-delivery-pending-finalization` or `pre-archived` is
+     performed in Safe-Close Mode step 4 once the SHA is available
      — if no file in either location, classify as `missing`. This normal per-item check is
      the only source of `missing`; the scan in step 4 never produces it
 
@@ -440,7 +486,7 @@ contract fixes the lock's identity explicitly:
    `.backlogit/reconcile/{shipment_id}-{mode}-{timestamp}.md`.
 
 7. **Gate decision**:
-   * If all items are `matched` or `pre-archived`, no orphans exist, AND the
+   * If all items are `matched` or `archived-provenance-deferred`, no orphans exist, AND the
      shipment-record-status classification is `record-consistent` →
      `recommendation: PROCEED`
    * If any `missing`, `status-mismatch`, or `orphan` items exist, OR the
@@ -684,6 +730,24 @@ completion.
    NOT archive any manifest item. The `pre-archived` exemption (step 4) applies to
    **manifest items only** — never to the protected set.
 
+   **Archived-member evidence preflight (same gate, still before the first mutation).**
+   Evidence validation for already-archived members MUST complete here, for **every**
+   manifest item, before any item is mutated. Validating it inside the step 4 loop would let
+   an invalid later member halt only after earlier members were already archived, leaving a
+   partially closed shipment. For each manifest item whose file is already in
+   `.backlogit/archive/`:
+   * Resolve which archived case applies using the step 4 provenance proof, and record the
+     decision and the artifacts it was read from.
+   * For a `current-delivery-pending-finalization` candidate, confirm the record is not
+     **fully** `status: archived` while lacking or contradicting the expected `commit`.
+   * For a `pre-archived` candidate, confirm its existing merge commit is **present** and
+     **not contradictory** with the item's documented delivery.
+   * If **any** archived member fails these checks, halt the whole run with
+     `RECONCILE_FAIL`, name every failing item, and route them to the Historical
+     Evidence-Remediation Workflow below. **Zero** manifest items are archived on this run.
+   Step 4 then consumes the preflight's recorded decisions; it never re-derives them and
+   never introduces a new evidence halt for an archived member.
+
 4. **Write frontmatter commit evidence, then archive, each manifest item individually** (loop over
    the `custom_fields.items` membership ONLY). Commit evidence is always written **before** the
    artifact moves, because once an item is archived its source record may no longer be mutable:
@@ -798,9 +862,11 @@ completion.
        proven, `origin/main`-confirmed SHA for **this** shipment's own delivery, and records
        on what proof it was permitted.
      * If the record is instead **fully** `status: archived` (final markers already applied)
-       but **lacks** or **contradicts** the expected `commit`, **halt** with
-       `RECONCILE_FAIL` and route it to the separate **historical evidence-remediation**
-       workflow described below. Safe-close **never silently rewrites fully archived
+       but **lacks** or **contradicts** the expected `commit`, the step 3 preflight has
+       **already** halted the run with `RECONCILE_FAIL` and routed it to the **Historical
+       Evidence-Remediation Workflow** below, so no item was mutated. This branch is
+       unreachable from inside the loop; if it is ever reached, the preflight was skipped —
+       halt immediately. Safe-close **never silently rewrites fully archived
        provenance** during closure.
    * **Case B — `pre-archived`** (delivered by an earlier shipment, or otherwise predating
      this shipment; the Case A proof above did **not** hold):
@@ -816,10 +882,12 @@ completion.
      * Record the preserved value and its evidence source (`pre-existing`) in the report.
      * If the required evidence is **missing** (no commit recorded on the pre-archived
        item) or **contradictory** (a recorded commit that conflicts with the item's
-       documented delivery), **halt** with `RECONCILE_FAIL` and name the item. Never
+       documented delivery), the step 3 preflight has **already** halted the run with
+       `RECONCILE_FAIL` and named the item, so no item was mutated. Never
        fabricate, infer, or backfill a SHA to close the gap.
-     * **Remediation boundary.** Repairing a previously completed record is the job of a
-       separate **historical evidence-remediation** workflow, run **outside** this
+     * **Remediation boundary.** Repairing a previously completed record is the job of the
+       separate **Historical Evidence-Remediation Workflow** defined below, run **outside**
+       this
        safe-close operation, only with **authoritative provenance** for the correct
        delivered-work SHA (for example the merge commit proven on `origin/main` for the
        shipment that actually delivered the item) and only with an **audit note** recording
@@ -827,7 +895,7 @@ completion.
        **does not legalize chronology** — a record repaired later was still not evidenced
        before its archival, and the audit note must say so. Safe-close itself never silently
        infers or backfills evidence, and never repairs a pre-archived record inline — it
-       halts and defers to that workflow.
+       halts at preflight and defers to that workflow.
    * If the item's file is in neither location: classify `missing`, halt with
      `RECONCILE_FAIL`, and do not continue archiving.
 
@@ -907,6 +975,48 @@ completion.
       `recommendation: CLOSED`. Proceed to post-mode.
     * Any cascade detected → `recommendation: HALT — cascade detected, revert required`
       (see step 6). Do not proceed to the commit step.
+
+### Historical Evidence-Remediation Workflow
+
+The defined entry point for every archived member that safe-close's step 3 preflight halted
+on: a record already in `.backlogit/archive/` whose commit evidence is **missing** or
+**contradictory**. It runs **outside** safe-close, never inline, and never as part of a
+closure run.
+
+**Entry condition.** A `RECONCILE_FAIL` preflight halt naming one or more archived members.
+The halting run archived nothing, so there is no partially closed shipment to unwind.
+
+**Procedure**:
+
+1. **Do not resume closure.** The shipment stays open. Follow the Halt Recovery Protocol
+   above: the halt handoff record is written and the canonical lock is released before this
+   workflow begins.
+2. **Identify the delivering shipment** for each named item — the shipment whose manifest
+   actually contained it. Read `custom_fields.items` on candidate shipment records; never
+   infer from the item's parent feature.
+3. **Establish authoritative provenance.** Obtain that shipment's delivered-work merge
+   commit and prove it exists on `origin/main`. A branch tip, an anticipated SHA, a PR
+   planning SHA, or a decision/closure-authority SHA is **never** acceptable. If no
+   authoritative SHA can be proven, stop here and record the gap as permanent; do not write
+   anything.
+4. **Obtain operator authorization.** Repairing a completed record is a
+   `ProposedAction` with `ActionRisk: high` (it rewrites historical provenance). It requires
+   explicit operator approval naming the item, the SHA, and the authority for it.
+5. **Apply the repair** with a **commit-only** frontmatter update on the archived record
+   (MCP `backlogit_update_item` carrying only `commit`, or CLI
+   `backlogit update {id} --commit {sha}`). No other field may be set. Verify the written
+   value afterwards.
+6. **Write the audit note** at `.backlogit/reconcile/{item_id}-evidence-remediation-{timestamp}.md`
+   recording: the item, the prior value (or its absence), the new SHA, the delivering
+   shipment, the provenance proof, the approving operator, and an explicit statement that
+   **chronology was not legalized** — the record was archived before this evidence existed,
+   and repairing it later does not make it contemporaneous.
+7. **Resume closure separately.** Only after every named item is repaired or permanently
+   recorded as an unrepairable gap may the operator authorize resume of the original
+   safe-close sequence per the Halt Recovery Protocol.
+
+**Boundaries.** This workflow repairs provenance only. It never archives, never moves, never
+changes status, never touches the protected set, and never runs against a live queue record.
 
 ### Cascade Close Sub-Procedure (P-015 verified fully-covered-root exception ONLY)
 
@@ -1326,13 +1436,16 @@ If pre-mode cannot acquire the logical shipment lock because another process hol
 * `backlogit_track_commit` / commit_links are supplemental provenance only and never substitute for the canonical frontmatter `commit`
 * The CLI `track_commit` mapping resolves to the **same** `backlogit update {id} --commit {sha}` command as the canonical frontmatter write, so on CLI it is executed **once** and classified as the canonical write, never double-called as a supplemental commit-link; only on MCP is `backlogit_track_commit` a distinct supplemental commit_links call
 * An archived manifest member is split into exactly two cases: `current-delivery-pending-finalization` (this shipment's own member, terminal-relocated by its `done` transition before the merge SHA existed) and `pre-archived` (an earlier shipment's delivery) — never one blanket case
+* Pre-mode never performs that split: it lacks `merge_commit_sha` (a post-mode/safe-close input) and so emits the `archived-provenance-deferred` preflight candidate, carrying forward the decidable evidence (this-shipment membership, and the archived record's frontmatter `commit` presence and value); the deferral neither halts nor blocks `PROCEED`, and safe-close performs the authoritative classification once the SHA exists
+* Evidence validation for **every** archived member completes in the step 3 preflight, before the first mutation: a missing or contradictory commit halts the whole run with `RECONCILE_FAIL` and archives zero items, so an invalid later member can never leave a partially closed shipment; step 4 consumes the preflight decisions and never introduces a new evidence halt
 * `current-delivery-pending-finalization` is fail-closed: it requires current-shipment `custom_fields.items` membership, Ship-owned same-scope completion evidence tying the `done` transition to this exact shipment, no evidence of delivery by another shipment, the merge SHA confirmed on `origin/main`, and a non-contradictory terminal `done` record — membership alone and a missing commit alone are never proof, and ambiguous provenance halts
 * A proven `current-delivery-pending-finalization` member is finalized with a commit-only frontmatter update on the archived record, verified against the exact SHA, then final archive markers applied exactly once only if not already applied, recorded with evidence source `current-delivery-post-terminal` plus its provenance proof — an explicit, evidence-bound exception to live-before-terminal evidence, never silent inference or backfill
 * A record already fully `status: archived` that lacks or contradicts its commit halts and routes to historical evidence remediation; safe-close never silently rewrites fully archived provenance
 * If **neither** the atomic guarantee **nor** a commit-only live frontmatter update is available, safe-close **halts** with `RECONCILE_FAIL` before any terminal mutation
 * After either successful path, one shared verify-after-each invariant confirms the artifact is archived exactly once with the expected frontmatter `commit`, and records the evidence source and SHA value
 * Safe-close preserves a pre-archived member's authoritative existing merge commit — verifying and reporting it rather than overwriting it with the current closure SHA — and halts rather than fabricating missing or contradictory evidence
-* Repairing a previously completed record is deferred to a separate historical evidence-remediation workflow run outside safe-close, with authoritative provenance and an audit note; that workflow repairs provenance but does not legalize chronology, and safe-close never silently infers or backfills evidence
+* Repairing a previously completed record is deferred to the Historical Evidence-Remediation Workflow defined in this skill, run outside safe-close, with an identified delivering shipment, an `origin/main`-proven SHA, explicit operator authorization, a commit-only frontmatter update, and an audit note; that workflow repairs provenance but does not legalize chronology, and safe-close never silently infers or backfills evidence
+* Every halt after the lock is acquired follows one Halt Recovery Protocol: stop before further mutation, persist a `status: open` halt handoff record naming the mutation point and the mutated/pending items, then release the canonical lock by its original queue path — so a post-mutation halt never strands the lock; the handoff record, not the lock, gates resumption, and resume is owner-validated (the only sanctioned re-derivation of the lock target from the artifact's new path)
 * Safe-close reports the commit evidence source and value per member and for the shipment record
 * Safe-close halts on cascade detection and executes `git restore`/`git revert` recovery only after explicit real-time operator approval, scoped to the exact identified paths or exact revert commit, with a P-005 violation event; it never force/resets, never broadens to unrelated paths or history, and never auto-prunes the manifest
 * `mode: post` runs after the safe-close archive sequence in Ship Step 6
