@@ -1381,7 +1381,14 @@ Copilot findings were verified correct against
 citation is not an exclusion (the skill's own traceability constraint is
 satisfied by rewriting the reference, not by refusing to compact), and
 `target: all` scans `docs/closure/` in full, not just the current record.
-This section now reports what was genuinely compacted.
+A subsequent Copilot review pass on the fix commit itself (`324bb37`)
+raised 3 further findings, all addressed in this same revision: a
+qualifying `docs/exec-plans/` plan candidate (`057-F`) that had not yet
+been consolidated, an invalid scope-avoidance exclusion of two memory
+checkpoints that needed a genuine Behavioral Constraint instead, and 2
+accuracy/formatting corrections in the newly-added closure summary and
+memory-compaction files. This section now reports what was genuinely
+compacted.
 
 Per P-020's "Invocation vs. candidate selection (decoupled)" clause,
 invocation is mandatory but candidate selection stays threshold-gated
@@ -1390,9 +1397,31 @@ invocation is mandatory but candidate selection stays threshold-gated
 * **Phase 1 (Assess)**: `docs/memory/` held 53 files (over the 40-file
   manual threshold) across several still-`queued`/in-flight work streams
   (`049-S`, `052-S`, `053-S`, `056-F`, `059-F`) plus the just-closed `051-S`.
-  `docs/exec-plans/` held 6 files; `docs/closure/` held 9 files, six of
+  `docs/exec-plans/` held 6 files, one of them (`057-F`'s hardening plan,
+  dated 2026-08-24) carrying an appended `## Plan Review` section for a
+  now-fully-archived chore. `docs/closure/` held 9 files, six of
   them (`047-S`/`048-S`, dated 2026-08-17) already over the 14-day
   threshold at the time of this corrected pass (2026-09-01).
+* **Phase 2 (Identify Candidates) — plans**: `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`
+  has an appended `## Plan Review` section (Gate decision: PASS) and its
+  covering chore `057-F` is `status: done` in `.backlogit/archive/057-F.md`
+  (shipped as `050-S`, PR #109) — satisfying the skill's plan rule
+  ("Feature or chore is complete AND plan has appended review content
+  ready for consolidation") with no active-work tie. **Compacted**:
+  consolidated into
+  `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`;
+  the verbose original archived to
+  `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`.
+  Every citation Ship is permitted to touch was rewritten to the archived
+  path (the 050-S post-merge closure record, an already-archived Ship
+  recovery memory, and two Stage-authored session memory files); two
+  citations were deliberately left untouched under Ship's Role Boundary —
+  `docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md`
+  (a deliberation artifact; Ship may not create or modify deliberation,
+  spike, plan, or review artifacts) and the `.backlogit/archive/057-F.md` /
+  `057.001-T.md` `references:` fields (Ship's backlog authority permits
+  only the narrow commit-only field write, not general field edits) — both
+  documented in the decided-plan's own "Known Exceptions" section.
 * **Phase 2 (Identify Candidates) — memory**: the just-closed `051-S`/PR
   #111/#113/#114 memory set was individually assessed:
   * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`,
@@ -1421,6 +1450,15 @@ invocation is mandatory but candidate selection stays threshold-gated
     Checkpoint," and "Cross-References" sections) was rewritten to the new
     archived path, preserving the traceable path the skill's Behavioral
     Constraints require.
+  * `docs/memory/2026-08-17/047-s-session-closure-memory.md` and
+    `docs/memory/2026-08-17/048-s-session-closure-memory.md` (assessed as
+    part of the paired `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`
+    consolidation below) qualify under "part of a completed feature or
+    chore" but are preserved, not compacted, per the skill's own
+    Behavioral Constraint "Preserve the most recent checkpoint for each
+    completed task" — each is the sole remaining live checkpoint for its
+    shipment, so it *is* that shipment's most recent checkpoint. Full
+    rationale recorded in the paired closure-summary file.
   * `docs/memory/2026-08-29/stage-059-f-engine-boundary-redeliberation-memory.md`,
     `docs/memory/2026-08-29/stage-pr113-circuit-breaker-reviewfix-cap-memory.md`
     (explicitly marked `halt preserved, not erased` by the memory file that
@@ -1464,14 +1502,19 @@ invocation is mandatory but candidate selection stays threshold-gated
   location (full detail, including the one known Stage-owned
   `.backlogit/stash.jsonl` exception left untouched under Ship's Role
   Boundary, is recorded in the compaction summary itself).
-* **Result**: 1 memory checkpoint compacted and archived; 6 closure records
-  compacted into 1 consolidated summary and archived (44,784 bytes); 2
-  compaction reports added (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
-  `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`); 0 files
-  deleted. All still-active work streams (`049-S`, `052-S`, `053-S`,
-  `056-F`, `059-F`) retain every checkpoint untouched. The broader
+* **Result**: 1 memory checkpoint compacted and archived; 1 exec-plan
+  compacted into a decided-plan and archived; 6 closure records compacted
+  into 1 consolidated summary and archived (44,784 bytes); 3 compaction
+  reports/decided-plans added
+  (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
+  `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`,
+  `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`);
+  0 files deleted. All still-active work streams (`049-S`, `052-S`, `053-S`,
+  `056-F`, `059-F`) retain every checkpoint untouched, and the two sole
+  remaining checkpoints for the completed `047-S`/`048-S` shipments are
+  preserved under the "most recent checkpoint" constraint. The broader
   `docs/memory/` file-count threshold (53 > 40, now 52 after this pass'
-  single archival) still reflects several *other* still-open release
+  single memory archival) still reflects several *other* still-open release
   units' active checkpoints, not stale material from `051-S`; a dedicated
   (non-post-merge-triggered) compaction pass once
   `049-S`/`052-S`/`053-S`/`056-F`/`059-F` close out is the appropriate future
@@ -1479,9 +1522,9 @@ invocation is mandatory but candidate selection stays threshold-gated
   Stash Follow-Up Review below) rather than acted on here.
 
 `compaction_status: done` — the skill was genuinely invoked and completed
-Phases 1–4 for `target: all`, with 1 memory checkpoint and 6 closure
-records actually compacted and archived this pass (corrected from the
-originally-recorded, invalid zero-candidate claim).
+Phases 1–4 for `target: all`, with 1 memory checkpoint, 1 exec-plan, and 6
+closure records actually compacted and archived this pass (corrected from
+the originally-recorded, invalid zero-candidate claim).
 
 ## Cross-References
 

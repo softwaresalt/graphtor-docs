@@ -195,7 +195,11 @@ this counts as "not present → skip and log":
 * `AGENTS.md` — no agent or skill change; not touched.
 * `docs/design-docs/` — no new durable design decision to graduate; the
   existing deliberation (`003-DL`) and plan
-  (`docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`)
+  (`docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md` —
+  compacted 2026-09-01, see
+  `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`,
+  original archived at
+  `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`)
   already record the rationale.
 * `docs/product-specs/` — no requirement change.
 * `docs/compound/` — no existing entry references `autoApprove` or
@@ -207,6 +211,10 @@ this counts as "not present → skip and log":
 
 * `docs/decisions/2026-08-24-vscode-pip-autoapprove-hardening-deliberation.md`
 * `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`
+  (compacted 2026-09-01, see
+  `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`,
+  original archived at
+  `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`)
 * `docs/archive/memory/2026-08-29/ship-050-s-recovery-memory.md`
 * `docs/compound/workflow-issues/post-merge-branch-preserve-dirty-file-2026-08-29.md`
 * Follow-up items stashed: none (see Stash Follow-Up Review below).

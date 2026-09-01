@@ -30,7 +30,9 @@ tags:
 > `docs/memory/2026-08-25/stage-store-toctou-nofollow-memory.md`, the eleven-task
 > U1-U11 DAG in `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`,
 > the 050-S hardening plan
-> `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`, and the live
+> `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md` (compacted
+> 2026-09-01, see `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`,
+> original archived at `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`), and the live
 > PR #107 `## Local Review Readiness` current-HEAD record.
 
 ## Task
@@ -44,7 +46,9 @@ shipment claim, no PR/Ship invocation. All unrelated/untracked files preserved.
 
 1. **050-S (vscode pip auto-approve hardening plan).** Added a complete
    `## Constitution Check` to
-   `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md` mapping
+   `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md` (compacted
+   2026-09-01, see `docs/exec-plans/2026-08-24-vscode-pip-autoapprove-hardening-decided-plan.md`,
+   original archived at `docs/archive/plans/2026-08-24-vscode-pip-autoapprove-hardening-plan.md`) mapping
    Principles I–XI, with an explicit config-only risk (`ActionRisk: low`) and
    git-revert rollback note. No other change to that plan. **(Superseded — the
    git-revert rollback note is obsolete; see the superseded warning at the top of

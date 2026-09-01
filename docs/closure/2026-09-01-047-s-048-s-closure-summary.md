@@ -5,6 +5,7 @@ target: closure
 slug: 047-s-048-s-closure-summary
 source_count: 6
 source_bytes: 44532
+archived_bytes: 44784
 archive_root: docs/archive/closure/2026-09-01-047-s-048-s-compaction
 shipments: ["047-S", "048-S"]
 ---
@@ -42,16 +43,19 @@ the most recent checkpoint for each completed task") withholds a closure
 record — those constraints govern memory/checkpoint compaction, and this
 group's shipments carry no open manifest member.
 
-**Not in this pass's scope** (left untouched, no rationale claimed as an
-exclusion under this rule — simply outside what the two Copilot findings
-asked for): `docs/memory/2026-08-17/047-s-session-closure-memory.md` and
-`docs/memory/2026-08-17/048-s-session-closure-memory.md`. These are memory
-checkpoints, not closure records, and this remediation pass's scope is the
-two specific Copilot findings (the one superseded memory checkpoint handled
-in `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
-and these six dated closure records). A future dedicated memory-compaction
-pass may separately evaluate them under Phase 2's "part of a completed
-feature or chore" rule.
+**Preserved under a Behavioral Constraint, not left out of scope**:
+`docs/memory/2026-08-17/047-s-session-closure-memory.md` and
+`docs/memory/2026-08-17/048-s-session-closure-memory.md` were assessed
+against compact-context Phase 2's memory rules (they qualify under "part of
+a completed feature or chore," since both `047-S` and `048-S` are fully
+archived). They are **not compacted**, per the skill's own Behavioral
+Constraint: "Preserve the most recent checkpoint for each completed task."
+A repo-wide search confirms no other, later memory checkpoint exists for
+either shipment — each of these two files is the sole remaining live
+checkpoint for its shipment, so it *is* the most recent (and only)
+checkpoint for that completed task, and archiving it would violate the
+constraint rather than satisfy it. This is a quoted skill constraint, not a
+judgement call or scope-avoidance choice.
 
 ## Consolidated Record
 
@@ -146,8 +150,7 @@ showing only the expected archive rename + hooks-queue append.
   in the P-017 activation scope (`970AE45A`, `5D98DBCC`, `B88E37BF`,
   `5868A7C5`) — all four stash IDs confirmed consumed.
 
-## Follow-Up Items (residual, carried forward — not created or mutated by
-this compaction pass)
+## Follow-Up Items (residual, carried forward — not created or mutated by this compaction pass)
 
 * `9CEC208C`, `C365AB98`, `3FFE51B4`, `B883681D`, `B8C0851E` — `047-S`
   post-deploy observation window and related follow-ups (open status
@@ -194,8 +197,13 @@ artifact.
 ## Result
 
 6 closure records compacted into this 1 consolidated summary; 6 files
-archived (44,532 bytes) to
-`docs/archive/closure/2026-09-01-047-s-048-s-compaction/`; 0 files deleted;
-8 tracked citing documents (plus the 6 files' own mutual cross-references)
-updated to preserve traceability; 1 known Stage-owned exception
-(`.backlogit/stash.jsonl`) documented above.
+archived to `docs/archive/closure/2026-09-01-047-s-048-s-compaction/`
+(44,532 bytes at time of relocation; 44,784 bytes as currently archived,
+reflecting the added cross-reference annotations from the reconciliation
+above — source size and archived size are distinct measurements, not a
+discrepancy); 0 files deleted; 7 tracked external citing documents (plus
+the six files' own mutual cross-references) updated to preserve
+traceability; 2 memory checkpoints assessed and preserved under the
+"most recent checkpoint for each completed task" Behavioral Constraint
+(not compacted); 1 known Stage-owned exception (`.backlogit/stash.jsonl`)
+documented above.

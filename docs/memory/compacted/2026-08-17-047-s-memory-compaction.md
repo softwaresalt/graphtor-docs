@@ -33,7 +33,7 @@ compacted 2026-09-01, now archived at
 `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-post-merge-closure.md`
 and
 `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md`,
-see `docs/closure/2026-09-01-047-s-048-s-closure-summary.md` —, and the
+see `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`, and the
 two `docs/compound/` entries this shipment produced/updated):
 
 * `is_engine_enforced_readonly()` kept meaning `guard.is_some()` — NOT
