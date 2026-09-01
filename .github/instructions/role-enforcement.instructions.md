@@ -78,14 +78,26 @@ All P-010 violations are first-class observability events:
 
 ## Skill-Delegation Model Inheritance (P-013.5)
 
-Skills are leaf executors: they do not declare their own `model_family` /
-`model_provider` / `reasoning_effort` frontmatter and they do not spawn
-subagents. A skill invoked by an agent (Stage, Ship, Orchestrator, or an
-elective agent) runs **inside the invoking agent's already-routed session** —
-it inherits whatever model that agent resolved and declared per its own
-invocation directive (P-013.5). This applies uniformly when invoking agents
-**and** their skill workflows: the routing decision is made once, at
-agent-invocation time, not re-resolved per skill call.
+Skills do not declare their own `model_family` / `model_provider` /
+`reasoning_effort` frontmatter. A skill invoked by an agent (Stage, Ship,
+Orchestrator, or an elective agent) runs **inside the invoking agent's
+already-routed session** — it inherits whatever model that agent resolved and
+declared per its own invocation directive (P-013.5). This applies uniformly
+when invoking agents **and** their skill workflows: the routing decision is
+made once, at agent-invocation time, not re-resolved per skill call.
+
+Most skills are also leaf executors that spawn no subagents. The exception is
+the review-orchestrating skills (`review`, `plan-review`), which each declare a
+`## Subagent Depth Constraint` section and dispatch persona subagents at a
+maximum depth of one hop (skill → persona subagent). Those persona subagents
+are the leaf executors: they declare `subagent_depth: 0` and MUST NOT spawn
+subagents of their own.
+
+Model inheritance stops at that boundary. A dispatched persona subagent is a
+distinct routed session that resolves its own model from the `model_family` /
+`model_provider` / `reasoning_effort` frontmatter in its own persona
+definition. The inheritance rule above governs the skill body itself, not the
+subagents that skill dispatches.
 
 Before invoking any skill, the invoking agent MUST confirm and propagate its
 own current routing state for the session — either "resolved" or explicitly

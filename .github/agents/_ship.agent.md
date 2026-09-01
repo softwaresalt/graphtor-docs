@@ -869,25 +869,47 @@ lifecycle to transition out of. See
         over the shipment manifest's items (workspaces with a Python implementation
         installed can reuse a `classify_shipment_close_path(manifest_items,
         workspace_backlog_dir)`-shaped function; the classification is defined in
-        prose here since this is a generic template). The cascade close path is
+        prose here since this is a generic template). The authoritative preconditions
+        live in P-015 (`.github/policies/workflow-policies.md`) and the
+        `shipment-reconcile` skill's Cascade Close Sub-Procedure; this bullet is a
+        pointer to them, never a substitute classifier. If this summary and the
+        policy/skill ever disagree, the policy and skill win. The cascade close path is
         permitted **only** when, for **every** feature member of the manifest: it is a
-        root (no `parent_id`); it is fully covered (every one of its children,
-        enumerated live from `.backlogit/queue/` +
-        `.backlogit/archive/`, is also a manifest member); and, if it
-        enumerates to zero children, that childlessness is **positively verified**
+        root (no `parent_id`); it is fully covered — every one of its **descendants at
+        every depth, not only its direct children**, enumerated by walking the full
+        `parent_id` graph live from `.backlogit/queue/` + `.backlogit/archive/`
+        starting at that feature, is also a manifest member; and, if it enumerates to
+        zero descendants, that childlessness is **positively verified**
         against the live workspace (never inferred from an incomplete or failed
         enumeration) and the feature is additionally terminal (no manifest member
         declares it as parent). The manifest must contain nothing beyond the
-        qualifying root feature(s) and their children. If **any** feature member fails
-        **any** precondition, the **whole manifest** falls back to safe-close —
-        qualification is never per-member, and no feature ID is ever special-cased.
+        qualifying root feature(s) and their full descendant sets. A check limited to
+        direct children is insufficient: Backlogit's `releaseScopeItemIDs` recursively
+        adds every descendant of each manifest item before archival, so a manifest such
+        as `[feature, task]` where that task has an out-of-manifest subtask would
+        otherwise wrongly qualify and the cascade would archive that subtask. If
+        **any** feature member fails **any** precondition, the **whole manifest** falls
+        back to safe-close — qualification is never per-member, and no feature ID is
+        ever special-cased.
         When (and only when) the classification confirms every precondition holds,
         invoke the cascade `backlogit shipment ship` / `backlogit_ship_shipment`
         operation in place of the safe-close sequence above for this shipment's
         closure.
-      * If the skill returns `HALT — cascade detected, revert required`, restore
-        `.backlogit/queue/` + `.backlogit/archive/`, surface the
-        protected-set violation, and halt. Do NOT commit a corrupt backlog.
+      * If the skill returns `HALT — cascade detected, revert required`, **halt first
+        and do not run any recovery command yet**. Restoring `.backlogit/` artifacts is
+        `ActionRisk: destructive` with `change_kind: rollback`, which Constitution VII
+        and P-005 require an operator to approve in real time. Record a
+        `ProposedAction` naming the **exact** identified protected-set paths to restore
+        — or the **exact** revert commit that introduced the cascade — with
+        `approval_required: true` and `ActionResult: blocked`, broadcast a P-005
+        violation event naming the cascaded artifact IDs, and request explicit
+        real-time operator approval. **Only after** approval, run exactly the approved
+        recovery: `git restore -- {exact identified protected-set paths}` or
+        `git revert {exact cascade commit}` — never a broad restore of
+        `.backlogit/queue/` or `.backlogit/archive/`, never unrelated paths or history,
+        never `git reset`, never a force operation. Surface the protected-set violation
+        and remain halted either way. Do NOT commit a corrupt backlog. See P-015 for
+        the full violation protocol.
    c. **Verify archive integrity (P-007)**: Run `git status -- ".backlogit/archive/"`.
       If any archive files appear as working-tree deletions, restoring them is the same
       approval-gated Git recovery classified above: record the `ProposedAction`
