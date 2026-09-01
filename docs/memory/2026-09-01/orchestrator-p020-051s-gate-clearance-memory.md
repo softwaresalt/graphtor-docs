@@ -19,7 +19,7 @@ P-001/P-020 closure gating.
 
 | PR | Subject | Merge SHA | Notes |
 |---|---|---|---|
-| #115 | autoharness 1.5.0 merge-install | `2f9b254` | 99 files; blockers 3 -> 0; CI build 5m02s -> 2m55s |
+| #115 | autoharness 1.5.0 merge-install | `2f9b254` | 72 changed files; blockers 3 -> 0; CI build 5m02s -> 2m55s |
 | #114 | 059-F TOCTOU transition closure | `aa7e8ac` | 9 Copilot review rounds (66 -> 1 findings) |
 | #116 | 051-S P-020 compaction | `44c623b` | 7 Copilot review rounds; P-010 violation caught + reverted |
 
@@ -29,7 +29,8 @@ Repository settings verified: `merge_commit=true, squash=false, rebase=false`.
 ## Compaction actually performed (PR #116)
 
 * 1 Orchestrator-owned memory checkpoint archived + compacted summary written
-  (`docs/memory/archive/2026-08-30-pr114-review-cap-checkpoint-compacted.md`)
+  (summary at `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`;
+  archived original at `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`)
 * 6 closure records (047-S / 048-S, dated 2026-08-17, 15 days old) consolidated into
   `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`; originals archived, not deleted
 * 2 checkpoints preserved under the "most recent checkpoint per completed task" constraint
@@ -41,10 +42,17 @@ Repository settings verified: `merge_commit=true, squash=false, rebase=false`.
    only two exclusions are active-work checkpoints and most-recent-per-task. Exact-path
    citation is *not* an exclusion — Ship invented it. Genuine candidates existed.
 
-2. **Orchestrator-owned memory compaction stands.** The checkpoint was mine, explicitly
-   directed, marked `status: superseded`, and archived byte-for-byte with a traceable path.
-   The Continuity Role Boundary row guards against *silent* mutation of another agent's
-   memory; explicit recorded owner direction is not that harm.
+2. **Orchestrator-owned memory compaction was retained, but is UNAUTHORIZED under current
+   policy.** The Ship Continuity Role Boundary row unconditionally forbids mutating another
+   agent's memory, and the Orchestrator's memory is "another agent's memory" from Ship's
+   perspective. No owner-consent carve-out exists (see the harness-gap section below).
+   By the same parity of reasoning applied to plan files in ruling 3, explicit owner
+   direction did **not** make this authorized — the "even under operator pressure" clause
+   binds the Orchestrator too. The checkpoint was in fact archived byte-for-byte with a
+   traceable path and marked `status: superseded`, so no content was lost, and the change
+   is merged; but this record characterizes it as a boundary violation retained after the
+   fact, **not** as a sanctioned exception. The owner-consent argument is preserved only as
+   *rationale for a future policy amendment*, never as present authority.
 
 3. **Plan-file edits were NOT authorizable.** The Ship Role Boundary Planning row
    (`.github/agents/_ship.agent.md` ~line 43) is unconditional, and the boundary states
@@ -55,8 +63,14 @@ Repository settings verified: `merge_commit=true, squash=false, rebase=false`.
    Step 2 routing reads the closure artifact on `main`; the authoritative value was
    `pending` there until #116 merged.
 
-5. **Gate on finding severity, not round count.** The 3-cycle review circuit breaker was
-   deliberately exceeded on both #114 and #116 because findings remained genuine.
+5. **The 3-cycle review-fix cap is a hard stop; it was exceeded only under explicit
+   per-round operator direction.** The circuit-breaker contract bounds how many cycles are
+   permitted: at the cap, remaining findings are captured as backlog items and unresolved
+   in-scope findings require a halt plus explicit operator disposition. On both #114 and
+   #116 the operator issued a fresh, explicitly scoped instruction for each additional
+   round, which *is* that operator-disposition path. Finding severity by itself does **not**
+   license continuing past the cap autonomously — do not read this as "gate on severity,
+   not round count."
 
 ## P-010 violation (root cause worth remembering)
 
@@ -104,12 +118,17 @@ every overbroad claim at once. That is what converged it.
 The Continuity Role Boundary row lacks an explicit-owner-consent carve-out. Ship correctly
 observed that the row's *text* does not distinguish silent mutation of another agent's
 memory from explicitly directed compaction of the requesting agent's own memory.
-Deliberately not fixed in-band.
+Deliberately not fixed in-band. Until such an amendment is actually made, the row applies
+unconditionally — which is why ruling 2 above records the retained compaction as a boundary
+violation rather than a sanctioned exception.
 
 ## Environment notes (hard-won)
 
-* PowerShell has no heredoc. Commit via temp file:
-  `$f=[System.IO.Path]::GetTempFileName(); Set-Content $f $msg -Encoding utf8; git commit -F $f`
+* PowerShell has no heredoc. Commit by piping the message to Git via stdin, which keeps all
+  file writes inside the workspace (Constitution Principle IV, CLI workspace containment):
+  `$msg | git commit -F -`. Do **not** use `[System.IO.Path]::GetTempFileName()` — it creates
+  a file in the OS temp directory, outside the current working directory tree, which the
+  containment rule forbids.
 * Double-quoted here-strings `@"..."@` process backtick escapes — `` `0 `` became NUL and ate
   the leading zero of every shipment ID (`049-S` -> `49-S`), corrupting a PR body.
   Always use single-quoted `@'...'@` for literal text.
