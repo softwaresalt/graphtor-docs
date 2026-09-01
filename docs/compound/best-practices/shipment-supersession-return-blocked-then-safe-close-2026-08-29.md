@@ -342,17 +342,22 @@ not re-litigated:
 
 * **Successor-shipment assembly path.** Step 4/5/6's "hand it,
   un-normalized, to Stage ... a future Stage session assembles it" no
-  longer has to wait for a fresh harvest. `.github/agents/.stage.agent.md`
+  longer has to wait for a fresh harvest. `.github/agents/_stage.agent.md`
   now supports a durable **Step 5.5 Mode R** ratified-existing-scope
-  handoff for exactly this recovery case; `member_ids` (9), `prerequisite_ids`
-  (2), assembly order, and exclusions for `059-F` are named in
+  handoff for exactly this recovery case; `member_ids` (8 task IDs),
+  `prerequisite_ids` (2), assembly order, and exclusions for `059-F` are named in
   `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
-  § *Mode R Authorization for Successor-Shipment Assembly*. **As first
-  recorded here this bullet cited a single 10-ID `handoff_ids` set that
-  folded the sign-off gate `059.014-T` into the member list; `378444e`/
-  `3fb4fd0` corrected that to the disjoint `member_ids`/`prerequisite_ids`
-  sets above, with `handoff_ids` demoted to their 11-ID audit union — see
-  the "Mode R Partition-Alignment Correction" addendum below.** Mode R
+  § *Mode R Authorization for Successor-Shipment Assembly*. **This bullet has
+  been corrected twice. As first recorded it cited a single 10-ID
+  `handoff_ids` set that folded the sign-off gate `059.014-T` into the
+  member list; `378444e`/`3fb4fd0` split that into disjoint
+  `member_ids`/`prerequisite_ids` sets but still counted the covering
+  feature as a member (9 members, an 11-ID union). The PR #114 review
+  round corrected it again: `059-F` is a **partial-feature** covering root
+  — it retains five live children outside the manifest — so under P-015 it
+  is held in the protected set and is never a member. The authoritative
+  shape is 8 task-only members, 2 prerequisites, and a 10-ID audit union.
+  See the "Mode R Partition-Alignment Correction" addendum below.** Mode R
   supplies *scope*, never gate relief — assembly stays blocked until
   **both** `prerequisite_ids` entries are satisfied: `059.007-T` already is
   (`done`/archived); the operator sign-off gate `059.014-T` is not, until
@@ -444,6 +449,13 @@ prevention step above:
   8/10 figures as current. The normalized-scope count of nine is a **different
   quantity** (the status-normalization act, which did include `059-F`) and
   remains correct.
+* **Agent definitions renamed (2026-08-31, autoharness 1.5.0 merge-install).**
+  `.github/agents/.stage.agent.md` and `.ship.agent.md` are now
+  `_stage.agent.md` and `_ship.agent.md`. Where this entry narrates an
+  earlier commit it keeps the filename that commit acted on, which is
+  chronologically accurate but no longer resolvable; read every such path as
+  the underscore-prefixed file. The current-procedure summary above already
+  cites the live path.
 
 None of this retroactively legalizes the four historical violations
 recorded in this entry's citations — all four remain standing,

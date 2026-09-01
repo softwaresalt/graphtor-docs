@@ -13,9 +13,18 @@
 # shipment from backlogit, or the current branch slug) and always runs
 # `--phase ambient` here (at-most-one-active, validating the resolved target
 # when one exists). No resolvable claimed shipment / zero active shipments ->
-# PASSES (existence-guarded, non-blocking for ordinary commits with no
-# claimed shipment); a mismatched single active or two-or-more-active
-# shipments still blocks fail-closed regardless of the advisory toggle below.
+# gate verdict PASS (existence-guarded, so ordinary commits with no claimed
+# shipment are unaffected); a mismatched single active or two-or-more-active
+# shipments produces a fail-closed gate verdict of BLOCK.
+#
+# GATE VERDICT vs. HOOK ENFORCEMENT are two separate things. The verdict above
+# describes what `autoharness gate pipeline-topology` decides. Whether THIS
+# HOOK propagates a BLOCK verdict into a non-zero exit is controlled solely by
+# the advisory toggle below: by default the hook warns and exits 0 even on
+# BLOCK, and it fails the commit only when
+# AUTOHARNESS_TOPOLOGY_GATE_BLOCKING=true. Local commit-time enforcement is
+# therefore opt-in; the authoritative P-001 / P-016 enforcement point is the
+# agent workflow and CI, not this hook.
 #
 # Behavior:
 #   * Absent 'autoharness' -> warn+skip, never a hard failure.

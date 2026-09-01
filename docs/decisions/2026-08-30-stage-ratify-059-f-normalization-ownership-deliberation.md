@@ -1,6 +1,6 @@
 ---
 title: "Stage ratification: 059-F rescoped-scope status normalization and successor-shipment assembly are Stage-owned (P-010 remediation)"
-description: "Independent Stage review that ratifies the already-queued dispositions of the 059-F feasible scope, assigns blocked-to-queued status normalization and successor-shipment assembly to Stage, issues the durable Step 5.5 Mode R authorization naming two disjoint exact sets (9 member_ids plus 2 prerequisite_ids), supersedes the PR #113 051-S closure-timing precondition, and records the prior Ship-performed normalization as an un-legalized P-010 violation"
+description: "Independent Stage review that ratifies the already-queued dispositions of the 059-F feasible scope, assigns blocked-to-queued status normalization and successor-shipment assembly to Stage, issues the durable Step 5.5 Mode R authorization naming two disjoint exact sets (8 task-only member_ids plus 2 prerequisite_ids, a 10-ID audit union; the partial-feature covering root 059-F is protected, never a member), supersedes the PR #113 051-S closure-timing precondition, and records the prior Ship-performed normalization as an un-legalized P-010 violation"
 topic: "Ownership of superseded-chain status normalization and successor-shipment assembly for feature 059-F after the 2026-08-29 re-deliberation, following Copilot review comment 3888455427 on PR #114"
 depth: "standard"
 doc_type: "decision"
@@ -44,7 +44,7 @@ records the historical violation honestly rather than retroactively legalizing i
 
 ## Role-Boundary Analysis (why normalization is Stage-owned)
 
-| Operation | `.ship.agent.md` Role Boundary | `.stage.agent.md` Role Boundary |
+| Operation | `_ship.agent.md` Role Boundary | `_stage.agent.md` Role Boundary |
 |---|---|---|
 | Move task `blocked → queued` (status normalization) | Not in Ship Allowed (`Claim shipments, move tasks to active/done, close shipments, archive completed items`); not read-only → **fail-closed forbidden** (P-010) | In Stage Allowed (`Create, update, archive backlog items, stash entries, shipment manifests`) → **allowed** |
 | Assemble successor shipment | Forbidden (`create shipments`) | Step 5.5 shipment assembly → **allowed** |
@@ -172,7 +172,7 @@ in `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-delibe
 ## Mode R Authorization for Successor-Shipment Assembly (durable, exact-ID)
 
 This section is the **durable, citable Step 5.5 Mode R authorization** required by
-`.github/agents/.stage.agent.md` (Step 5.5, item 1, *Mode R — ratified existing-scope handoff*).
+`.github/agents/_stage.agent.md` (Step 5.5, item 1, *Mode R — ratified existing-scope handoff*).
 It exists because the items below were harvested in an earlier session, already exist in the
 queue, and this PR intentionally creates **no** stash entry and **no** new harvest. Under Mode H the
 scope guard would exclude them; Mode R is the sanctioned path for exactly this case. Manufacturing a
@@ -389,7 +389,8 @@ superseding authority is recorded here instead.
 
 ### Mode R partition-alignment addendum (2026-08-30, PR #114 HEAD `378444e`)
 
-The Mode R contract in `.github/agents/.stage.agent.md` was corrected by commit `378444e` to require
+The Mode R contract in `.github/agents/_stage.agent.md` (named `.stage.agent.md` at the time of
+that commit; renamed during the autoharness 1.5.0 merge-install) was corrected by commit `378444e` to require
 **two disjoint exact sets** rather than a single handoff list. That reconciliation pass had written
 the authorization as one 10-ID `handoff_ids` set that folded the sign-off gate `059.014-T` into the
 member list and into the assembly order. This addendum records the alignment applied here:

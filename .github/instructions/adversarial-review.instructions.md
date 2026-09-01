@@ -34,11 +34,15 @@ instances across different model tiers:
 
 When `openai` and `gpt-5.6-sol` are configured,
 launch an **Anchor Reviewer** as a separately identified reviewer slot before
-standard Tier 1/2/3 assignment. Pass `high` to the
-anchor reviewer when it is non-empty; an empty value means use the model default.
+standard Tier 1/2/3 assignment. Resolve the anchor reviewer's reasoning effort
+from `model_routing.anchor_review.reasoning_effort` in `.autoharness/config.yaml`
+at dispatch time and pass that resolved value when it is non-empty; an empty
+value means use the model default. Read the field rather than a literal, so a
+change to the configured effort is honored without editing this file. The
+currently configured value is `high`.
 The default anchor route is OpenAI GPT-5.6 Sol, but generated artifacts stay
-environment-agnostic by using the configured provider and family identifiers
-rather than hard-coding a runtime.
+environment-agnostic by using the configured provider, family, and effort
+identifiers rather than hard-coding a runtime.
 
 If the anchor route is unavailable, record `TOOL_DEGRADED: anchor-review-model`
 with a declared fallback and continue only when the remaining reviewer pool still
@@ -52,13 +56,16 @@ configured in `.autoharness/config.yaml`, one reviewer slot (Reviewer-B, the
 Tier 2 slot by default) is reassigned to the alternate provider and family.
 This allows a Gemini model, a different Anthropic family, or any registered
 provider to participate in the reviewer pool without requiring additional
-reviewer count. **Not currently configured for this workspace** — all
-reviewer slots use the standard tier routing set until an alternate provider
-is added to `config.yaml`.
+reviewer count. **Currently configured for this workspace**: `alt_provider` is
+`google` and `alt_family` is `gemini-2.5-pro`, so the Reviewer-B slot is
+reassigned to that model. Resolve both fields from `.autoharness/config.yaml` at
+dispatch time rather than trusting the values quoted here; if either is empty,
+the alternate-provider slot is disabled and all reviewer slots fall back to the
+standard tier routing set.
 
-**Escalation path**: If the standard tier routing set produces repeated
+**Escalation path**: If the reviewer pool produces repeated
 disagreements (no consensus after 3 invocations on the same change), consider
-enabling the alternate provider to break the deadlock with a genuinely
+rotating the alternate provider or family to break the deadlock with a genuinely
 different perspective.
 
 **Provider failure handling**: If the alternate provider is unreachable or

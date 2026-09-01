@@ -708,7 +708,8 @@ through P-005 telemetry (`violation_policy: P-020`, `gate: Ship Step 6 closure`,
 `action: closure-incomplete`). Because backlog and shipment archival run earlier
 in closure, completeness is NOT tracked by shipment active-state; it is tracked by
 the operational-closure artifact's recorded **compaction status**. Skipping
-compaction leaves that status unset, so the post-merge release closure is
+compaction, so the recorded status remains `pending` (the value step 2 initializes it
+to), the post-merge release closure is
 **incomplete** and the Orchestrator's closure-gated routing (P-001 + P-020) holds
 the next shipment until compaction is completed and its status recorded — rather
 than hard-halting in a way that strands the merged PR. A compact-context run that
