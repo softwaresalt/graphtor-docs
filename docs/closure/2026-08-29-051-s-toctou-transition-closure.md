@@ -4,7 +4,7 @@ slug: 051-s-toctou-transition-closure
 shipment: "051-S (closed)"
 mode: post-merge
 status: READY_WITH_FOLLOWUPS
-compaction_status: pending
+compaction_status: done
 readiness_authority: "Local Review Readiness (current — 2026-08-31)"
 owner: "@softwaresalt"
 ---
@@ -1350,6 +1350,75 @@ readiness authority for this closure record.
   with rationale, replied to after the fixing commit was pushed, and then
   resolved via the `resolveReviewThread` GraphQL mutation.
 
+## Post-Merge Compaction (P-020)
+
+Invoked the environment-agnostic **compact-context** skill with
+`target: all` per Ship Step 6 item 8 / P-020, after PR #114 merged as
+`aa7e8ac` (confirmed `MERGE_CONFIRMED` via `gh pr view 114 --json
+state,mergedAt,mergeCommit` and `git merge-base --is-ancestor aa7e8ac
+origin/main`, exit 0). This is a distinct, later invocation than the one
+originally contemplated when this closure record's frontmatter
+`compaction_status` was first added (`pending`, via an accepted Copilot
+suggested-fix commit during PR #114 review) — that field is finalized here.
+
+Per P-020's "Invocation vs. candidate selection (decoupled)" clause,
+invocation is mandatory but candidate selection stays threshold-gated
+(`threshold_days: 14`, `max_files: 40`, `max_size_kb: 500`); a scan-only
+no-op is a valid, compliant outcome when nothing qualifies. That is the
+genuine outcome of this pass:
+
+* **Phase 1 (Assess)**: `docs/memory/` held 53 files (over the 40-file
+  manual threshold) across several still-`queued`/in-flight work streams
+  (`049-S`, `052-S`, `053-S`, `056-F`, `059-F`) plus the just-closed `051-S`.
+  `docs/exec-plans/` held 6 files; `docs/closure/` held 9 files.
+* **Phase 2 (Identify Candidates)** — the just-closed `051-S`/PR #111/#113/#114
+  memory is the one intended per-merge candidate set under the
+  completed-work rule. Every file in that set was individually assessed and
+  rejected as a compaction candidate this round, for one of two reasons:
+  * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`,
+    `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`,
+    `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`,
+    and `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+    are each cited **by exact path** in this same closure record's own
+    "Cross-References" section (and, for the review-cap checkpoint, its
+    full detail is explicitly incorporated by reference in the "Final
+    Review-Cap Checkpoint" section above) as permanent audit trail.
+    Archiving them would break those citations — the same
+    already-reviewed/deliberately-preserved treatment the prior `050-S`
+    compaction pass gave the non-superseded `047-S`/`048-S` closure
+    memories. Not compacted.
+  * `docs/memory/2026-08-29/stage-059-f-engine-boundary-redeliberation-memory.md`,
+    `docs/memory/2026-08-29/stage-pr113-circuit-breaker-reviewfix-cap-memory.md`
+    (explicitly marked `halt preserved, not erased` by the memory file that
+    supersedes it), and
+    `docs/memory/2026-08-29/stage-pr113-operator-override-continuation-memory.md`
+    are tied to feature `059-F`, which remains `queued` (open) — the
+    Stash Follow-Up Review section above records that a future Stage
+    session must still assemble the successor shipment for this scope.
+    The skill's "never compact checkpoints for active work items" /
+    "cross-reference against active backlog work items" constraint applies.
+    Not compacted. The `stage-056-011-h3a-*` (4 files, tied to active
+    `049-S`/`056-F`) and `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`
+    (the live plan for open `059-F` work) fall under the same constraint
+    and were likewise left untouched.
+* **Closure records**: this closure record itself is 3 days old (well under
+  the 14-day threshold) and is the object of the current closure, not a
+  compaction candidate. No other closure record in scope for this pass.
+* **Result**: 0 files compacted, 0 files archived this round. Every raw
+  candidate in the just-closed release unit's memory set was individually
+  evaluated and excluded for one of the two reasons above — this is a
+  genuine, evidence-based scan-only outcome, not a skipped invocation. The
+  broader `docs/memory/` file-count threshold (53 > 40) reflects several
+  *other* still-open release units' active checkpoints, not stale material
+  from `051-S`; a dedicated (non-post-merge-triggered) compaction pass once
+  `049-S`/`052-S`/`053-S`/`056-F`/`059-F` close out is the appropriate future
+  point to revisit that broader count, and is recorded as a follow-up (see
+  Stash Follow-Up Review below) rather than acted on here.
+
+`compaction_status: done` — the skill was genuinely invoked and completed
+Phases 1–4 for `target: all`; a threshold-gated no-op is a fully compliant
+completion, not a `degraded` or skipped run.
+
 ## Cross-References
 
 * `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
@@ -1457,3 +1526,12 @@ questions" section, and in the PR description, as plain documentation for
 the operator/Stage to act on directly. `059.013-T` (Option A, upstream
 cozo) and `059.012-T` (U12) already exist as queued, later-shipment
 follow-ups per the decision document — not duplicated here.
+
+**Follow-up handoff (P-020 compaction, recorded 2026-09-01)**: the
+"Post-Merge Compaction (P-020)" section above found `docs/memory/` at 53
+files (over the 40-file manual guideline) driven by several still-open
+release units' active checkpoints (`049-S`, `052-S`, `053-S`, `056-F`,
+`059-F`), none of which this pass compacted. This is recorded here as a
+documentation-only handoff for a future Ship post-merge closure (once
+those release units close out) or a manual `compact-context` invocation —
+not a stash entry, and not created or mutated by this session.
