@@ -1580,10 +1580,21 @@ invocation is mandatory but candidate selection stays threshold-gated
   into `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`; the six
   originals archived to
   `docs/archive/closure/2026-09-01-047-s-048-s-compaction/`. Every tracked
-  citation to the six original paths was rewritten to the archived
-  location (full detail, including the one known Stage-owned
-  `.backlogit/stash.jsonl` exception left untouched under Ship's Role
-  Boundary, is recorded in the compaction summary itself).
+  citation in a document Ship is authorized to edit was rewritten to the
+  archived location. **Three stale-reference exceptions remain, all known,
+  none hidden**: (1) the one known Stage-owned `.backlogit/stash.jsonl`
+  exception, left untouched under Ship's Role Boundary; and (2)-(3) the two
+  decided-plan artifacts —
+  `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`
+  and
+  `docs/exec-plans/2026-08-16-serve-auto-discovery-followups-decided-plan.md`
+  — which still cite the six pre-compaction paths because round 6 correctly
+  reverted round 1's own Role-Boundary-violating citation rewrite inside
+  them (see the "Third correction" paragraph above and the "stale
+  decided-plan citations" follow-up handoff below); Ship has no authority
+  to update a plan artifact's citations, so these two remain a documented,
+  known-stale follow-up for a future Stage session. Full detail on all
+  three exceptions is recorded in the compaction summary itself.
 * **Result**: 1 memory checkpoint compacted and archived (under the narrow
   explicit-consent exception above); 6 closure records compacted into 1
   consolidated summary and archived (44,784 bytes archived); 2 compaction

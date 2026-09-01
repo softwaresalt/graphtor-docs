@@ -180,25 +180,44 @@ P-010).
 
 ## Cross-Reference Reconciliation
 
-Every tracked citation to the six original `docs/closure/` paths was
+Every tracked citation in a document Ship is authorized to edit was
 rewritten to the corresponding `docs/archive/closure/2026-09-01-047-s-048-s-compaction/`
 path, so the traceable path from this summary back to the original verbose
-artifacts (and from every other tracked citing document) is preserved, per
-the compact-context skill's "traceable path" constraint:
+artifacts (and from every other Ship-authored tracked citing document) is
+preserved, per the compact-context skill's "traceable path" constraint. Of
+the **7 tracked external citing documents** identified, **5 were updated**:
 
-* `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`
-* `docs/exec-plans/2026-08-16-serve-auto-discovery-followups-decided-plan.md`
 * `docs/memory/2026-08-17/047-s-session-closure-memory.md`
 * `docs/memory/2026-08-17/048-s-session-closure-memory.md`
 * `docs/memory/compacted/2026-08-17-047-s-memory-compaction.md`
 * `docs/memory/compacted/2026-08-17-048-s-memory-compaction.md`
 * `docs/archive/memory/2026-08-17/047-s-build-checkpoint-pre-pr.md`
-* Internal cross-references among the six files themselves (moved together
-  into the same archive subdirectory; mutual citations rewritten to the new
-  path so they remain valid after the move)
 
-**One known, deliberate exception**: `.backlogit/stash.jsonl` line 7 (the
-live stash entry `8C2E313D`) contains a prose reference to
+Plus internal cross-references among the six archived files themselves
+(moved together into the same archive subdirectory; mutual citations
+rewritten to the new path so they remain valid after the move).
+
+**The other 2 of the 7 were deliberately NOT updated, and remain stale**:
+
+* `docs/exec-plans/2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`
+* `docs/exec-plans/2026-08-16-serve-auto-discovery-followups-decided-plan.md`
+
+Round 1 of this PR's remediation (`324bb37`) originally rewrote these two
+decided-plans' citations, but that was a Ship Planning-row Role Boundary
+violation — Ship has no authority to create or modify a plan artifact, even
+for a citation-only, factually-accurate edit. Round 6 reverted both files
+byte-for-byte to their pre-PR (`aa7e8ac`) state. Both decided-plans
+therefore still cite the six pre-compaction `docs/closure/2026-08-17-*`
+paths this pass archived — a real, known-stale reference, not a hidden
+one — and updating them is Stage's Planning authority, not Ship's.
+Recorded as a documentation-only follow-up handoff for a future Stage
+session (full detail in the paired closure record's "Follow-up handoff
+(P-020 compaction, stale decided-plan citations...)" section).
+
+**A third, separate known exception** (not one of the 7 tracked citing
+documents above — a Stage-owned artifact, not a document Ship authored or
+could ever have been authorized to rewrite): `.backlogit/stash.jsonl` line
+7 (the live stash entry `8C2E313D`) contains a prose reference to
 `docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md` by its
 pre-compaction path. `.backlogit/` is a Stage-owned artifact; Ship's Role
 Boundary permits no stash-entry mutation of any kind (P-010), so this
@@ -211,6 +230,10 @@ A reader who encounters this stash entry should be directed to this
 consolidated summary, or directly to the archived file at the path above,
 rather than to the stash entry's original (now-dead) path.
 
+**In total, three stale-reference exceptions exist across this PR, all
+known and none hidden**: the two decided-plans above, and this one
+Stage-owned stash entry.
+
 ## Result
 
 6 closure records compacted into this 1 consolidated summary; 6 files
@@ -218,14 +241,19 @@ archived to `docs/archive/closure/2026-09-01-047-s-048-s-compaction/`
 (44,532 bytes at time of relocation; 44,784 bytes as currently archived,
 reflecting the added cross-reference annotations from the reconciliation
 above — source size and archived size are distinct measurements, not a
-discrepancy); 0 files deleted; 7 tracked external citing documents (plus
-the six files' own mutual cross-references) updated to preserve
-traceability; 2 memory checkpoints (Ship-authored) assessed and preserved
-under the "most recent checkpoint for each completed task" Behavioral
-Constraint (not compacted); 1 memory checkpoint
+discrepancy); 0 files deleted; 7 tracked external citing documents
+identified, of which **5 were updated** (Ship-authorized — see above) and
+**2 (the two decided-plans) were deliberately left stale**, still citing
+their original pre-compaction paths, because updating a plan artifact's
+citations is Stage's Planning authority, not Ship's — recorded as a
+follow-up handoff above (plus the six archived files' own mutual
+cross-references, all updated); 2 memory checkpoints (Ship-authored)
+assessed and preserved under the "most recent checkpoint for each
+completed task" Behavioral Constraint (not compacted); 1 memory checkpoint
 (`docs/memory/2026-08-16/dark-stage-session-complete-memory.md`,
 Stage-authored) assessed as a qualifying content candidate but excluded
 under Ship's Role Boundary (Continuity row — Ship may not mutate another
 agent's checkpoint or memory), recorded as a follow-up handoff for Stage,
-not compacted; 1 known Stage-owned exception (`.backlogit/stash.jsonl`)
-documented above.
+not compacted; **3 known stale-reference exceptions in total** (the two
+decided-plans, plus 1 known Stage-owned `.backlogit/stash.jsonl`
+exception) documented above.
