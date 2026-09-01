@@ -25,8 +25,13 @@ the reference instead.
 
 ## Candidate Assessment
 
-Only this one file qualifies as a memory-compaction candidate this pass. The
-other three files the prior pass grouped with it
+Of the 051-S/PR #114 candidate group assessed by this pass, only this one
+file qualifies as a memory-compaction candidate this pass — this scoped
+claim is limited to that group and does not extend to the 047-S/048-S
+checkpoints preserved elsewhere (see the paired closure record's Post-Merge
+Compaction section) or to the Role-Boundary-excluded Stage-owned candidate
+also documented in that same section. The other three files the prior pass
+grouped with it
 (`docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`,
 `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`,
 `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`)

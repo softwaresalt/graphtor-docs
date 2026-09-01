@@ -202,12 +202,14 @@ live stash entry `8C2E313D`) contains a prose reference to
 `docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md` by its
 pre-compaction path. `.backlogit/` is a Stage-owned artifact; Ship's Role
 Boundary permits no stash-entry mutation of any kind (P-010), so this
-reference is left untouched. The referenced file has not been deleted —
-only relocated to
-`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-closure.md`
-— so a future reader following that stash entry's pointer will find this
-compaction report and the archived file, not a dead link to a removed
-artifact.
+reference is left untouched. **This is a known stale pointer**: the
+referenced file has not been deleted, but the stash entry's exact
+pre-compaction path no longer resolves — following that path literally
+returns a dead link, because the file was relocated (not removed) to
+`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-closure.md`.
+A reader who encounters this stash entry should be directed to this
+consolidated summary, or directly to the archived file at the path above,
+rather than to the stash entry's original (now-dead) path.
 
 ## Result
 
