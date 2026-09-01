@@ -1,7 +1,7 @@
 {
   "name": "autoharness",
   "description": "Agent harness framework — compose 10 irreducible AI coding assistant primitives into any workspace",
-  "version": "1.4.11",
+  "version": "1.5.0",
   "author": {
     "name": "softwaresalt"
   },
@@ -16,8 +16,8 @@
   ],
   "agents": [
     ".github/agents/_orchestrator.agent.md",
-    ".github/agents/.ship.agent.md",
-    ".github/agents/.stage.agent.md"
+    ".github/agents/_ship.agent.md",
+    ".github/agents/_stage.agent.md"
   ],
   "skills": [
     ".github/skills/"
