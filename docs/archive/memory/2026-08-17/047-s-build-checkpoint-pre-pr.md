@@ -29,7 +29,9 @@ the PR.
 * `054.001.003-ST` — Release-observability evidence at
   `docs/closure/2026-08-17-047-s-release-observability-evidence.md` (owner,
   baseline, bounded observation window, failure threshold, rollback
-  trigger/procedure).
+  trigger/procedure) — compacted 2026-09-01, now archived at
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md`,
+  see `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`.
 * `054.002-T` — Corrected "Read-only serve hardening" section of
   `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`;
   linked spike/deliberation + deferred stash IDs `F1CE20EC`/`5905CDEE`.

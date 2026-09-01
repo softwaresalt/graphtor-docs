@@ -124,7 +124,13 @@ Merged as shipment `047-S`, PR #97, commit `704b95a6c1e2930079d6f3a602ab66e9682d
 Releasability status at closure: `READY_WITH_CONDITIONS` — the one open
 condition is the post-deploy observation window above (see "Verification,
 Rollback, and Monitoring"), not yet closed as of the closure record's date.
-Full execution record: `docs/closure/2026-08-17-047-s-post-merge-closure.md` and
-`docs/closure/2026-08-17-047-s-release-observability-evidence.md`. Original
-plan (with full round-by-round review transcript and hardening detail)
+Full execution record (compacted 2026-09-01, see
+`docs/closure/2026-09-01-047-s-048-s-closure-summary.md`): originally
+`docs/closure/2026-08-17-047-s-post-merge-closure.md` and
+`docs/closure/2026-08-17-047-s-release-observability-evidence.md`, now
+archived at
+`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-post-merge-closure.md`
+and
+`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md`.
+Original plan (with full round-by-round review transcript and hardening detail)
 archived at `docs/archive/plans/2026-08-16-readonly-serve-guarantee-hardening-plan.md`.

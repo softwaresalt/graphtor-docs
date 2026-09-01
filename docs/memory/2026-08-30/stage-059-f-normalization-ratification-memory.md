@@ -277,7 +277,9 @@ corrected by their owning agents:
 * `docs/closure/2026-08-29-051-s-toctou-transition-closure.md` (Ship-owned closure) — quotes the
   old assembly order `059-F → 059.014-T → …`.
 * `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` (Orchestrator-owned
-  checkpoint) — describes the authorization as "exact-10-ID" with `059.014-T` inside `handoff_ids`
+  checkpoint; compacted 2026-09-01, now archived at
+  `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`) — describes the
+  authorization as "exact-10-ID" with `059.014-T` inside `handoff_ids`
   and inside the assembly order.
 
 Stage does not edit other agents' closure or memory artifacts; the authoritative partition lives in

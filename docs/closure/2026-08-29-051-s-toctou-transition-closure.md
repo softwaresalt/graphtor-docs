@@ -988,7 +988,10 @@ transition memory checkpoint, the compound best-practices entry, and the
 orchestrator checkpoint memory are edited.
 
 **Blocking-node resolution.** The four P1 root nodes recorded in
-`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` are
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+(compacted 2026-09-01, now archived at
+`docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`,
+see `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`) are
 now resolved at the agent-contract/Stage-decision level:
 
 * **(A) Stage recovery/assembly path** — resolved by
@@ -1079,7 +1082,9 @@ This pass touches only the four Ship-owned continuity/knowledge artifacts
 named above. **Final current-HEAD review and GraphQL thread
 reply/resolution remain a pending follow-up** — not performed by this
 pass; see
-`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+(compacted 2026-09-01, now archived at
+`docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`)'s
 resumption section for the current status of each thread.
 
 ## Mode R Fail-Closed Partition Correction (2026-08-30, PR #114 HEAD `3fb4fd0`)
@@ -1165,7 +1170,9 @@ unapproved deletion; `059.008-T` `blocked_reason` mutation) — all four
 remain standing, un-legalized historical record, unchanged by this pass.
 **Final current-HEAD review and GraphQL thread reply/resolution remain a
 pending follow-up** — not performed by this pass; see
-`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
+`docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+(compacted 2026-09-01, now archived at
+`docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`)'s
 newest resumption section for the current status.
 
 ## Current-Contract Reconciliation (2026-08-30, PR #114 HEAD `45876b6`)
@@ -1230,7 +1237,11 @@ operator's explicit stop condition, **no further fix is being applied this
 session**. Full detail, the 9-persona review method note, and the
 rejected/downgraded findings with rationale are recorded in
 `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
-("Resumption / Resolution #3 — Final Review-Cap Checkpoint"); this section
+("Resumption / Resolution #3 — Final Review-Cap Checkpoint"; compacted
+2026-09-01, now archived at
+`docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`,
+dense summary at
+`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`); this section
 summarizes the current readiness state only and does not restate that
 evidence in full.
 
@@ -1361,32 +1372,55 @@ originally contemplated when this closure record's frontmatter
 `compaction_status` was first added (`pending`, via an accepted Copilot
 suggested-fix commit during PR #114 review) — that field is finalized here.
 
+**Correction (2026-09-01, PR #116 Copilot-review remediation)**: the
+original 2026-09-01 pass recorded below (superseded text preserved via git
+history) wrongly treated exact-path citation as a compaction exclusion and
+wrongly scoped closure-record assessment to this record alone. Both
+Copilot findings were verified correct against
+`.github/skills/compact-context/SKILL.md` and are fixed by this revision:
+citation is not an exclusion (the skill's own traceability constraint is
+satisfied by rewriting the reference, not by refusing to compact), and
+`target: all` scans `docs/closure/` in full, not just the current record.
+This section now reports what was genuinely compacted.
+
 Per P-020's "Invocation vs. candidate selection (decoupled)" clause,
 invocation is mandatory but candidate selection stays threshold-gated
-(`threshold_days: 14`, `max_files: 40`, `max_size_kb: 500`); a scan-only
-no-op is a valid, compliant outcome when nothing qualifies. That is the
-genuine outcome of this pass:
+(`threshold_days: 14`, `max_files: 40`, `max_size_kb: 500`).
 
 * **Phase 1 (Assess)**: `docs/memory/` held 53 files (over the 40-file
   manual threshold) across several still-`queued`/in-flight work streams
   (`049-S`, `052-S`, `053-S`, `056-F`, `059-F`) plus the just-closed `051-S`.
-  `docs/exec-plans/` held 6 files; `docs/closure/` held 9 files.
-* **Phase 2 (Identify Candidates)** — the just-closed `051-S`/PR #111/#113/#114
-  memory is the one intended per-merge candidate set under the
-  completed-work rule. Every file in that set was individually assessed and
-  rejected as a compaction candidate this round, for one of two reasons:
+  `docs/exec-plans/` held 6 files; `docs/closure/` held 9 files, six of
+  them (`047-S`/`048-S`, dated 2026-08-17) already over the 14-day
+  threshold at the time of this corrected pass (2026-09-01).
+* **Phase 2 (Identify Candidates) — memory**: the just-closed `051-S`/PR
+  #111/#113/#114 memory set was individually assessed:
   * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`,
-    `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`,
-    `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`,
-    and `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
-    are each cited **by exact path** in this same closure record's own
-    "Cross-References" section (and, for the review-cap checkpoint, its
-    full detail is explicitly incorporated by reference in the "Final
-    Review-Cap Checkpoint" section above) as permanent audit trail.
-    Archiving them would break those citations — the same
-    already-reviewed/deliberately-preserved treatment the prior `050-S`
-    compaction pass gave the non-superseded `047-S`/`048-S` closure
-    memories. Not compacted.
+    `docs/memory/2026-08-29/ship-051-s-feasibility-blocked-memory.md`, and
+    `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`
+    carry no `superseded` status and remain the live, authoritative
+    continuity record for `051-S`/`059-F` — cited by exact path in this
+    closure record's "Cross-References" section below, which remains a
+    correct citation (not a compaction exclusion) since these files are
+    not compacted for a substantive reason: they are not superseded and
+    not tied to a completed-and-archived release unit on their own (the
+    successor scope under `059-F` is still open). Not compacted.
+  * `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` —
+    **compacted**. Its own frontmatter declares
+    `status: "superseded — halt resolved 2026-08-31; all four P1 blockers
+    fixed"` and names this closure record's own "Local Review Readiness
+    (current — 2026-08-31)" section as `superseded_by`, satisfying the
+    skill's "Superseded by a more recent checkpoint for the same task"
+    Phase 2 rule directly. Archived byte-for-byte to
+    `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`;
+    dense summary at
+    `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`.
+    Every citation to it in this closure record (the "Mode R /
+    Role-Boundary Reconciliation," "Mode R Fail-Closed Partition
+    Correction," "Current-Contract Reconciliation," "Final Review-Cap
+    Checkpoint," and "Cross-References" sections) was rewritten to the new
+    archived path, preserving the traceable path the skill's Behavioral
+    Constraints require.
   * `docs/memory/2026-08-29/stage-059-f-engine-boundary-redeliberation-memory.md`,
     `docs/memory/2026-08-29/stage-pr113-circuit-breaker-reviewfix-cap-memory.md`
     (explicitly marked `halt preserved, not erased` by the memory file that
@@ -1400,24 +1434,54 @@ genuine outcome of this pass:
     Not compacted. The `stage-056-011-h3a-*` (4 files, tied to active
     `049-S`/`056-F`) and `docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md`
     (the live plan for open `059-F` work) fall under the same constraint
-    and were likewise left untouched.
-* **Closure records**: this closure record itself is 3 days old (well under
-  the 14-day threshold) and is the object of the current closure, not a
-  compaction candidate. No other closure record in scope for this pass.
-* **Result**: 0 files compacted, 0 files archived this round. Every raw
-  candidate in the just-closed release unit's memory set was individually
-  evaluated and excluded for one of the two reasons above — this is a
-  genuine, evidence-based scan-only outcome, not a skipped invocation. The
-  broader `docs/memory/` file-count threshold (53 > 40) reflects several
-  *other* still-open release units' active checkpoints, not stale material
-  from `051-S`; a dedicated (non-post-merge-triggered) compaction pass once
+    and were likewise left untouched. This same "never compact active-item
+    checkpoints" constraint also covers every other `status: superseded`
+    memory checkpoint found in `docs/memory/` this pass (the `2026-08-25`
+    `pr107-*`/`stage-dark-security-pipeline-remediation-memory.md` group
+    and the remaining `2026-08-29` `stage-056-011-h3a-*` files) — all tied
+    to `049-S`/`056-F`, both still `queued` per
+    `.backlogit/queue/049-S.md` and `.backlogit/queue/056-F.md`. None
+    compacted.
+* **Phase 2 (Identify Candidates) — closure records**: this closure record
+  itself is 3 days old (well under the 14-day threshold) and is the object
+  of the current closure, not a compaction candidate. The six 2026-08-17
+  closure artifacts for shipments `047-S` and `048-S`
+  (`2026-08-17-047-s-post-merge-closure.md`,
+  `2026-08-17-047-s-release-observability-evidence.md`,
+  `2026-08-17-serve-auto-discovery-followups-closure.md`,
+  `2026-08-17-serve-auto-discovery-followups-compound-refresh.md`,
+  `2026-08-17-serve-auto-discovery-followups-post-merge-closure.md`,
+  `2026-08-17-serve-auto-discovery-followups-runtime-verification.md`) are
+  each over the 14-day threshold (15 days as of 2026-09-01) and belong to
+  fully complete, archived shipments (`047-S`, `048-S` present only in
+  `.backlogit/archive/`, no live queue entry) — satisfying the skill's
+  closure rule ("Feature or chore is complete AND more than
+  `threshold_days` old") without exception. **Compacted**: consolidated
+  into `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`; the six
+  originals archived to
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/`. Every tracked
+  citation to the six original paths was rewritten to the archived
+  location (full detail, including the one known Stage-owned
+  `.backlogit/stash.jsonl` exception left untouched under Ship's Role
+  Boundary, is recorded in the compaction summary itself).
+* **Result**: 1 memory checkpoint compacted and archived; 6 closure records
+  compacted into 1 consolidated summary and archived (44,784 bytes); 2
+  compaction reports added (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
+  `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`); 0 files
+  deleted. All still-active work streams (`049-S`, `052-S`, `053-S`,
+  `056-F`, `059-F`) retain every checkpoint untouched. The broader
+  `docs/memory/` file-count threshold (53 > 40, now 52 after this pass'
+  single archival) still reflects several *other* still-open release
+  units' active checkpoints, not stale material from `051-S`; a dedicated
+  (non-post-merge-triggered) compaction pass once
   `049-S`/`052-S`/`053-S`/`056-F`/`059-F` close out is the appropriate future
   point to revisit that broader count, and is recorded as a follow-up (see
   Stash Follow-Up Review below) rather than acted on here.
 
 `compaction_status: done` — the skill was genuinely invoked and completed
-Phases 1–4 for `target: all`; a threshold-gated no-op is a fully compliant
-completion, not a `degraded` or skipped run.
+Phases 1–4 for `target: all`, with 1 memory checkpoint and 6 closure
+records actually compacted and archived this pass (corrected from the
+originally-recorded, invalid zero-candidate claim).
 
 ## Cross-References
 
@@ -1503,6 +1567,13 @@ completion, not a `degraded` or skipped run.
 * `docs/memory/2026-08-29/ship-051-s-054-s-transition-memory.md`
 * `docs/memory/2026-08-30/stage-059-f-normalization-ratification-memory.md`
 * `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+  (compacted 2026-09-01, now archived at
+  `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`,
+  dense summary at
+  `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`)
+* `docs/closure/2026-09-01-047-s-048-s-closure-summary.md` (2026-08-17
+  `047-S`/`048-S` closure artifacts, compacted and archived 2026-09-01 per
+  the Post-Merge Compaction section above)
 * `docs/compound/best-practices/shipment-supersession-return-blocked-then-safe-close-2026-08-29.md`
 * `docs/compound/workflow-issues/post-merge-branch-preserve-dirty-file-2026-08-29.md`
 * Follow-up items stashed: **none, by design** (see Stash Follow-Up Review

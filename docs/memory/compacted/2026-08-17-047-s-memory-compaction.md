@@ -27,8 +27,13 @@ cycle, per the 3-cycle cap), CI green, merged as PR #97
 -artifact safe-close, protected set empty — full-feature shipment).
 
 Key decisions and learnings (full detail retained in
-`docs/closure/2026-08-17-047-s-post-merge-closure.md`,
-`docs/closure/2026-08-17-047-s-release-observability-evidence.md`, and the
+`docs/closure/2026-08-17-047-s-post-merge-closure.md` and
+`docs/closure/2026-08-17-047-s-release-observability-evidence.md` —
+compacted 2026-09-01, now archived at
+`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-post-merge-closure.md`
+and
+`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md`,
+see `docs/closure/2026-09-01-047-s-048-s-closure-summary.md` —, and the
 two `docs/compound/` entries this shipment produced/updated):
 
 * `is_engine_enforced_readonly()` kept meaning `guard.is_some()` — NOT
