@@ -122,7 +122,7 @@ designed to preserve.
 
 None required for merge. See the Monitoring Plan and Rollback Trigger/Procedure sections of the
 pre-merge operational closure
-(`docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md`) for the bounded post-deploy
+(`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-closure.md`) for the bounded post-deploy
 manual observation window the exec plan requires given the classifier's read-only-vs-generation
 safety sensitivity. (Release-observability content is consolidated into that closure artifact
 rather than a separate file for this shipment.)

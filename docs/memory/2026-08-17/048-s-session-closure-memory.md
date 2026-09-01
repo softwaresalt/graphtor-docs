@@ -28,7 +28,12 @@ merge_commit_post_merge: "0cf49a81d5471026d17c81ea09db0d92f569a94b"
   extensive new test coverage
 * `docs/decisions/2026-08-17-served-alias-canonicalization-evaluation.md` — new decision doc
 * `docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md` — pre-merge closure
+  (compacted 2026-09-01, now archived at
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-closure.md`,
+  see `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`)
 * `docs/closure/2026-08-17-serve-auto-discovery-followups-runtime-verification.md` — runtime verification
+  (compacted 2026-09-01, now archived at
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-runtime-verification.md`)
 * `docs/archive/memory/2026-08-17/048-s-build-checkpoint-implementation-complete.md` — build checkpoint (archived post-merge; see `docs/memory/compacted/2026-08-17-048-s-memory-compaction.md`)
 * `.backlogit/queue/055-F.md`, `.backlogit/queue/055.001-T.md`,
   `.backlogit/queue/055.001.001-ST.md`, `.backlogit/queue/055.001.002-ST.md`,
@@ -39,7 +44,12 @@ merge_commit_post_merge: "0cf49a81d5471026d17c81ea09db0d92f569a94b"
 ## Files Modified (post-merge closure PR #102)
 
 * `docs/closure/2026-08-17-serve-auto-discovery-followups-post-merge-closure.md` — post-merge closure
+  (compacted 2026-09-01, now archived at
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-post-merge-closure.md`,
+  see `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`)
 * `docs/closure/2026-08-17-serve-auto-discovery-followups-compound-refresh.md` — compound-refresh review
+  (compacted 2026-09-01, now archived at
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-compound-refresh.md`)
 * `docs/compound/tracing-envfilter-wrong-crate-target-2026-08-17.md` — new compound learning
 * `docs/compound/workflow-issues/git-commit-powershell-embedded-quotes-2026-08-17.md` — new compound learning
 * `.backlogit/` — shipment and item archival bookkeeping

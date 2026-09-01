@@ -43,7 +43,7 @@ Two PR90 deferrals in `src/workspace/serve_discovery.rs`, executed as shipment `
 
 ## Validator Evidence (from Runtime Verification)
 
-* Report: `docs/closure/2026-08-17-serve-auto-discovery-followups-runtime-verification.md`
+* Report: `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-runtime-verification.md`
 * Verdict: **PASS**
 * Adapter: CLI/command, manual subprocess invocation against the real compiled binary
 * Surfaces verified: `serve` startup posture resolution log (`resolved serve posture ...`) and the

@@ -49,7 +49,7 @@ Shipment `048-S` closed via the `shipment-reconcile` safe-close procedure — **
   behavior-preserving refactor, not a new design pattern warranting a dedicated design doc.
 * `docs/product-specs/` — no requirement changes.
 * Compound learnings: two new entries captured (see
-  `docs/closure/2026-08-17-serve-auto-discovery-followups-compound-refresh.md` for the full
+  `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-serve-auto-discovery-followups-compound-refresh.md` for the full
   review) — a tracing `EnvFilter` crate-target-mismatch gotcha and a PowerShell
   `git commit -m` embedded-quote gotcha. Existing related entries reviewed and confirmed still
   accurate and distinct; no consolidation or replacement needed.

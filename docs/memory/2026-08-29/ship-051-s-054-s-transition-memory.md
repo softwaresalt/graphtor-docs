@@ -683,8 +683,10 @@ Role-Boundary Reconciliation" section; summarized here for this
 checkpoint's own continuity:
 
 * **Blocking nodes A-D from
-  `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` are
-  resolved** at the agent-contract/Stage-decision level, prospectively:
+  `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+  (compacted 2026-09-01, now archived at
+  `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`)
+  are resolved** at the agent-contract/Stage-decision level, prospectively:
   (A) Stage's Step 5.5 **Mode R** ratified-existing-scope handoff, naming
   `member_ids` (9) and `prerequisite_ids` (2, `059.007-T`/`059.014-T`) for
   `059-F` in
@@ -784,5 +786,7 @@ checkpoint's own continuity:
   remain standing, un-legalized historical record.
 * **Final current-HEAD review and GraphQL thread reply/resolution remain a
   pending follow-up**, not performed by this pass either — see
-  `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`'s
+  `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
+  (compacted 2026-09-01, now archived at
+  `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`)'s
   newest resumption section for the current status.

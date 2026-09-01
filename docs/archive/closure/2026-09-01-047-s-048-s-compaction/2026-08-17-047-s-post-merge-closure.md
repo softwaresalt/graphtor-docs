@@ -26,7 +26,7 @@ surface, without changing any guard runtime behavior:
 * New characterization test, landed RED-first (Constitution Principle II).
 * `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`
   — corrected "Read-only serve hardening" section.
-* `docs/closure/2026-08-17-047-s-release-observability-evidence.md` —
+* `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md` —
   release-observability evidence for the startup-log runtime-surface change.
 * CI audit-allowlist maintenance (disclosed, necessary scope addition):
   `RUSTSEC-2026-0249` (`smartstring`, unmaintained, direct `cozo` dependency)
@@ -106,7 +106,7 @@ gated on this change). The next operator run of `cargo build --release` (or
 ## Post-Deploy Checks
 
 See the release-observability evidence
-(`docs/closure/2026-08-17-047-s-release-observability-evidence.md`) for the
+(`docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md`) for the
 full owner/baseline/window/threshold/rollback record. Summary:
 
 * **Owner**: `@softwaresalt`.
@@ -198,6 +198,6 @@ criteria, with the owner recording a healthy/degraded/rolled-back outcome.
 * `docs/decisions/2026-08-16-readonly-serve-cross-process-coordination-spike.md`
 * `docs/decisions/2026-08-16-shared-external-readonly-databases-deliberation.md`
 * `docs/design-docs/2026-07-15-consumption-first-serve-and-trust-boundary.md`
-* `docs/closure/2026-08-17-047-s-release-observability-evidence.md`
+* `docs/archive/closure/2026-09-01-047-s-048-s-compaction/2026-08-17-047-s-release-observability-evidence.md`
 * Follow-up items stashed: `9CEC208C`, `C365AB98`, `3FFE51B4`, `B883681D`,
   `B8C0851E` (see PR #97 description for full disposition of each).

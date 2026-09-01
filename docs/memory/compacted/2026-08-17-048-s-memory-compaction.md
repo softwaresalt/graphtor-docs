@@ -49,12 +49,14 @@ fixed). Merged as PR #101
 (`0cf49a81d5471026d17c81ea09db0d92f569a94b`), then safely archived
 (single-artifact safe-close, protected set empty — full-feature shipment).
 
-Key decisions and learnings (full detail retained in
-`docs/closure/2026-08-17-serve-auto-discovery-followups-closure.md`,
-`docs/closure/2026-08-17-serve-auto-discovery-followups-runtime-verification.md`,
-`docs/closure/2026-08-17-serve-auto-discovery-followups-post-merge-closure.md`,
-`docs/closure/2026-08-17-serve-auto-discovery-followups-compound-refresh.md`,
-and the two new `docs/compound/` entries this shipment produced):
+Key decisions and learnings (full detail retained in the four
+`docs/closure/2026-08-17-serve-auto-discovery-followups-*.md` records —
+`-closure.md`, `-runtime-verification.md`, `-post-merge-closure.md`, and
+`-compound-refresh.md` — compacted 2026-09-01, now archived at
+`docs/archive/closure/2026-09-01-047-s-048-s-compaction/` under their
+original filenames, see
+`docs/closure/2026-09-01-047-s-048-s-closure-summary.md`, and the two new
+`docs/compound/` entries this shipment produced):
 
 * An additive `graphtor_core::acquire::FileFilter` public API (SemVer-minor)
   was required — not merely an internal refactor — because the classifier
