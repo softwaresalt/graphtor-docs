@@ -948,9 +948,70 @@ Dependency changes from the prior authority (each enacted in backlog by this Sta
   invariants, deterministic `should_refuse_reparse` predicate) is retained unchanged for the
   feasible units.
 
-**`051-S` transition (Ship-owned; planned, not executed by Stage):** Stage does not mutate the
-active `051-S` manifest or close it. Ship, on its next cycle and only after `059.014-T` sign-off,
-either re-scopes `051-S`'s manifest to the feasible task set (`059-F` + U1/U2/U6/U3/U4/U5/U10/U11)
-as the owner, or closes `051-S` (feasibility complete; engine binding infeasible/accepted) and
-Stage assembles a fresh implementation shipment. `049-S` is decoupled from `051-S` (sequencing-only
-edge, no code coupling, no schedule gain) so bug `7BF1961D` proceeds independently.
+**`051-S` transition (SUPERSEDED / ENACTED — 2026-08-30 Stage convergence, PR #114):**
+~~Stage does not mutate the active `051-S` manifest or close it. Ship, on its next cycle and only
+after `059.014-T` sign-off, either re-scopes `051-S`'s manifest to the feasible task set (`059-F` +
+U1/U2/U6/U3/U4/U5/U10/U11) as the owner, or closes `051-S` (feasibility complete; engine binding
+infeasible/accepted) and Stage assembles a fresh implementation shipment.~~ **Enacted outcome:**
+`051-S` was **safely closed and is now `archived`**; its non-terminal members were removed with
+status-preserving `return-blocked` and handed off; the Ship-created successor `054-S` was deleted
+and is absent, but that deletion was an unapproved destructive P-005 violation, not compliant
+remediation. **Ship did not, and cannot, re-scope `051-S` or create a successor shipment** —
+under fail-closed P-010 both are Stage-only. **Stage exclusively** normalizes (`blocked → queued`)
+the feasible units and assembles any successor shipment (Step 5.5). Those two Stage acts are on
+**different clocks**: the `blocked → queued` normalization of `059-F` + U1/U2/U6/U3/U4/U5/U10/U11
+is **already completed and Stage-ratified** (2026-08-30) while `059.014-T` is still `queued` — it
+was never gated on sign-off, because the gate functions as the `blocks` edge `059.001-T ←
+059.014-T`, so U1 stays unexecutable regardless of the units' intake status. Only
+**successor-shipment assembly and the implementation that follows it (U1 onward)** wait for
+`059.014-T` to be `done`. Ratifying the completed normalization grants no early execution
+authority and does not retroactively legalize the Ship mutation that produced it. `049-S` is
+decoupled from `051-S` (sequencing-only edge, no
+code coupling, no schedule gain) so bug `7BF1961D` proceeds independently.
+
+**`051-S` closure timing (superseded precondition; recorded 2026-08-30).** The original PR #113
+requirement that `051-S` be resolved only *after* `059.014-T` sign-off is **explicitly superseded**
+by `docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+§ *Supersession of the PR #113 `051-S` Closure-Timing Requirement*. Evidence-based basis: `051-S`
+was an **evidence** shipment whose post-return manifest was `[059.007-T]` (already `done`);
+the safe-close archived only that delivered member plus the shipment record, returned `059-F` and
+`059.008-T` status-preservingly via `return-blocked` (both stayed `blocked`, neither archived),
+accepted no residual risk, and began no implementation. The sequencing mismatch is recorded
+honestly: the closure ran before the precondition was superseded. Current rule:
+**evidence-shipment closure may precede sign-off; `059.014-T` gates successor-shipment assembly
+and implementation only.** This is a shipment-lifecycle timing supersession, **not** a retroactive
+security sign-off — `059.014-T` remains `queued` and the Accepted-Residual-Risk Record is unsigned.
+
+**Status-normalization + assembly ownership (Stage-owned; added 2026-08-30).** Following Copilot
+review comment `3888455427` on PR #114 and
+`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`: the
+`blocked → queued` normalization of the feasible units (`059-F` + U1/U2/U6/U3/U4/U5/U10/U11) is a
+Stage `update backlog items` operation, not a Ship operation. Ship only identifies the non-terminal
+manifest members, `return-blocked`s them (status-preserving), safe-closes the evidence shipment, and
+hands off the rescoped scope; **Stage** performs the status normalization, rewires the feasible DAG,
+and assembles any successor shipment under Step 5.5. The prior Ship-performed normalization remains
+a P-010 violation and is not retroactively legalized — Stage affirmed the resulting `queued`
+disposition only after independent review. A fourth distinct Ship P-010 was subsequently recorded:
+Ship's post-return mutation of `059.008-T`'s `blocked_reason` planning field; Stage independently
+ratified the current terminal blocked reason as semantically correct without legalizing the mutation
+(see the *Historical Ship role-boundary violation record* in
+`docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`).
+
+**Successor-shipment assembly path (Step 5.5 Mode R; added 2026-08-30).** The near-term items
+were harvested in an earlier session and already exist in the queue, so Step 5.5's default Mode H
+scope guard (harvest-only IDs) cannot admit them. The durable Mode R authorization names **two
+disjoint exact sets** — covering feature `059-F`; `member_ids` exactly the 8 IDs
+`059.001-T, 059.002-T, 059.006-T, 059.003-T, 059.004-T, 059.005-T, 059.010-T, 059.011-T` (these and
+only these become `assembly_ids`, in that parent-first dependency assembly order); and
+`prerequisite_ids` exactly `059.007-T` (`done`/archived, satisfied) and `059.014-T` (the `queued`
+sign-off gate), neither of which is ever a shipment member. The covering feature `059-F` is **not**
+a member — this is a partial-feature shipment, so `059-F` and every unshipped sibling remain in the
+P-015 protected set. `handoff_ids` is only the 10-ID
+auditable union of those sets and is never the assembly set. Exclusions
+`059.008-T`/`059.009-T`/`059.012-T`/`059.013-T` are recorded alongside them in
+`docs/decisions/2026-08-30-stage-ratify-059-f-normalization-ownership-deliberation.md`
+§ *Mode R Authorization for Successor-Shipment Assembly*. Once both prerequisites are satisfied —
+which requires `059.014-T` to reach `done`/archived after sign-off — Stage enters
+Step 5.5 directly under Mode R citing that section, logs Steps 1–5 as not applicable, re-validates
+each set against its own rules, and assembles the 9 members only. No stash entry or synthetic
+harvest may be manufactured, and no shipment is assembled while the gate is open.

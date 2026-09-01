@@ -1,10 +1,10 @@
 schema_version: 1.0.0
 installed_at: '2026-05-10T08:42:00-07:00'
-tuned_at: '2026-07-09T00:12:52.275533-07:00'
-autoharness_version: 1.4.11
-autoharness_home: C:\Python\Python312\Lib\site-packages\autoharness\data
-profile_hash: 77f60464a985e74b3002021e70b820643aca6c7122c850f956c72957df24d76a
-config_hash: 8e5433b214942a1b7c4d250c86e513cb8868cbac1f46d06b37c535f40a0dbe2c
+tuned_at: '2026-08-31T11:23:18.800142-07:00'
+autoharness_version: 1.5.0
+autoharness_home: C:\Python\Python314\Lib\site-packages\autoharness\data
+profile_hash: 5dc93a6858eade11ee8eb17137cd53253e3852c2bdd43e02f0171abde38f264e
+config_hash: 2f76caa98f824abb3a18985a36f45f3707e0ede08c4e1db9a3004681a83f7427
 install_preset: full
 primary_stack_pack: mcp-server
 stack_packs:
@@ -19,22 +19,11 @@ install_layers:
 - knowledge
 - overlays
 capability_packs:
-- agent-intercom
 - agent-engram
 - backlogit
 - adversarial-review
 - graphtor-docs
 capability_pack_overlays:
-- pack: agent-intercom
-  overlay_targets:
-  - .github/instructions/agent-intercom.instructions.md
-  - .github/skills/deliberate/SKILL.md
-  - .github/skills/spike/SKILL.md
-  - .github/skills/review/SKILL.md
-  - .github/skills/operational-closure/SKILL.md
-  verification_checks:
-  - agent-intercom.instructions.md installed
-  - affected skills reference intercom workflow
 - pack: agent-engram
   overlay_targets:
   - .github/instructions/agent-engram.instructions.md
@@ -88,486 +77,687 @@ primitives_installed:
 - 9
 - 10
 artifacts:
+- path: .autoharness/backlog-registry.yaml
+  artifact_type: config
+  primitive: 3
+  template: backlog/registries/backlogit.registry.yaml
+  checksum: 0a718b8f1b705ee6ae94b14ecf08cc30b17f05c86815b2e35a62644ae235c04d
 - path: .autoharness/config.yaml
   artifact_type: config
   primitive: 3
   template: harness-config.yaml.tmpl
-  checksum: 8e5433b214942a1b7c4d250c86e513cb8868cbac1f46d06b37c535f40a0dbe2c
+  checksum: 2f76caa98f824abb3a18985a36f45f3707e0ede08c4e1db9a3004681a83f7427
 - path: .github/agents/_orchestrator.agent.md
   artifact_type: agent
   primitive: 4
   template: agents/_orchestrator.agent.md.tmpl
-  checksum: ec135d0f9e3fbafd178af6a4d7f5548222c2ce41881dfe1e28e14a830eb830f7
-- path: .github/agents/subagents/learnings-researcher.agent.md
+  checksum: 77b369265cf607c07c53bbdbef73833179a0a7bcdd69f5b9b529d030a3fd72d7
+- path: .github/agents/_ship.agent.md
   artifact_type: agent
-  primitive: 1
-  template: agents/research/learnings-researcher.agent.md.tmpl
-  checksum: ead2a6b394ea5b1e9474d5a653717caee6beab7aeb0b6a888f0fd44fe6e77580
+  primitive: 4
+  template: agents/_ship.agent.md.tmpl
+  checksum: 62784d22810325d08b03bd634310ac9db02e8630ee7a8e57dd5b9e09c3823a6f
+- path: .github/agents/_stage.agent.md
+  artifact_type: agent
+  primitive: 4
+  template: agents/_stage.agent.md.tmpl
+  checksum: e66549de22d90a67d1302bcd9c62a6f1e8abe61cbef249df2145aef4ea80eb2e
 - path: .github/agents/subagents/adversarial-review.agent.md
   artifact_type: agent
   primitive: 7
   template: agents/adversarial-review.agent.md.tmpl
-  checksum: 1c988c7a13298c5647451d55a2218a102c48d6388c0d40faf9ef6fe3b0485e65
+  checksum: 7d24de9211af946571db09d4962e7298c0264a55441d3887c6a0dcc0c049fa92
 - path: .github/agents/subagents/agent-native-parity-reviewer.agent.md
   artifact_type: agent
   primitive: 7
   template: agents/review/agent-native-parity-reviewer.agent.md.tmpl
-  checksum: a4ade1604b1f712ce0c6718b10315ef24e35e76da8233414128e7042fe12aeed
+  checksum: 1a5baa6eab35133e9beef8cf43800bef709e4aecdc6362a3b67c41654e5ca772
 - path: .github/agents/subagents/architecture-strategist.agent.md
   artifact_type: agent
   primitive: 7
   template: agents/review/architecture-strategist.agent.md.tmpl
-  checksum: 2e4cf707bc9ef30187b2985a364469f7064d578e34378dc7ec8a3f4e866b6824
+  checksum: ebcdf7f6f1ba35a3718e04f8071501f811d0fdac28e56bd742c1d7f00a396961
 - path: .github/agents/subagents/concurrency-reviewer.agent.md
   artifact_type: agent
   primitive: 7
   template: agents/review/concurrency-reviewer.agent.md.tmpl
-  checksum: 585c6eec8b597d710edb6bc95b1851064637431afcd31ba6b3902b14591e0b98
+  checksum: d61e0ac4a67987b453c618966e1f22a18aa1d4f665608e2daaf4eb89f219ab3e
 - path: .github/agents/subagents/constitution-reviewer.agent.md
   artifact_type: agent
   primitive: 7
   template: agents/review/constitution-reviewer.agent.md.tmpl
-  checksum: 880c3ecfa03dcc2963cd67ce6f037dd3c4394e4fc0abf0d07cbbc6c6a60b86e0
-- path: .github/agents/subagents/scope-boundary-auditor.agent.md
+  checksum: 8857eca39a1a4c8eccec5412b19fcc91efbc03173d9d1e0621c93481865d6cb6
+- path: .github/agents/subagents/correctness-reviewer.agent.md
   artifact_type: agent
   primitive: 7
-  template: agents/review/scope-boundary-auditor.agent.md.tmpl
-  checksum: a3f66a0ddfdd83382823cc10b6ead6f5c3c2298f62dc32fb30a61254aaf0c032
-- path: .github/agents/subagents/security-lens-reviewer.agent.md
-  artifact_type: agent
-  primitive: 7
-  template: agents/review/security-lens-reviewer.agent.md.tmpl
-  checksum: 257dde2a28b451154a5b2aa9f4025e168ef18abf4f2ace284890171167f10f3c
-- path: .github/agents/subagents/security-reviewer.agent.md
-  artifact_type: agent
-  primitive: 7
-  template: agents/review/security-reviewer.agent.md.tmpl
-  checksum: a3629d7b1398981471273036e150c73c05fb4412d70ecfb8da2f606516d41191
-- path: .github/agents/subagents/technology-reviewer.agent.md
-  artifact_type: agent
-  primitive: 7
-  template: agents/review/technology-reviewer.agent.md.tmpl
-  checksum: 060c42b4e7d2ef2f3a2b2011c9dd120602deae8a47ca1d0318de011304d92fb3
-- path: .github/agents/subagents/security-sentinel.agent.md
-  artifact_type: agent
-  primitive: 5
-  template: agents/security-sentinel.agent.md.tmpl
-  checksum: 2734f3f48431c672389e49cccda4c3932c41b2abc0b99183cd2869cf033ed4f9
-- path: .github/agents/.ship.agent.md
-  artifact_type: agent
-  primitive: 4
-  template: agents/.ship.agent.md.tmpl
-  checksum: f174ed0caf0b95d83189ddde54efc5d1e9488e3225920485aab0196156b2c802
-- path: .github/agents/.stage.agent.md
-  artifact_type: agent
-  primitive: 4
-  template: agents/.stage.agent.md.tmpl
-  checksum: 9aa5a0f1f1ba427a264284737fed47bf87757738997945f5837e065de4a3ef78
+  template: agents/review/correctness-reviewer.agent.md.tmpl
+  checksum: 80fa47b98c96336bad77b400c73fb7d03010c955bbcbaf1ec7e8ebf61ccfaa9c
 - path: .github/agents/subagents/language-engineer.agent.md
   artifact_type: agent
   primitive: 4
   template: agents/language-engineer.agent.md.tmpl
-  checksum: 3f4be5c6d2ca18ab19ca79a456ead6c62f321affb312e337ec2687faf0139fc5
+  checksum: fa35dc49c3c7f4dfa1a798de9485c430b9509a01df7f8fbca3f4ef3c65ff2256
+- path: .github/agents/subagents/learnings-researcher.agent.md
+  artifact_type: agent
+  primitive: 1
+  template: agents/research/learnings-researcher.agent.md.tmpl
+  checksum: 4ec75412b050b798cd86570795b7f612737c99b16f6313fc6c82cb5f307ebc29
+- path: .github/agents/subagents/maintainability-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/maintainability-reviewer.agent.md.tmpl
+  checksum: 55f809ff1fc83e396a45d9ac0525537072e2ec49091737eec5f48411bcc90a53
 - path: .github/agents/subagents/prompt-builder.agent.md
   artifact_type: agent
   primitive: 4
   template: agents/prompt-builder.agent.md.tmpl
-  checksum: 8354f19707846bf605d766a44cc639570b9025e149ec67c060626188ee52d88c
+  checksum: c770524f6043afe63b4bf80ba21b497bc965893700ace1da8d790255f1000bfa
+- path: .github/agents/subagents/schema-cli-docs-coupling-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/schema-cli-docs-coupling-reviewer.agent.md.tmpl
+  checksum: 82bbf89b3a32be4b9bcbda7ba70470d8efe1e32b8e1698e2021df29725d30f14
+- path: .github/agents/subagents/scope-boundary-auditor.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/scope-boundary-auditor.agent.md.tmpl
+  checksum: 2691978f14ae9c305e984ef328854029d57a46284661a8d0354af01e57e3c65f
+- path: .github/agents/subagents/security-lens-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/security-lens-reviewer.agent.md.tmpl
+  checksum: 95459e80e9678723b39bacf81b46b76c3e0ea58ddf27bb4f263b294fffb2e4aa
+- path: .github/agents/subagents/security-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/security-reviewer.agent.md.tmpl
+  checksum: 751f5f5e0c4a4333b7f98cbb130fbd29385ee47664b2f0e65771e43b9164d598
+- path: .github/agents/subagents/security-sentinel.agent.md
+  artifact_type: agent
+  primitive: 5
+  template: agents/security-sentinel.agent.md.tmpl
+  checksum: 193c3833eb74adb4716826f6a1bf6f58fd713f248448bc005195b5dec351a441
+- path: .github/agents/subagents/technology-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/technology-reviewer.agent.md.tmpl
+  checksum: aa3941701c7d3f5e2e3dc22aee01ee86bf47252d6fc0545c9001cbe693ef2103
+- path: .github/agents/subagents/template-integrity-reviewer.agent.md
+  artifact_type: agent
+  primitive: 7
+  template: agents/review/template-integrity-reviewer.agent.md.tmpl
+  checksum: 44c790c9c3de004d25470d59f2ab85718aac44e43b320eb312202e2b403fa05f
 - path: .github/copilot-instructions.md
   artifact_type: foundation
   primitive: 6
   template: foundation/copilot-instructions.md.tmpl
-  checksum: 97ec5c2db9938f631d33c31e115fda743d1b0c68769480309ccd2c8c59625123
+  checksum: 37fa87066cdf5ba1612a4a712739cc3676138489f33888d2e666909e4270f04c
 - path: .github/instructions/adversarial-review.instructions.md
   artifact_type: instruction
   primitive: 7
   template: instructions/adversarial-review.instructions.md.tmpl
-  checksum: dd8322d074799629f92b169e0c1d6949b31e304a576acd7cdb44016e16ab8aed
+  checksum: 9ab7c20403213771b777482d7486b86fe13048417e38ba1371d4750a67d01dd2
 - path: .github/instructions/agent-engram.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/agent-engram.instructions.md.tmpl
-  checksum: 4e77366ee9f33650b4f9c0ebecda70f0be2f917023053d7ca4a3981ff78459f2
-- path: .github/instructions/agent-intercom.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/agent-intercom.instructions.md.tmpl
-  checksum: 5eb1017fb34a73c0dfa5f44756aa2c192eb8487c278554ed44572c92c79a25ca
+  checksum: 250ea21f662a28324a5f806ea28f69d224385ee432869e1f3895ea4449968954
 - path: .github/instructions/architecture-doc.instructions.md
   artifact_type: instruction
   primitive: 9
   template: instructions/architecture-doc.instructions.md.tmpl
-  checksum: 2947321be224b2e3dc33d0865f7b49d3b3a97e4f94f711375dedbc6da3e8f976
+  checksum: 2894f4fac16ad83b703927991e751e0df28b7d8ec58373f6ecf76019fd9c82ca
 - path: .github/instructions/backlog-integration.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/backlog-integration.instructions.md.tmpl
-  checksum: 39e0c1de8ebe29fe196c9b495b6a411ce51c75d49a364bb6db86f6032af9976a
+  checksum: f748d856f333e581e6144ae6f9ff93b9d0a4c67e2768943bf5371426f3fb77d5
 - path: .github/instructions/backlogit-sql-schema.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/backlogit-sql-schema.instructions.md.tmpl
-  checksum: 39ed2b2cfe2853662c60b50cf0b420b8d42070cef5e2ff7f243e73a402256555
+  checksum: a6c256966824fcee10a3e86b67ee33ed61773bfc266ec2d304d22e21d8bc33a2
 - path: .github/instructions/backlogit-yaml-header-tooling.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/backlogit-yaml-header-tooling.instructions.md.tmpl
-  checksum: 44724b33c0ad417cd10b2c51f7f9adfb1601d43fff9fd3e96e0fa1a3f7ba6fb3
+  checksum: ed96fe080b80ab9b6377b96d1e638689717ed797be68df5175053fa73ec24a1b
 - path: .github/instructions/backlogit.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/backlogit.instructions.md.tmpl
-  checksum: a293818373eae28352fac833abd1e5c775d2a189ebb895c4748b456cee38f5df
+  checksum: 29bd8c8291b4e73dcd5be149c18174dd67f7fdb67685e50d80600e69a39a5b8e
+- path: .github/instructions/capability-pack-enforcement.instructions.md
+  artifact_type: instruction
+  primitive: 3
+  template: instructions/capability-pack-enforcement.instructions.md.tmpl
+  checksum: 57ee627109e698d9fb3117606dcdab2b1c85b546599d8fd889aa8a2c7984ccdc
 - path: .github/instructions/ci-security.instructions.md
   artifact_type: instruction
   primitive: 5
   template: instructions/ci-security.instructions.md.tmpl
-  checksum: 4e9e508bd9f3f69e0ab3ead6bc76abbe208b5370c10aeeaf82a2203e3a8434ed
+  checksum: 5a1342489bcb5663dfd2d5a8b2fb56a428be9b8eef2d73a378507313ce2eda06
 - path: .github/instructions/circuit-breaker.instructions.md
   artifact_type: instruction
   primitive: 5
   template: instructions/circuit-breaker.instructions.md.tmpl
-  checksum: 2f51f8b8bebcf830d68d1910d24c396f924fb7e0acbf6e00ea0b50c0dc2371de
+  checksum: 5e0a6a43180edcabd37d7601adaafc04bf40337ddd2732769c9dcf81ac4d655e
+- path: .github/instructions/coding-discipline.instructions.md
+  artifact_type: instruction
+  primitive: 3
+  template: instructions/coding-discipline.instructions.md.tmpl
+  checksum: 067919a1656641d778789eb5fde6880ea0f10f566ab43eebe0ebe5cb0dff823d
 - path: .github/instructions/commit-message.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/commit-message.instructions.md.tmpl
-  checksum: 84b6918971bbec06723d55dae0df7b60385c8c5403c04f1271d03268c330b43c
+  checksum: b75e88c8a250277cdece20fdbaaea235bfd4595f3032964fffe0882f5f4166ba
 - path: .github/instructions/concurrency.instructions.md
   artifact_type: instruction
   primitive: 5
   template: instructions/concurrency.instructions.md.tmpl
-  checksum: 25ec9c915b64e654b88ab06046f7bf73709229542aa58c1829fa03b040be33fa
+  checksum: e3a09c6ed5215be68bdb31344c6b3119147877e4a692349f58a464bb6b34d223
 - path: .github/instructions/constitution.instructions.md
   artifact_type: foundation
   primitive: 5
   template: foundation/constitution.instructions.md.tmpl
-  checksum: 7afedd4116ead48ddd106dd3cd4350f9876d891f810aff1d6e688300f32d80fe
+  checksum: a06c6cf433c5555ec545904ac20714f5b9b2dabc7f10f10724714d1250304d03
+- path: .github/instructions/context-efficiency.instructions.md
+  artifact_type: instruction
+  primitive: 3
+  template: instructions/context-efficiency.instructions.md.tmpl
+  checksum: e90a66ebab83ff0b4d6cace14752866be83c26bff88813ef11dbb018e29e9c53
+- path: .github/instructions/copilot-code-review.instructions.md
+  artifact_type: instruction
+  primitive: 3
+  template: instructions/copilot-code-review.instructions.md.tmpl
+  checksum: dd174a0c5cdd9160eb5b207ac64dbd8625c478087fb0a4802f01444a630c7996
+- path: .github/instructions/escalation-protocol.instructions.md
+  artifact_type: instruction
+  primitive: 3
+  template: instructions/escalation-protocol.instructions.md.tmpl
+  checksum: 13b44142d3c4b7898332a7fa2b781f4cd7602a298877a100edd91ca3730339e5
 - path: .github/instructions/git-merge.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/git-merge.instructions.md.tmpl
-  checksum: 62e6ca56f90570f1ff895dad31827eed541050fd60fe7ec32559d3c394af2aa3
+  checksum: fa06c7b36ab3ff785ed003342dd52a92d3a8582ee8293d7f3a0a96d22f34b497
 - path: .github/instructions/github-pr-automation.instructions.md
   artifact_type: instruction
   primitive: 4
   template: instructions/github-pr-automation.instructions.md.tmpl
-  checksum: 89fd022426cc814f9c8965e82cbab49f983b13931110550e95cd4903936767e3
+  checksum: 7de9b0929d031d3d57822c9ef460312e028a9d4d8ba0574d8e1fa53de1564e6b
 - path: .github/instructions/graphtor-docs.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/graphtor-docs.instructions.md.tmpl
-  checksum: 6a8e807483f20115ebfe3a4670593c0d2670c7934e8613987eabfad455681268
+  checksum: 619af6ab03e6d0fef41f2acf54f1d10aa058662f153755ce2646a845af6fae45
 - path: .github/instructions/markdown.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/markdown.instructions.md.tmpl
-  checksum: 36b9faa412bb9b77adcb9d00b84b90d0adb226a1020d2789c497a72008fd85ae
+  checksum: 6ac28f56d9d00c13b76362d6058fbc8da42afe6eb96acd34fc53d9bf40868d9c
 - path: .github/instructions/mcp-server.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/mcp-server.instructions.md.tmpl
   checksum: b810794e2025279b8e2099056c3d149ff4a858bc48430771613e8ce321473758
-- path: .github/instructions/prompt-builder.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/prompt-builder.instructions.md.tmpl
-  checksum: 0240f417c991c10bec481ee2c60b3290802de341795ddedcfeb9d50036fb401d
-- path: .github/instructions/pull-request.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/pull-request.instructions.md.tmpl
-  checksum: cbaaabb2a07bfb0b5c872773e661c3130880ad8759c8d9507997def9bca40595
-- path: .github/instructions/release-observability.instructions.md
-  artifact_type: instruction
-  primitive: 10
-  template: instructions/release-observability.instructions.md.tmpl
-  checksum: 0c2cde657e227176cd3ef0003ac5edb37d1c6a3fc2fbb7d6fb71950933828ddf
-- path: .github/instructions/strict-safety.instructions.md
-  artifact_type: instruction
-  primitive: 5
-  template: instructions/strict-safety.instructions.md.tmpl
-  checksum: c66779a76080091f84f15fad12198ec662df4ed9c5d16a2f4f75d712a2f18e03
-- path: .github/instructions/technology-rust.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/technology-rust.instructions.md.tmpl
-  checksum: 5dab19d0ff567799d1aa4d141e2f476994623a2aa9a1154860ece0c319fc30c1
-- path: .github/instructions/technology.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/technology.instructions.md.tmpl
-  checksum: eff7918ec3319febcc7dc2c53f18388c45b0f65154e3460cca8a65f70d0c4ea8
-- path: .github/instructions/workflows.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/workflows.instructions.md.tmpl
-  checksum: fa39184192e6a42805ad2a457aba5d50a9f3e5263617037fe689ee15dc1f725a
-- path: .github/instructions/writing-style.instructions.md
-  artifact_type: instruction
-  primitive: 6
-  template: instructions/writing-style.instructions.md.tmpl
-  checksum: 74ede17cd141b15ff4f740d7dd55465fee4876d10b504971e4f874bbf0c6bbe8
-- path: .github/policies/policy-proposal.md
-  artifact_type: policy
-  primitive: 8
-  template: policies/policy-proposal.md.tmpl
-  checksum: 3800e17a9d4b76fa42f5bb933f1f8ea57288f17ade0a670b7015355d97657fc5
-- path: .github/policies/workflow-policies.md
-  artifact_type: policy
-  primitive: 8
-  template: policies/workflow-policies.md.tmpl
-  checksum: 89aa52029809c85f39085a7431ccacd042bb8caba0da7da6d2f8b9e6d2ca861d
-- path: .github/prompts/ping-loop.prompt.md
-  artifact_type: prompt
-  primitive: 2
-  template: prompts/ping-loop.prompt.md.tmpl
-  checksum: 3d9cdccec6566841d050ac3824cf59372d25e64dd8865e825eff459f5fe9f105
-- path: .github/prompts/stage-grouping-analysis.prompt.md
-  artifact_type: prompt
-  primitive: 2
-  template: prompts/stage-grouping-analysis.prompt.md.tmpl
-  checksum: 60c7e9f59607d07c7a7715e64753a4146d00a922b3d736beda50078982dfa41c
-- path: .github/skills/browser-automation/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/browser-automation/SKILL.md.tmpl
-  checksum: b3d5ab47587a023cb569b27cb1a29e1d0bab8f1c384239263f5b48fc91f6e3d6
-- path: .github/skills/build-feature/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/build-feature/SKILL.md.tmpl
-  checksum: 5ac42bac0420b07deef58780fc9765c971f4af56953e4af44b1f88f5f2fcd750
-- path: .github/skills/compact-context/SKILL.md
-  artifact_type: skill
-  primitive: 1
-  template: skills/compact-context/SKILL.md.tmpl
-  checksum: 1373b923016d65c29ed145011f6c5df8a3c03bed4385191ed8b8442fb71a18b3
-- path: .github/skills/compound-refresh/SKILL.md
-  artifact_type: skill
-  primitive: 1
-  template: skills/compound-refresh/SKILL.md.tmpl
-  checksum: d21e5d560a4e4f02576fa7b3e010cb76a957145739caf88ffe07d765c3013461
-- path: .github/skills/compound/SKILL.md
-  artifact_type: skill
-  primitive: 1
-  template: skills/compound/SKILL.md.tmpl
-  checksum: 08a68222b1bf3ed86fccd30e9e0a085ab1de56de9fe8496fa4defb8e4305ba95
-- path: .github/skills/deliberate/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/deliberate/SKILL.md.tmpl
-  checksum: 3ea2a8a8ab4e377f9b33b25e7b638f41f286a48686bb8c834002409ddf84610f
-- path: .github/skills/evolve/SKILL.md
-  artifact_type: skill
-  primitive: 1
-  template: skills/evolve/SKILL.md.tmpl
-  checksum: 1f7f06d289be1c2ad892d94b49d08f5e2fd49d0f25526be8fbfd7baed01daf80
-- path: .github/skills/file-lock/SKILL.md
-  artifact_type: skill
-  primitive: 5
-  template: skills/file-lock/SKILL.md.tmpl
-  checksum: 624df80c6cee4ceca496a5ee6fb1c9ec7603b1fcef190ef7c9f9198c6b9da74b
-- path: .github/skills/fix-ci/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/fix-ci/SKILL.md.tmpl
-  checksum: e6ce3c27f83d118b04bad8ba71f1292215cf30aabe508ae275902909c9d14ba9
-- path: .github/skills/harness-architect/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/harness-architect/SKILL.md.tmpl
-  checksum: 274525f320e522e3406d8c78944399f4652c524477c623dbf3ba95e29ecfe499
-- path: .github/skills/harness-doctor/SKILL.md
-  artifact_type: skill
-  primitive: 7
-  template: skills/harness-doctor/SKILL.md.tmpl
-  checksum: cda1ffe05cbb7cf475e6a8826e3da6ab9f5dc95063a1f12462ca5c3a4cc2674e
-- path: .github/skills/harvest/SKILL.md
-  artifact_type: skill
-  primitive: 2
-  template: skills/harvest/SKILL.md.tmpl
-  checksum: 8945f10b88aa8df5ace9a78d2a1dd53b5eb672202c8d28ec8d852bcbe791b0ee
-- path: .github/skills/impl-plan/SKILL.md
-  artifact_type: skill
-  primitive: 2
-  template: skills/impl-plan/SKILL.md.tmpl
-  checksum: 878ac433ee0f8e54471506338b6900fd66756971d86f6532046f896e66a909fe
-- path: .github/skills/iterative-experiment/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/iterative-experiment/SKILL.md.tmpl
-  checksum: 68691be311de5f0ae31f61f2cf2c26ed1c3099b5ba321976d519fafd29c5f8c0
-- path: .github/skills/learn/SKILL.md
-  artifact_type: skill
-  primitive: 1
-  template: skills/learn/SKILL.md.tmpl
-  checksum: 97ae0b1f0c77876a1af9763bb551b1ae6bcbfcaa83d2a0dcd48374c451170695
-- path: .github/skills/observe/SKILL.md
-  artifact_type: skill
-  primitive: 1
-  template: skills/observe/SKILL.md.tmpl
-  checksum: 4cc91f4bede89425e5c34eec9429a1d0a52549ec89e95baca5d72ce5243c8abe
-- path: .github/skills/operational-closure/SKILL.md
-  artifact_type: skill
-  primitive: 10
-  template: skills/operational-closure/SKILL.md.tmpl
-  checksum: 7da73783a0f12c1264a0cf47a31397775bf87839e1a94c334136ce821af56f79
-- path: .github/skills/plan-harden/SKILL.md
-  artifact_type: skill
-  primitive: 10
-  template: skills/plan-harden/SKILL.md.tmpl
-  checksum: 02d54cae5f5c006f523ba0af22fec5c3b1b12e0eaeeffd10bece508d8c0dc57f
-- path: .github/skills/plan-review/SKILL.md
-  artifact_type: skill
-  primitive: 7
-  template: skills/plan-review/SKILL.md.tmpl
-  checksum: 4d24ed7ac8dd09e3e1b460118c547a3c157b6d0d5715012d024fba675470aceb
-- path: .github/skills/pr-lifecycle/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/pr-lifecycle/SKILL.md.tmpl
-  checksum: 0eb30c33d1fd527a124cc92be2528f815988d2744162df092ead4192863e6ce1
-- path: .github/skills/review/SKILL.md
-  artifact_type: skill
-  primitive: 7
-  template: skills/review/SKILL.md.tmpl
-  checksum: 61ea5480a9065093ec6e888788a616228b0782fc637d55bc39f524f2b7444ae1
-- path: .github/skills/runtime-verification/SKILL.md
-  artifact_type: skill
-  primitive: 10
-  template: skills/runtime-verification/SKILL.md.tmpl
-  checksum: 965c7a07af09d5c45a31e72b7ad4725c37dc94974f0d5d7c1bfe7fa8bf42b53e
-- path: .github/skills/safety-modes/SKILL.md
-  artifact_type: skill
-  primitive: 5
-  template: skills/safety-modes/SKILL.md.tmpl
-  checksum: be46883623aa14341765dddf3990b1a6c8a70ce0e4965ade23531a47c379ed7e
-- path: .github/skills/security-audit/SKILL.md
-  artifact_type: skill
-  primitive: 5
-  template: skills/security-audit/SKILL.md.tmpl
-  checksum: cd839ba768c895b78ae297b657c8f60584366ccca82992500eba5fab1477dd19
-- path: .github/skills/shipment-reconcile/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/shipment-reconcile/SKILL.md.tmpl
-  checksum: 96f9c10670dd3928e3ae0ec9e38df4fd02778decdd2cf7f12bcedf80d28e81a4
-- path: .github/skills/skill-search/SKILL.md
-  artifact_type: skill
-  primitive: 9
-  template: skills/skill-search/SKILL.md.tmpl
-  checksum: 0fbdc29c4412dc3e152c015cdc982d5e6ddf82634d1d8c18a28d8f1661a50ab6
-- path: .github/skills/spike/SKILL.md
-  artifact_type: skill
-  primitive: 4
-  template: skills/spike/SKILL.md.tmpl
-  checksum: 160592a341eba6761c741453cec3acffc56ca68d96bbb1b87360da139cf8eca3
-- path: .markdownlint.json
-  artifact_type: script
-  primitive: 5
-  template: scripts/.markdownlint.json.tmpl
-  checksum: c527c1b08510f9f34a8c15a693e1c3294d91c95009ee670b13950875aeef0e38
-- path: AGENTS.md
-  artifact_type: foundation
-  primitive: 9
-  template: foundation/AGENTS.md.tmpl
-  checksum: 521cbf764dc611989d974e11f579178c539b182ca83a8ffdc86828adb972f21d
-- path: scripts/pre-commit-markdownlint.ps1
-  artifact_type: script
-  primitive: 5
-  template: scripts/pre-commit-markdownlint.ps1.tmpl
-  checksum: 2b3210637a45862f2bd74e491687bb389025926cc04593608e0705a983d9f5bf
-- path: scripts/pre-commit-markdownlint.sh
-  artifact_type: script
-  primitive: 5
-  template: scripts/pre-commit-markdownlint.sh.tmpl
-  checksum: 00afaf27e835690b22ae2f82bbfb0a2eb2b62848a8792ecf72c44c482c3d7cf0
-- path: start.ps1
-  artifact_type: script
-  primitive: 5
-  template: scripts/start.ps1.tmpl
-  checksum: f63b132015debb51a05ea37e185ca071a542a77293328b3740c6f433763dac4a
-- path: start.sh
-  artifact_type: script
-  primitive: 5
-  template: scripts/start.sh.tmpl
-  checksum: 25534e8326e7ec2e0bcd4e7307250e607ef4495444eb39d1fde2c9cf38e0ff1f
-- path: .github/prompts/feature-flow.prompt.md
-  artifact_type: prompt
-  primitive: 4
-  template: prompts/feature-flow.prompt.md.tmpl
-  checksum: 1aa567e2e8fc16ad85d69ad39163202273e3bef784dece9d975b2d7f02fc3bb8
 - path: .github/instructions/output-timestamps.instructions.md
   artifact_type: instruction
   primitive: 6
   template: instructions/output-timestamps.instructions.md.tmpl
-  checksum: 4d7d0ee274b24acc714e1c29dc0fa90d63aa94a8f6cdba6be3f2cf51be903057
-- path: .github/prompts/feature-flow-parallel.prompt.md
-  artifact_type: prompt
-  primitive: 4
-  template: prompts/feature-flow-parallel.prompt.md.tmpl
-  checksum: 577f6948d9712ac10c508760476ae5aa8a930fa632bccd1f3f21535f50149efa
+  checksum: 10e6faa0ca0ec29bb34926e6f0374b0eefe600451713d806c6061e0beb227b69
+- path: .github/instructions/prompt-builder.instructions.md
+  artifact_type: instruction
+  primitive: 6
+  template: instructions/prompt-builder.instructions.md.tmpl
+  checksum: 306270c592268efbff4386f069afae3ac41e311e0eeab855835acd3fb0303fc5
+- path: .github/instructions/pull-request.instructions.md
+  artifact_type: instruction
+  primitive: 6
+  template: instructions/pull-request.instructions.md.tmpl
+  checksum: 39f13c4648fce30421002fb9704e6996e116cc9f5ae2cea7cec6ad4df2d9c6e5
+- path: .github/instructions/release-observability.instructions.md
+  artifact_type: instruction
+  primitive: 10
+  template: instructions/release-observability.instructions.md.tmpl
+  checksum: 2f8c77791341b66821711b4303de283e8bc83b5a0c33bd4e156235a84dd360f7
+- path: .github/instructions/role-enforcement.instructions.md
+  artifact_type: instruction
+  primitive: 3
+  template: instructions/role-enforcement.instructions.md.tmpl
+  checksum: fd3af24626eeecda69699937a395f898017f592546156d45a76edf76013f2a85
+- path: .github/instructions/strict-safety.instructions.md
+  artifact_type: instruction
+  primitive: 5
+  template: instructions/strict-safety.instructions.md.tmpl
+  checksum: 9f70e1c9978d1071a3460dd91f5b057401e26892b97a93b2d5c94eaaf4c0f790
+- path: .github/instructions/technology-rust.instructions.md
+  artifact_type: instruction
+  primitive: 6
+  template: instructions/technology-rust.instructions.md.tmpl
+  checksum: d80fe4e78a47e6a43324031c26662aa5ada4e6e5a3d30c3d8be12aed63d296f4
+- path: .github/instructions/technology.instructions.md
+  artifact_type: instruction
+  primitive: 6
+  template: instructions/technology.instructions.md.tmpl
+  checksum: 41ec118a75e94b0ce9ab52a9820f30a36b4995228f9e0aedee2d3732b90ba720
+- path: .github/instructions/workflows.instructions.md
+  artifact_type: instruction
+  primitive: 6
+  template: instructions/workflows.instructions.md.tmpl
+  checksum: a821b82483d642647cc6f4fe41990345181014d9c76763c951db453e12e4e1e9
+- path: .github/instructions/writing-style.instructions.md
+  artifact_type: instruction
+  primitive: 6
+  template: instructions/writing-style.instructions.md.tmpl
+  checksum: 1fc5cdcb661bd09ec47193af6e6a50d8c36b1e2991c2164a4a6a33d2c630af79
+- path: .github/policies/policy-proposal.md
+  artifact_type: policy
+  primitive: 8
+  template: policies/policy-proposal.md.tmpl
+  checksum: 65db62479e8cbbdf3cf404e573f5c7a5f67df5aba53c23ed08c23c3f8cca5a91
+- path: .github/policies/workflow-policies.md
+  artifact_type: policy
+  primitive: 8
+  template: policies/workflow-policies.md.tmpl
+  checksum: 8a5b85a9b49f28657bddf27af52298486a103273c2315ea4e51b534a6d71b7d3
 - path: .github/prompts/feature-flow-dark.prompt.md
   artifact_type: prompt
   primitive: 4
   template: prompts/feature-flow-dark.prompt.md.tmpl
-  checksum: 4f5ff60fcb8e6771fc888ad7345125aa684a5b1d3921f415981fd1623a406cc1
-- path: .github/agents/subagents/correctness-reviewer.agent.md
-  artifact_type: agent
+  checksum: 5dc67d3ad19127993568a5015b099fbd7fb94eb524fcdaf28afb5371248cf597
+- path: .github/prompts/feature-flow-parallel.prompt.md
+  artifact_type: prompt
+  primitive: 4
+  template: prompts/feature-flow-parallel.prompt.md.tmpl
+  checksum: 1f64d4399e49f005e25aa0aaf7291f750bae3dbed6d7050cdeaa73351394e75f
+- path: .github/prompts/feature-flow.prompt.md
+  artifact_type: prompt
+  primitive: 4
+  template: prompts/feature-flow.prompt.md.tmpl
+  checksum: 587782dec40324c0662c835d67c90dd64000d97cd203d44b5b51bd9bc85e2166
+- path: .github/prompts/stage-grouping-analysis.prompt.md
+  artifact_type: prompt
+  primitive: 2
+  template: prompts/stage-grouping-analysis.prompt.md.tmpl
+  checksum: d9cdc97d07fde6f09a0b3bfaac6252f46ca2c7ebca42503ceb4c0a99835be78e
+- path: .github/skills/brainstorm/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/brainstorm/SKILL.md.tmpl
+  checksum: a406cd1f059fd1a6b15af9b7c4f4d814c6ec4724aa9f89fa3a339ffd111efa4b
+- path: .github/skills/browser-automation/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/browser-automation/SKILL.md.tmpl
+  checksum: c4da5af8d5465a246142bd2f7d5b7d897748371e5cf85cc51b028831d5fcb213
+- path: .github/skills/build-feature/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/build-feature/SKILL.md.tmpl
+  checksum: 4e367ab8befa9c63a0532d4371db8fc742fa7595beb5563802313111accd4377
+- path: .github/skills/compact-context/SKILL.md
+  artifact_type: skill
+  primitive: 1
+  template: skills/compact-context/SKILL.md.tmpl
+  checksum: 761e6ebc03e79c5b312cd403a369673fe19a63d3d437e37d5c51d7605265bf4d
+- path: .github/skills/compound-refresh/SKILL.md
+  artifact_type: skill
+  primitive: 1
+  template: skills/compound-refresh/SKILL.md.tmpl
+  checksum: 99f849184442886817ffd58f0060428e62c510fb516c85e546b6cfbfd4f28e11
+- path: .github/skills/compound/SKILL.md
+  artifact_type: skill
+  primitive: 1
+  template: skills/compound/SKILL.md.tmpl
+  checksum: b7f4281a13313875be7c4b50bed0b7968636de08eedc2ebf64b28624e3451867
+- path: .github/skills/deliberate/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/deliberate/SKILL.md.tmpl
+  checksum: 2f12d7d823bd3ec4e5960a764eed9e282637961d8ed7cabe1360378b82cbf4f9
+- path: .github/skills/doc-review/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/doc-review/SKILL.md.tmpl
+  checksum: 12bfa11f85a53857102c3e30f772e596babf0aa03baf329a45ecf30d263f0f4c
+- path: .github/skills/evolve/SKILL.md
+  artifact_type: skill
+  primitive: 1
+  template: skills/evolve/SKILL.md.tmpl
+  checksum: cfc0ad402117c288651e10a9b4a34ed1a38da1c5a51e4c1865974cd243ef6928
+- path: .github/skills/file-lock/SKILL.md
+  artifact_type: skill
+  primitive: 5
+  template: skills/file-lock/SKILL.md.tmpl
+  checksum: 92f9ab1fd3de3a5e2967e9aa9c4dea2f49c58589c892df04c47c892be3a0a563
+- path: .github/skills/file-lock/scripts/acquire_lock.ps1
+  artifact_type: skill
+  primitive: 4
+  template: skills/file-lock/scripts/acquire_lock.ps1
+  checksum: 14453d7e8a9c95ac5d917816b331c1a9fd6812a9ea1e49ac009c6f3bec7b5e3d
+- path: .github/skills/file-lock/scripts/acquire_lock.sh
+  artifact_type: skill
+  primitive: 4
+  template: skills/file-lock/scripts/acquire_lock.sh
+  checksum: 65c543969c5014f5c91623be6087986acaa57ef6e98eb5ea15b944962d8886e7
+- path: .github/skills/file-lock/scripts/release_lock.ps1
+  artifact_type: skill
+  primitive: 4
+  template: skills/file-lock/scripts/release_lock.ps1
+  checksum: 3900e9d814a29f44837c67d461119c39afc96fdd9dc6f4efdbc0d0460bcdbe3c
+- path: .github/skills/file-lock/scripts/release_lock.sh
+  artifact_type: skill
+  primitive: 4
+  template: skills/file-lock/scripts/release_lock.sh
+  checksum: 975eefc6c944c93548988a87c158fa27d9683ea878b783a1e07d8ebd769a6b09
+- path: .github/skills/fix-ci/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/fix-ci/SKILL.md.tmpl
+  checksum: 74f4ae29fe3a6fee1e7acd2050f7cb879645370d0d619a28c84c376913223601
+- path: .github/skills/harness-architect/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/harness-architect/SKILL.md.tmpl
+  checksum: 489dc96f4d691395764a137ee10d41f9fbb137345cbdbff27c07e2857ea298ff
+- path: .github/skills/harness-doctor/SKILL.md
+  artifact_type: skill
   primitive: 7
-  template: agents/review/correctness-reviewer.agent.md.tmpl
-  checksum: c9b6a78e2462ef5056d8d5c46c9b4119cc14ce1578175ff6ab124c06cecdc3b1
-- path: .github/agents/subagents/maintainability-reviewer.agent.md
-  artifact_type: agent
+  template: skills/harness-doctor/SKILL.md.tmpl
+  checksum: 112247346f4bff67932696100d3e7a4f0eda6fb433bdc1f7c4d0b3e5ff087c7d
+- path: .github/skills/harvest/SKILL.md
+  artifact_type: skill
+  primitive: 2
+  template: skills/harvest/SKILL.md.tmpl
+  checksum: 2ecd921cea4ba07c113d2ae70820c56bbc5bcaba8e28fc1ca3dfb35783fb7fac
+- path: .github/skills/impl-plan/SKILL.md
+  artifact_type: skill
+  primitive: 2
+  template: skills/impl-plan/SKILL.md.tmpl
+  checksum: 58c3d2b1cb48b4e5344392c0b30077670ba4f920085c26ad5be64f449462d222
+- path: .github/skills/iterative-experiment/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/iterative-experiment/SKILL.md.tmpl
+  checksum: d16ee90bdc02c2425f3bdf27ee9d9cd65d71abb7225ef0ff6edff4c98cdc4c86
+- path: .github/skills/learn/SKILL.md
+  artifact_type: skill
+  primitive: 1
+  template: skills/learn/SKILL.md.tmpl
+  checksum: 211a3808294ad1584a51ce403939590f19121621776c66c516c8623acf9524ab
+- path: .github/skills/observe/SKILL.md
+  artifact_type: skill
+  primitive: 1
+  template: skills/observe/SKILL.md.tmpl
+  checksum: 763b621f5098004bcdbeeb04e553b2cd4716171e24a4c57e92e984ca0a902c1c
+- path: .github/skills/operational-closure/SKILL.md
+  artifact_type: skill
+  primitive: 10
+  template: skills/operational-closure/SKILL.md.tmpl
+  checksum: 82ee5e78e3fec64bd00d741278b94c7a68aa166ae8c68464abb7dae91bc17ce4
+- path: .github/skills/plan-harden/SKILL.md
+  artifact_type: skill
+  primitive: 10
+  template: skills/plan-harden/SKILL.md.tmpl
+  checksum: 47cd5098caf4927928874e9df1d0574e16065a6efd70939c924d1c86aa3983d1
+- path: .github/skills/plan-review/SKILL.md
+  artifact_type: skill
   primitive: 7
-  template: agents/review/maintainability-reviewer.agent.md.tmpl
-  checksum: 0d95daf6155afc9990348cbed9c1afda4ea255dafe7ef2cc6a83114188c3ad42
-- path: .github/agents/subagents/template-integrity-reviewer.agent.md
-  artifact_type: agent
+  template: skills/plan-review/SKILL.md.tmpl
+  checksum: cb27c82e2a27d61a998b5b50b973924e1ad2dc4bb3c34f838b20cb4402595351
+- path: .github/skills/pr-lifecycle/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/pr-lifecycle/SKILL.md.tmpl
+  checksum: e98eaeb657161ff6e9596b5f4c82ad89b636af8e2c456091ec5e51f9764a2d66
+- path: .github/skills/review/SKILL.md
+  artifact_type: skill
   primitive: 7
-  template: agents/review/template-integrity-reviewer.agent.md.tmpl
-  checksum: 877ed8a76be304247fa3cf184937733512964ad85423b1559f83b8fd87caef59
-- path: .github/agents/subagents/schema-cli-docs-coupling-reviewer.agent.md
-  artifact_type: agent
-  primitive: 7
-  template: agents/review/schema-cli-docs-coupling-reviewer.agent.md.tmpl
-  checksum: 6cc9bdf66cd8dfd4a16ba20ccd68b43aae88c9ccd00391122cd76fb60d7647a9
-- path: .autoharness/backlog-registry.yaml
-  artifact_type: config
-  primitive: 3
-  template: backlog/registries/backlogit.registry.yaml
-  checksum: d23da4aa25071acdfc555e437445f69540bdd45f15e0539f4e40924bc8862ba2
+  template: skills/review/SKILL.md.tmpl
+  checksum: a24729797c3dfd927a43a172e632075840e9fcba3cadb974839bf93fb73e0161
+- path: .github/skills/runtime-verification/SKILL.md
+  artifact_type: skill
+  primitive: 10
+  template: skills/runtime-verification/SKILL.md.tmpl
+  checksum: c9dfbb8008d14d578bb4326d6f65d5a56f9d0ca3ff4d63c1b671270f6320cbb6
+- path: .github/skills/safety-modes/SKILL.md
+  artifact_type: skill
+  primitive: 5
+  template: skills/safety-modes/SKILL.md.tmpl
+  checksum: 12cff288698ddd5b2365ba5939eae148fe56240cf09af74d470402517a510942
+- path: .github/skills/security-audit/SKILL.md
+  artifact_type: skill
+  primitive: 5
+  template: skills/security-audit/SKILL.md.tmpl
+  checksum: b924a8e82bc474eb241c6ab8e3bda65a3e67f66141c002d07ffbf536139ea0ea
+- path: .github/skills/shipment-reconcile/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/shipment-reconcile/SKILL.md.tmpl
+  checksum: be8df7c3fa7f8ad04fd097db595e1b1e567a348daf87442210a3c855a6bf5fab
+- path: .github/skills/skill-search/SKILL.md
+  artifact_type: skill
+  primitive: 9
+  template: skills/skill-search/SKILL.md.tmpl
+  checksum: 4b5b4423eef36132a30108880409010fb25d1d3b2bbb5869eaa706955604b578
+- path: .github/skills/skill-search/scripts/search.ps1
+  artifact_type: skill
+  primitive: 4
+  template: skills/skill-search/scripts/search.ps1
+  checksum: 402d99a385c1157e503ff8b1621bef06ebafd46b9679f1ac1fd104e46cea8424
+- path: .github/skills/skill-search/scripts/search.sh
+  artifact_type: skill
+  primitive: 4
+  template: skills/skill-search/scripts/search.sh
+  checksum: 43b464100063496fa1965e3e312c127d22aeb0c0ec9209906972a4ade465d430
+- path: .github/skills/spike/SKILL.md
+  artifact_type: skill
+  primitive: 4
+  template: skills/spike/SKILL.md.tmpl
+  checksum: 21f41d13f659eaa19a98047929456b6279e5f68c161e856046919767aadd0e4d
+- path: .markdownlint.json
+  artifact_type: script
+  primitive: 5
+  template: scripts/.markdownlint.json.tmpl
+  checksum: 5cb328173ca286c34d6eacb60cf58fe6f579fc4843d2cd6b47533bb5b1965e16
+- path: AGENTS.md
+  artifact_type: foundation
+  primitive: 9
+  template: foundation/AGENTS.md.tmpl
+  checksum: 6a11b59a70dba77e72a6bee667be28c02be7eb400b1dae51613a5d0878b98441
+- path: scripts/deploy-harness.ps1
+  artifact_type: script
+  primitive: 6
+  template: scripts/deploy-harness.ps1.tmpl
+  checksum: 293d0a90f04120adebdf4fb3c425fd8bc2a26c6fdd75d042632406e4fa48914d
+- path: scripts/deploy-harness.sh
+  artifact_type: script
+  primitive: 6
+  template: scripts/deploy-harness.sh.tmpl
+  checksum: 330ea740064c4bf74c038ad7e7afde0598ab0ca909902f200a550ed6af6007d4
+- path: scripts/pre-commit-markdownlint.ps1
+  artifact_type: script
+  primitive: 5
+  template: scripts/pre-commit-markdownlint.ps1.tmpl
+  checksum: 3fe8142f02cd30f142091c12bff38cdd8131ffcdb51bec750148e78a2903cb8d
+- path: scripts/pre-commit-markdownlint.sh
+  artifact_type: script
+  primitive: 5
+  template: scripts/pre-commit-markdownlint.sh.tmpl
+  checksum: 66d223e8102f82f52d9c4f89b36255660ea29026acd99772c2768c8ec98ea8f4
+- path: scripts/pre-commit-pipeline-topology.ps1
+  artifact_type: script
+  primitive: 6
+  template: scripts/pre-commit-pipeline-topology.ps1.tmpl
+  checksum: 16e41f54e1dbfc0b9e2cfcde8aba982e9b3ed558affe849953d36d43339898cd
+- path: scripts/pre-commit-pipeline-topology.sh
+  artifact_type: script
+  primitive: 6
+  template: scripts/pre-commit-pipeline-topology.sh.tmpl
+  checksum: 2f22d605a6af193d82c3498d5018af45026893e7f6d9dc66aaf5b5ad1af51fa5
+- path: scripts/pre-push-quality-gates.ps1
+  artifact_type: script
+  primitive: 6
+  template: scripts/pre-push-quality-gates.ps1.tmpl
+  checksum: 84057b504ccc8a949b7b8f690e5399521ef323ab517063583529bf41e268359b
+- path: scripts/pre-push-quality-gates.sh
+  artifact_type: script
+  primitive: 6
+  template: scripts/pre-push-quality-gates.sh.tmpl
+  checksum: dd46bacdb35cf150923ee91928c71d069603ee80731052dc03293371c584b82b
+- path: start.ps1
+  artifact_type: script
+  primitive: 5
+  template: scripts/start.ps1.tmpl
+  checksum: 08f6a8c0b16e728864bb4f84849c89024088977e396da638726ffaa13665c7d3
+- path: start.sh
+  artifact_type: script
+  primitive: 5
+  template: scripts/start.sh.tmpl
+  checksum: 3d1567357160fcb8023aef85f060e88e76cf5a3d5647b0526e43065979421d73
 variables_used:
-  PROJECT_NAME: graphtor-docs
-  PRIMARY_LANGUAGE: Rust
-  LANGUAGE_VERSION: edition 2021, rust-version 1.75
-  BUILD_TOOL: cargo
-  BUILD_COMMAND: cargo build
+  AGENTIC_CONFIG_GLOB: .github/**,.vscode/**
+  ALT_REVIEW_PROVIDER: alt_review_provider
+  AUTOHARNESS_VERSION: 1.5.0
+  BACKLOG_DIRECTORY: .backlogit
+  BACKLOG_TOOL_NAME: backlogit
+  BACKLOG_TOOL_TYPE: both
+  BROWSER_CLI: agent-browser
+  BROWSER_HEADLESS_FLAG: --headless
   BUILD_CHECK_COMMAND: cargo check
-  TEST_RUNNER: cargo test
-  TEST_COMMAND: cargo test
+  BUILD_COMMAND: cargo build
+  BUILD_TOOL: cargo
+  CI_PLATFORM: GitHub Actions
+  CI_WORKFLOW_GLOB: '**/.github/workflows/*.yml'
+  COMMIT_SCOPES: acquire, chunk, config, error, logging, path, mcp, cli, docs, harness, agents, skills, instructions, workflows, scripts
+  CONCURRENCY_PATTERNS: unsynchronized shared state, missing Send/Sync bounds, lock-across-await, race conditions in async tasks, unbounded channel growth
+  CONTINUOUS_LEARNING_CAPTURE_HOOKS: 'false'
+  CONTINUOUS_LEARNING_DIR: .autoharness/continuous-learning
+  CONTINUOUS_LEARNING_ENVIRONMENT_ADAPTER: none
+  CONTINUOUS_LEARNING_PROMOTION_THRESHOLD: '3'
+  COPILOT_EXE_PATH: copilot
+  DATE: '2026-05-20'
+  DEFAULT_BRANCH: main
+  DOCS_CLOSURE: docs/closure
+  DOCS_CLOSURE_DIR: closure
+  DOCS_COMPOUND: docs/compound
+  DOCS_COMPOUND_DIR: compound
+  DOCS_DECISIONS: docs/decisions
+  DOCS_DECISIONS_DIR: decisions
+  DOCS_DESIGN_DOCS: docs/design-docs
+  DOCS_DESIGN_DOCS_DIR: design-docs
+  DOCS_MEMORY: docs/memory
+  DOCS_MEMORY_DIR: memory
+  DOCS_PLANS: docs/exec-plans
+  DOCS_PLANS_DIR: exec-plans
+  DOCS_PRODUCT_SPECS: docs/product-specs
+  DOCS_PRODUCT_SPECS_DIR: product-specs
+  DOCS_ROOT: docs
+  DOCS_SECURITY: docs/security
+  DOC_COMMENT_STYLE: /// doc comment
+  ERROR_HANDLING_POLICY: All errors must be propagated via `Result<T, E>`; no `.unwrap()` or `.expect()` in library code
+  ERROR_PATTERN: Result<T, Error>
+  EXAMPLE_SCOPE: acquire
+  EXPERIMENT_BRANCH_PREFIX: experiment/
+  EXPERIMENT_RESULTS_DIR: docs/experiments
+  FIELD_DESCRIPTION: description
+  FIELD_LABELS: labels
+  FIELD_PARENT_ID: parent_id
+  FIELD_STATUS: status
+  FIELD_TASK_ID: id
+  FIELD_TITLE: title
+  FIELD_TYPE: artifact_type
+  FILE_EXT: rs
+  FORMATTER: rustfmt
+  FORMAT_CHECK_COMMAND: cargo fmt --all -- --check
+  FORMAT_COMMAND: cargo fmt --all
+  FORMAT_FIX_COMMAND: cargo fmt --all
+  GRAPHTOR_BINARY_PATH: target/release/graphtor-docs
+  GRAPHTOR_SOURCES_PATH: .graphtor/config/sources.yaml
+  HARNESS_MANIFEST_PATH: .autoharness/harness-manifest.yaml
+  INSTALL_PRESET: full
+  LANGUAGE_FILE_GLOB: '**/*.rs'
+  LANGUAGE_VERSION: edition 2021, rust-version 1.75
+  LANGUAGE_VERSION_DETAIL: Rust 2021 edition, rust-version 1.75
   LINTER: clippy
   LINT_COMMAND: cargo clippy --all-targets -- -D warnings -D clippy::pedantic
-  FORMATTER: rustfmt
-  FORMAT_COMMAND: cargo fmt --all
-  FORMAT_CHECK_COMMAND: cargo fmt --all -- --check
-  CI_PLATFORM: GitHub Actions
-  BACKLOG_TOOL_NAME: backlogit
-  BACKLOG_DIRECTORY: .backlogit
-  DOCS_ROOT: docs
-  DOCS_COMPOUND: docs/compound
-  DOCS_PLANS: docs/exec-plans
-  DOCS_DECISIONS: docs/decisions
-  DOCS_MEMORY: docs/memory
-  DOCS_CLOSURE: docs/closure
-  ORCHESTRATOR_FAMILY: gpt-5.4
+  LINT_POLICY: All clippy warnings (including `clippy::pedantic`) are hard errors via `-D warnings`
+  MAX_WAIT: '600'
+  MCP_SDK: rmcp
+  MCP_TRANSPORT: STDIO
+  MODEL_ROUTING_TIER1: claude-haiku-4.5
+  OP_COMPLETE_CLI: backlogit move {id} --status done
+  OP_COMPLETE_MCP: backlogit_move_item
+  OP_CREATE_CLI: backlogit add --type {type} --title {title}
+  OP_CREATE_MCP: backlogit_create_item
+  OP_GET_CLI: backlogit get {id}
+  OP_GET_MCP: backlogit_get_item
+  OP_LIST_CLI: backlogit list
+  OP_LIST_MCP: backlogit_list_items
+  OP_LIST_SHIPMENTS_MCP: backlogit_list_shipments
+  OP_MOVE_CLI: backlogit move {id} --status {status}
+  OP_MOVE_MCP: backlogit_move_item
+  OP_SEARCH_CLI: backlogit search {query}
+  OP_SEARCH_MCP: backlogit_search_items
+  OP_SHIP_SHIPMENT_MCP: backlogit_ship_shipment
+  OP_UPDATE_CLI: backlogit update {id}
+  OP_UPDATE_MCP: backlogit_update_item
+  ORCHESTRATOR_FAMILY: gpt-5.6-sol
+  ORCHESTRATOR_PROVIDER: openai
+  ORCHESTRATOR_REASONING_EFFORT: xhigh
+  POLL_INTERVAL: '30'
+  PRIMARY_LANGUAGE: Rust
+  PRIMARY_LANGUAGE_LOWER: rust
+  PROJECT_NAME: graphtor-docs
+  QUALITY_GATE_1: cargo fmt --all -- --check
+  QUALITY_GATE_1_NAME: fmt
+  QUALITY_GATE_2: cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+  QUALITY_GATE_2_NAME: clippy
+  QUALITY_GATE_3: cargo test --all-targets
+  QUALITY_GATE_3_NAME: test
+  QUALITY_GATE_4: cargo audit
+  QUALITY_GATE_4_NAME: audit
+  REPO_NAME: graphtor-docs
+  REPO_OWNER: softwaresalt
+  SECURITY_CONFIG_RULES: hardcoded credentials, unpinned secrets, debug endpoints, terminal auto-approve, overly permissive allow-lists
+  SECURITY_OWASP_PATTERNS: unsafe blocks, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, shell command injection
+  SECURITY_REVIEW_PATTERNS: unsafe blocks without SAFETY comments, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, secrets in config
+  SECURITY_SCAN_PATTERNS: unsafe blocks, unchecked deserialization, raw SQL in embedded DB, unvalidated file paths, shell command injection, hardcoded credentials
+  SOURCE_DIR: src
+  SOURCE_GLOB: src/**/*.rs
+  STATUS_ACTIVE: active
+  STATUS_BLOCKED: blocked
+  STATUS_DONE: done
+  STATUS_QUEUED: queued
+  STRICT_SAFETY_ENABLED: 'true'
+  SUFFIX_BUG: B
+  SUFFIX_CHORE: C
+  SUFFIX_DELIBERATION: DL
+  SUFFIX_EPIC: E
+  SUFFIX_FEATURE: F
+  SUFFIX_SHIPMENT: S
+  SUFFIX_SPIKE: SP
+  SUFFIX_SUBTASK: ST
+  SUFFIX_TASK: T
+  TEST_COMMAND: cargo test
+  TEST_DIR: tests
+  TEST_RUNNER: cargo test
+  TEST_STRUCTURE: Unit tests colocated in source via `#[cfg(test)]`; integration tests in `tests/` directory
+  TIER_1_FAMILY: claude-haiku-4.5
+  TIER_1_PROVIDER: anthropic
+  TIER_2_PROVIDER: anthropic
+  TIER_2_REASONING_EFFORT: high
+  TIER_3_PROVIDER: anthropic
+  TIER_3_REASONING_EFFORT: high
+  UNIMPLEMENTED_MARKER: 'unimplemented!("TODO: ...")'
+  UNSAFE_POLICY: '`#![forbid(unsafe_code)]` at crate root'
 tuning_history:
 - tuned_at: '2026-05-01T21:48:00-07:00'
   trigger: Workflow violation — Stage agent called backlogit_ship_shipment and bypassed PR workflow
   changes:
-  - Removed backlogit_ship_shipment, backlogit_archive_item, backlogit_delete_item, backlogit_claim_shipment
-    from Stage agent tool list
+  - Removed backlogit_ship_shipment, backlogit_archive_item, backlogit_delete_item, backlogit_claim_shipment from Stage agent tool list
   - Added Forbidden Actions section to Stage agent with 7 NON-NEGOTIABLE rules
   - Added Forbidden Actions section to Ship agent with 7 NON-NEGOTIABLE rules
   - 'Added P-010: Stage/Ship Boundary Enforcement policy'
@@ -576,8 +766,12 @@ tuning_history:
   policies_added:
   - P-010
   - P-011
-  evidence: Agent called backlogit_ship_shipment during Stage operation without PR, violating branch protection
-    and Stage/Ship boundary
+  evidence: Agent called backlogit_ship_shipment during Stage operation without PR, violating branch protection and Stage/Ship boundary
+- at: '2026-08-31T09:54:37.383343-07:00'
+  action: merge-install
+  from_version: 1.4.11
+  to_version: 1.5.0
+  notes: Three-way merge against a reconstructed 1.4.11 baseline; local modifications preserved.
 vscode_settings:
   applied: false
   user_settings_path: null

@@ -9,6 +9,9 @@ decision_status: "decided"
 promoted_to: "plan"
 linked_artifacts:
   - "docs/exec-plans/2026-08-24-store-toctou-nofollow-handle-plan.md"
+  - "docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md"
+superseded_in_part_by:
+  - "docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md"
 stash_ids:
   - "E86A6E56"
   - "5905CDEE"
@@ -22,6 +25,43 @@ tags:
   - "windows"
   - "unix"
 ---
+
+## Supersession Notice (added 2026-08-30) — read before acting on anything below
+
+> **This document is preserved as historical evidence and is no longer the current
+> authority for `059-F` scope.** The authoritative decision for current scope is
+> `docs/decisions/2026-08-29-store-toctou-engine-boundary-redeliberation-deliberation.md`
+> (the 2026-08-29 re-deliberation). Where the two conflict, the 2026-08-29 decision governs.
+
+**Still active from this decision.**
+
+* The permission-mutation containment groundwork: identity-bound, no-follow, fail-closed
+  handling of the `EngineReadonlyGuard` lock/rollback/`Drop` and `clear_stale_readonly_lock`
+  permission (`chmod`) paths, with no path-based `chmod` fallback.
+* The U7 feasibility evidence (`059.007-T`, PASS): a beneath-root, capability-relative
+  no-follow opener is achievable under `#![forbid(unsafe_code)]` and MSRV 1.75.
+
+**Superseded / deferred — not executable for current `059-F`.**
+
+* Every requirement in this document that capability authority must survive the SQLite/Cozo
+  **engine open** — the U8 → U9 direction, including the "Capability authority must survive
+  the SQLite engine open" section and the U6/U9 engine-integration wording in the later
+  addenda — is superseded by the 2026-08-29 decision.
+* U8 (`059.008-T`) is **terminal BLOCKED** on source-verified, compile-checked evidence:
+  cozo 0.7 opens SQLite by bare path and `SqliteStorage::transact()` re-opens the original
+  `PathBuf` for the whole `DataStore` lifetime, so no safe handle or capability can be
+  injected. U9 (`059.009-T`) is therefore **not executable** in the near-term shipment.
+* Near-term `059-F` scope is **permission-mutation containment only**. Full engine-open
+  identity binding is **deferred** to the upstream/fork investigation `059.013-T` on a later,
+  separate shipment.
+
+**Risk status.** This notice does not claim the security risk is resolved. The engine-open
+leaf and intermediate-directory redirection remains a named **accepted residual** under the
+2026-08-29 decision (operator sign-off gate `059.014-T`), and Principles III/IV stay
+NOT-PASSED for that engine-open threat.
+
+Nothing below this notice has been rewritten; the original prose and its PR #107 addenda are
+retained verbatim as the historical record.
 
 ## Problem Frame
 

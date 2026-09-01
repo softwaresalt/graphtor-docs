@@ -17,7 +17,7 @@ The primary table for all backlogit artifacts (features, tasks, subtasks, delibe
 |---|---|---|
 | `id` | TEXT PK | Hierarchical ID: `001-F`, `001.001-T`, `001.001.001-ST` |
 | `title` | TEXT | Artifact title |
-| `status` | TEXT | `queued`, `active`, `done`, `blocked` |
+| `status` | TEXT | Persisted union of all work item type status vocabularies; accepted values are constrained per artifact type — see [Status values by artifact type](#status-values-by-artifact-type) |
 | `artifact_type` | TEXT | `feature`, `task`, `subtask`, `deliberation`, `shipment` |
 | `parent_id` | TEXT | ID of the parent artifact (`NULL` for level-1) |
 | `sprint` | TEXT | Sprint ID (optional) |
@@ -36,6 +36,22 @@ The primary table for all backlogit artifacts (features, tasks, subtasks, delibe
 | `hierarchy_path` | TEXT | Path without type suffix: `001`, `001.001`, `001.001.001` |
 
 **FTS5 virtual table**: `items_fts` (columns: `id`, `title`, `description`, `labels`). Linked to `items` via `rowid`.
+
+#### Status values by artifact type
+
+`items.status` persists the union of every work item type (WIT) status vocabulary, so a value that appears in this column is not accepted by every artifact type. The WIT definitions in `.backlogit/header-def.yaml` are authoritative: each artifact type accepts only the values listed for its own type below. Resolve a status against the artifact's `artifact_type` before treating it as terminal — this matters for shipment safe-close validation, where the only terminal statuses are `shipped` and `abandoned`, recorded before lifecycle archival.
+
+| Artifact type | Accepted `status` values (WIT) | Terminal statuses |
+|---|---|---|
+| `shipment` | `queued`, `active`, `shipped`, `abandoned` | `shipped` or `abandoned` |
+| `feature` | `queued`, `active`, `blocked`, `review`, `done`, `accepted`, `rejected`, `archived` | `done`, `accepted`, or `rejected` as configured |
+| `task` | `queued`, `active`, `blocked`, `review`, `done`, `accepted`, `rejected`, `archived` | `done`, `accepted`, or `rejected` as configured |
+| `subtask` | `queued`, `active`, `blocked`, `review`, `done`, `accepted`, `rejected`, `archived` | `done`, `accepted`, or `rejected` as configured |
+| `bug` | `queued`, `active`, `blocked`, `review`, `done`, `accepted`, `rejected`, `archived` | `done`, `accepted`, or `rejected` as configured |
+| `review` | `queued`, `active`, `blocked`, `review`, `done`, `accepted`, `rejected`, `archived` | `done`, `accepted`, or `rejected` as configured |
+| `deliberation` | `queued`, `active`, `blocked`, `review`, `done`, `accepted`, `rejected`, `archived` | `done`, `accepted`, or `rejected` as configured |
+
+`archived` is applied by lifecycle archival (`backlogit_archive_item`, `backlogit_move_item`), not by an authoring transition, and no shipment WIT transition targets it. Archive routing in `.backlogit/registry.yaml` admits `done`, `accepted`, `rejected`, and `archived`. It deliberately does **not** admit `shipped` or `abandoned`: safe-close requires the shipment record to stay live after `move --status shipped` so it can be re-read and verified before the explicit single-artifact `backlogit archive` call, and routing those statuses would relocate the record immediately and make that verification step halt every time. Those two statuses remain in the shipment status vocabulary; they are simply not archive-routing statuses. Artifacts therefore reach `archive/` either by routing or by explicit archival, so files under `archive/` may persist a type-specific terminal status (for example `done` or `shipped`) or `archived`. Queue routing admits `queued`, `active`, `blocked`, and `review`.
 
 ### `item_deps`: Dependencies
 
@@ -285,6 +301,8 @@ WHERE s.artifact_type = 'shipment'
 ORDER BY s.created_at DESC
 ```
 
+Shipment `status` is `queued`, `active`, `shipped`, or `abandoned`; treat only `shipped` and `abandoned` as terminal when validating safe-close.
+
 ### List semantic links for an item
 
 ```sql
@@ -303,7 +321,7 @@ WHERE link_type = 'duplicate_of'
 ORDER BY created_at DESC
 ```
 
-### List archived items (artifacts moved through lifecycle)
+### List items with lifecycle-archival status
 
 ```sql
 SELECT id, title, artifact_type, status, updated_at
@@ -312,6 +330,8 @@ WHERE status = 'archived'
 ORDER BY updated_at DESC
 LIMIT 20
 ```
+
+This matches only `status = 'archived'`. Artifacts routed under `archive/` while still holding a type-specific terminal status (`done`, `accepted`, `rejected`, `shipped`, `abandoned`) are not returned; widen the filter to those values when auditing archive routing.
 
 ## Indexes
 

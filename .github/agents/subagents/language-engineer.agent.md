@@ -3,8 +3,7 @@ name: "Rust Engineer"
 description: "Expert Rust implementation agent — applies language idioms, safety rules, and workspace conventions during feature work"
 maturity: stable
 tools: vscode, execute, read, edit, search
-model_routing: "Tier 2 (Standard)"  # DEPRECATED — use model_tier
-model_tier: 2
+model_routing: "Tier 2 (Standard)"  # DEPRECATED — descriptive only; routing is set by model_provider / model_family / reasoning_effort
 max_subagent_tier: 2
 reasoning_effort: ""
 model_provider: ""

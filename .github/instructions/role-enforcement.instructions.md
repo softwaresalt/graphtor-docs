@@ -49,6 +49,15 @@ operations, git commands, build invocations, PR actions), the agent MUST:
      role boundaries because many state-mutating operations will not be
      explicitly enumerated. Fail-closed ensures that only explicitly permitted
      mutations proceed.
+   - **P-021 capture-only carve-out**: A capture-only stash write performed
+     under P-021 C2 (mandatory deferred-scope-expansion capture) matches the
+     acting agent's Allowed column via P-021 C5 (Ship's capture-only
+     carve-out) and does NOT trigger the fail-closed unclassified-mutation
+     halt above. This is an enumeration in the Allowed column, not a
+     weakening of fail-closed semantics. Any OTHER stash operation by Ship —
+     triage, prioritize, re-classify, edit, harvest, deliberate, or
+     discretionary removal/archival — remains a P-010 violation and MUST
+     halt.
 
 ## Session Start Reminder
 
@@ -66,3 +75,54 @@ All P-010 violations are first-class observability events:
   the violation: `[P-010] {agent_name} role boundary violation: {operation}`.
 - The violation does not require operator intervention to continue the session,
   but the forbidden operation MUST NOT be executed.
+
+## Skill-Delegation Model Inheritance (P-013.5)
+
+Skills do not declare their own `model_family` / `model_provider` /
+`reasoning_effort` frontmatter. A skill invoked by an agent (Stage, Ship,
+Orchestrator, or an elective agent) runs **inside the invoking agent's
+already-routed session** — it inherits whatever model that agent resolved and
+declared per its own invocation directive (P-013.5). This applies uniformly
+when invoking agents **and** their skill workflows: the routing decision is
+made once, at agent-invocation time, not re-resolved per skill call.
+
+Most skills are also leaf executors that spawn no subagents. The exception is
+the review-orchestrating skills (`review`, `plan-review`), which each declare a
+`## Subagent Depth Constraint` section and dispatch persona subagents at a
+maximum depth of one hop (skill → persona subagent). Those persona subagents
+are the leaf executors: they declare `subagent_depth: 0` and MUST NOT spawn
+subagents of their own.
+
+Model inheritance stops at that boundary. A dispatched persona subagent is a
+distinct routed session that resolves its own model from the `model_family` /
+`model_provider` / `reasoning_effort` frontmatter in its own persona
+definition. The inheritance rule above governs the skill body itself, not the
+subagents that skill dispatches.
+
+Before invoking any skill, the invoking agent MUST confirm and propagate its
+own current routing state for the session — either "resolved" or explicitly
+"`ROUTING_DEGRADED`" — rather than requiring a non-degraded state as a
+precondition (a degraded session must still be able to invoke its skills; it
+just carries the degradation forward, per step 3 below):
+
+1. **Confirm own routing first.** If the agent's own model route was resolved
+   via an explicit invocation directive (Orchestrator Steps 1/2 for Stage/Ship;
+   an equivalent directive for elective agents) and no `ROUTING_DEGRADED`
+   condition was declared for this session, proceed — the skill inherits that
+   resolved session model with no further action.
+2. **Do not re-resolve per skill.** A skill is not a separate routing target;
+   introducing a per-skill `model_family` field would duplicate P-013.5 routing
+   at the wrong granularity and is explicitly out of scope (skills remain leaf
+   executors — see also P-013.4 tier annotation, which applies to agent
+   definitions only).
+3. **Carry a degraded state forward, do not clear it.** If the invoking agent's
+   own session is already in a `ROUTING_DEGRADED` state (its resolved role route
+   could not be honored by the runtime), that degradation applies to every skill
+   the agent invokes during the session. Do not silently treat a skill invocation
+   as a fresh, non-degraded routing context.
+
+**Rationale**: this closes the gap between "the desired role→model mapping
+exists in config" and "every unit of work — agent turn and skill call alike —
+actually runs on the resolved model." Cross-reference P-013.5 (invocation-time
+model-routing enforcement) in `workflow-policies.md` for the fail-closed
+verification and `ROUTING_DEGRADED` semantics this contract depends on.

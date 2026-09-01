@@ -8,8 +8,8 @@ applyTo: '**'
 Use these rules when the workspace has enabled the `adversarial-review`
 capability pack. This pack provides multi-model parallel review for higher
 review confidence on security-sensitive, compliance-critical, or large-scale
-code changes. It also supports alternate model providers (e.g., Gemini) so
-reviewer diversity is not limited to the standard tier routing set.
+code changes. It also supports a first-class Anchor Reviewer route and alternate model providers
+(e.g., Gemini) so reviewer diversity is not limited to the standard tier routing set.
 
 ## When to Escalate
 
@@ -30,6 +30,25 @@ instances across different model tiers:
 * each reviewer operates independently and does not see other reviewers'
   findings until consensus assembly
 
+## Anchor Reviewer Support
+
+When `openai` and `gpt-5.6-sol` are configured,
+launch an **Anchor Reviewer** as a separately identified reviewer slot before
+standard Tier 1/2/3 assignment. Resolve the anchor reviewer's reasoning effort
+from `model_routing.anchor_review.reasoning_effort` in `.autoharness/config.yaml`
+at dispatch time and pass that resolved value when it is non-empty; an empty
+value means use the model default. Read the field rather than a literal, so a
+change to the configured effort is honored without editing this file. The
+currently configured value is `high`.
+The default anchor route is OpenAI GPT-5.6 Sol, but generated artifacts stay
+environment-agnostic by using the configured provider, family, and effort
+identifiers rather than hard-coding a runtime.
+
+If the anchor route is unavailable, record `TOOL_DEGRADED: anchor-review-model`
+with a declared fallback and continue only when the remaining reviewer pool still
+meets the minimum reviewer count and consensus rules. Never silently drop the
+Anchor Reviewer from the report.
+
 ## Alternate Model Provider Support
 
 When `model_routing.adversarial_review.alt_provider` and `alt_family` are
@@ -37,13 +56,16 @@ configured in `.autoharness/config.yaml`, one reviewer slot (Reviewer-B, the
 Tier 2 slot by default) is reassigned to the alternate provider and family.
 This allows a Gemini model, a different Anthropic family, or any registered
 provider to participate in the reviewer pool without requiring additional
-reviewer count. **Not currently configured for this workspace** — all
-reviewer slots use the standard tier routing set until an alternate provider
-is added to `config.yaml`.
+reviewer count. **Currently configured for this workspace**: `alt_provider` is
+`google` and `alt_family` is `gemini-2.5-pro`, so the Reviewer-B slot is
+reassigned to that model. Resolve both fields from `.autoharness/config.yaml` at
+dispatch time rather than trusting the values quoted here; if either is empty,
+the alternate-provider slot is disabled and all reviewer slots fall back to the
+standard tier routing set.
 
-**Escalation path**: If the standard tier routing set produces repeated
+**Escalation path**: If the reviewer pool produces repeated
 disagreements (no consensus after 3 invocations on the same change), consider
-enabling the alternate provider to break the deadlock with a genuinely
+rotating the alternate provider or family to break the deadlock with a genuinely
 different perspective.
 
 **Provider failure handling**: If the alternate provider is unreachable or
@@ -79,20 +101,25 @@ before merge.
 
 After all reviewers return findings:
 
-* **HIGH confidence** — finding identified by all reviewers (consensus).
+* **HIGH confidence / Consensus section** — finding identified by all reviewers.
   Treat identically to a standard review P0/P1 finding: blocks the gate.
-* **MEDIUM confidence** — finding identified by a majority of reviewers.
-  Requires explicit acknowledgment (fix or defer with rationale).
-* **LOW confidence** — finding identified by a single reviewer only.
-  Preserved as an advisory observation.
+* **MEDIUM confidence / Majority section** — finding identified by a strict
+  majority of reviewers (`agreement_count > reviewers / 2`). Requires explicit
+  acknowledgment (fix or defer with rationale).
+* **MEDIUM confidence / Plurality section** — finding identified by more than one
+  reviewer but not by a strict majority, such as 2 of 4 reviewers. Requires
+  explicit acknowledgment and uses the same action-class rules as other MEDIUM
+  findings.
+* **LOW confidence / Unique section** — finding identified by a single reviewer
+  only. Preserved as an advisory observation.
 
 ## Remediation Queue
 
 Assemble findings into a structured remediation queue ordered by
 `confidence × severity`:
 
-* each entry includes: finding summary, affected file/line, confidence
-  tier, severity (P0–P3), and action class (safe_auto / gated_auto /
+* each entry includes: finding summary, affected file/line, report section,
+  confidence tier, severity (P0–P3), and action class (safe_auto / gated_auto /
   manual / advisory)
 * HIGH-confidence P0/P1 entries are ready for direct backlog creation
 * remediation entries carry enough context to be actionable without

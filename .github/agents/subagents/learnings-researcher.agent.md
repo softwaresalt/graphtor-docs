@@ -3,7 +3,6 @@ name: Learnings Researcher
 description: "Searches institutional knowledge in docs/compound/ for relevant past solutions to inform current work"
 maturity: stable
 tools: read, search
-model_tier: 1
 max_subagent_tier: 1
 reasoning_effort: ""
 model_provider: ""

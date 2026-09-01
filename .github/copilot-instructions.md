@@ -224,11 +224,17 @@ When the workspace enabled the `adversarial-review` capability pack:
 
 When the workspace enabled the `graphtor-docs` capability pack:
 
+* follow `.github/instructions/graphtor-docs.instructions.md`
+* verify the graphtor-docs server / MCP surface is reachable and sources are indexed before depending on indexed documentation retrieval
+* prefer `search_local_docs`, `search_semantic`, and `research_topic` for conceptual, API-oriented, or documentation questions before broad web search or raw file scans
+* use `traverse_doc_links` to follow related documentation and `list_sources` to confirm indexed coverage
+* if the server is unavailable or sources are not indexed, fall back to grep, glob, or direct file reading and note reduced confidence
+* treat `.graphtor/` generated artifacts as tool-managed state rather than files to hand-edit casually
+
 * prefer `search_local_docs` / `search_semantic` / `research_topic` over raw file scans or web search for documentation lookups covered by indexed sources
 * verify server reachability via `get_status` before trusting query results
 * fall back to file-based search only when the graphtor-docs server is unavailable or sources are unindexed
 * treat `.graphtor/config/sources.yaml` as the authoritative source registry and `.graphtor/` generated artifacts as tool-managed state
-
 ## Remote Operator Integration
 
 ### agent-intercom
@@ -239,8 +245,6 @@ When `agent-intercom` is available:
 * Broadcast progress at meaningful phase transitions — do not broadcast every trivial step.
 * Route approval for destructive actions through the intercom approval workflow before executing.
 * If intercom becomes unreachable mid-task, warn that operator visibility is degraded and continue only with safe, non-destructive work.
-
-The `ping-loop.prompt.md` prompt is available in `.github/prompts/` for sustained heartbeat sessions when the pack is installed.
 
 ### agent-engram
 
