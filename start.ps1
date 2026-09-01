@@ -46,7 +46,6 @@ if (Test-Path -LiteralPath $envLocalPath -PathType Leaf) {
 # COPILOT_HOME/ENGRAM_DATA_DIR redirect AI-tool state to workspace-local hidden
 # directories so agent memories, checkpoints, and database files are
 # git-visible and project-scoped rather than shared across all workspaces.
-$env:GITHUB_PERSONAL_ACCESS_TOKEN = (gh auth token)
 $env:COPILOT_HOME = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $PSScriptRoot ".copilot" }
 $env:ENGRAM_DATA_DIR = if ($env:ENGRAM_DATA_DIR) { $env:ENGRAM_DATA_DIR } else { Join-Path $PSScriptRoot ".engram" }
 
@@ -98,6 +97,10 @@ if (-not $copilotExe) {
     Write-Error "Unable to locate Copilot CLI. Set COPILOT_EXE_PATH (or COPILOT_EXE for backward compatibility) or add 'copilot' to PATH."
     exit 1
 }
+
+# Sidecar syncs -- derived at install time from the capability packs enabled
+# for this workspace (backlogit/agent-engram/graphtor-docs).
+$enabledSidecars = @("backlogit", "engram", "graphtor-docs")
 
 if ($enabledSidecars -contains "backlogit") {
     $backlogitCmd = Get-Command backlogit -ErrorAction SilentlyContinue
