@@ -28,9 +28,12 @@ Repository settings verified: `merge_commit=true, squash=false, rebase=false`.
 
 ## Compaction actually performed (PR #116)
 
-* 1 Orchestrator-owned memory checkpoint archived + compacted summary written
+* 1 **Ship-owned** memory checkpoint archived + compacted summary written
   (summary at `docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`;
-  archived original at `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`)
+  archived original at `docs/archive/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`).
+  Note the `orchestrator-` filename prefix names the checkpoint's *subject* (the
+  Orchestrator's PR #114 review-cap halt), not its owner; the artifact's frontmatter
+  declares `agent: "Ship (halt/checkpoint/readiness hygiene only)"`.
 * 6 closure records (047-S / 048-S, dated 2026-08-17, 15 days old) consolidated into
   `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`; originals archived, not deleted
 * 2 checkpoints preserved under the "most recent checkpoint per completed task" constraint
@@ -42,17 +45,17 @@ Repository settings verified: `merge_commit=true, squash=false, rebase=false`.
    only two exclusions are active-work checkpoints and most-recent-per-task. Exact-path
    citation is *not* an exclusion — Ship invented it. Genuine candidates existed.
 
-2. **Orchestrator-owned memory compaction was retained, but is UNAUTHORIZED under current
-   policy.** The Ship Continuity Role Boundary row unconditionally forbids mutating another
-   agent's memory, and the Orchestrator's memory is "another agent's memory" from Ship's
-   perspective. No owner-consent carve-out exists (see the harness-gap section below).
-   By the same parity of reasoning applied to plan files in ruling 3, explicit owner
-   direction did **not** make this authorized — the "even under operator pressure" clause
-   binds the Orchestrator too. The checkpoint was in fact archived byte-for-byte with a
-   traceable path and marked `status: superseded`, so no content was lost, and the change
-   is merged; but this record characterizes it as a boundary violation retained after the
-   fact, **not** as a sanctioned exception. The owner-consent argument is preserved only as
-   *rationale for a future policy amendment*, never as present authority.
+2. **The compacted checkpoint is Ship-owned, so no Continuity boundary was crossed.**
+   The artifact's frontmatter is the authoritative ownership metadata and declares
+   `agent: "Ship (halt/checkpoint/readiness hygiene only)"` with
+   `title: "Ship halt: PR #114 review-fix cap reached..."`. The `orchestrator-` filename
+   prefix denotes the checkpoint's subject, not its owner, and reading the filename as
+   ownership is what produced two successive wrong rulings here: first that the compaction
+   was a sanctioned Orchestrator-owned exception, then that it was an unauthorized boundary
+   violation. Both shared the same false premise. The Continuity row forbids mutating
+   **another** agent's memory; Ship compacting its own checkpoint is squarely inside its
+   boundary. No violation occurred, and no owner-consent carve-out was needed for this case.
+   **Lesson: determine artifact ownership from frontmatter `agent:`, never from the filename.**
 
 3. **Plan-file edits were NOT authorizable.** The Ship Role Boundary Planning row
    (`.github/agents/_ship.agent.md` ~line 43) is unconditional, and the boundary states
@@ -113,14 +116,14 @@ every overbroad claim at once. That is what converged it.
    `2026-08-16-readonly-serve-guarantee-hardening-decided-plan.md`,
    `2026-08-16-serve-auto-discovery-followups-decided-plan.md`
 
-## Harness gap flagged (upstream template concern)
+## Harness gap flagged — WITHDRAWN
 
-The Continuity Role Boundary row lacks an explicit-owner-consent carve-out. Ship correctly
-observed that the row's *text* does not distinguish silent mutation of another agent's
-memory from explicitly directed compaction of the requesting agent's own memory.
-Deliberately not fixed in-band. Until such an amendment is actually made, the row applies
-unconditionally — which is why ruling 2 above records the retained compaction as a boundary
-violation rather than a sanctioned exception.
+An earlier draft of this record claimed the Continuity Role Boundary row lacks an
+explicit-owner-consent carve-out, citing the checkpoint compaction as evidence.
+**That claim is withdrawn.** The checkpoint was Ship-owned (see ruling 2), so Ship
+compacting it required no carve-out and the case demonstrates no gap. Whether the row
+should someday distinguish owner-directed compaction from silent cross-agent mutation is
+an open question, but this session produced **no evidence for it** and none is asserted here.
 
 ## Environment notes (hard-won)
 
