@@ -1404,23 +1404,26 @@ separately and unconditionally forbids mutating another agent's checkpoint
 or memory, which bars rewriting citations inside Stage-authored files
 regardless of what they cite. This third revision reverts the plan
 compaction and the three Stage-memory citation edits in full, and
-re-reports Phase 1-4 accordingly. The one exception is the compaction of
+re-reports Phase 1-4 accordingly. The one distinct case is the compaction of
 `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
-itself (see below): unlike the plan and Stage-memory cases, this specific
-action was explicitly directed by the Orchestrator — the very agent that
-authored and owns that checkpoint — via the current PR-116 remediation
-task instructions, which independently verified the underlying Copilot
-finding as correct and required this compaction as the fix. That is
-consent from the affected agent, delivered through the operator, for one
-narrow, explicitly-identified action; it is not a general license Ship
-extended to any other cross-agent artifact, and Ship's independent
-extension of that precedent to Stage's memory files and to the `057-F`
-plan was exactly the (now-reverted) overreach the reviewer caught. This
-narrow case is flagged here for operator/Orchestrator attention: the
-general Continuity Role Boundary text as currently written does not itself
-carve out an explicit-owner-consent exception, so a future amendment to
-either the role contract or the compact-context skill would remove this
-ambiguity rather than leaving it to be re-litigated by each review pass.
+itself (see below). **Corrected 2026-09-01**: an earlier revision of this
+record described that checkpoint as Orchestrator-owned and justified its
+compaction as a narrow explicit-owner-consent exception. That was wrong.
+The artifact's frontmatter is the authoritative ownership metadata and
+declares `agent: "Ship (halt/checkpoint/readiness hygiene only)"` with
+`title: "Ship halt: PR #114 review-fix cap reached..."`; the
+`orchestrator-` filename prefix names the checkpoint's *subject* (the
+Orchestrator's PR-114 review-cap halt), not its owner. The checkpoint is
+therefore **Ship-owned**, and the Continuity Role Boundary — which forbids
+mutating *another* agent's memory — was never implicated. Ship compacting
+its own checkpoint was squarely inside its boundary: **no exception was
+needed and no boundary was crossed.** Ship's independent extension to
+Stage's memory files and to the `057-F` plan remains genuine (now-reverted)
+overreach, because those artifacts really are owned by another agent. The
+previously-flagged "explicit-owner-consent carve-out" gap in the Continuity
+Role Boundary text is **withdrawn as unevidenced** — this case never
+required such a carve-out. Lesson: determine artifact ownership from
+frontmatter `agent:`, never from the filename.
 
 **Third correction (2026-09-01, round 6 — self-reported false claim)**: a
 round-6 Copilot review correctly identified a genuine Role Boundary
@@ -1509,8 +1512,11 @@ invocation is mandatory but candidate selection stays threshold-gated
     the above — its citation to the archived Orchestrator checkpoint below
     was reverted to its original, un-annotated text for this reason.)
   * `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` —
-    **compacted**, under the narrow explicit-Orchestrator-consent exception
-    described above. Its own frontmatter declares
+    **compacted**. This checkpoint is **Ship-owned** (frontmatter
+    `agent: "Ship (halt/checkpoint/readiness hygiene only)"`; the
+    `orchestrator-` prefix names its subject, not its owner), so it fell
+    inside Ship's own Continuity authority and required no consent
+    exception — see the 2026-09-01 ownership correction above. Its own frontmatter declares
     `status: "superseded — halt resolved 2026-08-31; all four P1 blockers
     fixed"` and names this closure record's own "Local Review Readiness
     (current — 2026-08-31)" section as `superseded_by`, satisfying the
@@ -1595,8 +1601,8 @@ invocation is mandatory but candidate selection stays threshold-gated
   to update a plan artifact's citations, so these two remain a documented,
   known-stale follow-up for a future Stage session. Full detail on all
   three exceptions is recorded in the compaction summary itself.
-* **Result**: 1 memory checkpoint compacted and archived (under the narrow
-  explicit-consent exception above); 6 closure records compacted into 1
+* **Result**: 1 memory checkpoint compacted and archived (Ship-owned; see the
+  2026-09-01 ownership correction above — no exception was required); 6 closure records compacted into 1
   consolidated summary and archived (44,784 bytes archived); 2 compaction
   reports added (`docs/memory/compacted/2026-08-30-pr114-review-cap-checkpoint-compacted.md`,
   `docs/closure/2026-09-01-047-s-048-s-closure-summary.md`); 0 files
@@ -1669,7 +1675,8 @@ invocation is mandatory but candidate selection stays threshold-gated
 
 `compaction_status: done` — the skill was genuinely invoked and completed
 Phases 1-4 for `target: all` across every candidate within Ship's Role
-Boundary authority, with 1 memory checkpoint (explicit-consent exception)
+Boundary authority, with 1 memory checkpoint (Ship-owned — no exception
+required; see the 2026-09-01 ownership correction above)
 and 6 closure records actually compacted and archived this pass (corrected
 from the originally-recorded, invalid zero-candidate claim). Every
 candidate outside that authority (the `057-F` plan, and every
