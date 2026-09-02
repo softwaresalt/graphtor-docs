@@ -985,7 +985,7 @@ landed later on this same PR. No subagents, no merge, no
 backlog/stash/shipment mutation. Dirty `.gitignore` and all
 untracked/ignored files preserved; only this closure artifact, the
 transition memory checkpoint, the compound best-practices entry, and the
-orchestrator checkpoint memory are edited.
+PR-114 review-cap checkpoint memory are edited.
 
 **Blocking-node resolution.** The four P1 root nodes recorded in
 `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md`
@@ -1072,7 +1072,7 @@ Risky Action Record in Review-Fix Cycle 4 above, unchanged by this pass.
   changes instead of asserting no agent/skill change.
 
 **Dependent-node status**: the remaining P2/document nodes tracked in the
-orchestrator checkpoint that touch Stage-owned decision/plan/backlog-item
+PR-114 review-cap checkpoint that touch Stage-owned decision/plan/backlog-item
 files (`3888610906`, `3888693375`, `3888693380`, `3888860317`,
 `3888860326`, `3888860333`, `3888860341`) were already resolved by
 `537daaf` on the Stage side; `3888555111` (memory frontmatter title) was
@@ -1509,7 +1509,8 @@ invocation is mandatory but candidate selection stays threshold-gated
     successor scope under `059-F` is still open). Not compacted. (The
     `stage-059-f-normalization-ratification-memory.md` file is additionally
     Stage-authored and outside Ship's Continuity authority regardless of
-    the above — its citation to the archived Orchestrator checkpoint below
+    the above — its citation to the archived PR-114 review-cap checkpoint
+    (the Ship-owned `orchestrator-pr114-review-cap-checkpoint.md`) below
     was reverted to its original, un-annotated text for this reason.)
   * `docs/memory/2026-08-30/orchestrator-pr114-review-cap-checkpoint.md` —
     **compacted**. This checkpoint is **Ship-owned** (frontmatter
