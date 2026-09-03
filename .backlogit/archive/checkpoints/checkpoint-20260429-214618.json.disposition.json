@@ -1,0 +1,7 @@
+{
+  "filename": "checkpoint-20260429-214618.json",
+  "disposition": "quarantined",
+  "reason": "Legacy schema-less checkpoint invalid under CheckpointV1; operator-approved archival for recurrence cleanup",
+  "operator": "REDMOND\\dewilliams",
+  "disposition_at": "2026-09-03T21:30:30.7517468Z"
+}
