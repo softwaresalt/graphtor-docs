@@ -164,7 +164,7 @@ ai_tools:
 # Derived at merge-install time from the capability packs enabled for this
 # workspace. Omit this key to run every known sidecar (backward-compatible
 # default).
-sidecars: ["backlogit", "engram", "graphtor-docs"]
+sidecars: ["backlogit", "engram"]
 
 # Optional browser-automation capability configuration (used when browser-verification is enabled)
 browser:
