@@ -27,6 +27,15 @@ Set-Location -LiteralPath $PSScriptRoot
 # Load .env.local (gitignored per-developer overrides) if present. Each
 # KEY=VALUE line overrides the inherited process value for this launch. A
 # single pair of matching surrounding quotes is stripped from the value.
+#
+# Precedence is deliberately unconditional-override, not skip-if-already-set:
+# .env.local is the operator's own explicit, workspace-local configuration
+# file for this launcher, so its values are meant to take precedence over
+# whatever the invoking shell/CI/launcher happened to inherit in the process
+# environment -- otherwise a stale inherited value could silently shadow an
+# intentional .env.local edit with no visible warning. Anyone who needs a
+# value NOT touched by this launcher should omit it from .env.local rather
+# than relying on process-env precedence.
 $envLocalPath = Join-Path $PSScriptRoot ".env.local"
 if (Test-Path -LiteralPath $envLocalPath -PathType Leaf) {
     Get-Content -LiteralPath $envLocalPath | ForEach-Object {

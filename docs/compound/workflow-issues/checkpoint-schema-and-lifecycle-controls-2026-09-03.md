@@ -13,8 +13,11 @@ message: "checkpoint validation failed; needs_quarantine is nonzero or an obsole
 file_path: ".backlogit/checkpoints/"
 citations:
   - ".backlogit/archive/checkpoints/checkpoint-20260429-214618.json"
+  - ".backlogit/archive/checkpoints/checkpoint-20260429-215617.json"
   - ".backlogit/archive/checkpoints/checkpoint-20260701-064559.json"
   - ".backlogit/archive/checkpoints/checkpoint-20260822-073402.json"
+  - ".backlogit/archive/checkpoints/checkpoint-20260822-090657.json"
+  - ".backlogit/archive/checkpoints/checkpoint-20260822-092508.json"
   - ".backlogit/checkpoints/checkpoint-20260829-163933.json"
   - ".backlogit/checkpoints/checkpoint-20260829-165829.json"
   - ".github/instructions/backlogit.instructions.md"
