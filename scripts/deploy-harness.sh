@@ -94,9 +94,12 @@ case "$PRESET" in starter|standard|full) ;; *) fail "invalid --preset: $PRESET";
 case "$REGISTER" in vscode|copilot-cli|claude|codex|none) ;; *) fail "invalid --register: $REGISTER"; exit 1 ;; esac
 case "$INSTALL_METHOD" in pip|clone) ;; *) fail "invalid --install-method: $INSTALL_METHOD"; exit 1 ;; esac
 
-# Load .env.local (gitignored per-developer overrides) if present, mirroring the
-# start.sh loader: export each KEY=VALUE only when not already set; strip a
-# single pair of matching surrounding quotes.
+# Load .env.local (gitignored per-developer overrides) if present. Unlike the
+# start.sh/start.ps1 launchers (which use unconditional-override precedence
+# for interactive dev sessions), this deploy script intentionally keeps
+# skip-if-already-set precedence: export each KEY=VALUE only when not already
+# set, so a value already provided by the invoking shell/CI takes priority
+# over .env.local. Strip a single pair of matching surrounding quotes.
 env_local="${WORKSPACE_ROOT}/.env.local"
 if [[ -f "$env_local" ]]; then
 	while IFS= read -r line || [[ -n "$line" ]]; do

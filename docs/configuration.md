@@ -300,17 +300,19 @@ MCP `serve` server:
 GRAPHTOR_EMBED_MODEL_DIR=C:\workspace\.graphtor\models\all-MiniLM-L6-v2
 ```
 
-The `start.ps1` harness loader reads `.env.local` into the session environment
-at startup, so both the CLI you invoke and the MCP server the client launches
-inherit the value. This is the recommended way to make configuration behave
-identically in CLI and MCP mode.
+The `start.ps1` and `start.sh` harness loaders read `.env.local` into the
+session environment at startup, so both the CLI you invoke and the MCP server
+the client launches inherit the value. This is the recommended way to make
+configuration behave identically in CLI and MCP mode.
 
 > [!NOTE]
-> Automatic `.env.local` loading is specific to the PowerShell harness
-> (`start.ps1`). The Bash harness (`start.sh`) does not load `.env.local`; under
-> Bash or any other launch method, export `GRAPHTOR_EMBED_MODEL_DIR` yourself
-> (for example `export GRAPHTOR_EMBED_MODEL_DIR=/abs/path` or via your own
-> dotenv loader) before invoking graphtor-docs.
+> Both the PowerShell harness (`start.ps1`) and the Bash harness (`start.sh`)
+> load `.env.local` automatically, with unconditional-override precedence:
+> each `KEY=VALUE` line replaces whatever the invoking shell/CI/launcher
+> already had in the process environment, so `.env.local` always wins. Under
+> any other launch method, export `GRAPHTOR_EMBED_MODEL_DIR` yourself (for
+> example `export GRAPHTOR_EMBED_MODEL_DIR=/abs/path` or via your own dotenv
+> loader) before invoking graphtor-docs.
 
 ## Annotated Full Example
 

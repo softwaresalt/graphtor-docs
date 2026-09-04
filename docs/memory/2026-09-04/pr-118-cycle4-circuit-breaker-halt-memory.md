@@ -1,3 +1,14 @@
+---
+type: circuit-breaker
+timestamp: 2026-09-04T23:15:00Z
+agent: "Ship"
+skill: "pr-lifecycle"
+breaker_type: skill-managed
+operation: "Copilot review-fix-push cycle (PR #118)"
+attempts: 4
+identity: "pr-118-copilot-review-fix-cycle"
+---
+
 # PR #118 — Cycle 4 Circuit Breaker Halt (Session Continuity Checkpoint)
 
 **Date**: 2026-09-04
