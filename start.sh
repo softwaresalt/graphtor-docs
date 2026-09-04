@@ -20,9 +20,22 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Anchor every child process to the workspace regardless of where this script
+# was invoked from.
+cd "$script_dir"
+
 # Load .env.local (gitignored per-developer overrides) if present. Each
-# KEY=VALUE line is exported only when that variable is not already set. A
+# KEY=VALUE line overrides the inherited process value for this launch. A
 # single pair of matching surrounding quotes is stripped from the value.
+#
+# Precedence is deliberately unconditional-override, not skip-if-already-set:
+# .env.local is the operator's own explicit, workspace-local configuration
+# file for this launcher, so its values are meant to take precedence over
+# whatever the invoking shell/CI/launcher happened to inherit in the process
+# environment -- otherwise a stale inherited value could silently shadow an
+# intentional .env.local edit with no visible warning. Anyone who needs a
+# value NOT touched by this launcher should omit it from .env.local rather
+# than relying on process-env precedence.
 env_local_path="$script_dir/.env.local"
 if [[ -f "$env_local_path" ]]; then
 	while IFS= read -r env_line || [[ -n "$env_line" ]]; do
@@ -37,9 +50,7 @@ if [[ -f "$env_local_path" ]]; then
 					env_value="${env_value:1:${#env_value}-2}"
 				fi
 			fi
-			if [[ -z "${!env_name+x}" ]]; then
-				export "$env_name=$env_value"
-			fi
+			export "$env_name=$env_value"
 		fi
 	done < "$env_local_path"
 fi
