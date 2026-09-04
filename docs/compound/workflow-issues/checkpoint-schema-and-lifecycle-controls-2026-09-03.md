@@ -65,11 +65,15 @@ and disposition metadata into `.backlogit/archive/checkpoints/`; it did not
 discard the historical evidence. An unfiltered checkpoint listing then
 reported `needs_quarantine: 0`.
 
-Treat the remaining August 29 active record as a lifecycle leak, not evidence
-of an interrupted Stage run. Its later resolved peer proves that the same
-session completed successfully. The owning Stage recovery workflow must
-resolve the original active filename; an Orchestrator must not silently infer
-or mutate owner state.
+The August 29 active record (`checkpoint-20260829-163933.json`) was a
+lifecycle leak, not evidence of an interrupted Stage run: its later resolved
+peer (`checkpoint-20260829-165829.json`, same session, same
+shipment/feature) proved that the same session completed successfully. The
+owning Stage recovery workflow has since resolved the original active
+filename directly, and a subsequent unfiltered checkpoint listing confirmed
+`status: resolved` with no active cursor remaining. An Orchestrator must
+still never silently infer or mutate owner state on a future recurrence of
+this pattern.
 
 The highest-priority recurrence control -- reject schema-less checkpoint
 creation by default and require an explicit legacy-import path -- is already

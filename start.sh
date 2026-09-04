@@ -3,7 +3,7 @@
 #
 # This script is self-contained: it loads .env.local, resolves workspace-local
 # AI-tool state directories, runs the sidecar syncs enabled for this workspace
-# (backlogit/Engram/graphtor-docs), resolves the Copilot CLI executable, and
+# (backlogit/Engram), resolves the Copilot CLI executable, and
 # launches it directly in THIS shell -- no supervising process, no
 # process-spawning layer in between. This is deliberate: an intermediate
 # process (e.g. a Python launcher) was found to change how many processes are
@@ -95,8 +95,8 @@ elif [[ ! -x "$copilot_exe" ]]; then
 fi
 
 # Sidecar syncs -- derived at install time from the capability packs enabled
-# for this workspace (backlogit/agent-engram/graphtor-docs).
-enabled_sidecars=("backlogit" "engram" "graphtor-docs")
+# for this workspace (backlogit/agent-engram).
+enabled_sidecars=("backlogit" "engram")
 
 _sidecar_enabled() {
 	local name="$1"
@@ -117,18 +117,6 @@ if _sidecar_enabled "engram" && command -v engram >/dev/null 2>&1; then
 		engram --format text bind || true
 		echo "Synchronizing Engram index — Daemon-backed pre-warm fallback"
 		engram --format text sync --timeout 300 || echo "Warning: engram sync failed (non-fatal)" >&2
-	fi
-fi
-
-if _sidecar_enabled "graphtor-docs"; then
-	graphtor_docs_exe=""
-	if command -v graphtor-docs >/dev/null 2>&1; then
-		graphtor_docs_exe="graphtor-docs"
-	elif [[ -x "$script_dir/.graphtor/bin/graphtor-docs" ]]; then
-		graphtor_docs_exe="$script_dir/.graphtor/bin/graphtor-docs"
-	fi
-	if [[ -n "$graphtor_docs_exe" ]]; then
-		"$graphtor_docs_exe" sync || echo "Warning: graphtor-docs sync failed (non-fatal)" >&2
 	fi
 fi
 
