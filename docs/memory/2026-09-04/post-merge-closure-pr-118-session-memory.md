@@ -808,8 +808,7 @@ this session or any prior session** — this consolidated pass's operator
 authorization is explicitly distinct from, and does not extend to, the
 P-014 merge-approval decision.
 
-## Addendum 9 — Round 7 discovery, P-021 deferred capture, and a genuine
-## authority blocker (post-`b5f7398` polling)
+## Addendum 9 — Round 7 discovery, P-021 deferred capture, and a genuine authority blocker (post-`b5f7398` polling)
 
 Polling the resulting Copilot review after Addendum 8's fix push (per the
 "Next steps" above) surfaced exactly the self-referential pattern that push
@@ -894,3 +893,59 @@ occurred in this addendum's actions. The one stash mutation
 (`67BA0629`'s creation) was already authorized and performed under Addendum
 8's own P-021 C2 capture; this addendum documents its downstream review
 consequences and the one further in-scope doc fix they required.
+
+## Addendum 10 — Resumed session: `ff6Uc` authority blocker cleared by Stage, thread resolved, one new mechanical finding fixed (new session)
+
+Resumed at the exact halt point Addendum 9 recorded. Stage — not Ship —
+performed the narrowly-scoped correction the `ff6Uc` blocker required:
+stash entry `67BA0629`'s structured `kind` field corrected from the
+schema-invalid `chore` to the valid `task`
+(`.github/instructions/backlogit-sql-schema.instructions.md:81` enum:
+feature/task/bug/epic/unknown), landing as an uncommitted, unstaged
+one-insertion/one-deletion diff to `.backlogit/stash.jsonl` with no other
+field or entry touched. Ship independently verified this: `git diff`
+confirmed exactly one line changed; a field-by-field JSON comparison of
+`HEAD:.backlogit/stash.jsonl` against the working tree confirmed the sole
+changed key across all 12 entries was `kind` on entry `67BA0629`
+(`chore` → `task`). Note the entry's embedded free-text `(6) Kind: chore`
+string was intentionally left unchanged — only the structured field was
+in scope for this correction, consistent with Stage's stash-triage
+authority and Ship's continued lack of any edit authority over stash
+content.
+
+Ship committed this Stage-authored correction on Stage's behalf (Ship has
+no independent authority to originate the edit, but committing a
+already-made, already-verified correction to a tracked file is ordinary
+repository mechanics) as `f33aa91` (`fix(backlog): correct invalid kind
+enum value in stash entry 67BA0629`) and pushed. Replied to
+`PRRT_kwDORiB5E86ff6Uc` citing the fix commit, clarifying the
+correction's authorship (Stage, not Ship) and the intentionally-unchanged
+embedded text, then resolved the thread — the only thread left unresolved
+at Addendum 9's halt point.
+
+The push re-armed Copilot review (per P-018, every HEAD advance requires
+a fresh review pass). Requested Copilot review explicitly and polled via
+`autoharness gate copilot-review`; it returned `WAITING_FOR_REVIEW` then,
+after Copilot completed its pass on `f33aa91`, `UNRESOLVED_THREADS: 1`.
+The one new thread, `PRRT_kwDORiB5E86fgEqm`, flagged that this file's own
+`## Addendum 9` heading had been accidentally split across two
+consecutive `## ` lines (`## Addendum 9 — Round 7 discovery, P-021
+deferred capture, and a genuine` / `## authority blocker (post-`
+`b5f7398` polling)`), rendering the second half as an empty sibling
+section instead of part of the title. Classified against P-021 C1: a
+same-contract-surface mechanical markdown fix inside this same closure
+session-memory file — not a new scope, not a different subject matter,
+and not requiring any investigation beyond joining two lines into the one
+heading they were always meant to be. Fixed directly (combined into a
+single `## ` heading) in the same commit as this addendum.
+
+**Outcome of this addendum's commit**: `ff6Uc` resolved (Stage-authored
+fix, Ship-committed, thread replied + resolved); `fgEqm`'s heading-split
+fixed directly as an in-scope mechanical consequence. No shipment claim,
+no `048-S`/`049-S` mutation, and no stash creation/edit/harvest/archive
+by Ship — the one stash-content change was Stage's, not Ship's. Awaiting
+the next Copilot review pass on this addendum's own push before declaring
+`autoharness gate copilot-review` `SATISFIED`; if clean, this closure PR
+proceeds to the P-014 explicit operator merge-approval gate (still not
+sought — no merge approval has been given at any point in this session
+or any prior session for PR #119).
