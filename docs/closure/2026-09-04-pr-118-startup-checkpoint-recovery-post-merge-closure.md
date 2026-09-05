@@ -3,7 +3,7 @@ date: 2026-09-04
 slug: pr-118-startup-checkpoint-recovery-post-merge-closure
 shipment: "N/A — chore carry-forward PR, no shipment claimed (see Shipment Applicability below)"
 mode: post-merge
-status: READY
+status: READY_WITH_CONDITIONS
 owner: "@softwaresalt"
 compaction: done
 ---
@@ -56,16 +56,52 @@ Consequently:
 ## Summary of the Change
 
 Resolved a startup/launcher regression plus accumulated backlogit checkpoint
-schema debt, across four review-remediation rounds on PR #118:
+schema debt on PR #118. GitHub's repository ruleset auto-triggered a Copilot
+review on every push (`review_on_push: true`); across the branch's full
+lifecycle this produced **7 Copilot review submissions**, verified via the
+GraphQL `reviews` connection (`submittedAt` + `comments.totalCount` per
+node), not the 4 stated in an earlier draft of this closure. Of those 7:
+
+* **5 rounds carried new, actionable comments** requiring a reply and/or a
+  fix: round 1 (5 comments, `3080dc8`) → 4 fixed in-branch, 1 deferred as
+  stash `CCAC612D`; round 2 (1 comment — the `start.sh` cwd-anchoring bug)
+  → fixed in `25a1290`; round 3 (2 comments — `.mcp.json` shim conflict +
+  stale readiness) → 1 deferred as stash `578B8678`, fixed in `d4f0029`;
+  round 4 (2 comments — generated-launcher/template-drift) → deferred as
+  stash `BAD41DF2`/`8AFB7B3A` per P-021 C2 (see below); round 5 (4 comments
+  — stash-entry `kind` field mismatches + stale doc/circuit-breaker wording)
+  → fixed in `176a198`.
+* **2 rounds were clean/informational** (`🔵`, "0 new" top-level comments):
+  one mid-lifecycle pass, and the **final pre-merge pass** (immediately
+  before the `255020e` merge). That final pass reported "0 new" but surfaced
+  **7 previously-suppressed comments** in its review body (GitHub suppresses
+  repeat comments on unchanged code across rounds) that were never
+  individually replied to, fixed, or captured: 6 identical findings that the
+  new `.backlogit/archive/checkpoints/*.disposition.json` files publicly
+  record a Windows domain account (`REDMOND\dewilliams`) in their `operator`
+  field, plus 1 finding that the in-flight PR-body readiness block was
+  already stale relative to the then-current head. See the new Follow-up
+  Handoff entry below — this closure cannot rewrite already-merged `main`
+  history to redact these disposition-file contents.
+
+Change surface:
 
 * **`start.sh` / `start.ps1`** — anchored every child process to the
   workspace directory regardless of invocation cwd
   (`cd "$script_dir"` / `Set-Location -LiteralPath $PSScriptRoot`), and made
   `.env.local` loading behave identically on both launchers with
   unconditional-override precedence (each `KEY=VALUE` line replaces any
-  value already inherited from the invoking shell/CI). Previously,
-  `.env.local` auto-loading was PowerShell-only; `start.sh` did not load it
-  at all. `docs/configuration.md` was updated in the same PR to describe the
+  value already inherited from the invoking shell/CI). Previously, `.env.local`
+  auto-loading was **not** PowerShell-only, and `start.sh` was **not**
+  missing it entirely: the pre-fix Bash launcher already loaded
+  `.env.local`, but guarded each assignment with a skip-if-already-set check
+  (`export` only `if [[ -z "${!env_name+x}" ]]`), so any variable already
+  present in the invoking shell's environment silently shadowed the
+  operator's `.env.local` value. Commit `25a1290` removed that guard,
+  matching `start.ps1`'s unconditional-override precedence and eliminating
+  the actual parity bug (a Copilot review finding on PR #118 confirmed this
+  distinction; see `git show 25a1290 -- start.sh`).
+  `docs/configuration.md` was updated in the same PR to describe the
   corrected, symmetric behavior.
 * **`.mcp.json`** — added `${workspaceFolder}` env bindings
   (`BACKLOGIT_WORKSPACE`, `ENGRAM_WORKSPACE`) to the `backlogit`/`engram`
@@ -106,9 +142,8 @@ schema debt, across four review-remediation rounds on PR #118:
   tooling/config/backlog-hygiene PR with zero product runtime surface
   touched.
 
-Four Copilot-review remediation rounds ran across the PR's lifecycle
-(documented in the now-compacted memory pair — see Compaction below); all
-review threads were resolved before merge, `mergeStateStatus: CLEAN`, and
+Across the full 7-round Copilot review history above, all review threads
+were resolved before merge, `mergeStateStatus: CLEAN`, and
 `autoharness gate copilot-review 118 --enforcement auto` reported
 `SATISFIED: PASS` at the final head (`176a198`) prior to merge.
 
@@ -151,21 +186,64 @@ get 048-S` — still `status: archived`, `archived_status: active` (unchanged);
 
 ## Validator Evidence (Runtime Verification)
 
-**Not applicable — no runtime surface changed.** `start.sh`/`start.ps1` are
-autoharness-generated Copilot CLI launcher scripts (workspace bootstrap for
-the AI CLI tool), not the `graphtor-docs` product binary or its MCP `serve`
-runtime; `.mcp.json` and `.autoharness/config.yaml` are dev-tooling launch
-configuration for this workspace's own editor/agent integration, not
-generated or consumed by any `graphtor-docs` source code path
-(`src/workspace/mcp_config.rs`'s generator is untouched by this PR). Per
-`.autoharness/workspace-profile.yaml`, `runtime_surfaces` are all `false`
-(`web_ui`, `public_api`, `background_jobs`) for this workspace, and no
-`src/`/`Cargo.*` file was modified. No CLI/MCP-serve validator probe or
-manual checkpoint from `runtime_validation.validator_manifest` was invented
-for this closure — consistent with the precedent set in the `050-S` closure
-for a comparable static-config-only change.
+**Corrected during this closure PR's own local review**: an earlier draft of
+this artifact recorded runtime verification as `N/A`. That was incorrect.
+`.autoharness/workspace-profile.yaml`'s `runtime_surfaces` block
+(`web_ui`/`public_api`/`background_jobs`, all `false`) is a *different*
+section from `runtime_validation.validator_manifest`, which explicitly
+defines a required `cli` surface — `cli-status` and `mcp-stdio-startup`
+command probes (both `required: true`) plus a `mcp-client-smoke` manual
+checkpoint (`required_for_release: true`). PR #118 changed exactly the
+mechanisms that invoke this surface: `start.sh`/`start.ps1` (the launcher
+that anchors cwd before any child process, including a `graphtor-docs
+serve` invocation, starts) and `.mcp.json`'s `graphtor-docs` entry (the
+command VS Code/Copilot uses to start the MCP server, including a path fix
+and the `--read-only` removal). The `runtime_surfaces` flags being `false`
+does not exempt this change from the `validator_manifest` contract.
 
-**Verdict**: `N/A` (no runtime surface touched). No blocked prerequisites.
+No Rust source (`src/`, `Cargo.*`) changed, so the `graphtor-docs` binary's
+own behavior is unaffected by this PR — but the probes below still confirm
+no regression was introduced in how that binary is invoked, and a direct,
+isolated replay of the launcher fix's own logic validates the specific
+regression this PR addressed.
+
+**Automated probes (this closure session, against the merge commit)**:
+
+| Probe | Command | Result |
+|---|---|---|
+| `cli-status` (required) | `cargo run --release -- status` | ✅ PASS — reported 5 configured sources and opened the read-only SQLite datastore with no error |
+| `mcp-stdio-startup` (required) | `graphtor-docs.exe serve` with stdin redirected from `NUL` | ✅ PASS — server fully started (posture resolution, DB open, embedding model load, "starting MCP STDIO server" all logged with no error), then exited with `error: MCP server failed to start / Caused by: connection closed: initialize request` (exit code 2) only *after* stdin EOF. This is the documented, expected "benign EOF-driven shutdown" behavior for a closed-stdin probe with no `initialize` request sent — see `docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md` lines 403-409 ("Keep the child's stdin OPEN... A closed stdin only exercises a benign EOF-driven shutdown and cannot distinguish the regression from a normal handshake"). Not a startup error. |
+
+**Targeted launcher-fix verification (this closure session)**: rather than
+running the full interactive `start.ps1` (which launches the Copilot CLI
+interactively and would hang this automated session), the two specific
+logic blocks changed by commit `25a1290` were replayed verbatim against an
+isolated scratch directory (never touching the real workspace `.env.local`):
+cwd was anchored away from the target directory, a scratch `.env.local` set
+`TEST_OVERRIDE_VAR="from-env-local"`, and the process environment was
+pre-seeded with `TEST_OVERRIDE_VAR=from-inherited-shell` (simulating an
+inherited shell/CI value) before replaying the `Set-Location` + `.env.local`
+loader logic. Result: `Get-Location` resolved to the scratch directory
+(cwd-anchoring confirmed) and `$env:TEST_OVERRIDE_VAR` became
+`from-env-local` (unconditional-override precedence confirmed, matching the
+fixed behavior, not the pre-fix skip-if-already-set behavior). Scratch
+directory removed after the check; no tracked file was touched.
+
+**Manual checkpoint — `mcp-client-smoke` (required for release)**: **NOT
+PERFORMED** in this closure session. No live MCP client capable of driving
+a real `initialize` → `search_local_docs`/`search_semantic` session was
+available in this automated context. Per the validator manifest's own
+documented fallback: *"Record the cli-status and mcp-stdio-startup probe
+evidence and note the client check as deferred. Because this checkpoint is
+required_for_release, that fallback yields READY_WITH_CONDITIONS at best —
+the initialize handshake stays unvalidated — and never a clean READY."*
+This closure follows that fallback exactly; see the downgraded
+Releasability Evidence below.
+
+**Verdict**: `READY_WITH_CONDITIONS` — both required automated probes pass
+and the specific launcher-fix logic was independently replay-verified, but
+the required `mcp-client-smoke` manual checkpoint remains outstanding. No
+other blocked prerequisite.
 
 ## Pre-Deploy Audits
 
@@ -175,7 +253,8 @@ config change` does not apply here either, since the *original* PR #118 did
 touch shell-script and JSON/YAML config (not "documentation-only"); the
 prior Ship session's Local Review Readiness record for PR #118 recorded full
 local build evidence (`cargo check`/`fmt`/`clippy --pedantic`/`test`, all
-green) at each of its four review-remediation rounds. This closure
+green) at each of its 5 actionable review-remediation rounds (see the
+corrected round accounting in Summary of the Change above). This closure
 independently re-verified the same gates against the merge commit itself
 (see Quality Gates below).
 
@@ -292,17 +371,25 @@ behavior takes effect on the very next invocation.
 
 | Evidence | Status |
 |---|---|
-| Monitoring plan | Manual observation (proportionate — no runtime surface changed) |
+| Monitoring plan | Manual observation (proportionate — single-developer local tool) |
 | Pre-deploy audit | N/A — no migration/flag/cross-service dependency |
-| Runtime verification | `N/A` — no runtime surface touched (dev-tooling launcher/config only) |
+| Runtime verification | `READY_WITH_CONDITIONS` — both required automated probes (`cli-status`, `mcp-stdio-startup`) pass and the launcher fix's own logic was independently replay-verified; the required `mcp-client-smoke` manual checkpoint was not performed this session (see Validator Evidence above) |
 | Post-deploy observation window | Closed — no async rollout, effect is immediate and already re-confirmed |
 | Rollback trigger + procedure | Defined above |
 | Risky actions | All recorded above, `ActionResult: applied` |
 | Backlog closure | `N/A` — no shipment claimed; `048-S`/`049-S` confirmed unmodified |
 | Compaction (P-020) | See Compaction section below |
 
-**Releasability status**: `READY` — all closure work is complete and
-verified; no open condition or observation window remains.
+**Releasability status**: `READY_WITH_CONDITIONS`. **Condition**: perform the
+`mcp-client-smoke` manual checkpoint (call `get_status`, then
+`search_local_docs`/`search_semantic` against an indexed source, from a real
+MCP client) at the next opportunity a live client session is available, to
+validate the `initialize` handshake and advertised tool surface — the one
+piece of required-for-release evidence this closure could not automate.
+This condition does not block the closure PR itself (it is evidence
+generation, not a code or config change) but should be recorded as a
+follow-up for whoever next has an interactive MCP client session against
+this workspace (see Follow-up Handoff below).
 
 ## Compaction (P-020)
 
@@ -381,8 +468,33 @@ a read-only pointer for Stage:
    Backlogit 1.10.1 has no supported repair operation for this gap; Ship has
    no authority to invent one. Full detail preserved (not compacted) in
    `docs/memory/2026-09-03/checkpoint-resolution-and-049s-topology-blocker-memory.md`.
+5. **Domain account name publicly exposed in 6 merged disposition files**
+   (discovered during this closure PR's own local review, via the GraphQL
+   `reviews` history for PR #118) — `.backlogit/archive/checkpoints/
+   checkpoint-{20260429-214618,20260429-215617,20260701-064559,
+   20260822-073402,20260822-090657,20260822-092508}.json.disposition.json`
+   each carry `"operator": "REDMOND\\dewilliams"` in a public repository.
+   GitHub's Copilot reviewer flagged this as 6 "suppressed" (previously
+   missed) comments on the PR's **final**, clean (0-new-comment) pre-merge
+   review pass — suppressed because the underlying code had not changed
+   since an earlier round, so no new top-level thread was ever created for
+   Ship to see, reply to, or capture during the PR's own lifecycle. This
+   closure **cannot** remediate it: the content is already part of merged
+   `main` history (`255020e`), and rewriting merged history (`git reset`,
+   force-push, history-editing) is unconditionally forbidden under Ship's
+   Role Boundary. Needs a Stage-triaged decision: accept as a low-severity,
+   non-credential identity disclosure and document, or schedule a follow-up
+   commit that replaces the 6 `operator` values with a repository-safe
+   actor identifier (the disposition files themselves, not history, would
+   be edited — no rewrite required for that remediation path).
+6. **`mcp-client-smoke` manual checkpoint outstanding** (required for
+   release, not performed this closure session — see Validator Evidence
+   above) — needs a live MCP client session (call `get_status`, then
+   `search_local_docs`/`search_semantic` against an indexed source) at the
+   next opportunity, to validate the `initialize` handshake and advertised
+   tool surface for the launcher/`.mcp.json` changes this PR made.
 
-None of these four items were created, edited, harvested, or archived by
+None of these six items were created, edited, harvested, or archived by
 this closure — they are cited here solely so a future Stage/operator
 session can locate them.
 

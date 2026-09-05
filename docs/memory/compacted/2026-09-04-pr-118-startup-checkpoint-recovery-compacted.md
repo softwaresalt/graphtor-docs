@@ -145,10 +145,30 @@ compound-learning files.
   belong to a separate, externally-versioned tool project entirely (as it
   did here, for the `autoharness` package's own template directory).
 
-**Failed approaches / dead ends**: none recorded — the 4-round Copilot
-cycle was a normal review-remediation progression, not a failed approach;
-each round's findings were either fixed (rounds 1–3, in-scope) or correctly
-identified as out-of-scope and deferred (round 4).
+**Failed approaches / dead ends**: none recorded — the Copilot review-fix
+cycle documented above was a normal review-remediation progression, not a
+failed approach.
+
+**Correction (added during the PR #118 post-merge closure PR's own local
+review, same date)**: the source memory pair compacted above stopped
+narrating at what they called "round 4" (the `BAD41DF2`/`8AFB7B3A` defer
+capture). GitHub's Copilot shadow-review continued past that point: the
+GraphQL `reviews` history for PR #118 shows **7 total review submissions**,
+not 4 — 5 carried new actionable comments (the 4 described above, plus a
+5th round at `176a198` fixing 2 stash-entry `kind`-field mismatches and
+stale doc/circuit-breaker wording) and 2 were clean/informational passes.
+The **final** pre-merge pass (0 new top-level comments) surfaced 7
+*suppressed* (previously-missed) findings in its review body that were
+never individually actioned: 6 identical findings that
+`.backlogit/archive/checkpoints/*.disposition.json` publicly record a
+Windows domain account (`REDMOND\dewilliams`), plus 1 noting the PR body's
+readiness block was stale relative to the then-current head. This
+correction does not change any decision or disposition recorded above — it
+only completes the historical count. The domain-account exposure is now
+recorded as a Follow-Up Handoff item in
+`docs/closure/2026-09-04-pr-118-startup-checkpoint-recovery-post-merge-closure.md`
+for a future Stage session (it cannot be remediated by rewriting already-merged
+history).
 
 **Outcome**: PR #118 merged (`255020e14df99767549253d56ec3d53aa0b2bbd7`) with
 all CI checks green, all review threads resolved, `SATISFIED: PASS` on the

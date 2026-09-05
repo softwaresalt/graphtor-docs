@@ -87,14 +87,25 @@ needed.
    root cause the second entry already documents (its Prevention guidance
    was followed correctly again) — not a new distinct pattern warranting a
    new entry.
-9. **Runtime-verification / operational-closure**: determined runtime
-   surface = none touched (launcher scripts + dev-tooling MCP config, not
-   the `graphtor-docs` product binary; `runtime_surfaces` all `false` in
-   `workspace-profile.yaml`; no `src/`/`Cargo.*` changed). Recorded
-   `runtime-verification: N/A` with rationale rather than inventing a
-   probe. Wrote the full `operational-closure` artifact:
+9. **Runtime-verification / operational-closure**: initially (incorrectly)
+   recorded `runtime-verification: N/A` on the theory that `runtime_surfaces`
+   was all `false` in `workspace-profile.yaml`. **Corrected during the
+   closure PR's own local review**: `runtime_surfaces` and
+   `runtime_validation.validator_manifest` are different sections — the
+   latter defines a required `cli` surface (`cli-status`,
+   `mcp-stdio-startup` probes, `mcp-client-smoke` manual checkpoint) that
+   this PR's launcher/`.mcp.json` changes squarely touch. Ran both required
+   automated probes against the merge commit (both PASS — see the closure
+   artifact for full evidence) plus an isolated verbatim-logic replay of the
+   `start.ps1` cwd-anchoring/`.env.local`-override fix (PASS). Could not
+   perform the required `mcp-client-smoke` manual checkpoint (no live MCP
+   client in this session) — recorded as deferred per the validator
+   manifest's own documented fallback, which caps this at
+   `READY_WITH_CONDITIONS`. Updated the closure artifact's frontmatter and
+   releasability section accordingly (`status: READY_WITH_CONDITIONS`).
+   Wrote the full `operational-closure` artifact:
    `docs/closure/2026-09-04-pr-118-startup-checkpoint-recovery-post-merge-closure.md`
-   (`status: READY`, `compaction: pending` at time of writing).
+   (`compaction: pending` at time of writing).
 10. **Doc/knowledge graduation review**: grepped `docs/ARCHITECTURE.md` and
     `AGENTS.md` for `start.sh`/`start.ps1`/`checkpoint` references — nothing
     stale found; neither file touched. `docs/configuration.md` was already
@@ -149,6 +160,48 @@ needed.
   intact for whichever future session remediates the `049-S` blocker.
 * Do not create, edit, or archive any of the 4 pre-existing P-021 stash
   entries — cite them read-only in the closure Follow-Up Handoff section.
-* Treat the launcher scripts and `.mcp.json`/config changes as
+* ~~Treat the launcher scripts and `.mcp.json`/config changes as
   non-runtime-surface (dev-tooling only) rather than inventing a
-  runtime-verification probe that would not be honest evidence.
+  runtime-verification probe.~~ **Superseded — see Addendum below.** This
+  was wrong: `runtime_validation.validator_manifest` is a separate,
+  independently-required contract from the `runtime_surfaces` booleans, and
+  it does apply to this PR's launcher/`.mcp.json` changes.
+
+## Addendum — Closure PR #119 local review remediation (same session)
+
+The closure PR (`#119`) was created, and a 3-reviewer adversarial local
+review (report-only) was run against its own diff before presenting it as
+merge-ready. First pass at HEAD `4d5ea72` returned `READY_WITH_FOLLOWUPS`
+(2 LOW-confidence wording nits, fixed directly at `e526222`). After PR
+creation, GitHub's Copilot shadow-review (auto-triggered by the same
+repository ruleset that governed PR #118) surfaced **5 substantive,
+actionable findings** against the closure artifact's own content — not
+wording nits, but factual/completeness corrections:
+
+1. Runtime-verification was wrongly marked `N/A` — corrected per the
+   Decisions-list strikethrough above; both required automated probes now
+   PASS, `mcp-client-smoke` recorded as an outstanding condition
+   (`READY_WITH_CONDITIONS`).
+2. Same incorrect `N/A` claim mirrored in this memory file (§9 above) —
+   corrected in place.
+3. The closure's `.env.local` history claim ("`start.sh` did not load it at
+   all") was factually wrong — the pre-fix Bash launcher did load it, with
+   a skip-if-already-set guard; `25a1290` removed that guard. Corrected.
+4/5. The closure understated the Copilot review-round count (said 4; the
+   verified GraphQL history shows 7 total review submissions — 5 with new
+   actionable comments, 2 clean/informational). Corrected in both the
+   closure artifact and the (already-compacted) memory summary, and a new
+   Follow-Up Handoff item was added for a previously undiscovered residual
+   finding surfaced by this investigation: 6 merged
+   `.backlogit/archive/checkpoints/*.disposition.json` files publicly
+   record a Windows domain account (`REDMOND\dewilliams`) — Copilot's own
+   final pre-merge review flagged this as 6 suppressed comments that were
+   never individually surfaced as an actionable thread during PR #118's
+   lifecycle. This closure cannot rewrite already-merged history to redact
+   it; recorded as a Stage follow-up instead.
+
+All 5 findings were fixed directly in a follow-up commit (in-scope,
+same-contract-surface corrections to this closure's own content — P-021
+C1/C3), pushed, and the corresponding review threads replied to and
+resolved. See the closure artifact's updated Summary/Validator
+Evidence/Releasability/Follow-Up sections for the corrected content.
