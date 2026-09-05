@@ -1,7 +1,7 @@
 ---
 title: "PR #118 readiness: local review, Copilot shadow-review remediation, merge-approval gate"
 description: "Records the full PR lifecycle execution for fix/graphtor-startup-checkpoint-recovery through PR creation, CI monitoring, Copilot shadow-review discovery and remediation, and the §1.9/P-018 readiness gate, stopping at the explicit P-014 merge-approval gate per operator instruction"
-source: "docs/memory/2026-09-04/pr-118-readiness-copilot-remediation-memory.md"
+source: "docs/archive/memory/2026-09-04/pr-118-readiness-copilot-remediation-memory.md"
 doc_type: "memory"
 date: "2026-09-04"
 agent: "ship"
