@@ -258,16 +258,67 @@ been performed. No other blocked prerequisite.
 
 ## Pre-Deploy Audits
 
-Not applicable — no feature flag, migration, schema, or cross-service
-dependency. `Full local build: not applicable for a documentation/backlog
-config change` does not apply here either, since the *original* PR #118 did
-touch shell-script and JSON/YAML config (not "documentation-only"); the
-prior Ship session's Local Review Readiness record for PR #118 recorded full
-local build evidence (`cargo check`/`fmt`/`clippy --pedantic`/`test`, all
-green) at each of its 5 actionable review-remediation rounds (see the
-corrected round accounting in Summary of the Change above). This closure
-independently re-verified the same gates against the merge commit itself
-(see Quality Gates below).
+**Corrected during Copilot review round 4 of this closure PR**: an earlier
+draft marked this entire section `N/A`. That was wrong — this artifact
+elsewhere classifies PR #118 as runtime-affecting (Validator Evidence above)
+and records the `.mcp.json` `--read-only` removal as a capability widening
+(Risky Action Record). Per the release-observability Pre-Deploy Audit
+Checklist, each required check is evaluated individually below instead of a
+blanket section-level `N/A`:
+
+* **Feature flags / rollout gates configured** — `N/A`, with rationale:
+  `graphtor-docs` has no feature-flag or phased-rollout mechanism; it is a
+  single-developer, local-only CLI/MCP server with no staged-deployment
+  ring or canary path (see Deployment / Rollout Path below). The
+  `--read-only` removal takes effect unconditionally the next time a client
+  restarts the `graphtor-docs` MCP server — there is no gate to configure or
+  verify, and none is needed for a single always-on local process.
+* **Rollback procedure documented and actionable** — YES. If the widened
+  write capability from removing `--read-only` causes an unwanted mutation
+  via the `graphtor-docs` MCP tool surface, re-add `--read-only` to that
+  entry's `serve` invocation in `.mcp.json` and restart/reload the client —
+  a single-line config revert, no code change, no data loss, no restart of
+  the `graphtor-docs` binary's own release artifact required. This is now
+  folded into Rollback Procedure and Failure Signals below as an explicit
+  bullet (previously only the launcher-script and checkpoint-quarantine
+  rollback paths were documented there).
+* **Data migration / schema changes backward-compatible or have a revert
+  path** — `N/A`, with rationale: PR #118 shipped no data migration or
+  schema change. The `.backlogit/checkpoints/` quarantine action is a
+  byte-preserving relocation (see Invariants to Preserve / Risky Action
+  Record above), not a schema migration, and already has a documented,
+  verified revert path (restore byte-identical originals from
+  `.backlogit/archive/checkpoints/`).
+* **Dependent services aware of the change (cross-service boundaries)** —
+  `N/A`, with rationale: the `graphtor-docs` `.mcp.json` entry is consumed
+  only by the sole maintainer's own local VS Code/Copilot CLI client on a
+  single workstation; there is no other service, team, CI consumer, or
+  downstream integration to notify of this config change.
+* **Monitoring plan complete** — YES, via the release-observability
+  contract's own no-monitoring-system fallback ("record the monitoring plan
+  as a structured checklist... and flag it as a manual observation
+  requirement"), not the SLI/dashboard/baseline/alert-threshold form that
+  applies when a monitoring system exists: `graphtor-docs` has no dashboard,
+  alerting, or metrics surface to instrument for launcher/dev-tooling
+  config. See Monitoring Plan below for the recorded checklist (manual
+  observation, signals to watch per Healthy/Failure Signals above, owner
+  `@softwaresalt`); cross-linked here per the release-observability Closure
+  Integration contract rather than duplicated verbatim.
+
+**Full local build applicability**: `Full local build: not applicable for a
+documentation/backlog config change` does not apply here either, since the
+*original* PR #118 did touch shell-script and JSON/YAML config (not
+"documentation-only"); the prior Ship session's Local Review Readiness
+record for PR #118 recorded full local build evidence
+(`cargo check`/`fmt`/`clippy --pedantic`/`test`, all green) at each of its 5
+actionable review-remediation rounds (see the corrected round accounting in
+Summary of the Change above). This closure independently re-verified the
+same gates against the merge commit itself (see Quality Gates below). This
+closure PR itself (`#119`) is documentation-only (no `src/`, `Cargo.*`,
+`.mcp.json`, or launcher-script changes) — see the PR's own Local Review
+Readiness block for the applicable non-applicability rationale on *that*
+build boundary, which is separate from PR #118's build evidence recorded
+here.
 
 ## Deployment / Rollout Path
 
@@ -333,6 +384,12 @@ session and are listed here for completeness of the closure record.
 * `049-S`'s topology-gate blocker (`PREDECESSOR_NOT_SHIPPED` against
   archived `048-S`) is worked around instead of properly remediated by a
   future session.
+* An unintended write or mutation occurs via the `graphtor-docs` MCP tool
+  surface as a direct result of the `--read-only` removal (the capability
+  widening recorded in Risky Action Record and evaluated in Pre-Deploy
+  Audits above) — the symptom to watch for is any write operation the
+  operator did not explicitly request completing successfully against this
+  workspace's indexed sources during a live MCP client session.
 
 ## Monitoring Plan
 
@@ -354,6 +411,12 @@ Any Failure Signal above observed by the operator or a future agent session.
 * Checkpoint quarantine: quarantined files remain byte-identical in
   `.backlogit/archive/checkpoints/` and can be restored if a false-positive
   quarantine is ever identified (none is known as of this closure).
+* `--read-only` capability widening: if the widened write capability causes
+  an unwanted mutation via the `graphtor-docs` MCP tool surface (see the
+  matching Failure Signal above), re-add `--read-only` to the
+  `graphtor-docs` entry's `serve` invocation in `.mcp.json` and
+  restart/reload the client — a single-line config revert, no code change,
+  no data loss.
 * No code rollback applies to `048-S`/`049-S` — this session made no change
   to either.
 
@@ -402,7 +465,7 @@ cannot treat observation as already closed out.
 | Evidence | Status |
 |---|---|
 | Monitoring plan | Manual observation (proportionate — single-developer local tool) |
-| Pre-deploy audit | N/A — no migration/flag/cross-service dependency |
+| Pre-deploy audit | Checklist-evaluated per item (see Pre-Deploy Audits above): flags/rollout `N/A` (no flag mechanism), rollback procedure documented + actionable (YES), migration/schema `N/A` (byte-preserving quarantine only, verified revert path), dependent-service awareness `N/A` (single local consumer), monitoring plan complete (YES) |
 | Runtime verification | `READY_WITH_CONDITIONS` — `cli-status` passes cleanly and the launcher fix's own logic was independently replay-verified; `mcp-stdio-startup` shows no evidence of a regression but its exit-on-EOF result does not literally certify the manifest's declared clean-exit signal (no initialize-sending harness exists yet); the required `mcp-client-smoke` manual checkpoint was not performed this session (see Validator Evidence above) |
 | Post-deploy observation window | Open — 14-day bounded window (or until `mcp-client-smoke` is performed, whichever first), owner `@softwaresalt`; see Validation Window above |
 | Rollback trigger + procedure | Defined above |

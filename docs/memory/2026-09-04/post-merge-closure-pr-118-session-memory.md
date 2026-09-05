@@ -439,3 +439,89 @@ closure session (3 Copilot shadow-review rounds + this final local-review
 pass, all now resolved); per Ship's own review-fix-cycle circuit breaker,
 this closure treats this as the natural stopping point rather than
 continuing to iterate.
+
+## Addendum 6 — Resumed session: bounded 4th review-fix cycle, both round-4 findings disposed (new session)
+
+The operator's continuation directive authorized exactly one bounded 4th
+review-remediation cycle for this closure PR (the cycle deferred at the end
+of Addendum 5), explicitly **not** as the distinct P-014 merge approval
+this closure PR still requires. This addendum documents that bounded
+cycle; no merge was attempted or authorized.
+
+**Finding 1 — `PRRT_kwDORiB5E86ffNiF` (Pre-Deploy Audits `N/A`)**: confirmed
+genuinely in-scope (P-021 C1 same-contract-surface — completing this
+closure artifact's own Pre-Deploy Audits section is squarely within the
+authorized change) and fixed directly. Rewrote the section from a blanket
+`N/A` into a per-item evaluation of the release-observability Pre-Deploy
+Audit Checklist's 5 required checks (feature flags/rollout gates,
+rollback procedure, migration/schema compatibility, dependent-service
+awareness, monitoring-plan completeness) — 3 items are genuinely `N/A` with
+concrete rationale (no flag mechanism / no migration / single local
+consumer), 1 item is `YES` with a newly-documented actionable rollback path
+(re-add `--read-only` to the `graphtor-docs` `.mcp.json` entry), and 1 item
+(monitoring-plan completeness) is `YES` via the release-observability
+contract's own explicit no-monitoring-system fallback rather than the
+SLI/dashboard/baseline/threshold form (refined during this session's own
+review pass below). Added matching cross-references: a new Failure Signal
+bullet naming the `--read-only` capability-widening symptom, a new Rollback
+Procedure bullet naming its single-line config revert, and rewrote the
+Releasability Evidence table's `Pre-deploy audit` row from blanket `N/A` to
+the same per-item summary. No new production system, measurement, or
+evidence was invented — every claim traces to content already established
+elsewhere in this artifact (Validator Evidence, Risky Action Record,
+Deployment/Rollout Path, Monitoring Plan).
+
+**Finding 2 — `PRRT_kwDORiB5E86ffNiP` (session-memory `Reviewed HEAD`
+staleness)**: confirmed moot, per Addendum 5's own contemporaneous note.
+This thread was created against the `d62f6d5` push (citing a stale
+`Reviewed HEAD: 8e484f4` / `Outcome: READY` PR-body claim), but the PR body
+was independently corrected to `1a98eb3` with the full accurate round
+history as part of the very fix cycle that produced `1a98eb3` — before
+this thread was even discovered by the P-018 gate re-run. No further
+content change was needed for this specific finding; it was disposed via a
+substantive reply (not a code fix) citing the current PR-body state,
+current HEAD at time of reply, and the specific commit that already
+corrected the condition the thread described.
+
+**Verification before fixing**: read the exact current closure-artifact
+section content and both thread bodies directly (via the GraphQL
+`reviewThreads` connection) before making any change, per the resumed
+task's explicit requirement — consistent with this session's established
+investigate-before-fixing discipline (Addenda 1-4).
+
+**Local review**: ran a 3-reviewer adversarial local review (report-only)
+against the working-tree diff (confined to the closure artifact's
+Pre-Deploy Audits/Failure Signals/Rollback Procedure/Releasability Evidence
+sections) before pushing. Verdict: `READY_WITH_FOLLOWUPS` — no
+HIGH-confidence/consensus blocking finding; one MEDIUM/majority finding
+(the "Monitoring plan complete" bullet's wording implied the full
+SLI/dashboard/baseline/threshold form rather than the release-observability
+contract's own documented no-monitoring-system fallback) was fixed directly
+in the same cycle (in-scope, same-contract-surface wording precision); the
+remaining LOW/advisory nits (minor duplication-style wording between the
+Pre-Deploy Audits summary bullets and their cross-referenced sections,
+which the release-observability Closure Integration contract's
+"reference rather than duplicate verbatim" pattern already anticipates)
+were accepted as non-blocking per the review's own priority ordering,
+matching this closure's established pattern for LOW-confidence,
+single-reviewer, non-blocking findings (see Addendum 4).
+
+**Markdown/frontmatter validation**: `markdownlint` against the modified
+file — clean, no violations. Frontmatter re-parsed via `yaml.safe_load` —
+valid, `status: READY_WITH_CONDITIONS` and `compaction: done` unchanged (no
+change to either field was warranted by this fix). No code or config file
+was touched by this cycle — the diff is confined entirely to
+`docs/closure/2026-09-04-pr-118-startup-checkpoint-recovery-post-merge-closure.md`
+— so full local build stays explicitly non-applicable for this specific
+commit's own scope (distinct from PR #118's own build evidence, which
+remains recorded unchanged above).
+
+**Next steps recorded, not yet executed as of this addendum**: commit and
+push the fix; reply to and resolve both threads citing the fix commit SHA;
+poll CI and re-run the P-018 `autoharness gate copilot-review` check;
+update the PR body's `## Local Review Readiness` block to the new final
+HEAD; re-run the full §1.9 readiness gate and last-mile HEAD check; present
+the PR as merge-ready without merging. **No merge approval has been given
+or sought for PR #119** — the operator's continuation directive is
+explicitly scoped to this one bounded review-fix cycle, not to the
+distinct P-014 merge-approval decision this closure PR still requires.
