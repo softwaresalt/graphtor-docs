@@ -247,12 +247,16 @@ surfaced **6 further actionable findings** at the new HEAD:
 6. **The PR body's `## Local Review Readiness` block was stale** —
    advertised `READY` at reviewed HEAD `e526222` while the closure artifact
    already recorded `READY_WITH_CONDITIONS` at a later HEAD. **Confirmed
-   corrected**: the PR body was updated via `gh pr edit` to the final HEAD
+   corrected**: the PR body was updated via `gh pr edit` to the
+   then-current HEAD
    (`8e484f4`, after the second review round's own follow-up fixes landed),
    with a full history of both local-review passes and both Copilot
    shadow-review rounds — independently re-verified via
    `gh pr view 119 --json body` showing `Reviewed HEAD: 8e484f4...` live on
-   the PR, not merely planned.
+   the PR, not merely planned. (This HEAD was itself superseded by a later
+   commit — see Addendum 3 below, which also states the PR body's
+   subsequent update status explicitly, to avoid repeating this same
+   staleness pattern.)
 
 All 6 findings were investigated before fixing (per the same
 investigate-before-fixing discipline as Addendum 1) and fixed directly
@@ -262,12 +266,14 @@ corresponding review threads replied to and resolved.
 ## Addendum 3 — Closure PR #119 third Copilot review round + local-review re-pass (same session)
 
 A second local adversarial review pass (against the `e526222..ada4cf7`
-diff) returned `READY_WITH_FOLLOWUPS` (2 LOW-confidence, MINOR advisory
-nits confined to the compacted memory file's pre-existing round-count
-narrative — neither introduced by the corrective diff itself). Both were
-fixed directly (in-scope, low-effort wording reconciliation), committed as
-`8e484f4`, and pushed. The PR body was then updated (`gh pr edit`) to the
-final HEAD with the full local- and shadow-review history.
+diff, where `ada4cf7` is the second follow-up commit referenced in
+Addendum 2 above) returned `READY_WITH_FOLLOWUPS` (2 LOW-confidence, MINOR
+advisory nits confined to the compacted memory file's pre-existing
+round-count narrative — neither introduced by the corrective diff itself).
+Both were fixed directly (in-scope, low-effort wording reconciliation),
+committed as `8e484f4`, and pushed. The PR body was then updated
+(`gh pr edit`) to the then-current HEAD (`8e484f4`) with the full local-
+and shadow-review history.
 
 Pushing `8e484f4` re-armed Copilot review a third time, surfacing **3
 further findings**:
@@ -302,3 +308,54 @@ gap against an actually-installed capability pack's contract; finding 3 was
 a legitimate wording-precision gap), and fixed directly in-scope (P-021
 C1/C3) in a third follow-up commit, pushed, and the corresponding review
 threads replied to and resolved.
+
+## Addendum 4 — Final local-review pass and chronology cleanup (same session)
+
+A third local adversarial review pass (against the `8e484f4..d62f6d5` diff)
+returned `READY_WITH_FOLLOWUPS`: one HIGH-confidence (3/3 reviewer)
+consensus finding, plus 4 LOW-confidence unique advisory nits. All three
+of the pass's specifically-targeted verification questions (runtime-surface
+wording, Validation Window three-way consistency, Addendum 3 narration
+accuracy) were independently confirmed correct by all 3 reviewers.
+
+The consensus finding: Addendum 2/3 above described `8e484f4` as "the
+final HEAD" and asserted a re-verified PR-body update, but this file's own
+Addendum 3 later documented that `8e484f4` was itself superseded by
+`d62f6d5` without ever stating the PR body's corresponding update status —
+a self-referential chronology gap in exactly the failure class this
+document's own remediation history had already been correcting. Fixed
+directly: reworded "final HEAD" to "then-current HEAD" in both Addendum 2
+and Addendum 3, explicitly anchored `ada4cf7` as "the second follow-up
+commit," and this addendum itself now states the PR body's update status
+for the current HEAD (below) rather than leaving it implicit.
+
+Also fixed: a "should" → "MUST" rigor-language gap in the closure
+artifact's Validation Window / Follow-Up Handoff item 6 outcome-recording
+language, matching the release-observability instructions' own imperative
+wording for recording an observation window's outcome at close.
+
+**Accepted as follow-ups, not fixed in this closure** (LOW-confidence,
+single-reviewer, non-blocking per the review's own priority ordering):
+consolidating the Pre-Deploy Audits section into an explicit
+release-observability checklist format; consolidating the Monitoring Plan
+section into an explicit structured checklist; and a debatable wording-nit
+about whether "timing artifact" adequately characterizes a since-corrected
+premature claim. None of these affect the substantive releasability
+claims (runtime verification, validation window, releasability evidence
+all independently confirmed internally consistent by all 3 reviewers), so
+this closure does not expand further to address them — recorded here for
+traceability, not as a Follow-Up Handoff item (they are about this
+closure's own document structure, not a future code/config action).
+
+Both fixes were committed as a fourth follow-up commit and pushed. The PR
+body was updated (`gh pr edit`) to reflect this commit as the current
+reviewed HEAD, closing the chronology gap the consensus finding
+identified — this addendum is written after that update, not before it,
+specifically to avoid repeating the same premature-claim pattern a fourth
+time.
+
+This is the fourth and final round of review-driven correction in this
+closure session (3 Copilot shadow-review rounds + this final local-review
+pass, all now resolved); per Ship's own review-fix-cycle circuit breaker,
+this closure treats this as the natural stopping point rather than
+continuing to iterate.

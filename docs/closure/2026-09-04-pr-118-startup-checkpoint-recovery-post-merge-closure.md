@@ -376,7 +376,7 @@ cannot treat observation as already closed out.
   of `start.sh`/`start.ps1` and any live MCP client session against this
   workspace.
 * **Outcome recording**: whoever closes this window (by performing
-  `mcp-client-smoke` or at the 14-day mark) should record the outcome —
+  `mcp-client-smoke` or at the 14-day mark) MUST record the outcome —
   healthy, degraded, or rolled back — as a follow-up note; this closure
   cannot pre-record an outcome it has not observed. This is folded into
   Follow-Up Handoff item 6 below rather than duplicated as a separate
@@ -535,7 +535,7 @@ a read-only pointer for Stage:
    tool surface for the launcher/`.mcp.json` changes this PR made. This
    checkpoint's completion is also the natural close-out signal for the
    open 14-day post-deploy observation window (see Validation Window
-   above); whoever performs it should record the window's outcome
+   above); whoever performs it MUST record the window's outcome
    (healthy/degraded/rolled back) at the same time.
 7. **`mcp-stdio-startup` cannot literally certify a clean exit** (see
    Validator Evidence above) — the probe as currently specified sends no
