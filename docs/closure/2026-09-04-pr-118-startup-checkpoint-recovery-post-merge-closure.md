@@ -365,11 +365,13 @@ Re-verified on the merge commit in this closure session:
 | Remove `--read-only` from the `graphtor-docs` `.mcp.json` entry | low-moderate (widens the MCP server's write capability for this local dev-tooling config; reviewed and accepted by Copilot review + operator during PR #118's own lifecycle) | applied (pre-existing to this closure) |
 | Create post-merge closure branch `post-merge/startup-checkpoint-recovery` directly from freshly-fetched `origin/main` | low (standard P-016-compliant closure branch creation; verified single worktree before and after) | applied, verified |
 | Defer 2 out-of-scope autoharness-template findings (`BAD41DF2`, `8AFB7B3A`) via P-021 C2 capture instead of editing an externally-versioned tool project | low (no repository file exists to edit; capture-only, no code change) | applied (pre-existing to this closure) |
+| Capture 1 out-of-scope Validation Window anchor finding (`67BA0629`) via P-021 C2 instead of rewriting the window's anchor logic outside this session's authorized scope | low (stash-only creation, no code/content change; the sole permitted mutation under the P-021 C5 capture-only carve-out) | applied by this closure session; downstream consequence: the captured entry's `kind: chore` value is not a member of the stash schema's enum (`PRRT_kwDORiB5E86ff6Uc`) — Ship has no authority to correct this (see Follow-Up Handoff item 9), so it remains open pending operator or Stage action |
 
-No new risky action was taken *by this closure session* beyond branch
-creation and read-only verification/reporting; the checkpoint-quarantine and
-`--read-only` removal actions were already applied and merged prior to this
-session and are listed here for completeness of the closure record.
+This closure session's own new risky action is the `67BA0629` stash
+capture above (low risk, capture-only, no code/content change) plus branch
+creation and read-only verification/reporting; the checkpoint-quarantine
+and `--read-only` removal actions were already applied and merged prior to
+this session and are listed here for completeness of the closure record.
 
 ## Healthy Signals
 
