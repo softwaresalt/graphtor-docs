@@ -14,6 +14,13 @@
       "env": {"ENGRAM_WORKSPACE": "${workspaceFolder}"},
       "tools": ["*"]
     },
+    "graphtor-docs": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [".copilot/graphtor-mcp-shim.cjs", "graphtor-docs", "serve"],
+      "x-graphtor-managed": true,
+      "tools": ["*"]
+    },
     "context7": {
       "type": "stdio",
       "command": "bunx",

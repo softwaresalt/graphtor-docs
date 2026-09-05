@@ -4,6 +4,7 @@ Cargo.lock.bak
 
 # Transient output files (logs, test results, lint reports)
 logs/
+docs/scratch/
 
 # C extensions
 *.so
@@ -122,6 +123,8 @@ tmp/
 .backlogit/*.db-shm
 .backlogit/*.db-wal
 .backlogit/*.db-journal
+.backlogit/logs/
+.backlogit/runtime/
 
 # graphtor-docs — managed by graphtor-docs install
 .graphtor/

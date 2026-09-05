@@ -95,9 +95,12 @@ function Write-Info([string]$Msg) { Write-Host "  [..]   $Msg" }
 function Write-Warn2([string]$Msg) { Write-Warning $Msg }
 function Write-Fail([string]$Msg) { Write-Host "  [FAIL] $Msg" -ForegroundColor Red }
 
-# Load .env.local (gitignored per-developer overrides) if present, mirroring the
-# start.ps1 loader: export each KEY=VALUE only when not already set; strip a
-# single pair of matching surrounding quotes.
+# Load .env.local (gitignored per-developer overrides) if present. Unlike the
+# start.ps1/start.sh launchers (which use unconditional-override precedence
+# for interactive dev sessions), this deploy script intentionally keeps
+# skip-if-already-set precedence: export each KEY=VALUE only when not already
+# set, so a value already provided by the invoking shell/CI takes priority
+# over .env.local. Strip a single pair of matching surrounding quotes.
 $envLocalPath = Join-Path $WorkspaceRoot ".env.local"
 if (Test-Path -LiteralPath $envLocalPath -PathType Leaf) {
     Get-Content -LiteralPath $envLocalPath | ForEach-Object {
