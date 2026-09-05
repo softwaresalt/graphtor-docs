@@ -807,3 +807,90 @@ at least once before, triggered a fresh review round against itself).
 this session or any prior session** — this consolidated pass's operator
 authorization is explicitly distinct from, and does not extend to, the
 P-014 merge-approval decision.
+
+## Addendum 9 — Round 7 discovery, P-021 deferred capture, and a genuine
+## authority blocker (post-`b5f7398` polling)
+
+Polling the resulting Copilot review after Addendum 8's fix push (per the
+"Next steps" above) surfaced exactly the self-referential pattern that push
+anticipated: 1 new thread, `PRRT_kwDORiB5E86ff2Hy`, on this closure
+artifact's `## Validation Window` `Duration` bullet — a genuine finding
+(the window anchors to "this closure's merge," PR #119, rather than PR
+#118's actual runtime-affecting merge `255020e`, which would omit the
+already-elapsed observation interval). Classified against P-021 C1: out of
+scope for this session's authorization (scoped to exactly the 4 named
+round-5/6 findings, not a newly-surfaced 5th finding not itself a
+consequence of the round-5/6 fix). Discovery search of active and archived
+stash found no prior matching entry (one unrelated substring
+false-positive). Captured per P-021 C2 as stash entry `67BA0629` (full
+six-field payload — expansion statement, out-of-scope rationale citing C1,
+source refs including the thread ID, `requires deliberation: true`, kind
+`chore` / provisional priority `medium`). Replied to the thread citing the
+entry ID and disposition, then resolved per the canonical thread-present
+procedure (capture → reply → resolve) — an initial reply mistakenly said
+the thread would be left open "pending operator disposition," which does
+not match the canonical procedure; corrected with a follow-up reply
+clarifying that the durable stash entry, not an open GitHub thread, is the
+correct pointer for future Stage attention, then resolved.
+
+The stash capture entry itself is a **tracked** file
+(`.backlogit/stash.jsonl` — confirmed via `git ls-files`, and this same
+file has prior commit history on this branch's ancestry, e.g. `254b99b`,
+`d4f0029`, both pre-existing P-021 captures from PR #118's own lifecycle).
+Consistent with that established precedent, the capture was committed as
+its own small, honestly-labeled commit (bookkeeping only — no content/code
+change) and pushed.
+
+That push triggered a further Copilot review round, surfacing 2 more
+threads:
+
+1. `PRRT_kwDORiB5E86ff6Uc` — genuine and valid: the just-created
+   `67BA0629` entry's embedded `kind: chore` is not a member of the stash
+   schema's `feature`/`task`/`bug`/`epic`/`unknown` enum
+   (`.github/instructions/backlogit-sql-schema.instructions.md:81`).
+   **This finding cannot be fixed by Ship.** Correcting it requires
+   editing the just-created stash entry's content, which Ship's own Role
+   Boundary (P-010, P-021 C5 capture-only carve-out) explicitly forbids —
+   *"Ship never... edits... any stash entry — including the one it just
+   created."* No substitute action exists either: a replacement entry
+   would violate the C2 single-write invariant, and archiving the invalid
+   entry is equally forbidden. Replied explaining this authority
+   constraint and the two available remediation paths (direct operator
+   correction, or a future Stage session's stash-triage authority);
+   **left unresolved** — a genuine design/authority blocker for this
+   session, not a P-021 scope question, so no further stash capture was
+   made for it.
+2. `PRRT_kwDORiB5E86ff6Ul` — genuine and valid: this artifact's
+   `## P-021 Deferred Findings` heading/closing text, `## Follow-Up
+   Handoff` opening text and numbered list, and the `## Cross-References`
+   follow-up-items line all still claimed "no stash mutation of any kind"
+   / "read-only pointer, not mutated" after `67BA0629` had in fact been
+   created — a direct, same-contract-surface consequence of this pass's
+   own capture action (P-021 C1: in scope, fixable, safe). Fixed in the
+   same commit as this addendum: all three locations now correctly
+   distinguish the four genuinely-untouched pre-existing entries from the
+   one entry this closure session itself created under the C5 carve-out
+   (never edited, harvested, or archived afterward), and record the
+   `ff6Uc` kind-enum defect as its own numbered item (9) since this
+   closure session identified it but has no authority to correct it.
+
+**Outcome of this addendum's commit**: fixes `ff6Ul` only (in scope,
+same-contract, safe). Does **not** fix `ff6Uc` (authority blocker, not a
+scope question — no fix possible without violating Ship's Role Boundary).
+Per this session's stopping condition ("stop only when P-018 is SATISFIED
+... or a genuinely unsafe/design blocker remains"), `ff6Uc` is exactly such
+a blocker: P-018 cannot report `SATISFIED` while it remains unresolved, and
+Ship has no available action to resolve it. This is the halt point for
+this session's autonomous remediation — further findings arising from
+polling this addendum's own push, if any, are to be recorded and reported
+to the operator rather than autonomously fixed, consistent with avoiding
+an unbounded self-referential review-fix regress (this closure PR's
+Copilot round count is already far beyond any reasonable bound: 9 rounds
+recorded in the gate's own `rounds` counter as of this polling).
+
+No shipment claim, no `048-S`/`049-S` mutation (re-confirmed unchanged:
+`048-S: archived`, `049-S: queued`), and no backlog item/shipment creation
+occurred in this addendum's actions. The one stash mutation
+(`67BA0629`'s creation) was already authorized and performed under Addendum
+8's own P-021 C2 capture; this addendum documents its downstream review
+consequences and the one further in-scope doc fix they required.

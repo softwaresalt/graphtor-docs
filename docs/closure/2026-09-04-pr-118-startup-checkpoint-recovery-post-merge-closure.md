@@ -153,11 +153,14 @@ were resolved before merge, `mergeStateStatus: CLEAN`, and
 `autoharness gate copilot-review 118 --enforcement auto` reported
 `SATISFIED: PASS` at the final head (`176a198`) prior to merge.
 
-## P-021 Deferred Findings (read-only pointer — not created or mutated by this closure)
+## P-021 Deferred Findings
 
 Four `DEFERRED SCOPE EXPANSION` stash entries were captured during the PR's
 own lifecycle (prior to this closure session), all still `active` in the
-stash as of this closure:
+stash as of this closure. A fifth entry (`67BA0629`) was captured **by this
+closure session itself**, during its own review-remediation pass — the
+single P-021 C2 capture-only stash creation Ship's Role Boundary (P-010, C5
+carve-out) permits:
 
 | Stash ID | Finding | Disposition |
 |---|---|---|
@@ -165,10 +168,16 @@ stash as of this closure:
 | `578B8678` | `.mcp.json` `graphtor-docs` entry's shim is gitignored/unverified by install/tune, and `x-graphtor-managed: true` risks the generator silently overwriting its custom shape on next install | Captured + thread resolved on PR #118; requires Stage triage/deliberation |
 | `BAD41DF2` | The externally-versioned `autoharness` template `scripts/start.ps1.tmpl` was not updated to match the `start.ps1` fix, so a future `autoharness install`/`tune` could regenerate a stale launcher | Captured + thread resolved on PR #118; confirmed no `.tmpl` file exists anywhere in this repo's tracked source — genuinely outside this repository's contract surface |
 | `8AFB7B3A` | Same finding as `BAD41DF2`, for `scripts/start.sh.tmpl` | Captured + thread resolved on PR #118; same rationale as `BAD41DF2` |
+| `67BA0629` | This closure artifact's `## Validation Window` `Duration` bullet anchors to "this closure's merge" (PR #119, still pending) rather than PR #118's actual runtime-affecting merge (`255020e`, already landed), which would omit the already-elapsed observation interval | Captured + thread resolved on PR #119 (`PRRT_kwDORiB5E86ff2Hy`), during this closure PR's own review-remediation pass; requires Stage triage/deliberation |
 
-This closure session performed **no** stash mutation of any kind (create,
-edit, harvest, or archive) — read-only lookup only, per Ship's Role Boundary
-(P-010). All four remain open for a future Stage session.
+For the first four entries, this closure session performed **no** stash
+mutation of any kind (create, edit, harvest, or archive) — read-only lookup
+only, per Ship's Role Boundary (P-010); all four remain open for a future
+Stage session. The fifth entry (`67BA0629`) was created by this same
+closure session under the narrow P-021 C2 capture-only carve-out — a single
+permitted creation, never an edit, harvest, or archive of any entry
+(including that one, once created). All five remain open for a future
+Stage session.
 
 ## Invariants to Preserve
 
@@ -567,11 +576,14 @@ Stage/operator session.
     existing entry's Prevention section already covers this exact class of
     defect, and this closure found no new distinct root cause to document.
 
-## Follow-Up Handoff (for a future Stage session — not created or mutated here)
+## Follow-Up Handoff (for a future Stage session)
 
-Per Ship's Role Boundary, no stash entry, backlog item, or shipment was
-created, edited, or archived by this closure. The following are recorded as
-a read-only pointer for Stage:
+Per Ship's Role Boundary, no backlog item or shipment was created, edited,
+or archived by this closure, and no stash entry was ever edited, harvested,
+or archived. One stash entry (`67BA0629`) was created under the narrow
+P-021 C2 capture-only carve-out during this closure PR's own
+review-remediation pass — the sole permitted mutation. It, and the four
+pre-existing entries below, are recorded here as a pointer for Stage:
 
 1. **`CCAC612D`** — ad hoc git diagnostic scripts
    (`scripts/git_commands.py`, `scripts/run_git_commands.sh`) — durable
@@ -635,10 +647,29 @@ a read-only pointer for Stage:
    on stdin EOF" signal — worth flagging to whoever picks up PR #114's
    deferred work, since it also affects every future closure that touches
    this surface, not just this one.
+8. **`67BA0629`** — this closure artifact's `## Validation Window`
+   `Duration` bullet anchors to "this closure's merge" (PR #119, still
+   pending) rather than PR #118's actual runtime-affecting merge
+   (`255020e`, already landed) — needs the anchor corrected to the actual
+   merge date so the observation window does not omit the already-elapsed
+   interval. Captured by this closure session itself (P-021 C2), not by
+   the underlying PR #118.
+9. **Stash entry `67BA0629` carries a schema-non-conformant `kind` value**
+   (`chore`, not a member of the `feature`/`task`/`bug`/`epic`/`unknown`
+   enum defined in
+   `.github/instructions/backlogit-sql-schema.instructions.md:81`) —
+   flagged by Copilot review on this closure PR
+   (`PRRT_kwDORiB5E86ff6Uc`); Ship's Role Boundary forbids editing any
+   stash entry, including one it just created, so this requires direct
+   operator correction or a future Stage session's stash-triage authority.
 
-None of these seven items were created, edited, harvested, or archived by
-this closure — they are cited here solely so a future Stage/operator
-session can locate them.
+Items 1–7 were neither created, edited, harvested, nor archived by this
+closure — they are cited here solely so a future Stage/operator session
+can locate them. Item 8 (`67BA0629`) was created by this closure session
+under the P-021 C2 capture-only carve-out (the sole permitted mutation);
+it was never edited, harvested, or archived afterward. Item 9 documents a
+data-quality defect in that same entry that this closure session
+identified but has no authority to correct.
 
 ## Source-Artifact Retirement (backlogit)
 
@@ -665,3 +696,6 @@ absent.
 * `docs/compound/workflow-issues/mcp-json-workspacefolder-camelcase-2026-08-24.md`
 * Follow-up items (stash, read-only pointer, not mutated): `CCAC612D`,
   `578B8678`, `BAD41DF2`, `8AFB7B3A`
+* Follow-up item (stash, created by this closure session under the P-021
+  C2 capture-only carve-out, never edited/harvested/archived afterward):
+  `67BA0629`
