@@ -160,8 +160,8 @@ separately — see
 ## Result
 
 2 memory files compacted into this 1 consolidated summary; 2 files archived
-to `docs/archive/memory/2026-09-04/` (byte-preserved, only 2 internal
-cross-reference paths corrected — the cycle4 file's citation of the
+to `docs/archive/memory/2026-09-04/` with content preserved apart from 2
+documented cross-reference corrections (the cycle4 file's citation of the
 readiness file's new location, and the readiness file's own frontmatter
 `source` field); 0 files deleted; 0 external tracked citing documents found
 (none needed updating); 2 sibling 2026-09-03 memory files and this closure

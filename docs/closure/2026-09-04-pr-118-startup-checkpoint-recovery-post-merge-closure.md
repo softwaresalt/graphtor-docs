@@ -312,8 +312,9 @@ session memory checkpoint was written (see Cross-References). **Outcome:
 PR #118 lifecycle (`pr-118-readiness-copilot-remediation-memory.md`,
 `pr-118-cycle4-circuit-breaker-halt-memory.md`) were compacted into
 `docs/memory/compacted/2026-09-04-pr-118-startup-checkpoint-recovery-compacted.md`
-and the verbose originals archived byte-preserved to
-`docs/archive/memory/2026-09-04/`. Zero external tracked citing documents
+and the verbose originals archived to `docs/archive/memory/2026-09-04/`
+with content preserved except for the two required cross-reference
+corrections described next. Zero external tracked citing documents
 required updating (verified via `git grep`); the two files' own mutual
 internal citation and one frontmatter `source` self-reference were
 corrected to the new archive paths.
