@@ -81,9 +81,12 @@ compacted** (not part of this pair, and not otherwise eligible):
   compound-learning candidate if this pattern recurs (not separately
   captured as a compound entry — noted here for traceability only).
 * Four consecutive Copilot review-fix rounds occurred across the PR's
-  lifecycle. Round 4 exceeded the Ship agent's 3-cycle circuit-breaker limit
+  lifecycle, as narrated by the two source memory files compacted into this
+  record. Round 4 exceeded the Ship agent's 3-cycle circuit-breaker limit
   for review-comment fix cycles; per that directive, the two round-4
   findings were initially left unresolved and presented to the operator.
+  (Review continued past this point — see the Correction paragraph below
+  for the full, later-verified 7-submission count.)
 * On resumption, the operator authorized extending the review-fix budget to
   a 4th cycle. Both round-4 findings were investigated against the actual
   repository layout (not accepted at face value) and confirmed to require
@@ -102,11 +105,17 @@ compacted** (not part of this pair, and not otherwise eligible):
   ordering. `mergeStateStatus` moved `BLOCKED` → `CLEAN`;
   `autoharness gate copilot-review 118 --enforcement auto` →
   `SATISFIED: PASS`.
-* Applied 4 genuine in-scope Copilot findings directly across the PR's
-  earlier rounds (`.mcp.json` backslash path; missing `${workspaceFolder}`
-  env bindings; `.mcp.json`/`start.sh` sync-removal inconsistency; a
-  stale-tense compound-doc paragraph) — all within files this branch itself
-  modified, confirmed in-scope per P-021 C1/C3.
+* Applied 4 genuine in-scope Copilot findings directly across the two
+  source memory files' own narrated rounds (`.mcp.json` backslash path;
+  missing `${workspaceFolder}` env bindings; `.mcp.json`/`start.sh`
+  sync-removal inconsistency; a stale-tense compound-doc paragraph) — all
+  within files this branch itself modified, confirmed in-scope per
+  P-021 C1/C3. This count is distinct from, and does not include, the
+  separate round-2 `start.sh` cwd-anchoring/`.env.local`-guard fix
+  (`25a1290`), which the two source memories did not narrate as part of
+  this same review-remediation list but which the closure artifact's
+  authoritative per-round breakdown documents in full (see the Correction
+  paragraph below).
 * Did not fix a 5th finding (stash `CCAC612D`'s own `Kind: chore` text vs.
   its actual `kind: task` field) — editing a captured stash entry is outside
   Ship's create-only stash authority (Role Boundary, single-write capture
