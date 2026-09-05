@@ -327,7 +327,87 @@ document's own remediation history had already been correcting. Fixed
 directly: reworded "final HEAD" to "then-current HEAD" in both Addendum 2
 and Addendum 3, explicitly anchored `ada4cf7` as "the second follow-up
 commit," and this addendum itself now states the PR body's update status
-for the current HEAD (below) rather than leaving it implicit.
+for the current HEAD (below) rather than leaving it implicit. This fix,
+plus the "should"→"MUST" wording tightening in the closure artifact's
+Validation Window and Follow-Up Handoff item 6, was committed at `1a98eb3`
+and the PR body was updated to reflect that HEAD with a complete,
+accurate review-round history (verified via `gh pr view 119` after the
+edit).
+
+## Addendum 5 — Fourth Copilot review round: circuit breaker invoked, session halted for operator (same session)
+
+After pushing `1a98eb3` and updating the PR body, the P-018
+`autoharness gate copilot-review` check was re-run
+(`--enforcement auto --max-wait 900`) to confirm merge-readiness. It
+returned **`UNRESOLVED_THREADS` (BLOCKED)** at `head_ref_oid: 1a98eb3`,
+citing 2 unresolved review threads. Investigation via the GraphQL
+`reviewThreads` connection showed these 2 threads were created at
+`2026-09-05T01:51:36Z` — i.e., they were posted by Copilot's automatic
+re-review of the **`d62f6d5` push** (round 3's fix), before this
+session's own local-review pass 3 / Addendum 4 fix cycle began, and were
+simply not yet discovered because the gate had not been re-run since that
+push. This is the **fourth** distinct Copilot review round this closure
+PR has accumulated (round 1: 5 findings fixed at `a150d72`; round 2: 6
+findings fixed at `ada4cf7`; round 3: 3 findings fixed at `d62f6d5`; round
+4: 2 findings, described below).
+
+The 2 round-4 findings, read directly from the thread bodies:
+
+1. **`PRRT_kwDORiB5E86ffNiF`** (closure artifact, `Pre-Deploy Audits`
+   section, line 263 / the `Pre-deploy audit: N/A` row in the
+   Releasability Evidence table): genuinely substantive and **not yet
+   addressed**. Copilot correctly observes that this closure artifact
+   elsewhere classifies PR #118 as runtime-affecting (removal of
+   `--read-only` recorded as a capability widening) and that the
+   installed release-observability contract requires flag/rollout,
+   rollback, compatibility, dependency, and monitoring checks — not an
+   `N/A` disposition — for runtime-risk work. Fixing this correctly would
+   require re-examining and rewriting the Pre-Deploy Audits section (and
+   possibly the Releasability Evidence table row) with the same care as
+   the prior 3 rounds, which is exactly the kind of investigation this
+   halt defers to the operator rather than rushing.
+2. **`PRRT_kwDORiB5E86ffNiP`** (session-memory `Reviewed HEAD` claim):
+   flags that at the time this thread was created (against the `d62f6d5`
+   push), the PR body still said `Reviewed HEAD: 8e484f4` /
+   `Outcome: READY` and only described 2 Copilot rounds. This is now
+   **stale/already-moot**: the PR body was independently updated to
+   `1a98eb3` with the full accurate round history as part of this same
+   commit's remediation (see above), before this thread was even
+   discovered. No further content change is needed for this specific
+   finding, but the thread itself has not been replied to or resolved.
+
+**Circuit breaker invoked.** Ship's own circuit-breaker table specifies
+"Review comment fix cycles per task: 3 → Present PR with remaining
+unresolved comments listed for operator." Rounds 1–3 already consumed all
+3 cycles (each investigated, fixed, and its threads replied-to/resolved
+in full). This round-4 discovery is a 4th cycle, over the limit.
+Per protocol and per this session's own prior decision (recorded in
+Addendum 4's framing), **no further auto-fix is performed**. The session
+halts here: the PR is presented to the operator with both round-4 threads
+left unreplied and unresolved, the P-018 gate is left in its current
+`BLOCKED`/`UNRESOLVED_THREADS` state, and no merge is attempted. This is
+a deliberate stop, not an oversight — continuing to iterate risks an
+unbounded loop, since each fix-and-push cycle has so far re-armed at least
+one more Copilot round against the fix itself (this exact pattern
+occurred between round 1 and round 2, and between round 3 and this
+round 4).
+
+**Session end state**: remained on `post-merge/startup-checkpoint-recovery`
+throughout (never checked out `main`); single worktree confirmed via
+`git worktree list --porcelain`; PR #119 base `main`, head `1a98eb3`; CI
+checks (`detect code changes`, `pipeline topology gate`) both PASS,
+`build` correctly skips (docs-only PR); repository merge-strategy setting
+confirmed merge-commit-only (P-009). Closure content itself (the closure
+artifact's own releasability verdict) remains `READY_WITH_CONDITIONS`
+pending the operator's decision on how to proceed with the outstanding
+Pre-Deploy Audits finding; PR #119's own local-review readiness is
+`READY` per the local adversarial-review history above, but the PR's
+**P-018 gate is BLOCKED** on the 2 unresolved round-4 Copilot threads and
+merge must not proceed until the operator decides whether to (a)
+authorize a bounded 4th fix cycle, (b) accept the Pre-Deploy Audits
+finding as a recorded follow-up condition instead of a direct fix, or (c)
+provide other explicit direction. **No merge approval has been given or
+sought for PR #119** at any point in this session.
 
 Also fixed: a "should" → "MUST" rigor-language gap in the closure
 artifact's Validation Window / Follow-Up Handoff item 6 outcome-recording
