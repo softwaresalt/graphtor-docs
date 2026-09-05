@@ -26,8 +26,10 @@ single coherent commit per operator instruction, rather than discarded.
 ## Summary
 
 Continued the PR #118 lifecycle from the prior checkpoint
-(`docs/memory/2026-09-04/pr-118-readiness-copilot-remediation-memory.md`,
-committed `637524a`). Completed Copilot review-fix cycle 3's carry-over
+(`docs/archive/memory/2026-09-04/pr-118-readiness-copilot-remediation-memory.md`,
+committed `637524a`; relocated here by the 2026-09-04 P-020 post-merge
+compaction pass — see
+`docs/memory/compacted/2026-09-04-pr-118-startup-checkpoint-recovery-compacted.md`). Completed Copilot review-fix cycle 3's carry-over
 thread closeout, then Copilot's round-4 automated review (triggered by the
 cycle-3 fix push, `d4f0029`) surfaced 2 NEW findings. This is the 4th
 consecutive review-fix round on this PR, exceeding the Ship agent's
