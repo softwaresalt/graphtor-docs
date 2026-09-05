@@ -246,11 +246,59 @@ surfaced **6 further actionable findings** at the new HEAD:
    harness (tracked as PR #114 in the manifest's own note).
 6. **The PR body's `## Local Review Readiness` block was stale** —
    advertised `READY` at reviewed HEAD `e526222` while the closure artifact
-   already recorded `READY_WITH_CONDITIONS` at a later HEAD. Corrected by
-   updating the PR body for the current HEAD once all content fixes were
-   committed and pushed.
+   already recorded `READY_WITH_CONDITIONS` at a later HEAD. **Confirmed
+   corrected**: the PR body was updated via `gh pr edit` to the final HEAD
+   (`8e484f4`, after the second review round's own follow-up fixes landed),
+   with a full history of both local-review passes and both Copilot
+   shadow-review rounds — independently re-verified via
+   `gh pr view 119 --json body` showing `Reviewed HEAD: 8e484f4...` live on
+   the PR, not merely planned.
 
 All 6 findings were investigated before fixing (per the same
 investigate-before-fixing discipline as Addendum 1) and fixed directly
 in-scope (P-021 C1/C3) in a second follow-up commit, pushed, and the
 corresponding review threads replied to and resolved.
+
+## Addendum 3 — Closure PR #119 third Copilot review round + local-review re-pass (same session)
+
+A second local adversarial review pass (against the `e526222..ada4cf7`
+diff) returned `READY_WITH_FOLLOWUPS` (2 LOW-confidence, MINOR advisory
+nits confined to the compacted memory file's pre-existing round-count
+narrative — neither introduced by the corrective diff itself). Both were
+fixed directly (in-scope, low-effort wording reconciliation), committed as
+`8e484f4`, and pushed. The PR body was then updated (`gh pr edit`) to the
+final HEAD with the full local- and shadow-review history.
+
+Pushing `8e484f4` re-armed Copilot review a third time, surfacing **3
+further findings**:
+
+1. **A reintroduced N/A-adjacent contradiction**: the Summary's own
+   "zero product runtime surface touched" sentence (describing the absence
+   of Rust source changes) contradicted the already-corrected Validator
+   Evidence section. Fixed by distinguishing "no Rust/binary implementation
+   changed" from "no runtime surface touched" — the latter is false; the
+   launcher/`.mcp.json` changes do touch the required `cli` surface.
+2. **Post-deploy observation window incorrectly declared closed**: the
+   `release-observability` capability pack (confirmed installed via
+   `.github/instructions/release-observability.instructions.md`) requires
+   an explicit, bounded observation window (duration + owner) for
+   runtime-affecting work, not a "no window" declaration — especially with
+   `mcp-client-smoke` still outstanding. Corrected: opened an explicit
+   14-day (or until `mcp-client-smoke` completes, whichever first) window,
+   owner `@softwaresalt`, tied to the same Follow-Up Handoff item as the
+   outstanding manual checkpoint.
+3. **A stale self-referential claim in this very memory file** (Addendum 2,
+   item 6): at the time that sentence was written (during the `ada4cf7`
+   commit), the PR body had not yet actually been updated — the sentence
+   described a still-pending action in a way that could be misread as
+   already complete. By the time this third Copilot round ran, the PR body
+   update genuinely had landed (see above), so this was a timing artifact,
+   not a live inaccuracy; the wording was nonetheless sharpened to state
+   the completion definitively and cite independent re-verification.
+
+All 3 findings were investigated, confirmed genuine (not false positives —
+finding 1 was a real reintroduced contradiction; finding 2 reflected a real
+gap against an actually-installed capability pack's contract; finding 3 was
+a legitimate wording-precision gap), and fixed directly in-scope (P-021
+C1/C3) in a third follow-up commit, pushed, and the corresponding review
+threads replied to and resolved.

@@ -141,9 +141,12 @@ Change surface:
   fixed in-branch (see P-021 Deferred Findings below).
 * **`.github/copilot/settings.local.json`** — new file, local Copilot CLI
   effort/model override (`effortLevel: high`, `model: gpt-5.6-sol`).
-* No Rust source (`src/`), `Cargo.toml`, or `Cargo.lock` changes — this is a
-  tooling/config/backlog-hygiene PR with zero product runtime surface
-  touched.
+* No Rust source (`src/`), `Cargo.toml`, or `Cargo.lock` changes — the
+  `graphtor-docs` binary's own implementation is untouched. This is **not**
+  the same as "zero runtime surface touched": the launcher/`.mcp.json`
+  changes above DO touch the required `cli` runtime surface defined by
+  `runtime_validation.validator_manifest` (see Validator Evidence below,
+  which corrects an earlier, incorrect `N/A` framing of this point).
 
 Across the full 7-round Copilot review history above, all review threads
 were resolved before merge, `mergeStateStatus: CLEAN`, and
@@ -356,9 +359,28 @@ Any Failure Signal above observed by the operator or a future agent session.
 
 ## Validation Window
 
-None open. This is a static, immediately-effective change with no async
-rollout or delayed-activation window — the corrected launcher/config
-behavior takes effect on the very next invocation.
+**Open, bounded observation window** (release-observability contract:
+runtime-affecting work requires an explicit duration and owner, not a
+"no window" declaration): the launcher/`.mcp.json` change is
+runtime-affecting (see Validator Evidence above), and the required
+`mcp-client-smoke` manual checkpoint remains outstanding, so this closure
+cannot treat observation as already closed out.
+
+* **Duration**: 14 calendar days from this closure's merge, **or** until
+  the `mcp-client-smoke` manual checkpoint is performed (whichever comes
+  first) — the checkpoint's own completion is the natural close-out
+  signal for this window, since it is the one piece of evidence this
+  closure could not automate.
+* **Owner**: `@softwaresalt` (sole maintainer).
+* **What to watch**: the Healthy/Failure Signals above during ordinary use
+  of `start.sh`/`start.ps1` and any live MCP client session against this
+  workspace.
+* **Outcome recording**: whoever closes this window (by performing
+  `mcp-client-smoke` or at the 14-day mark) should record the outcome —
+  healthy, degraded, or rolled back — as a follow-up note; this closure
+  cannot pre-record an outcome it has not observed. This is folded into
+  Follow-Up Handoff item 6 below rather than duplicated as a separate
+  item.
 
 ## Owner
 
@@ -382,7 +404,7 @@ behavior takes effect on the very next invocation.
 | Monitoring plan | Manual observation (proportionate — single-developer local tool) |
 | Pre-deploy audit | N/A — no migration/flag/cross-service dependency |
 | Runtime verification | `READY_WITH_CONDITIONS` — `cli-status` passes cleanly and the launcher fix's own logic was independently replay-verified; `mcp-stdio-startup` shows no evidence of a regression but its exit-on-EOF result does not literally certify the manifest's declared clean-exit signal (no initialize-sending harness exists yet); the required `mcp-client-smoke` manual checkpoint was not performed this session (see Validator Evidence above) |
-| Post-deploy observation window | Closed — no async rollout, effect is immediate and already re-confirmed |
+| Post-deploy observation window | Open — 14-day bounded window (or until `mcp-client-smoke` is performed, whichever first), owner `@softwaresalt`; see Validation Window above |
 | Rollback trigger + procedure | Defined above |
 | Risky actions | All recorded above, `ActionResult: applied` |
 | Backlog closure | `N/A` — no shipment claimed; `048-S`/`049-S` confirmed unmodified |
@@ -510,7 +532,11 @@ a read-only pointer for Stage:
    above) — needs a live MCP client session (call `get_status`, then
    `search_local_docs`/`search_semantic` against an indexed source) at the
    next opportunity, to validate the `initialize` handshake and advertised
-   tool surface for the launcher/`.mcp.json` changes this PR made.
+   tool surface for the launcher/`.mcp.json` changes this PR made. This
+   checkpoint's completion is also the natural close-out signal for the
+   open 14-day post-deploy observation window (see Validation Window
+   above); whoever performs it should record the window's outcome
+   (healthy/degraded/rolled back) at the same time.
 7. **`mcp-stdio-startup` cannot literally certify a clean exit** (see
    Validator Evidence above) — the probe as currently specified sends no
    `initialize` request, so any invocation (on any build) exits via the
