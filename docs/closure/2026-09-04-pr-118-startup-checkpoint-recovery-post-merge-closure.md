@@ -78,11 +78,14 @@ node), not the 4 stated in an earlier draft of this closure. Of those 7:
   repeat comments on unchanged code across rounds) that were never
   individually replied to, fixed, or captured: 6 identical findings that the
   new `.backlogit/archive/checkpoints/*.disposition.json` files publicly
-  record a Windows domain account (`REDMOND\dewilliams`) in their `operator`
-  field, plus 1 finding that the in-flight PR-body readiness block was
-  already stale relative to the then-current head. See the new Follow-up
-  Handoff entry below — this closure cannot rewrite already-merged `main`
-  history to redact these disposition-file contents.
+    record a specific Windows domain account identifier (redacted here; see
+    the merged `.disposition.json` files themselves for the literal value —
+    intentionally not repeated in this documentation to avoid creating an
+    additional public copy) in their `operator` field, plus 1 finding that the
+    in-flight PR-body readiness block was already stale relative to the
+    then-current head. See the new Follow-up Handoff entry below — this
+    closure cannot rewrite already-merged `main` history to redact these
+    disposition-file contents.
 
 Change surface:
 
@@ -212,7 +215,7 @@ regression this PR addressed.
 | Probe | Command | Result |
 |---|---|---|
 | `cli-status` (required) | `cargo run --release -- status` | ✅ PASS — reported 5 configured sources and opened the read-only SQLite datastore with no error |
-| `mcp-stdio-startup` (required) | `graphtor-docs.exe serve` with stdin redirected from `NUL` | ✅ PASS — server fully started (posture resolution, DB open, embedding model load, "starting MCP STDIO server" all logged with no error), then exited with `error: MCP server failed to start / Caused by: connection closed: initialize request` (exit code 2) only *after* stdin EOF. This is the documented, expected "benign EOF-driven shutdown" behavior for a closed-stdin probe with no `initialize` request sent — see `docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md` lines 403-409 ("Keep the child's stdin OPEN... A closed stdin only exercises a benign EOF-driven shutdown and cannot distinguish the regression from a normal handshake"). Not a startup error. |
+| `mcp-stdio-startup` (required) | `graphtor-docs.exe serve` with stdin redirected from `NUL` | ⚠️ DOES NOT LITERALLY MEET THE DECLARED SIGNAL — the server started cleanly with no startup-phase error (posture resolution, DB open, embedding model load, "starting MCP STDIO server" all logged with no error), but the manifest's declared success signal is "logs no startup error, **and exits cleanly on stdin EOF**." On stdin EOF this process instead exited with `error: MCP server failed to start / Caused by: connection closed: initialize request` (exit code 2) — not a clean exit. The manifest's own note explains why: this probe sends no JSON-RPC `initialize` request and therefore "cannot distinguish the regression from a normal handshake," deferring real handshake coverage to the `mcp-client-smoke` manual checkpoint; the accompanying `docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md` (lines 403-409) independently documents this exact exit-on-EOF behavior as expected for a closed-stdin, no-`initialize` invocation, and not diagnostic of a regression — the same result would occur on any correctly functioning build run this way, not only PR #118's merge commit. Net assessment: **no evidence of a regression introduced by PR #118**, but this probe's current form cannot, by itself, certify a literal clean exit per the manifest's own wording; an automated initialize-sending harness does not yet exist (manifest note: deferred, see PR #114). |
 
 **Targeted launcher-fix verification (this closure session)**: rather than
 running the full interactive `start.ps1` (which launches the Copilot CLI
@@ -240,10 +243,15 @@ the initialize handshake stays unvalidated — and never a clean READY."*
 This closure follows that fallback exactly; see the downgraded
 Releasability Evidence below.
 
-**Verdict**: `READY_WITH_CONDITIONS` — both required automated probes pass
-and the specific launcher-fix logic was independently replay-verified, but
-the required `mcp-client-smoke` manual checkpoint remains outstanding. No
-other blocked prerequisite.
+**Verdict**: `READY_WITH_CONDITIONS` — `cli-status` passes cleanly; the
+launcher-fix logic itself was independently replay-verified; and
+`mcp-stdio-startup`'s exit-on-EOF behavior shows no evidence of a
+regression introduced by PR #118. Two conditions remain open, both
+stemming from the same underlying gap (no automated harness exists yet to
+drive a real `initialize` handshake over stdio): (1) `mcp-stdio-startup`
+cannot, by itself, literally certify the manifest's declared clean-exit
+signal, and (2) the required `mcp-client-smoke` manual checkpoint has not
+been performed. No other blocked prerequisite.
 
 ## Pre-Deploy Audits
 
@@ -373,23 +381,29 @@ behavior takes effect on the very next invocation.
 |---|---|
 | Monitoring plan | Manual observation (proportionate — single-developer local tool) |
 | Pre-deploy audit | N/A — no migration/flag/cross-service dependency |
-| Runtime verification | `READY_WITH_CONDITIONS` — both required automated probes (`cli-status`, `mcp-stdio-startup`) pass and the launcher fix's own logic was independently replay-verified; the required `mcp-client-smoke` manual checkpoint was not performed this session (see Validator Evidence above) |
+| Runtime verification | `READY_WITH_CONDITIONS` — `cli-status` passes cleanly and the launcher fix's own logic was independently replay-verified; `mcp-stdio-startup` shows no evidence of a regression but its exit-on-EOF result does not literally certify the manifest's declared clean-exit signal (no initialize-sending harness exists yet); the required `mcp-client-smoke` manual checkpoint was not performed this session (see Validator Evidence above) |
 | Post-deploy observation window | Closed — no async rollout, effect is immediate and already re-confirmed |
 | Rollback trigger + procedure | Defined above |
 | Risky actions | All recorded above, `ActionResult: applied` |
 | Backlog closure | `N/A` — no shipment claimed; `048-S`/`049-S` confirmed unmodified |
 | Compaction (P-020) | See Compaction section below |
 
-**Releasability status**: `READY_WITH_CONDITIONS`. **Condition**: perform the
+**Releasability status**: `READY_WITH_CONDITIONS`. **Conditions**: (1) the
+`mcp-stdio-startup` probe's exit-on-EOF result cannot, by itself, literally
+certify the manifest's declared clean-exit signal until an
+initialize-sending harness exists (tracked in the manifest's own note, see
+PR #114) — no regression evidence was found, but literal automated
+certification is not yet possible; (2) perform the
 `mcp-client-smoke` manual checkpoint (call `get_status`, then
 `search_local_docs`/`search_semantic` against an indexed source, from a real
 MCP client) at the next opportunity a live client session is available, to
 validate the `initialize` handshake and advertised tool surface — the one
 piece of required-for-release evidence this closure could not automate.
-This condition does not block the closure PR itself (it is evidence
-generation, not a code or config change) but should be recorded as a
-follow-up for whoever next has an interactive MCP client session against
-this workspace (see Follow-up Handoff below).
+Neither condition blocks the closure PR itself (both are evidence
+generation, not a code or config change) but should be recorded as
+follow-ups for whoever next has an interactive MCP client session against
+this workspace, or picks up the initialize-handshake harness work (see
+Follow-up Handoff below).
 
 ## Compaction (P-020)
 
@@ -473,16 +487,20 @@ a read-only pointer for Stage:
    `reviews` history for PR #118) — `.backlogit/archive/checkpoints/
    checkpoint-{20260429-214618,20260429-215617,20260701-064559,
    20260822-073402,20260822-090657,20260822-092508}.json.disposition.json`
-   each carry `"operator": "REDMOND\\dewilliams"` in a public repository.
-   GitHub's Copilot reviewer flagged this as 6 "suppressed" (previously
-   missed) comments on the PR's **final**, clean (0-new-comment) pre-merge
-   review pass — suppressed because the underlying code had not changed
-   since an earlier round, so no new top-level thread was ever created for
-   Ship to see, reply to, or capture during the PR's own lifecycle. This
-   closure **cannot** remediate it: the content is already part of merged
-   `main` history (`255020e`), and rewriting merged history (`git reset`,
-   force-push, history-editing) is unconditionally forbidden under Ship's
-   Role Boundary. Needs a Stage-triaged decision: accept as a low-severity,
+   each carry a specific Windows domain account identifier in their
+   `operator` field (redacted here — see the merged `.disposition.json`
+   files themselves for the literal value; deliberately not repeated in
+   this documentation to avoid creating an additional public, searchable
+   copy of it). GitHub's Copilot reviewer flagged this as 6 "suppressed"
+   (previously missed) comments on the PR's **final**, clean
+   (0-new-comment) pre-merge review pass — suppressed because the
+   underlying code had not changed since an earlier round, so no new
+   top-level thread was ever created for Ship to see, reply to, or capture
+   during the PR's own lifecycle. This closure **cannot** remediate it: the
+   content is already part of merged `main` history (`255020e`), and
+   rewriting merged history (`git reset`, force-push, history-editing) is
+   unconditionally forbidden under Ship's Role Boundary. Needs a
+   Stage-triaged decision: accept as a low-severity,
    non-credential identity disclosure and document, or schedule a follow-up
    commit that replaces the 6 `operator` values with a repository-safe
    actor identifier (the disposition files themselves, not history, would
@@ -493,8 +511,19 @@ a read-only pointer for Stage:
    `search_local_docs`/`search_semantic` against an indexed source) at the
    next opportunity, to validate the `initialize` handshake and advertised
    tool surface for the launcher/`.mcp.json` changes this PR made.
+7. **`mcp-stdio-startup` cannot literally certify a clean exit** (see
+   Validator Evidence above) — the probe as currently specified sends no
+   `initialize` request, so any invocation (on any build) exits via the
+   same `connection closed: initialize request` error on stdin EOF; the
+   manifest's own note defers a real fix to an automated initialize-sending
+   test harness that "does not exist in `tests/` yet (deferred, see
+   PR #114)." Until that harness exists, this required probe can only ever
+   confirm startup-phase health, not the manifest's literal "exits cleanly
+   on stdin EOF" signal — worth flagging to whoever picks up PR #114's
+   deferred work, since it also affects every future closure that touches
+   this surface, not just this one.
 
-None of these six items were created, edited, harvested, or archived by
+None of these seven items were created, edited, harvested, or archived by
 this closure — they are cited here solely so a future Stage/operator
 session can locate them.
 

@@ -161,7 +161,9 @@ The **final** pre-merge pass (0 new top-level comments) surfaced 7
 *suppressed* (previously-missed) findings in its review body that were
 never individually actioned: 6 identical findings that
 `.backlogit/archive/checkpoints/*.disposition.json` publicly record a
-Windows domain account (`REDMOND\dewilliams`), plus 1 noting the PR body's
+specific Windows domain account identifier (redacted here — see the merged
+files themselves for the literal value, not repeated in this
+documentation), plus 1 noting the PR body's
 readiness block was stale relative to the then-current head. This
 correction does not change any decision or disposition recorded above — it
 only completes the historical count. The domain-account exposure is now

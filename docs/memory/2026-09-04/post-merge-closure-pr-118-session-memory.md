@@ -95,12 +95,17 @@ needed.
    latter defines a required `cli` surface (`cli-status`,
    `mcp-stdio-startup` probes, `mcp-client-smoke` manual checkpoint) that
    this PR's launcher/`.mcp.json` changes squarely touch. Ran both required
-   automated probes against the merge commit (both PASS — see the closure
-   artifact for full evidence) plus an isolated verbatim-logic replay of the
+   automated probes against the merge commit: `cli-status` PASS;
+   `mcp-stdio-startup` started cleanly with no startup-phase error but its
+   exit-on-stdin-EOF result does not literally satisfy the manifest's
+   declared clean-exit signal (the probe sends no `initialize` request, so
+   this is a known probe-methodology limitation — not evidence of a
+   regression — pending an initialize-sending harness, tracked as PR #114).
+   Also ran an isolated verbatim-logic replay of the
    `start.ps1` cwd-anchoring/`.env.local`-override fix (PASS). Could not
    perform the required `mcp-client-smoke` manual checkpoint (no live MCP
    client in this session) — recorded as deferred per the validator
-   manifest's own documented fallback, which caps this at
+   manifest's own documented fallback. Both open items cap this at
    `READY_WITH_CONDITIONS`. Updated the closure artifact's frontmatter and
    releasability section accordingly (`status: READY_WITH_CONDITIONS`).
    Wrote the full `operational-closure` artifact:
@@ -179,9 +184,9 @@ actionable findings** against the closure artifact's own content — not
 wording nits, but factual/completeness corrections:
 
 1. Runtime-verification was wrongly marked `N/A` — corrected per the
-   Decisions-list strikethrough above; both required automated probes now
-   PASS, `mcp-client-smoke` recorded as an outstanding condition
-   (`READY_WITH_CONDITIONS`).
+   Decisions-list strikethrough above; the required automated probes were
+   run against the merge commit, `mcp-client-smoke` recorded as an
+   outstanding condition (`READY_WITH_CONDITIONS`).
 2. Same incorrect `N/A` claim mirrored in this memory file (§9 above) —
    corrected in place.
 3. The closure's `.env.local` history claim ("`start.sh` did not load it at
@@ -194,14 +199,58 @@ wording nits, but factual/completeness corrections:
    Follow-Up Handoff item was added for a previously undiscovered residual
    finding surfaced by this investigation: 6 merged
    `.backlogit/archive/checkpoints/*.disposition.json` files publicly
-   record a Windows domain account (`REDMOND\dewilliams`) — Copilot's own
-   final pre-merge review flagged this as 6 suppressed comments that were
-   never individually surfaced as an actionable thread during PR #118's
-   lifecycle. This closure cannot rewrite already-merged history to redact
-   it; recorded as a Stage follow-up instead.
+   record a specific Windows domain account identifier (redacted here —
+   see the merged files themselves for the literal value, not repeated in
+   this documentation) — Copilot's own final pre-merge review flagged this
+   as 6 suppressed comments that were never individually surfaced as an
+   actionable thread during PR #118's lifecycle. This closure cannot
+   rewrite already-merged history to redact it; recorded as a Stage
+   follow-up instead.
 
 All 5 findings were fixed directly in a follow-up commit (in-scope,
 same-contract-surface corrections to this closure's own content — P-021
 C1/C3), pushed, and the corresponding review threads replied to and
 resolved. See the closure artifact's updated Summary/Validator
 Evidence/Releasability/Follow-Up sections for the corrected content.
+
+## Addendum 2 — Closure PR #119 second Copilot review round (same session)
+
+Pushing the round-1 fix commit (`a150d72`) re-armed Copilot review, which
+surfaced **6 further actionable findings** at the new HEAD:
+
+1/2/3. **The round-1 fix itself republished the exposed domain-account
+   identifier** — in the closure artifact (two locations) and in this
+   memory file's own Addendum text — increasing its public visibility
+   rather than reducing it. Corrected by redacting the literal value in all
+   three locations and pointing instead to the merged `.disposition.json`
+   files themselves as the source of truth, deliberately not creating any
+   further searchable copy of it in documentation.
+4. **The compacted summary also republished the identifier** (line ~164 of
+   the P-020 compacted file) — same redaction applied there.
+5. **The `mcp-stdio-startup` probe result was recorded as an unconditional
+   PASS, but the manifest's declared success signal requires a clean exit
+   on stdin EOF, and the probe actually exited with an error (exit code 2,
+   `connection closed: initialize request`)** — a genuine factual
+   correction, not a wording nit. Investigated against
+   `.autoharness/workspace-profile.yaml`'s validator manifest and the
+   already-cited exec-plan: the manifest's own note explains this probe
+   sends no `initialize` request and therefore cannot distinguish a
+   regression from normal handshake behavior, so the observed exit is a
+   known probe-methodology limitation (identical on any build run this
+   way) rather than evidence PR #118 introduced a regression — but it is
+   NOT a literal PASS of the manifest's declared signal either. Rewrote the
+   closure artifact's probe row, verdict, and releasability
+   evidence/status to state this precisely (still `READY_WITH_CONDITIONS`,
+   now with two explicit conditions instead of one), and added a 7th
+   Follow-Up Handoff item pointing at the missing initialize-sending
+   harness (tracked as PR #114 in the manifest's own note).
+6. **The PR body's `## Local Review Readiness` block was stale** —
+   advertised `READY` at reviewed HEAD `e526222` while the closure artifact
+   already recorded `READY_WITH_CONDITIONS` at a later HEAD. Corrected by
+   updating the PR body for the current HEAD once all content fixes were
+   committed and pushed.
+
+All 6 findings were investigated before fixing (per the same
+investigate-before-fixing discipline as Addendum 1) and fixed directly
+in-scope (P-021 C1/C3) in a second follow-up commit, pushed, and the
+corresponding review threads replied to and resolved.
