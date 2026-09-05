@@ -175,9 +175,14 @@ mutation of any kind (create, edit, harvest, or archive) — read-only lookup
 only, per Ship's Role Boundary (P-010); all four remain open for a future
 Stage session. The fifth entry (`67BA0629`) was created by this same
 closure session under the narrow P-021 C2 capture-only carve-out — a single
-permitted creation, never an edit, harvest, or archive of any entry
-(including that one, once created). All five remain open for a future
-Stage session.
+permitted creation, never an edit, harvest, or archive of any entry by
+Ship (including that one, once created). All five remain open for a
+future Stage session's triage/deliberation of the underlying Validation
+Window anchor expansion. **Update**: `67BA0629`'s structured `kind` field
+was subsequently corrected from the schema-invalid `chore` to the valid
+`task` by Stage (not Ship) — committed by Ship on Stage's behalf at
+`f33aa91` — resolving the separate schema-validity defect flagged by
+Copilot thread `PRRT_kwDORiB5E86ff6Uc`; see Follow-Up Handoff item 9.
 
 ## Invariants to Preserve
 
@@ -365,7 +370,7 @@ Re-verified on the merge commit in this closure session:
 | Remove `--read-only` from the `graphtor-docs` `.mcp.json` entry | low-moderate (widens the MCP server's write capability for this local dev-tooling config; reviewed and accepted by Copilot review + operator during PR #118's own lifecycle) | applied (pre-existing to this closure) |
 | Create post-merge closure branch `post-merge/startup-checkpoint-recovery` directly from freshly-fetched `origin/main` | low (standard P-016-compliant closure branch creation; verified single worktree before and after) | applied, verified |
 | Defer 2 out-of-scope autoharness-template findings (`BAD41DF2`, `8AFB7B3A`) via P-021 C2 capture instead of editing an externally-versioned tool project | low (no repository file exists to edit; capture-only, no code change) | applied (pre-existing to this closure) |
-| Capture 1 out-of-scope Validation Window anchor finding (`67BA0629`) via P-021 C2 instead of rewriting the window's anchor logic outside this session's authorized scope | low (stash-only creation, no code/content change; the sole permitted mutation under the P-021 C5 capture-only carve-out) | applied by this closure session; downstream consequence: the captured entry's `kind: chore` value is not a member of the stash schema's enum (`PRRT_kwDORiB5E86ff6Uc`) — Ship has no authority to correct this (see Follow-Up Handoff item 9), so it remains open pending operator or Stage action |
+| Capture 1 out-of-scope Validation Window anchor finding (`67BA0629`) via P-021 C2 instead of rewriting the window's anchor logic outside this session's authorized scope | low (stash-only creation, no code/content change; the sole permitted mutation under the P-021 C5 capture-only carve-out) | applied by this closure session; downstream consequence: the captured entry's `kind: chore` value was not a member of the stash schema's enum (`PRRT_kwDORiB5E86ff6Uc`) — Ship had no authority to correct this, so it was left for operator or Stage action (see Follow-Up Handoff item 9); Stage subsequently corrected the field to `task`, committed by Ship at `f33aa91` — the underlying Validation Window anchor expansion remains open for Stage triage/deliberation |
 
 This closure session's own new risky action is the `67BA0629` stash
 capture above (low risk, capture-only, no code/content change) plus branch
@@ -582,10 +587,14 @@ Stage/operator session.
 
 Per Ship's Role Boundary, no backlog item or shipment was created, edited,
 or archived by this closure, and no stash entry was ever edited, harvested,
-or archived. One stash entry (`67BA0629`) was created under the narrow
-P-021 C2 capture-only carve-out during this closure PR's own
-review-remediation pass — the sole permitted mutation. It, and the four
-pre-existing entries below, are recorded here as a pointer for Stage:
+or archived by Ship. One stash entry (`67BA0629`) was created under the
+narrow P-021 C2 capture-only carve-out during this closure PR's own
+review-remediation pass — the sole permitted Ship mutation. It, and the
+four pre-existing entries below, are recorded here as a pointer for Stage.
+**Update**: `67BA0629`'s structured `kind` field was subsequently
+corrected by Stage (not Ship) from the schema-invalid `chore` to the
+valid `task`; Ship committed that Stage-authored correction at `f33aa91`
+without itself editing the entry's content — see item 9 below.
 
 1. **`CCAC612D`** — ad hoc git diagnostic scripts
    (`scripts/git_commands.py`, `scripts/run_git_commands.sh`) — durable
@@ -656,22 +665,33 @@ pre-existing entries below, are recorded here as a pointer for Stage:
    merge date so the observation window does not omit the already-elapsed
    interval. Captured by this closure session itself (P-021 C2), not by
    the underlying PR #118.
-9. **Stash entry `67BA0629` carries a schema-non-conformant `kind` value**
+9. **Stash entry `67BA0629` carried a schema-non-conformant `kind` value**
    (`chore`, not a member of the `feature`/`task`/`bug`/`epic`/`unknown`
    enum defined in
    `.github/instructions/backlogit-sql-schema.instructions.md:81`) —
    flagged by Copilot review on this closure PR
-   (`PRRT_kwDORiB5E86ff6Uc`); Ship's Role Boundary forbids editing any
-   stash entry, including one it just created, so this requires direct
-   operator correction or a future Stage session's stash-triage authority.
+   (`PRRT_kwDORiB5E86ff6Uc`); Ship's Role Boundary forbade editing any
+   stash entry, including one it just created, so it required direct
+   operator correction or a future Stage session's stash-triage
+   authority. **Resolved**: Stage corrected the structured `kind` field
+   from `chore` to `task`; Ship independently verified the diff (exactly
+   one field, one entry, changed) and committed the correction at
+   `f33aa91` on Stage's behalf, then replied to and resolved the thread.
+   The entry's embedded free-text `(6) Kind: chore` string was
+   intentionally left unchanged by that narrowly-scoped correction — only
+   the structured field was in scope. The underlying Validation Window
+   anchor expansion this entry captures remains open for Stage
+   triage/deliberation.
 
 Items 1–7 were neither created, edited, harvested, nor archived by this
 closure — they are cited here solely so a future Stage/operator session
 can locate them. Item 8 (`67BA0629`) was created by this closure session
 under the P-021 C2 capture-only carve-out (the sole permitted mutation);
-it was never edited, harvested, or archived afterward. Item 9 documents a
-data-quality defect in that same entry that this closure session
-identified but has no authority to correct.
+it was never edited, harvested, or archived by Ship afterward. Item 9
+documented a data-quality defect in that same entry that this closure
+session identified but had no authority to correct — Stage has since
+corrected it (see item 9's own update above), and Ship's authority over
+the entry remains unchanged (creation only, no edit/harvest/archive).
 
 ## Source-Artifact Retirement (backlogit)
 
@@ -699,5 +719,6 @@ absent.
 * Follow-up items (stash, read-only pointer, not mutated): `CCAC612D`,
   `578B8678`, `BAD41DF2`, `8AFB7B3A`
 * Follow-up item (stash, created by this closure session under the P-021
-  C2 capture-only carve-out, never edited/harvested/archived afterward):
-  `67BA0629`
+  C2 capture-only carve-out; never edited/harvested/archived by Ship
+  afterward; structured `kind` field subsequently corrected from `chore`
+  to `task` by Stage, committed by Ship at `f33aa91`): `67BA0629`
