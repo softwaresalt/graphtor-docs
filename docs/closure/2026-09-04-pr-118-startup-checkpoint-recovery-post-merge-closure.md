@@ -297,13 +297,18 @@ blanket section-level `N/A`:
 * **Monitoring plan complete** — YES, via the release-observability
   contract's own no-monitoring-system fallback ("record the monitoring plan
   as a structured checklist... and flag it as a manual observation
-  requirement"), not the SLI/dashboard/baseline/alert-threshold form that
-  applies when a monitoring system exists: `graphtor-docs` has no dashboard,
-  alerting, or metrics surface to instrument for launcher/dev-tooling
-  config. See Monitoring Plan below for the recorded checklist (manual
-  observation, signals to watch per Healthy/Failure Signals above, owner
-  `@softwaresalt`); cross-linked here per the release-observability Closure
-  Integration contract rather than duplicated verbatim.
+  requirement"). **Corrected during Copilot review rounds 5/6**: this still
+  carries the same SLI / observation-location / baseline / alert-threshold /
+  owner fields the contract requires when a monitoring system exists — only
+  the dashboard-or-query mechanism is substituted with a named manual check,
+  since `graphtor-docs` has no dashboard, alerting, or metrics surface to
+  instrument for launcher/dev-tooling config. See Monitoring Plan below for
+  the full structured checklist (cross-linked here per the
+  release-observability Closure Integration contract rather than
+  duplicated verbatim); one baseline item there (zero unintended writes via
+  the widened MCP surface) is explicitly recorded as unverified pending the
+  outstanding `mcp-client-smoke` checkpoint, carried into Releasability
+  Evidence condition (2) below rather than assumed healthy.
 
 **Full local build applicability**: `Full local build: not applicable for a
 documentation/backlog config change` does not apply here either, since the
@@ -393,11 +398,30 @@ session and are listed here for completeness of the closure record.
 
 ## Monitoring Plan
 
-Manual observation only — single-developer, local-only tool, no dashboard or
-alerting surface for launcher scripts or dev-tooling config. The compound
-entry (`docs/compound/workflow-issues/checkpoint-schema-and-lifecycle-controls-2026-09-03.md`)
-and the preserved 049-S topology-blocker memory file are the durable record
-for any future session picking up related work.
+**Manual observation only** — single-developer, local-only tool; no
+dashboard, alerting, or metrics system exists for launcher scripts or
+dev-tooling config in this repository. **Corrected during Copilot review
+rounds 5/6**: the release-observability contract's no-monitoring-system
+fallback still requires the plan recorded as a structured checklist (the
+same SLI / observation-location / baseline / alert-threshold / owner fields
+a dashboard-backed plan would carry, substituting a named manual check for
+the missing dashboard/query) rather than a free-form note — this section
+was previously prose-only and did not satisfy that structure:
+
+| Field | Value |
+|---|---|
+| SLIs / key metrics | (1) launcher cwd-independence — `start.sh`/`start.ps1` resolve script-relative paths correctly regardless of invocation directory; (2) checkpoint schema health — the count of records in `.backlogit/checkpoints/` failing `schema_version: 1` validation (`needs_quarantine`); (3) MCP write-capability scope — whether any write/mutation occurs via the `graphtor-docs` MCP tool surface that the operator did not explicitly request |
+| Observation query / check location | No dashboard exists; the manual checks are: (1) invoke `start.sh`/`start.ps1` from a working directory other than the repo root and confirm no path-resolution error; (2) inspect `.backlogit/checkpoints/` for any record failing `schema_version: 1` (validation logic recorded in the compound entry below); (3) during any live MCP client session against this workspace, observe tool-call activity for unrequested writes — the outstanding `mcp-client-smoke` manual checkpoint (see Validator Evidence above) is the first such observation opportunity |
+| Baseline | (1) zero path-resolution regressions since the `25a1290` anchoring fix (re-verified this closure); (2) `needs_quarantine: 0` as of this closure (6 pre-existing invalid records already quarantined, byte-preserving, not deleted); (3) zero writes observed to date via the widened `--read-only`-removed surface — but this specific baseline item is **unverified by a live client session**, since `mcp-client-smoke` has not yet been performed (carried into Releasability Evidence condition (2) below as open, not silently assumed healthy) |
+| Alert / investigation threshold | Any single occurrence of a Failure Signal above (a path-resolution regression, a new schema-invalid checkpoint record, or one unrequested write via the MCP tool surface) triggers investigation immediately — no rate/frequency threshold applies at this single-developer, single-consumer scale |
+| Owner | `@softwaresalt` (sole maintainer) |
+| Post-deploy observation window | See Validation Window below — not duplicated here per the release-observability Closure Integration contract |
+| Rollback trigger / procedure | See Rollback Trigger and Rollback Procedure below — not duplicated here per the release-observability Closure Integration contract |
+
+The compound entry
+(`docs/compound/workflow-issues/checkpoint-schema-and-lifecycle-controls-2026-09-03.md`)
+and the preserved 049-S topology-blocker memory file remain the durable
+record for any future session picking up related work.
 
 ## Rollback Trigger
 
@@ -464,7 +488,7 @@ cannot treat observation as already closed out.
 
 | Evidence | Status |
 |---|---|
-| Monitoring plan | Manual observation (proportionate — single-developer local tool) |
+| Monitoring plan | Manual observation, structured checklist (SLIs, check locations, baseline, alert threshold, owner) — see Monitoring Plan above; one baseline item (zero unintended writes via the widened MCP surface) unverified pending `mcp-client-smoke` (see condition (2) below) |
 | Pre-deploy audit | Checklist-evaluated per item (see Pre-Deploy Audits above): flags/rollout `N/A` (no flag mechanism), rollback procedure documented + actionable (YES), migration/schema `N/A` (byte-preserving quarantine only, verified revert path), dependent-service awareness `N/A` (single local consumer), monitoring plan complete (YES) |
 | Runtime verification | `READY_WITH_CONDITIONS` — `cli-status` passes cleanly and the launcher fix's own logic was independently replay-verified; `mcp-stdio-startup` shows no evidence of a regression but its exit-on-EOF result does not literally certify the manifest's declared clean-exit signal (no initialize-sending harness exists yet); the required `mcp-client-smoke` manual checkpoint was not performed this session (see Validator Evidence above) |
 | Post-deploy observation window | Open — 14-day bounded window (or until `mcp-client-smoke` is performed, whichever first), owner `@softwaresalt`; see Validation Window above |

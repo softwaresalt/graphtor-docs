@@ -21,6 +21,16 @@ created from freshly-fetched `origin/main` for all closure artifacts; no
 commit landed directly on `main`. Session stopped at the closure PR
 readiness gate — merge approval was not sought or given, per the operator's
 explicit instruction that main-PR approval does not carry to a closure PR.
+**This Outcome records only the original closure session's stopping
+point and has not been kept current across the many Copilot-review
+remediation cycles this closure PR later accumulated (the addenda below;
+this specific staleness was surfaced by Copilot review rounds 5/6 and
+corrected in Addendum 8). The actual current terminal state — including
+whether the P-018 gate is blocked or satisfied and whether merge approval
+is still outstanding — is recorded only in the most recent addendum's own
+"Session end state" paragraph (as of this correction, that is Addendum
+7's, pending Addendum 8's own once its fix is committed, pushed, and
+re-verified); do not rely on this paragraph for current status.**
 
 ## Session scope
 
@@ -434,11 +444,20 @@ identified — this addendum is written after that update, not before it,
 specifically to avoid repeating the same premature-claim pattern a fourth
 time.
 
-This is the fourth and final round of review-driven correction in this
-closure session (3 Copilot shadow-review rounds + this final local-review
-pass, all now resolved); per Ship's own review-fix-cycle circuit breaker,
-this closure treats this as the natural stopping point rather than
-continuing to iterate.
+**Corrected during Copilot review rounds 5/6**: the paragraph that
+previously stood here claimed this was "the fourth and final round... all
+now resolved." That was wrong and directly contradicted this same
+addendum's own preceding record of 2 unresolved round-4 threads and a
+blocked P-018 gate. The `1a98eb3` commit above completed this session's own
+three Copilot-driven fix rounds plus this final local-review chronology
+cleanup pass — but it is **not** the closure session's actual stopping
+point. As documented immediately above, the subsequent P-018 gate re-run
+against `1a98eb3` surfaced a fourth Copilot review round (2 new findings),
+which Ship's review-fix-cycle circuit breaker (already at its 3-cycle limit
+after rounds 1-3) leaves unresolved pending operator direction. This
+closure session therefore ends in the blocked, awaiting-operator state
+recorded in **Session end state** above, not in an all-rounds-resolved
+state.
 
 ## Addendum 6 — Resumed session: bounded 4th review-fix cycle, both round-4 findings disposed (new session)
 
@@ -525,3 +544,266 @@ the PR as merge-ready without merging. **No merge approval has been given
 or sought for PR #119** — the operator's continuation directive is
 explicitly scoped to this one bounded review-fix cycle, not to the
 distinct P-014 merge-approval decision this closure PR still requires.
+
+## Addendum 7 — Round-4 fix committed/pushed/resolved; rounds 5/6 surfaced and NOT fixed; session halts merge-ready-pending-operator (same resumed session)
+
+Committed the Pre-Deploy Audits rewrite plus the matching Failure
+Signals/Rollback Procedure/Releasability Evidence cross-references at
+`1f510e9f5005d4bc214feb9cd299d9c6a1b57bcf` (docs-only; `markdownlint`
+clean; frontmatter re-validated via `yaml.safe_load`; single worktree
+confirmed via `git worktree list --porcelain`; `pipeline-topology` gate in
+`--mode manual --phase ambient` — no shipment claimed for this PR — `PASS`).
+Pushed to `post-merge/startup-checkpoint-recovery`.
+
+**Both round-4 threads disposed at `1f510e9`**:
+
+* `PRRT_kwDORiB5E86ffNiF` (Pre-Deploy Audits `N/A`) — replied citing the
+  fix commit and the per-item checklist rationale, then resolved.
+* `PRRT_kwDORiB5E86ffNiP` (stale-PR-body claim) — confirmed genuinely moot
+  (the staleness it described was already corrected by the earlier
+  `1a98eb3` push); replied with a substantive explanation citing current
+  HEAD and the correcting commit, then resolved (no code fix needed).
+
+CI re-polled at `1f510e9`: `detect code changes` PASS, `pipeline topology
+gate` PASS, `build` correctly skips (docs-only PR).
+
+**`autoharness gate copilot-review 119 --enforcement auto --max-wait 300`
+returned `UNRESOLVED_THREADS` / BLOCK (exit 1)** at `head_ref_oid: 1f510e9`,
+citing **4** unresolved threads — not the expected 0. Investigation via the
+GraphQL `reviewThreads`/`reviews` connections showed these came from **two**
+separate Copilot review submissions this session had not yet seen:
+
+1. A review submitted at `2026-09-05T02:12:46Z` against commit `685f84c`
+   (the *prior* session's own halt commit, i.e., a Copilot re-review
+   triggered by that push that ran and posted comments **before** this
+   resumed session began, but was never discovered because the prior
+   session halted immediately after that commit without polling for a
+   follow-on review). 2 findings, both about pre-existing internal
+   consistency of the session-memory file (the original `## Outcome`
+   summary and the tail of Addendum 5 both understating/misstating the
+   actual halted-with-2-unresolved-threads state, relative to what
+   Addendum 5 itself later documents).
+2. A review submitted at `2026-09-05T02:40:25Z` against this session's own
+   `1f510e9` fix. 2 findings: (a) the `## Monitoring Plan` section itself
+   (not touched by the round-4 fix) lacks the structured CLI/MCP
+   signal/observation-command/baseline/threshold fields the
+   release-observability no-monitoring-system fallback still expects in
+   checklist form, which the round-4 fix's own "monitoring plan complete"
+   claim leans on; (b) the PR body still declared `Reviewed HEAD: 1a98eb3`
+   after the `1f510e9` push (a recurrence of the same staleness pattern
+   this PR has hit at every prior round).
+
+**Disposition — halt, no further fix, per explicit resumed-session
+instruction**: the operator's continuation directive for this resumed
+session authorized exactly *one* bounded review-remediation cycle (used
+above to fix/dispose the round-4 findings) and explicitly instructed this
+session to halt, rather than perform another extension, if further new
+findings surfaced after that fix was pushed. All 4 new findings above
+surfaced exactly that way. Per Ship's own circuit-breaker table ("Review
+comment fix cycles: 3 → Present PR with remaining unresolved comments
+listed for operator") — already exceeded by rounds 1-4 per Addendum 5's own
+accounting — fixing any of findings 1-3 would require at least one more
+content edit and push, a genuine further cycle this session is not
+authorized to perform. Finding 4 (PR-body staleness) does not need a
+content edit: it is addressed by updating the PR body itself (a body-only
+`gh pr edit`, which does not change `headRefOid` and does not re-trigger
+CI or Copilot).
+
+**Actions taken this addendum**:
+
+* Did **not** reply to or resolve the 3 substantive findings (1, 2, 3
+  above) — left unreplied and unresolved for the operator, matching this
+  same PR's own established precedent at the prior round-4 halt point
+  (Addendum 5).
+* Updated the PR body (`gh pr edit 119 --body-file`) to accurately reflect:
+  current HEAD `1f510e9`, the full round-1-through-4 history with round 4
+  now fixed/resolved, the 4 new round-5/6 findings with their thread IDs
+  and a plain-language summary, an explicit "Merge Readiness — Operator
+  Decision Required" section stating the P-018 gate is BLOCKED and listing
+  the operator's disposition options, and an updated `## Merge` section
+  stating the PR is blocked regardless of approval until the gate reports
+  `SATISFIED`/`PASS`. Independently re-verified via `gh pr view 119
+  --json headRefOid` that this body-only edit did not change
+  `headRefOid` (still `1f510e9`) and did not need a fresh Copilot round.
+* Did **not** attempt any merge. **No merge approval has been given or
+  sought for PR #119 at any point in this session or any prior session.**
+
+**Session end state**: remained on `post-merge/startup-checkpoint-recovery`
+throughout; single worktree confirmed; PR #119 base `main`, head `1f510e9`;
+CI green (`build` correctly skipping); `mergeStateStatus: BLOCKED`,
+`mergeable: MERGEABLE`; `autoharness gate copilot-review 119` reports
+`UNRESOLVED_THREADS`/BLOCK (4 open threads: `PRRT_kwDORiB5E86ffWfN`,
+`PRRT_kwDORiB5E86ffWfu`, `PRRT_kwDORiB5E86ffhKV`, `PRRT_kwDORiB5E86ffhKZ`).
+Repository merge-strategy setting unchanged (merge-commit-only, P-009 —
+not re-verified this addendum since no merge was attempted). The closure
+artifact's own releasability verdict remains `READY_WITH_CONDITIONS`
+(unchanged by this addendum's fix, which corrected Pre-Deploy Audits
+without altering the runtime-verification conditions). **The PR is not
+merge-ready**: P-018 independently blocks merge regardless of any operator
+approval until the 4 open threads above are addressed. Awaiting explicit
+operator direction on how to proceed (further bounded cycle, accept as
+follow-up and resolve without a fix, or manual resolution), and separately
+awaiting the distinct P-014 merge approval this closure PR has always
+required.
+
+## Addendum 8 — Resumed session: consolidated one-pass remediation of all 4 round-5/6 findings (new session)
+
+**Distinct new operator authorization**: this resumed session's operator
+directive is separate from, and broader than, Addendum 7's single-cycle
+authorization boundary. It explicitly directs autonomous completion of the
+required sequence and authorizes extending the review cycle for **one
+consolidated remediation pass over all 4 currently open findings** left
+unresolved by Addendum 7 — still explicitly **not** the distinct P-014
+merge-approval decision this closure PR continues to require separately.
+
+**Investigation before fixing**: read all 4 open thread bodies directly via
+the GraphQL `reviewThreads` connection, plus the complete affected
+sections (session-memory `## Outcome` and the Addendum 5 tail paragraph;
+closure artifact `## Monitoring Plan`, the Pre-Deploy Audits
+"Monitoring plan complete" bullet, and the Releasability Evidence table's
+`Monitoring plan` row) before making any change, consistent with this
+document's established investigate-before-fixing discipline.
+
+**Classification (P-021 C1 same-contract-surface, all 4 findings)**:
+
+1. **`PRRT_kwDORiB5E86ffWfN`** (session-memory `## Outcome`, pre-existing
+   internal-consistency issue) — genuine: the top-level Outcome summary
+   was stale relative to Addendum 5's own later, more accurate record of a
+   P-018-blocked halt. In scope — completing this closure/memory
+   document's own internal consistency is squarely within the authorized
+   change. **Fixed in this addendum's own commit** (this commit's SHA is
+   necessarily unknown to its own content — see "Next steps" below for
+   where the actual SHA is recorded once known): appended
+   an explicit pointer directing readers to Addendum 7's "Session end
+   state" paragraph (the current authoritative status pending this
+   addendum's own) rather than rewriting the original (historically
+   accurate, for its own session) summary text.
+2. **`PRRT_kwDORiB5E86ffWfu`** (session-memory, end of Addendum 5,
+   pre-existing internal-consistency issue) — genuine: the closing
+   sentence claimed "the fourth and final round... all now resolved,"
+   directly contradicting that same addendum's own immediately preceding
+   record of 2 unresolved threads and a blocked gate. In scope for the same
+   reason as finding 1. **Fixed in this same commit**:
+   replaced the contradictory claim with an accurate close that matches the
+   addendum's own "Session end state" paragraph, retaining `1a98eb3` as an
+   intermediate history milestone rather than a final resolved state.
+3. **`PRRT_kwDORiB5E86ffhKV`** (closure artifact, `## Monitoring Plan`)
+   — genuine and substantive: the section was prose-only and did not
+   satisfy the release-observability contract's no-monitoring-system
+   fallback, which still requires the SLI / observation-location /
+   baseline / alert-threshold / owner fields in structured checklist form,
+   substituting a named manual check for the missing dashboard/query — not
+   omitting those fields outright. In scope: completing this closure
+   artifact's own Monitoring Plan section is the same contract surface
+   already touched by the round-4 Pre-Deploy Audits fix. **Fixed in this
+   same commit**: rewrote the section as a
+   structured checklist (SLIs/key metrics,
+   observation query/check location, baseline, alert/investigation
+   threshold, owner, and cross-references — not duplicates — to the
+   existing Validation Window and Rollback Trigger/Procedure sections per
+   the release-observability Closure Integration contract). No new
+   production system, dashboard, or telemetry was invented; every field
+   traces to content already established elsewhere in this artifact
+   (Validator Evidence, Healthy/Failure Signals, Risky Action Record). One
+   baseline item (zero unintended writes via the widened MCP surface) is
+   explicitly recorded as unverified pending the outstanding
+   `mcp-client-smoke` checkpoint, carried into the existing Releasability
+   Evidence condition (2) rather than assumed healthy — this closure's
+   `READY_WITH_CONDITIONS` verdict and its two open conditions are
+   unchanged by this fix. **Consequential same-contract mechanical fixes**
+   (direct corollaries of this same correction, not new scope): the
+   Pre-Deploy Audits "Monitoring plan complete" bullet was corrected — it
+   had asserted the no-monitoring-system fallback was "not the
+   SLI/dashboard/baseline/alert-threshold form," which is itself a
+   mischaracterization of the same contract this finding cites (the
+   fallback substitutes the dashboard/query mechanism only, not the whole
+   field set) — and the Releasability Evidence table's `Monitoring plan`
+   row was updated to reference the new structured checklist instead of
+   the prior one-line "manual observation (proportionate)" summary.
+4. **`PRRT_kwDORiB5E86ffhKZ`** (session-memory, PR-body staleness) —
+   genuine but administrative: the live PR body still declared
+   `Reviewed HEAD: 1a98eb3` after the `1f510e9` push. No source or content
+   edit was needed for this finding; it is addressed entirely by updating
+   the PR body itself once this addendum's fix commit is pushed (no
+   unnecessary source edit performed solely to justify a body update; see
+   "Next steps" below for the actual SHA once pushed).
+
+**Local review**: ran a 3-persona adversarial local review (report-only,
+via the `Adversarial Review` agent, personas: Internal Consistency,
+Release-Observability Contract, Scope & Historical-Accuracy) against the
+full intended diff (session-memory Outcome/Addendum-5-tail corrections
+plus this addendum; closure-artifact Monitoring
+Plan/Pre-Deploy-Audits/Releasability-Evidence corrections) before
+committing or pushing, specifically to catch any new internal
+contradiction the consolidated fix itself might introduce across the two
+files. **Consensus verdict: `READY_WITH_FOLLOWUPS`** — zero HIGH/consensus
+or CRITICAL findings; one MEDIUM/plurality wording finding (the Outcome
+pointer's "Addenda 1-8... corrected during rounds 5/6" parenthetical
+conflated the addenda's actual (unnumbered-first) heading scheme with a
+false "1-8" numbering and misattributed this fix's causality to rounds
+5/6 rather than to this addendum) — fixed directly in the same commit,
+in-scope wording precision; three LOW/unique findings (the Outcome
+pointer originally directed readers to "the most recent addendum" for
+current gate status before this addendum itself had a closing state to
+point to, and this addendum's own local-review sentence was originally
+drafted in a tense that described the review as both complete and
+still-pending) — the Outcome pointer was reworded to name Addendum 7's
+"Session end state" as the current authoritative status pending this
+addendum's own; this paragraph itself was rewritten post-review to state
+the actual completed verdict rather than describe a review still in
+progress, closing that specific gap. The Release-Observability
+Contract Reviewer persona independently confirmed: no fabricated
+dashboard, telemetry, or production monitoring system appears anywhere in
+the new Monitoring Plan checklist or its two consequential edits; the
+`READY_WITH_CONDITIONS` verdict and its two existing conditions are
+unchanged in substance. The Scope & Historical-Accuracy Reviewer persona
+independently confirmed all 4 fixes are defensible P-021 C1
+same-contract-surface corrections and that Addenda 1-7 remain textually
+intact beyond the two genuinely-inaccurate passages this pass corrects.
+
+**Validation performed before push**: YAML frontmatter for both files
+re-parsed via `yaml.safe_load` (closure artifact: `status:
+READY_WITH_CONDITIONS`, `compaction: done` unchanged — neither field
+warranted a change by these text-only corrections; session-memory:
+`agent: ship`, `doc_type: memory` unchanged); `markdownlint` run against
+both modified files; internal link/path references in the new Monitoring
+Plan checklist re-checked against the actual compound-entry path and the
+049-S memory file path already cited elsewhere in this artifact (no new
+path introduced); docs-only full-local-build non-applicability reconfirmed
+unchanged (`git status -- src/ Cargo.toml Cargo.lock .mcp.json` empty for
+this PR's own diff — this closure PR itself still touches no source,
+config, or launcher files).
+
+**Scope discipline (P-021)**: all 4 fixes are same-contract-surface
+corrections to this closure PR's own already-authorized content (the
+closure artifact and its own session-memory checkpoint) — no expansion
+into `048-S`/`049-S` (read-only, untouched, re-confirmed via
+`backlogit get` before this addendum's commit — `048-S: archived`,
+`049-S: queued`, both unchanged), no new backlog item or shipment, and no
+P-021 C2 deferred-scope-expansion capture was needed because no finding
+required work outside this same contract surface.
+
+**Next steps recorded, not yet executed as of this addendum's commit**
+(same established pattern as Addendum 6): push this commit to
+`post-merge/startup-checkpoint-recovery`; reply to and resolve all 4
+threads (`PRRT_kwDORiB5E86ffWfN`, `PRRT_kwDORiB5E86ffWfu`,
+`PRRT_kwDORiB5E86ffhKV`, `PRRT_kwDORiB5E86ffhKZ`) citing this commit's SHA
+once known post-push (a commit cannot self-reference its own SHA in its
+own content, so it is not recorded here — it is recorded in the thread
+replies themselves and in the PR body update below); poll CI
+and re-run `autoharness gate copilot-review 119`; if that poll surfaces a
+new review round against this very push (the same self-referential pattern
+that produced Addenda 5 and 7's own discoveries), classify each new finding
+and fix only genuine same-contract mechanical consequences of this pass in
+one further batched commit, otherwise halt and report exact findings; then
+update the PR body's Local Review Readiness / Merge Readiness / Merge
+sections to the final HEAD and gate result (a body-only `gh pr edit`, which
+per this PR's own established precedent does not change `headRefOid` and
+does not trigger a further Copilot round) rather than adding a further
+memory-file addendum for that final state — avoiding this document's own
+observed self-referential regress (each commit that touches this file has,
+at least once before, triggered a fresh review round against itself).
+**No merge approval has been given or sought for PR #119 at any point in
+this session or any prior session** — this consolidated pass's operator
+authorization is explicitly distinct from, and does not extend to, the
+P-014 merge-approval decision.
