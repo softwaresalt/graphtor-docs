@@ -173,16 +173,19 @@ carve-out) permits:
 For the first four entries, this closure session performed **no** stash
 mutation of any kind (create, edit, harvest, or archive) — read-only lookup
 only, per Ship's Role Boundary (P-010); all four remain open for a future
-Stage session. The fifth entry (`67BA0629`) was created by this same
-closure session under the narrow P-021 C2 capture-only carve-out — a single
-permitted creation, never an edit, harvest, or archive of any entry by
-Ship (including that one, once created). All five remain open for a
-future Stage session's triage/deliberation of the underlying Validation
-Window anchor expansion. **Update**: `67BA0629`'s structured `kind` field
-was subsequently corrected from the schema-invalid `chore` to the valid
-`task` by Stage (not Ship) — committed by Ship on Stage's behalf at
-`f33aa91` — resolving the separate schema-validity defect flagged by
-Copilot thread `PRRT_kwDORiB5E86ff6Uc`; see Follow-Up Handoff item 9.
+Stage session's triage/deliberation of their own respective findings
+(diagnostic-script durability, MCP managed-entry generation conflict, and
+the two externally-versioned launcher-template gaps). The fifth entry
+(`67BA0629`) was created by this same closure session under the narrow
+P-021 C2 capture-only carve-out — a single permitted creation, never an
+edit, harvest, or archive of any entry by Ship (including that one, once
+created); it remains open for a future Stage session's triage/deliberation
+of its own underlying Validation Window anchor expansion. **Update**:
+`67BA0629`'s structured `kind` field was subsequently corrected from the
+schema-invalid `chore` to the valid `task` by Stage (not Ship) —
+committed by Ship on Stage's behalf at `f33aa91` — resolving the separate
+schema-validity defect flagged by Copilot thread
+`PRRT_kwDORiB5E86ff6Uc`; see Follow-Up Handoff item 9.
 
 ## Invariants to Preserve
 
