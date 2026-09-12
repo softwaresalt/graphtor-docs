@@ -17,8 +17,10 @@
 //! indistinguishable) start-time match is always reported ambiguous,
 //! never a confirmed identity -- see [`is_ambiguous_match`].
 
+use crate::evidence::{write_evidence_output, EvidenceCollector};
 use crate::transport::{run_duplex_pump, PumpConfig, PumpOutcome};
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
 
@@ -301,10 +303,13 @@ pub struct WrapperConfig {
 /// (`None` only when the pump deadline elapsed and the inner child had
 /// to be torn down instead of exiting on its own), the underlying pump
 /// outcome, this wrapper process's own observed identity, whether the
-/// env-inheritance sentinel was observed, and any residual descendant
-/// processes surfaced (never acted on). `056.022-T` persists none of
-/// this -- evidence serialization to `evidence_output` is `056.023-T`'s
-/// job; this struct is the in-memory seam it will consume.
+/// env-inheritance sentinel was observed, any residual descendant
+/// processes surfaced (never acted on), and the `056.023-T`
+/// evidence-collection outcome: whether the collected summary was
+/// itself valid (no saturation/observer failure), and, separately,
+/// whether writing that summary to `evidence_output` succeeded. Evidence
+/// collection and its write are always best-effort -- neither ever
+/// changes `inner_exit_code` or fails this function.
 #[derive(Debug, Clone)]
 pub struct WrapperOutcome {
     pub inner_exit_code: Option<i32>,
@@ -314,13 +319,24 @@ pub struct WrapperOutcome {
     pub residual_descendants: Vec<ProcessIdentity>,
     pub run_nonce: String,
     pub evidence_output: String,
+    /// `false` when the `056.023-T` evidence summary itself was marked
+    /// invalid (channel saturation or a caught correlator panic) -- see
+    /// `crate::evidence::EvidenceSummary::valid`.
+    pub evidence_valid: bool,
+    /// `Some(message)` only if writing the evidence summary to
+    /// `evidence_output` failed; `None` on a successful write. This is
+    /// independent of `evidence_valid` -- a valid summary can still fail
+    /// to persist (for example, an unwritable path).
+    pub evidence_write_error: Option<String>,
 }
 
 /// Runs the `wrapper` subcommand's core logic: spawns the inner process
 /// named by `config.args.inner_exe`/`inner_args`, wires its stdio through
 /// [`run_duplex_pump`] (never reimplementing the byte pumps), preserves
-/// its exit code, and reports diagnostic identity/sentinel/residual
-/// information through `observer`.
+/// its exit code, reports diagnostic identity/sentinel/residual
+/// information through `observer`, and -- composing `056.023-T`'s
+/// observer seam onto the same pump call -- collects a redacted evidence
+/// summary and writes it atomically to `config.args.evidence_output`.
 ///
 /// `incoming`/`outgoing` stand in for the actual Copilot CLI's
 /// stdin/stdout from this process's perspective; production callers pass
@@ -330,7 +346,9 @@ pub struct WrapperOutcome {
 /// # Errors
 ///
 /// Returns an error only if the inner process could not be spawned, or
-/// if [`run_duplex_pump`] itself errors (missing piped stdio).
+/// if [`run_duplex_pump`] itself errors (missing piped stdio). Evidence
+/// collection/write failures are reported via the returned
+/// [`WrapperOutcome`], never as an `Err` from this function.
 pub fn run_wrapper<R, W>(
     incoming: R,
     outgoing: W,
@@ -354,7 +372,14 @@ where
         ..PumpConfig::default()
     };
 
-    let pump = run_duplex_pump(incoming, outgoing, guard.child_mut(), &pump_config, None)?;
+    let evidence_collector = EvidenceCollector::new(config.args.run_nonce.clone());
+    let pump = run_duplex_pump(
+        incoming,
+        outgoing,
+        guard.child_mut(),
+        &pump_config,
+        Some(evidence_collector.hook()),
+    )?;
 
     let inner_exit_code = if pump.timed_out {
         // Deadline/error teardown: the inner child never closed both
@@ -383,6 +408,17 @@ where
             .collect()
     });
 
+    // 056.023-T: finalize evidence collection and persist the redacted
+    // summary to the wrapper-owned evidence_output path. This is always
+    // best-effort -- neither collection validity nor a write failure
+    // ever changes `inner_exit_code` or turns into an `Err` here.
+    let evidence_summary = evidence_collector.finalize();
+    let evidence_valid = evidence_summary.valid;
+    let evidence_write_error =
+        write_evidence_output(&evidence_summary, Path::new(&config.args.evidence_output))
+            .err()
+            .map(|err| err.to_string());
+
     Ok(WrapperOutcome {
         inner_exit_code,
         pump,
@@ -391,5 +427,7 @@ where
         residual_descendants,
         run_nonce: config.args.run_nonce.clone(),
         evidence_output: config.args.evidence_output.clone(),
+        evidence_valid,
+        evidence_write_error,
     })
 }

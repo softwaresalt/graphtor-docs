@@ -17,5 +17,6 @@
 //! `056.021-T` owns the isolated probe workspace, and `056.001-T` owns the
 //! exact-CLI differential runner.
 
+pub mod evidence;
 pub mod process;
 pub mod transport;

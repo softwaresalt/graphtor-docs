@@ -61,11 +61,27 @@ fn wrapper_config(inner_args: Vec<&str>, pump_deadline: Option<Duration>) -> Wra
         args: WrapperArgs {
             inner_exe: probe_bin().to_string(),
             inner_args: inner_args.into_iter().map(str::to_string).collect(),
-            evidence_output: "unused-in-this-task.json".to_string(),
+            evidence_output: unique_temp_evidence_path(),
             run_nonce: "test-nonce".to_string(),
         },
         pump_deadline,
     }
+}
+
+/// A unique path under the OS temp directory for a single test's
+/// `--evidence-output`, so `056.023-T`'s now-real evidence write never
+/// creates a stray file inside this crate's own working tree.
+fn unique_temp_evidence_path() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir()
+        .join(format!(
+            "mcp-probe-process-test-evidence-{}-{n}.json",
+            std::process::id()
+        ))
+        .to_string_lossy()
+        .into_owned()
 }
 
 // --- Scenario 1: normal completion, back-to-back runs, forwarding, panic/unwind reap ---
