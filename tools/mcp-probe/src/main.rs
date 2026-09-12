@@ -10,14 +10,16 @@
 //! `056.020-T` owns only the core transport (exposed via the `mcp_probe`
 //! library target's `transport` module -- see `src/lib.rs`) and this thin
 //! entry point, plus the hidden, in-crate, platform-portable self-test
-//! helper modes below (`__echo` / `__block`). These helper modes are
-//! consumed by `mcp_probe::transport`'s own black-box integration
-//! self-tests (`tools/mcp-probe/tests/transport_test.rs`) via
+//! helper modes below (`__echo` / `__block` / `__exit`). These helper
+//! modes are consumed by this crate's own black-box integration
+//! self-tests (`tools/mcp-probe/tests/`) via
 //! `env!("CARGO_BIN_EXE_mcp-probe")`, re-exec'ing this exact binary rather
-//! than an external OS-specific helper. Later tasks compose additional
-//! subcommands onto this same entry point: `056.022-T` adds the versioned
-//! `wrapper` subcommand, and `056.001-T` adds the `exact-cli` subcommand.
+//! than an external OS-specific helper. `056.022-T` adds the versioned
+//! `wrapper` subcommand (composing process spawning/teardown onto the
+//! `056.020-T` transport -- see `src/process.rs`), and `056.001-T` adds
+//! the `exact-cli` subcommand.
 
+use mcp_probe::process::{parse_wrapper_args, run_wrapper, SysinfoProcessObserver, WrapperConfig};
 use std::io::{Read, Write};
 
 fn main() {
@@ -25,6 +27,8 @@ fn main() {
     match args.next().as_deref() {
         Some("__echo") => run_echo_child(),
         Some("__block") => run_block_child(),
+        Some("__exit") => run_exit_child(args),
+        Some("wrapper") => run_wrapper_subcommand(args),
         Some(other) => {
             eprintln!("mcp-probe: unknown subcommand '{other}'");
             std::process::exit(2);
@@ -33,11 +37,45 @@ fn main() {
             eprintln!(
                 "mcp-probe: standalone, non-published diagnostic probe for the \
                  056-F MCP serve initialize-handshake regression investigation. \
-                 No production subcommand is wired yet at this point in the \
-                 shipment (056.020-T owns only the core transport); see \
-                 056.022-T (wrapper) and 056.001-T (exact-cli)."
+                 Subcommands: wrapper (056.022-T). See 056.001-T for the \
+                 forthcoming exact-cli subcommand."
             );
             std::process::exit(2);
+        }
+    }
+}
+
+/// Composes process spawning/teardown and the `056.020-T` transport for
+/// the versioned `wrapper` subcommand. Argv contract: `--inner-exe`,
+/// repeated `--inner-arg`, `--evidence-output`, `--run-nonce`. Preserves
+/// the inner child's exit code, stderr, half-close, and deadline
+/// behavior unchanged; see `mcp_probe::process` for the full contract.
+/// This subcommand persists no evidence itself -- serializing to
+/// `--evidence-output` is `056.023-T`'s job.
+fn run_wrapper_subcommand(args: impl Iterator<Item = String>) {
+    let parsed = match parse_wrapper_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("mcp-probe wrapper: {message}");
+            std::process::exit(2);
+        }
+    };
+
+    let config = WrapperConfig {
+        args: parsed,
+        // Production wrapper runs never bound the pump wait themselves;
+        // the outer timeout belongs to 056.001-T's exact-CLI runner. Only
+        // this crate's own integration self-tests construct a
+        // `WrapperConfig` directly with a bounded deadline.
+        pump_deadline: None,
+    };
+    let observer = SysinfoProcessObserver::new();
+
+    match run_wrapper(std::io::stdin(), std::io::stdout(), &config, &observer) {
+        Ok(outcome) => std::process::exit(outcome.inner_exit_code.unwrap_or(1)),
+        Err(err) => {
+            eprintln!("mcp-probe wrapper: failed to run inner process: {err}");
+            std::process::exit(1);
         }
     }
 }
@@ -81,7 +119,18 @@ fn run_echo_child() {
 /// Hidden, in-crate self-test helper that never reads or writes anything
 /// and sleeps well beyond any test deadline, standing in for a wedged
 /// child that never produces output or exits on its own. Used ONLY by
-/// `transport`'s deadline-signaling self-test.
+/// `transport`'s deadline-signaling self-test and `process`'s
+/// deadline-teardown self-test.
 fn run_block_child() {
     std::thread::sleep(std::time::Duration::from_secs(3600));
+}
+
+/// Hidden, in-crate self-test helper that exits immediately with the
+/// exit code given as its sole argument (defaulting to `0` if absent or
+/// unparsable), never touching stdio. Used ONLY by `process`'s wrapper
+/// self-tests to prove non-zero exit-code preservation deterministically
+/// (distinct from `__echo`'s always-`0` exit).
+fn run_exit_child(mut args: impl Iterator<Item = String>) {
+    let code: i32 = args.next().and_then(|raw| raw.parse().ok()).unwrap_or(0);
+    std::process::exit(code);
 }

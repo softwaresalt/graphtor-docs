@@ -17,5 +17,6 @@ name = "mcp-probe"
 path = "src/main.rs"
 
 [dependencies]
+sysinfo = { version = "0.30", default-features = false }
 
 [dev-dependencies]
