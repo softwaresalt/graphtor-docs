@@ -16,8 +16,13 @@
 //! `env!("CARGO_BIN_EXE_mcp-probe")`, re-exec'ing this exact binary rather
 //! than an external OS-specific helper. `056.022-T` adds the versioned
 //! `wrapper` subcommand (composing process spawning/teardown onto the
-//! `056.020-T` transport -- see `src/process.rs`), and `056.001-T` adds
-//! the `exact-cli` subcommand.
+//! `056.020-T` transport -- see `src/process.rs`). `056.021-T` adds the
+//! isolated `logs/probe/<nonce>` workspace and control/treatment/ancestor
+//! `.mcp.json` fixture composition (`mcp_probe::workspace` -- see
+//! `src/workspace.rs`); it performs no production acceptance and adds no
+//! subcommand of its own -- `056.001-T`'s forthcoming `exact-cli`
+//! subcommand is the sole caller that composes `workspace::create_probe_workspace`
+//! with the `wrapper` subcommand above into one real run.
 
 use mcp_probe::process::{parse_wrapper_args, run_wrapper, SysinfoProcessObserver, WrapperConfig};
 use std::io::{Read, Write};

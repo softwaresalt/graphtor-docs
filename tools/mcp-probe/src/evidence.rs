@@ -359,7 +359,7 @@ fn process_line(state: &mut CollectorState, direction: Direction, line: &[u8]) {
     };
 
     if kind == FrameKind::Request && method.as_deref() == Some("initialize") {
-        state.pending_initialize_request_id = id.clone();
+        state.pending_initialize_request_id.clone_from(&id);
         state.pending_initialize_params = value.get("params").cloned().map(|mut params| {
             redact_json_value(&mut params);
             params

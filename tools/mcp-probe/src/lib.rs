@@ -13,10 +13,12 @@
 //!
 //! `056.020-T` owns only [`transport`]. Later tasks add further modules on
 //! top of it: `056.022-T` owns process spawning/teardown and the `wrapper`
-//! subcommand ([`process`]), `056.023-T` owns the observer/evidence seam,
-//! `056.021-T` owns the isolated probe workspace, and `056.001-T` owns the
-//! exact-CLI differential runner.
+//! subcommand ([`process`]), `056.023-T` owns the observer/evidence seam
+//! ([`evidence`]), `056.021-T` owns the isolated probe workspace and
+//! control/treatment/ancestor config fixtures ([`workspace`]), and
+//! `056.001-T` owns the exact-CLI differential runner.
 
 pub mod evidence;
 pub mod process;
 pub mod transport;
+pub mod workspace;
