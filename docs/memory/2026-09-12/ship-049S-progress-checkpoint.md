@@ -300,12 +300,107 @@
      resolve as `done`/`not-needed` without needing its own bounded
      CLI adjudication -- to be confirmed when 056.019-T is implemented.
 
+6. **056.002-T** -- DONE, committed (`14c2587` driver code, `5d5f162`
+   P-021 stash capture, `1a2d675` backlog archival). Built the
+   out-of-process serve initialize-handshake test driver in the MAIN
+   crate (`graphtor-core`, not `tools/mcp-probe`): `tests/common/
+   serve_driver.rs` (~700+ lines) -- hand-rolled newline-delimited
+   JSON-RPC session driver over the real `graphtor-docs serve` stdio
+   child (rmcp only enables `server`/`transport-io` features, no client
+   transport to reuse). One `ServeSession` primitive (held-open
+   `ChildStdin`, background stdout-line-drain thread via `mpsc`,
+   background bounded-stderr-drain thread, bounded overall deadline,
+   cancellation-safe `shutdown` using `try_wait` first to avoid a
+   double-wait). Two entry points: `run_initialize_handshake` (minimal
+   green-path initialize round trip) and `run_read_only_server_control`
+   (always-forced `--read-only`, `initialize` -> `notifications/
+   initialized` -> `tools/list` -> `tools/call get_status`, boundary
+   double-proven via a literal `stderr_shows_write_path` marker scan,
+   for the future out-of-scope T4/056.011-T consumer). Reusable
+   `assert_stdout_protocol_clean` parity-control harness for 056.003-T.
+   `tests/serve_handshake_driver_test.rs`: 4 self-tests, all passing
+   against the real compiled binary (successful handshake vs. readonly
+   workspace; diagnostic outcome vs. empty workspace; server-control
+   forcing read-only despite a real Generation-eligible source present;
+   server-control never showing write-path markers in a pure readonly
+   workspace). `tests/common/mod.rs`: wired `pub mod serve_driver;`,
+   added a module-level `#![allow(dead_code)]` with rationale (each
+   `tests/*.rs` integration binary only exercises a subset of this
+   shared toolbox -- confirmed empirically the attribute cascades to
+   the child module).
+   - Wire shapes verified directly against vendored rmcp 1.5.0 source
+     (`model.rs`), not assumed: exact `initialize`/`tools/list`/
+     `tools/call`/`notifications/initialized` JSON-RPC shapes.
+   - Exact stderr log-string ownership confirmed via direct source read
+     (`src/db/store.rs:82,136,177`; `src/main.rs:2615`); confirmed no
+     substring collision between the one write-path marker and the two
+     read-only variants, so a plain ban-list scan is safe.
+   - All gates green under the **default stable toolchain** (1.98.0):
+     `cargo build --bin graphtor-docs`, `cargo test --test
+     serve_handshake_driver_test` (4/4), `cargo clippy --all-targets -D
+     warnings -D clippy::pedantic` (one fix: `build_tool_call_request`'s
+     `arguments: Value` param -> `&Value`, `needless_pass_by_value`),
+     `cargo fmt --all -- --check` (clean after `cargo fmt --all`), full
+     `cargo test` (all green -- one initially-alarming failure,
+     `sync_progress_tests::periodic_heartbeat_emits_ticks_before_stop`,
+     confirmed pre-existing/timing-flaky/unrelated: zero diff in
+     `src/main.rs`, passed in isolation and on a clean full re-run),
+     `cargo audit` with CI's exact `--ignore` flag list + `--deny
+     warnings` (clean/exit 0 -- the one real advisory, `lz4_flex`
+     RUSTSEC-2026-0041, is pre-existing/already-suppressed, owned by
+     013.008-T, unrelated).
+   - **Major discovery: root-crate `+1.75.0` MSRV is currently BROKEN,
+     pre-existing, environment-wide, unrelated to this task.**
+     `cargo +1.75.0 clippy --all-targets` (and equally `check`/`build`/
+     `test`) fails to even parse the dependency graph:
+     `globset-0.4.18/Cargo.toml` declares `edition = "2024"`, which
+     cargo 1.75.0 cannot parse at all (edition2024 wasn't stabilized
+     until long after Nov 2023). Confirmed via `cargo tree -i globset`
+     that `globset = "0.4"` is graphtor-core's own DIRECT, non-dev
+     `[dependencies]` entry (source-glob include-pattern matching, not
+     transitive/dev-only). Confirmed via `git diff main -- Cargo.toml
+     Cargo.lock` that NEITHER file has changed on this branch --
+     100% pre-existing on `main`, would break for literally any change
+     to this crate today. Confirmed CI never actually enforces
+     `+1.75.0` (`.github/workflows/ci.yml` only ever installs/uses
+     `stable`). Root `Cargo.toml` does declare `rust-version = "1.75"`
+     but it is currently false/unenforceable given upstream globset
+     churn. Out of scope for 056.002-T (dependency-lock surgery on an
+     unrelated pre-existing production dependency, not "add a test
+     driver") per P-021 C1.
+     - **P-021 C2 mandatory capture performed** (threadless path -- no
+       PR/thread exists yet): discovery-before-capture ran first
+       (`backlogit stash list` -- all 11 active entries read in full;
+       `.backlogit/archive/stash.jsonl` grepped for
+       globset/edition2024/rust-version/1.75/MSRV) -- zero matches,
+       confirmed fresh capture, not a duplicate. Captured stash entry
+       **`6C174AA9`** (kind `chore`, priority `medium`) with the full
+       six-field payload: token, expansion statement (pin globset back
+       to a pre-edition2024 0.4.x release, or deliberately raise
+       `rust-version` + re-verify every other pinned dep's MSRV floor),
+       P-021 C1 out-of-scope rationale, source refs (task 056.002-T,
+       feature 056-F, shipment 049-S, branch
+       `chore/fix-mcp-serve-initialize-handshake-regression`, PR `N/A`,
+       thread `N/A`), `requires deliberation: true`, kind/priority.
+       Committed separately (`5d5f162`) from the driver code (`14c2587`)
+       for a clean audit trail. **Decision for the remainder of this
+       shipment**: rely on STABLE-toolchain-only gates (matching what
+       CI actually enforces) for any further root-crate-touching task
+       (056.003-T next, possibly 056.019-T) -- do not re-attempt
+       `+1.75.0` against the root crate; it will keep failing for
+       reasons wholly unrelated to any of 049-S's work. `tools/
+       mcp-probe`'s own separate lockfile is UNAFFECTED (no globset
+       dependency there) and its tasks' `+1.75.0` verification already
+       performed (056.020-T/022-T/023-T/021-T/001-T) remains valid.
+     - Compound-worthy learning (environment/dependency-drift
+       discovery) -- to be captured via the `compound` skill before or
+       alongside the PR, per Ship's Learnings Capture step.
+
 ## Remaining work (not yet started)
 
-- 056.002-T (out-of-process serve handshake test driver, main crate,
-  independent of chain 1)
 - 056.003-T (serve_preflight.rs hardening in main crate, depends on
-  056.002-T)
+  056.002-T; use STABLE-toolchain-only gates for the root crate per the
+  056.002-T MSRV finding above)
 - 056.019-T (H3-B terminal adjudication, depends on 056.003-T +
   056.001-T; expected to resolve `done`/`not-needed` per
   `h3_b_candidate=false` above, but implemented and confirmed rather
