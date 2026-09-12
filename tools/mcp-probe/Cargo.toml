@@ -1,0 +1,21 @@
+[workspace]
+
+[package]
+name = "mcp-probe"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+description = "Standalone, non-published diagnostic probe for the MCP serve initialize-handshake regression (056-F). Never shipped, never a production dependency."
+
+[lib]
+name = "mcp_probe"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcp-probe"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]
