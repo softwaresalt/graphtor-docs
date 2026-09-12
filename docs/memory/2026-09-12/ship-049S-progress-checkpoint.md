@@ -174,19 +174,143 @@
      --check`, `cargo audit` (clean), plus a `graphtor-core` `cargo
      check`.
 
+5. **056.001-T** -- DONE, committed (`0bd8c92` code, `d575e6a` backlog
+   archival). Built `tools/mcp-probe/src/exact_cli.rs` (~1500 lines incl.
+   18 unit tests): `ExactCliArgs`/`parse_exact_cli_args`, `fnv1a_64` +
+   `CopilotIdentity`/`identify_copilot`, `CaptureSink`,
+   `spawn_piped_child`/`pump_and_reap` (reused `ChildGuard` +
+   `run_duplex_pump` one layer up, over the exact Copilot CLI child
+   itself -- never a new pump/teardown), `SentinelObservation`/
+   `watch_sentinel_inheritance`/`spawn_sentinel_watcher` (new,
+   independent, read-only `sysinfo::Process::environ()` watcher --
+   `WrapperOutcome.sentinel_inherited` is never persisted by `main.rs`
+   and `EvidenceSummary` has no sentinel field, so this could not be
+   satisfied by reading the wrapper's evidence file without touching
+   056.022-T/056.023-T-owned modules, which the task's own AC forbids),
+   `Gate1Outcome`/`run_gate1` (`mcp get --json` ancestor-isolation
+   proof, zero AI cost), `Leg`/`LegOutcome`/`run_leg`, `PassOutcome`/
+   `run_pass`, `classify_pass` (ordered H0a-retained / no-reproduction /
+   unresolved / unexpected-asymmetry), `ExactCliOutcome`/
+   `outcome_to_json`/`run_exact_cli`. Wired `pub mod exact_cli;` into
+   `lib.rs` and the `exact-cli` subcommand into `main.rs` (the one
+   final wiring edit the AC permits).
+   - Design bugs fixed before compiling clean: `Stdio::null()` doesn't
+     satisfy `run_duplex_pump`'s `.take()` requirement on
+     `child.stdin`/`stdout` (switched to `Stdio::piped()` +
+     `io::empty()` incoming); an `E0382` borrow-of-moved-value in the
+     original two-match `pump_and_reap` (consolidated into one `match`
+     computing `(timed_out, exit_code)` together).
+   - Pedantic clippy fixes (default stable, 1.98.0): `map().unwrap_or_else()`
+     -> `map_or_else()` in `CaptureSink::into_bytes`; a doc-list
+     indentation lint on `spawn_and_capture`'s doc comment.
+   - MSRV-only (`+1.75.0`) clippy surfaced 3 `module_name_repetitions`
+     findings in this task's own new items (`ExactCliArgs`,
+     `ExactCliOutcome`, `run_exact_cli`) -- fixed with the same
+     `#[allow(clippy::module_name_repetitions)]` + rationale-comment
+     pattern already established in `evidence.rs`/`process.rs`. The
+     same MSRV clippy pass also surfaced 4 pre-existing
+     `module_name_repetitions` findings in `workspace.rs`
+     (`WorkspaceError`, `ProbeWorkspace`, `create_probe_workspace`,
+     `remove_probe_workspace`) that are **NOT** newly introduced by
+     this task, are **not** flagged by the newer stable (1.98.0)
+     clippy CI actually runs (`.github/workflows/ci.yml` only runs
+     `stable` toolchain clippy/fmt/test/audit -- there is no MSRV
+     clippy job in CI), and touching `workspace.rs` is outside
+     056.001-T's declared file ownership. Left untouched; recorded here
+     as a known, non-blocking, MSRV-clippy-only latent finding for a
+     future Stage-triaged cleanup task if ever desired. `cargo check`/
+     `cargo test` both pass clean under `+1.75.0` for the whole crate
+     (MSRV compile/test compatibility, the actually-required contract,
+     is intact).
+   - `cargo audit` clean (no new dependency added).
+   - **Real-world run executed** (the core acceptance criterion) via
+     `cargo +1.75.0 run --manifest-path tools/mcp-probe/Cargo.toml --
+     exact-cli --copilot-exe C:\Tools\copilot.exe --repo-root
+     C:\Source\GitHub\graphtor --inner-exe C:\Tools\bun.exe --inner-arg
+     .copilot/graphtor-mcp-shim.cjs --inner-arg graphtor-docs
+     --inner-arg serve --entry-name graphtor-docs --leg-deadline-secs 60
+     --gate1-deadline-secs 20` against the real installed Copilot CLI
+     (`GitHub Copilot CLI 1.0.84-3`, content hash `375c12c42318bea6`,
+     144861984 bytes) and the real production `bun.exe` +
+     `.copilot/graphtor-mcp-shim.cjs`.
+     - **Gate 1: PASSED.** The CLI logged `Warning: skipping workspace
+       MCP config "...\ancestor\.mcp.json" because it is malformed`
+       (the owned 056.021-T sentinel-invalid ancestor fixture) and
+       resolved the requested entry's `sourcePath` to the nested
+       child's own `.mcp.json`, not the ancestor -- proving
+       nearest-config-wins isolation with **zero** AI-model cost.
+     - **`h3_b_candidate: false`** (Gate 1 passed; no ancestor merge or
+       both-legs-foreign result) -- so the Gate-1 branch to
+       `H3-B-candidate`/forward-to-056.019-T does **not** apply.
+     - **Wrapper handoff parity confirmed on disk**: control and
+       treatment `.mcp.json` wrapper args are byte-identical (same
+       `--inner-exe`, `--inner-arg .copilot/graphtor-mcp-shim.cjs`
+       `graphtor-docs` `serve`, same `--evidence-output`/`--run-nonce`);
+       treatment alone adds `"cwd": "\\?\C:\Source\GitHub\graphtor"`.
+     - **Sentinel-inheritance observation: OBSERVED** on both legs (a
+       direct child matching this binary's own path was seen carrying
+       `MCP_PROBE_ENV_INHERITANCE_SENTINEL` in its OS-reported
+       environment) -- confirms the new `sysinfo`-based watcher works
+       against the real process tree on this host and gives 056.006-T a
+       positive env-inheritance selection signal.
+     - **Ordered cause classification: `unresolved`** -- "Cause not
+       resolved by cwd alone for build 'affected': neither leg reached
+       a connected, initialize-correlated state (control
+       last_mcp_status=Some("failed"), treatment
+       last_mcp_status=Some("connected"))." The wrapper's own
+       JSON-RPC frame capture recorded exactly one event on each leg
+       (`server/discover`, not `initialize`) and `initialize_correlation:
+       null` on both legs, so even the treatment leg's "connected"
+       session-level status did not satisfy the compound
+       connected-AND-initialize-correlated bar `classify_pass` requires
+       before declaring `H0a-retained`. This is honest, as-observed
+       evidence, recorded without a rerun (one-shot contract) and
+       without modifying the classifier to make the result look
+       cleaner.
+     - **Terminal: `done`** (not `blocked`) -- evidence capture itself
+       was never blocked; this is a fully conclusive, if unresolved,
+       one-shot classification.
+     - **Stable-build comparison: not run.** Investigated
+       `C:\Tools\copilot.exe.old-26912-*`/`*-30316-*` (no `--version`
+       output at all) and the versioned
+       `%LOCALAPPDATA%\github-copilot-sdk\cli\{1.0.71,1.0.73,1.0.80}\
+       copilot.exe` caches (each independently reports the same live
+       `1.0.84-3` version string when invoked directly, despite
+       distinct content hashes and distinct folder version labels --
+       strongly suggesting these are thin self-relaunching/self-updating
+       launchers rather than genuinely pinned historical binaries). No
+       last-known-stable build could be identified with reasonable
+       confidence, so per the AC's own conditional wording ("when a
+       last-known-stable Copilot executable is available"), only the
+       required single affected-build pair was run.
+     - Full JSON output persisted transiently under
+       `logs/probe/exact-1789250503062413000-35436/` (gitignored,
+       per-design scratch workspace; `evidence.json` +
+       `control/`/`treatment/wrapper-evidence-snapshot.json` +
+       `ancestor/` fixture all inspected and confirmed correct). No
+       lingering `mcp-probe.exe`/orphaned processes after the run.
+   - **Consequence for 056.019-T**: 056.019-T's own first disposition
+     rule applies directly -- "If T0 emitted neither an H3-B cwd cause
+     nor an `H3-B-candidate` from a Gate-1 ancestor-config merge, move
+     to `done` with `not-needed: H3-B / isolated-config mechanism not
+     evidenced`." Since `h3_b_candidate=false` and 056.001-T's
+     classification vocabulary never emits a distinct "H3-B cwd cause"
+     label (that is 056.019-T's own separate working-directory-mechanism
+     hypothesis, tested independently), 056.019-T is expected to
+     resolve as `done`/`not-needed` without needing its own bounded
+     CLI adjudication -- to be confirmed when 056.019-T is implemented.
+
 ## Remaining work (not yet started)
 
-- 056.001-T (exact_cli.rs, real Copilot CLI differential probe; one-shot
-  classification; may end `done` or `blocked`) -- consumes 056.021-T's
-  `ProbeWorkspace`/`McpServerEntrySpec` and 056.022-T's `wrapper`
-  subcommand.
 - 056.002-T (out-of-process serve handshake test driver, main crate,
   independent of chain 1)
 - 056.003-T (serve_preflight.rs hardening in main crate, depends on
   056.002-T)
 - 056.019-T (H3-B terminal adjudication, depends on 056.003-T +
-  056.001-T; may legitimately end `blocked`, which would halt 049-S
-  closure)
+  056.001-T; expected to resolve `done`/`not-needed` per
+  `h3_b_candidate=false` above, but implemented and confirmed rather
+  than assumed; may legitimately end `blocked` if that expectation
+  proves wrong, which would halt 049-S closure)
 - Standard multi-persona review + adversarial multi-model review before
   PR
 - PR creation, Copilot review cycle, CI, merge (merge commit only, no
