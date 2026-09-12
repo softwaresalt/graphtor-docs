@@ -1,4 +1,18 @@
 //! Shared test helper utilities for graphtor-docs integration tests.
+//!
+//! Each `tests/*.rs` integration test file that declares `mod common;`
+//! compiles this module into its own independent binary crate, so `pub`
+//! here does not make an item externally reachable the way it would in a
+//! real library crate — only the specific helpers a given test binary
+//! actually calls are considered "used" by that binary's own dead-code
+//! analysis. This module is intentionally a general, cross-binary toolbox
+//! (docline fixture builders, the `056.002-T` serve handshake driver in
+//! [`serve_driver`]) where any single consumer is expected to exercise
+//! only a subset. `#![allow(dead_code)]` reflects that shared-toolbox
+//! shape rather than silencing a genuine unused-code defect.
+#![allow(dead_code)]
+
+pub mod serve_driver;
 
 /// Build a docline v1 conformant markdown string suitable for use in test
 /// fixtures that exercise the runtime ingestion path.
