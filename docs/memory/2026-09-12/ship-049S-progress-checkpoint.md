@@ -6,6 +6,9 @@
 
 ## Status
 
+- **Progress: 7 of 8 manifest tasks DONE** (056.020-T, 056.022-T,
+  056.023-T, 056.021-T, 056.001-T, 056.002-T, 056.003-T). Only
+  **056.019-T** remains before review/PR/CI/merge/closure.
 - Shipment 049-S claimed (`active`). All 8 manifest tasks activated by
   backlogit's own claim cascade (side effect, not individually invoked by
   Ship for 7 of the 8). Covering feature 056-F's status also rolled up to
@@ -396,11 +399,69 @@
        discovery) -- to be captured via the `compound` skill before or
        alongside the PR, per Ship's Learnings Capture step.
 
+7. **056.003-T** -- DONE, committed (`dbbd5e6` code, `70bbbee` backlog
+   archival). Built the typed `cmd_serve` pre-transport diagnostics seam
+   in the MAIN crate: `src/workspace/serve_preflight.rs` (~370 lines) --
+   `ServePreflightExit` enum (5 variants: `ConfigOverrideNotFound`,
+   `NoDatabasesToServe`, `DuplicateIntakeConflict`, `PreV4Schema`,
+   `NoPrimaryStore`) with `exit_code()`/`tag()`/`trace()`/`Display`;
+   `ServePreflightErrorStage` enum (6 variants) with `Display`;
+   `trace_preflight_error`, `trace_stage<T>` (generic map-through
+   wrapper, never alters the propagated error), `trace_serve_ready`.
+   Wired into `open_serve_databases` (7 fallible calls + both
+   `PreV4Schema` exit sites) and `cmd_serve` (malformed-registry
+   propagated error, `ConfigOverrideNotFound`, `discover_served_
+   databases`, both `NoDatabasesToServe` sites, `DuplicateIntakeConflict`
+   trace-only call site, `resolve_embedding_model`, `NoPrimaryStore`,
+   plus `trace_serve_ready(cwd)` immediately before `rmcp::serve_server`).
+   Every pre-existing `eprintln!` preserved byte-for-byte; the shared
+   `run_duplicate_intake_preflight` helper (also used by
+   `cmd_sync`/`cmd_prewarm`) deliberately left untouched -- only the
+   `cmd_serve` call site gains a `.trace()` call, per the task's
+   serve-only scope boundary.
+   - `tests/serve_preflight_test.rs`: 8 new integration tests, all
+     passing on first real run (genuine observed-green, not
+     red-then-green because the seam is purely additive over already
+     -green exit paths): (a) 5 tests -- exhaustive typed-exit mapping
+     via real process spawns for all 4 reachable variants
+     (`ConfigOverrideNotFound`, `NoDatabasesToServe`, `PreV4Schema` x2
+     branches [ReadOnly auto-discovery + Generation source-backed],
+     `DuplicateIntakeConflict`), each asserting BOTH the preserved
+     verbatim message AND the new `mcp_serve_preflight_exit` trace event
+     text, exit code 2. `NoPrimaryStore` is structurally unreachable
+     (existing code comment) and is covered only by the pure unit tests
+     inside `serve_preflight.rs` itself. (b) 2 tests -- a malformed
+     source-registry propagated error, once with default logging
+     (asserts `mcp_serve_preflight_error` + `source_config` present)
+     and once with `RUST_LOG=off` (asserts the unconditional top-level
+     fatal message `"source registry is invalid; fix it before running
+     serve"` still appears, but the additional tracing event is
+     silenced) -- proving the two channels are genuinely independent.
+     (c) 1 test -- reuses 056.002-T's `run_initialize_handshake` driver
+     against a real seeded fixture, asserts `assert_stdout_protocol_
+     clean` still holds (no new stdout bytes) and `mcp_serve_ready` +
+     `preflight_complete=true` appear in captured stderr.
+   - Added a local `strip_ansi` helper (mirrors `tests/
+     serve_posture_gating_test.rs`'s own) before asserting on compound
+     `key=value`/multi-token stderr substrings, since this codebase's
+     `tracing_subscriber::fmt()` colourises field values even when
+     piped to a non-terminal.
+   - All gates green under the **stable toolchain only** (per the
+     056.002-T MSRV decision -- root crate `+1.75.0` stays unattempted
+     for the rest of this shipment): `cargo check --bin graphtor-docs`
+     (clean after the `main.rs` wiring), `cargo clippy --all-targets -D
+     warnings -D clippy::pedantic` (clean, zero new `#[allow]` needed),
+     `cargo fmt --all -- --check` (clean), `cargo test --test
+     serve_preflight_test` (8/8 pass), full `cargo test` (0 failures
+     across the whole workspace), `cargo audit` with CI's `--ignore`
+     list (only the 2 already-known/CI-ignored advisories remain --
+     `paste` RUSTSEC-2024-0436, `smartstring` RUSTSEC-2026-0249; no
+     Cargo.toml/Cargo.lock changes this task, so the dependency graph
+     is byte-identical to 056.002-T's already-clean run).
+   - No new P-021 deferred findings this task; no new stash captures.
+
 ## Remaining work (not yet started)
 
-- 056.003-T (serve_preflight.rs hardening in main crate, depends on
-  056.002-T; use STABLE-toolchain-only gates for the root crate per the
-  056.002-T MSRV finding above)
 - 056.019-T (H3-B terminal adjudication, depends on 056.003-T +
   056.001-T; expected to resolve `done`/`not-needed` per
   `h3_b_candidate=false` above, but implemented and confirmed rather
