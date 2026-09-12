@@ -94,6 +94,12 @@ pub enum WorkspaceError {
     Io(std::io::Error),
     /// Building or serializing a generated `.mcp.json` document failed.
     Json(serde_json::Error),
+    /// The caller-supplied `--run-nonce` is not a safe, single, relative
+    /// path component (empty, contains a path separator, is `.`/`..`, or
+    /// is itself absolute). Rejected before any join/create so a
+    /// malicious or malformed nonce can never cause a directory to be
+    /// created outside `logs/probe/` in the first place.
+    InvalidNonce(String),
 }
 
 impl std::fmt::Display for WorkspaceError {
@@ -124,6 +130,11 @@ impl std::fmt::Display for WorkspaceError {
             ),
             Self::Io(err) => write!(f, "I/O error: {err}"),
             Self::Json(err) => write!(f, "config JSON error: {err}"),
+            Self::InvalidNonce(nonce) => write!(
+                f,
+                "run-nonce {nonce:?} is not a safe single relative path component \
+                 (must not be empty, contain a path separator, be '.'/'..', or be absolute)"
+            ),
         }
     }
 }
@@ -133,7 +144,10 @@ impl std::error::Error for WorkspaceError {
         match self {
             Self::Io(err) => Some(err),
             Self::Json(err) => Some(err),
-            Self::AlreadyExists(_) | Self::ReparsePoint(_) | Self::ContainmentEscape { .. } => None,
+            Self::AlreadyExists(_)
+            | Self::ReparsePoint(_)
+            | Self::ContainmentEscape { .. }
+            | Self::InvalidNonce(_) => None,
         }
     }
 }
@@ -226,6 +240,32 @@ fn reject_if_leaf_unsafe(path: &Path) -> Result<(), WorkspaceError> {
         Ok(_) => Err(WorkspaceError::AlreadyExists(path.to_path_buf())),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(WorkspaceError::Io(err)),
+    }
+}
+
+/// Validates that `nonce` is a single, safe, relative path component
+/// before it is ever joined onto `logs/probe/` or used to create a
+/// directory. Rejects an empty string, any embedded path separator
+/// (`/` or `\` on every platform, not just the host's native one, since
+/// a `--run-nonce` value is arbitrary caller-supplied text and this
+/// check must not depend on which OS produced it), the special `.`/`..`
+/// components, and an absolute path. This runs strictly BEFORE any
+/// `Path::join`/`fs::create_dir` call in [`create_probe_workspace`] so a
+/// malformed or malicious nonce can never cause a directory to be
+/// created outside `logs/probe/<nonce>` in the first place -- unlike
+/// [`validate_containment`], which can only validate a path that
+/// already exists on disk.
+fn validate_nonce(nonce: &str) -> Result<(), WorkspaceError> {
+    let is_safe = !nonce.is_empty()
+        && nonce != "."
+        && nonce != ".."
+        && !nonce.contains('/')
+        && !nonce.contains('\\')
+        && !Path::new(nonce).is_absolute();
+    if is_safe {
+        Ok(())
+    } else {
+        Err(WorkspaceError::InvalidNonce(nonce.to_string()))
     }
 }
 
@@ -346,7 +386,10 @@ fn write_wrapper_mcp_json(
 /// intended workspace path; [`WorkspaceError::ContainmentEscape`] if the
 /// shared `logs/probe` parent chain or the freshly created workspace
 /// itself canonicalizes outside `repo_root` (most commonly caused by a
-/// reparse point on an ancestor component); and [`WorkspaceError::Io`] /
+/// reparse point on an ancestor component); [`WorkspaceError::InvalidNonce`]
+/// if `nonce` is not a safe single relative path component (checked
+/// FIRST, before anything is joined or created, so an unsafe nonce can
+/// never reach the filesystem at all); and [`WorkspaceError::Io`] /
 /// [`WorkspaceError::Json`] for ordinary filesystem or serialization
 /// failures.
 pub fn create_probe_workspace(
@@ -354,6 +397,14 @@ pub fn create_probe_workspace(
     nonce: &str,
     entry: &McpServerEntrySpec,
 ) -> Result<ProbeWorkspace, WorkspaceError> {
+    // Reject an unsafe nonce (path separator, `..`, absolute, empty)
+    // BEFORE any `Path::join`/`fs::create_dir` call below -- validating
+    // only after creation (as `validate_containment` must, since it
+    // needs the path to already exist to `canonicalize` it) would let a
+    // malicious or malformed nonce cause a directory to be created
+    // outside `logs/probe/` first and only be caught afterward.
+    validate_nonce(nonce)?;
+
     let canonical_repo_root = fs::canonicalize(repo_root)?;
 
     // Shared parent chain across many probe runs: created if missing,

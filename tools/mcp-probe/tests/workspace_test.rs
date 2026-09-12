@@ -201,6 +201,75 @@ fn ancestor_fixture_is_invalid_and_ancestor_run_fixture_is_valid() {
 }
 
 #[test]
+fn create_probe_workspace_rejects_unsafe_nonces_before_touching_the_filesystem() {
+    let repo_root = fresh_fake_repo_root("unsafe-nonce");
+    let entry = fixture_entry();
+
+    let unsafe_nonces: &[&str] = &[
+        "",
+        ".",
+        "..",
+        "../escape",
+        "a/b",
+        "a\\b",
+        "/absolute",
+        "\\absolute",
+    ];
+
+    for nonce in unsafe_nonces {
+        let result = create_probe_workspace(&repo_root, nonce, &entry);
+        match result {
+            Err(WorkspaceError::InvalidNonce(rejected)) => {
+                assert_eq!(&rejected, nonce);
+            }
+            other => panic!("expected InvalidNonce for nonce {nonce:?}, got {other:?}"),
+        }
+    }
+
+    // Nothing must have been created at all -- an unsafe nonce is
+    // rejected strictly BEFORE any join/create, unlike the containment
+    // check (which can only run after a path already exists).
+    assert!(
+        !repo_root.join("logs").exists(),
+        "an unsafe nonce must never cause even the shared logs/probe parent chain to be created"
+    );
+
+    let _ = std::fs::remove_dir_all(&repo_root);
+}
+
+#[test]
+fn create_probe_workspace_rejects_a_traversal_nonce_without_ever_escaping_logs_probe() {
+    let repo_root = fresh_fake_repo_root("traversal-escape");
+    let entry = fixture_entry();
+
+    // Without the pre-join/pre-create nonce validation, `probe_root
+    // .join("../escape-nonce")` would resolve (at the OS level, when
+    // `fs::create_dir` is actually invoked) to a directory as a SIBLING
+    // of `logs/probe/` -- i.e. `repo_root/logs/escape-nonce` -- fully
+    // outside the intended `logs/probe/<nonce>` containment boundary,
+    // and it would exist on disk BEFORE `validate_containment` ever ran.
+    let result = create_probe_workspace(&repo_root, "../escape-nonce", &entry);
+    assert!(
+        matches!(result, Err(WorkspaceError::InvalidNonce(_))),
+        "expected InvalidNonce for a traversal nonce, got {result:?}"
+    );
+
+    let would_be_escape_path = repo_root.join("logs").join("escape-nonce");
+    assert!(
+        !would_be_escape_path.exists(),
+        "a traversal nonce must never cause a directory to be created outside logs/probe/: {}",
+        would_be_escape_path.display()
+    );
+    assert!(
+        !repo_root.join("logs").exists(),
+        "a traversal nonce must never cause even the shared logs/probe parent chain to be \
+         created, since validation runs before any join/create"
+    );
+
+    let _ = std::fs::remove_dir_all(&repo_root);
+}
+
+#[test]
 fn create_probe_workspace_rejects_a_pre_existing_junction_at_the_exact_workspace_path() {
     let repo_root = fresh_fake_repo_root("leaf-junction");
     let entry = fixture_entry();
