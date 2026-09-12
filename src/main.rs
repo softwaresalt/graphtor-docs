@@ -73,6 +73,10 @@ use std::any::Any;
 use tracing::{debug, info, warn};
 
 use cli::{Cli, Command, OutputFormat};
+use workspace::serve_preflight::{
+    trace_preflight_error, trace_serve_ready, trace_stage, ServePreflightErrorStage,
+    ServePreflightExit,
+};
 
 #[tokio::main]
 async fn main() {
@@ -2367,6 +2371,7 @@ struct ServeOpenedDatabases {
 ///
 /// Returns `Ok(None)` when all databases opened cleanly, or `Ok(Some(code))`
 /// when an exit code should be returned immediately (e.g. pre-v4 gate).
+#[allow(clippy::too_many_lines)]
 fn open_serve_databases(
     classified: Vec<(PathBuf, workspace::serve_discovery::ServeMode)>,
     cwd: &std::path::Path,
@@ -2386,30 +2391,47 @@ fn open_serve_databases(
                     posture = "generation",
                     "opening database"
                 );
-                let lock = acquire_database_lock(&target_db_path, cwd)?;
-                let store = DataStore::open_sqlite(&target_db_path, cwd).with_context(|| {
-                    format!("failed to open database at {}", target_db_path.display())
-                })?;
-                store
-                    .ensure_schema()
-                    .context("failed to ensure database schema")?;
+                let lock = trace_stage(
+                    ServePreflightErrorStage::DatabaseLock,
+                    acquire_database_lock(&target_db_path, cwd),
+                )?;
+                let store = trace_stage(
+                    ServePreflightErrorStage::DatabaseOpen,
+                    DataStore::open_sqlite(&target_db_path, cwd).with_context(|| {
+                        format!("failed to open database at {}", target_db_path.display())
+                    }),
+                )?;
+                trace_stage(
+                    ServePreflightErrorStage::Schema,
+                    store
+                        .ensure_schema()
+                        .context("failed to ensure database schema"),
+                )?;
                 // Gate serve on pre-v4 databases.  Serving stale pre-pivot data is
                 // worse than refusing to start; the operator must run `sync` first.
-                if store
-                    .needs_v4_migration()
-                    .context("failed to check database migration state")?
-                {
+                if trace_stage(
+                    ServePreflightErrorStage::Schema,
+                    store
+                        .needs_v4_migration()
+                        .context("failed to check database migration state"),
+                )? {
+                    let exit = ServePreflightExit::PreV4Schema {
+                        db_path: target_db_path.clone(),
+                    };
+                    exit.trace();
                     eprintln!(
                         "error: database at '{}' has pre-v4 schema; \
                          run `graphtor-docs sync` to rebuild the index before starting serve",
                         target_db_path.display()
                     );
-                    return Ok((Some(2), result));
+                    return Ok((Some(exit.exit_code()), result));
                 }
-                let readonly_store = DataStore::open_sqlite_readonly(&target_db_path, cwd)
-                    .with_context(|| {
+                let readonly_store = trace_stage(
+                    ServePreflightErrorStage::DatabaseOpen,
+                    DataStore::open_sqlite_readonly(&target_db_path, cwd).with_context(|| {
                         format!("failed to open database at {}", target_db_path.display())
-                    })?;
+                    }),
+                )?;
                 result.locks.push(lock);
                 result.rw_stores.push((target_db_path.clone(), store));
                 result.ro_stores.push((target_db_path, readonly_store));
@@ -2420,20 +2442,28 @@ fn open_serve_databases(
                     posture = "read_only",
                     "opening database"
                 );
-                let readonly_store = DataStore::open_engine_readonly(&target_db_path, cwd)
-                    .with_context(|| {
+                let readonly_store = trace_stage(
+                    ServePreflightErrorStage::DatabaseOpen,
+                    DataStore::open_engine_readonly(&target_db_path, cwd).with_context(|| {
                         format!("failed to open database at {}", target_db_path.display())
-                    })?;
-                if readonly_store
-                    .needs_v4_migration()
-                    .context("failed to check database migration state")?
-                {
+                    }),
+                )?;
+                if trace_stage(
+                    ServePreflightErrorStage::Schema,
+                    readonly_store
+                        .needs_v4_migration()
+                        .context("failed to check database migration state"),
+                )? {
+                    let exit = ServePreflightExit::PreV4Schema {
+                        db_path: target_db_path.clone(),
+                    };
+                    exit.trace();
                     eprintln!(
                         "error: database at '{}' has pre-v4 schema; \
                          run `graphtor-docs sync` to rebuild the index before starting serve",
                         target_db_path.display()
                     );
-                    return Ok((Some(2), result));
+                    return Ok((Some(exit.exit_code()), result));
                 }
                 result.ro_stores.push((target_db_path, readonly_store));
             }
@@ -2459,9 +2489,10 @@ async fn cmd_serve(
             // databases and starting the MCP server with a broken config would
             // silently serve stale or incorrect data.  Matching the fail-closed
             // behaviour of `sync` and `status`.
-            return Err(anyhow::anyhow!(
-                "source registry is invalid; fix it before running serve: {e}"
-            ));
+            let err =
+                anyhow::anyhow!("source registry is invalid; fix it before running serve: {e}");
+            trace_preflight_error(ServePreflightErrorStage::SourceConfig, &err);
+            return Err(err);
         }
     };
 
@@ -2471,8 +2502,12 @@ async fn cmd_serve(
         // The operator explicitly pointed `--config` at a file that does not
         // exist — a genuine configuration error, not a case for
         // auto-discovery to paper over.
+        let exit = ServePreflightExit::ConfigOverrideNotFound {
+            path: path.to_path_buf(),
+        };
+        exit.trace();
         eprintln!("error: config file '{}' not found", path.display());
-        return Ok(2);
+        return Ok(exit.exit_code());
     } else if has_explicit_db_target {
         vec![db_path.to_path_buf()]
     } else {
@@ -2492,19 +2527,26 @@ async fn cmd_serve(
     // live outside `.graphtor/`); auto-discovery itself stays scoped to
     // `.graphtor/`.
     let graphtor_dir = cwd.join(".graphtor");
-    let served_paths = workspace::serve_discovery::discover_served_databases(
-        &graphtor_dir,
-        cwd,
-        &db_paths,
-        source_config.as_ref(),
-    )
-    .context("failed to discover databases to serve")?;
+    let served_paths = trace_stage(
+        ServePreflightErrorStage::Discovery,
+        workspace::serve_discovery::discover_served_databases(
+            &graphtor_dir,
+            cwd,
+            &db_paths,
+            source_config.as_ref(),
+        )
+        .context("failed to discover databases to serve"),
+    )?;
     if served_paths.is_empty() {
+        let exit = ServePreflightExit::NoDatabasesToServe {
+            graphtor_dir: graphtor_dir.clone(),
+        };
+        exit.trace();
         eprintln!(
             "no databases found to serve; drop a `.db` file into '{}' or configure a source",
             graphtor_dir.display()
         );
-        return Ok(2);
+        return Ok(exit.exit_code());
     }
 
     // Content-derived posture classification (P1-T2): resolvable real
@@ -2545,11 +2587,15 @@ async fn cmd_serve(
     });
 
     if classified.postures.is_empty() {
+        let exit = ServePreflightExit::NoDatabasesToServe {
+            graphtor_dir: graphtor_dir.clone(),
+        };
+        exit.trace();
         eprintln!(
             "no databases found to serve; drop a `.db` file into '{}' or configure a source",
             graphtor_dir.display()
         );
-        return Ok(2);
+        return Ok(exit.exit_code());
     }
 
     let generation_count = classified
@@ -2584,6 +2630,7 @@ async fn cmd_serve(
         if let Some(exit_code) =
             run_duplicate_intake_preflight(&generation_config, db_path, cwd, false)?
         {
+            ServePreflightExit::DuplicateIntakeConflict.trace();
             return Ok(exit_code);
         }
     }
@@ -2600,8 +2647,11 @@ async fn cmd_serve(
     } = opened;
 
     // Load the embedding model for semantic search via the shared resolver.
-    let model: Option<EmbeddingModel> = resolve_embedding_model(ResolverCaller::Serve, false)
-        .context("embedding model resolution failed")?;
+    let model: Option<EmbeddingModel> = trace_stage(
+        ServePreflightErrorStage::EmbeddingModel,
+        resolve_embedding_model(ResolverCaller::Serve, false)
+            .context("embedding model resolution failed"),
+    )?;
 
     // Spawn a background incremental sync task ONLY when at least one
     // database resolved to `Generation`; hand it ONLY the filtered
@@ -2632,8 +2682,10 @@ async fn cmd_serve(
         // Structurally unreachable — the empty-union case is already
         // handled above — but kept as a HANDLED error rather than
         // `unreachable!()` for defence-in-depth (review thread 14).
+        let exit = ServePreflightExit::NoPrimaryStore;
+        exit.trace();
         eprintln!("no databases found to serve");
-        return Ok(2);
+        return Ok(exit.exit_code());
     };
     let additional: Vec<_> = stores.collect();
     let server = match model {
@@ -2643,6 +2695,7 @@ async fn cmd_serve(
     let server = server.with_sync_status(sync_status);
 
     info!("starting MCP STDIO server");
+    trace_serve_ready(cwd);
     rmcp::serve_server(server, rmcp::transport::stdio())
         .await
         .context("MCP server failed to start")?

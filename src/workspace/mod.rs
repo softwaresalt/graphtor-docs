@@ -17,6 +17,8 @@
 //! - [`uninstall`]: Workspace removal.
 //! - [`lock`]: Advisory workspace lock file.
 //! - [`serve_discovery`]: `.graphtor/` root auto-discovery for `serve`/`status`.
+//! - [`serve_preflight`]: typed pre-transport exit/error observability seam
+//!   for `cmd_serve` (`056.003-T`).
 
 pub mod doctor;
 pub mod gitignore;
@@ -26,5 +28,6 @@ pub mod lock;
 pub mod mcp_config;
 pub mod paths;
 pub mod serve_discovery;
+pub mod serve_preflight;
 pub mod uninstall;
 pub mod upgrade;
