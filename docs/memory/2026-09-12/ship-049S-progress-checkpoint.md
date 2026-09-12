@@ -81,14 +81,105 @@
      `bool::then(..)` inside `filter_map` with `filter().map()` in
      `child_pids`.
 
+3. **056.023-T** -- DONE, committed (`e89147b` code, `7dcc9b9` backlog
+   archival). Wired `src/evidence.rs` into the crate (`pub mod evidence;`
+   in `lib.rs`; `serde_json = "1.0"` added to `Cargo.toml`, its `zmij`
+   transitive dep independently confirmed a legitimate real serde_json
+   1.0.151 dependency via the crates.io API, not a supply-chain
+   anomaly). `evidence.rs`: redaction helpers (`redact_argv`/
+   `redact_env`/`redact_json_value`), `FrameKind`/`FrameEvent`/
+   `InitializeCorrelation`/`EvidenceSummary`, `LineReassembler`,
+   `CollectorState`/`process_line`, `EvidenceCollector` (own dedicated
+   bounded channel + correlator thread, fully decoupled from
+   transport's delivery thread/channel; `new`/`new_with_capacity`/
+   `hook`/`finalize`), `evidence_summary_to_json` (manual
+   `serde_json::json!` construction, no `Serialize` derive),
+   `write_evidence_output` (atomic write). `process.rs`'s `run_wrapper`
+   now constructs an `EvidenceCollector`, attaches its hook to the
+   duplex pump, and calls `finalize()`/`write_evidence_output()` on
+   every teardown path (including deadline teardown); `WrapperOutcome`
+   gained `evidence_valid`/`evidence_write_error`.
+   - `tests/evidence_test.rs`: 10 new tests (redaction pure functions,
+     fragmented/interleaved initialize correlation via direct hook
+     calls, mismatched-id non-correlation, channel-saturation
+     invalidation without affecting real forwarding, a panicking
+     `CopyHook`'s isolation, no-raw-frame-persistence, two true
+     end-to-end `run_wrapper` checks).
+   - Two test-design bugs found and fixed during red/green: (a) a
+     `redact_json_value` test fixture used the key `"credentials"`,
+     which itself substring-matches the sensitive-key check and
+     blanket-redacts the whole object instead of recursing (renamed to
+     `"auth_info"` -- this is intentional over-redaction behavior, not
+     a code bug); (b) an interleaved-correlation test spliced a
+     complete frame's bytes into the middle of a still-fragmented
+     line's byte stream, which a single-stream `LineReassembler` cannot
+     treat as two frames -- restructured to keep each direction's byte
+     stream internally contiguous while still interleaving across
+     directions.
+   - All gates green (10 evidence + 6 process + 6 transport = 22 tests
+     at this point): `cargo +1.75.0 check|test|build|clippy -D warnings
+     -D clippy::pedantic`, `cargo fmt --check`, `cargo audit` (clean, 32
+     deps), plus a `graphtor-core` `cargo check`.
+
+4. **056.021-T** -- DONE, committed (`8ea6cf7` code, `0d58d0a` backlog
+   archival). Built `tools/mcp-probe/src/workspace.rs`:
+   `McpServerEntrySpec` (caller-supplied entry_name/wrapper_exe/
+   inner_exe/inner_args -- this module never reads the real
+   `.mcp.json`), `ProbeWorkspace`, `WorkspaceError`
+   (`AlreadyExists`/`ReparsePoint`/`ContainmentEscape`/`Io`/`Json`),
+   `create_probe_workspace(repo_root, nonce, entry)` and
+   `remove_probe_workspace`.
+   - Design correction reached before writing code: control and
+     treatment `.mcp.json` wrapper args must be **byte-identical**,
+     including the same `--evidence-output` path and same
+     `--run-nonce` value (not per-leg-distinct) -- the two legs run
+     sequentially and share one evidence_output file; treatment adds
+     **only** a `cwd` key (the canonicalized repo root) to its JSON
+     object.
+   - Fail-closed exclusive creation: pre-check the exact nonce leaf via
+     `symlink_metadata` (any existing entry -> `ReparsePoint` if a
+     junction/symlink, else generic `AlreadyExists`; never reused or
+     followed), then `fs::create_dir`, then a post-creation
+     `canonicalize` + `starts_with` containment re-check against the
+     canonical repo root -- applied to both the shared `logs/probe`
+     parent chain (defends against a tampered ancestor component) and
+     the freshly created leaf.
+   - Ancestor fixture: `ancestor/.mcp.json` holds deliberately
+     syntactically-invalid JSON (a loud, unambiguous sentinel);
+     `ancestor/run/.mcp.json` holds a valid wrapper config with its own
+     separate evidence_output (a distinct Gate-1 config-discovery
+     proof, not part of the control/treatment cwd contrast).
+   - Confirmed via `main.rs`'s own doc comment that 056.001-T (not
+     056.021-T) owns the `exact-cli` subcommand; 056.021-T's "wiring"
+     is `pub mod workspace;` plus doc-comment updates in `lib.rs`/
+     `main.rs`, no new CLI surface.
+   - `tests/workspace_test.rs`: 6 new tests -- layout, byte-identical
+     control/treatment args except `cwd`, exclusive-creation rejection,
+     ancestor/ancestor-run fixture content, and **two real-junction
+     rejection scenarios** via `cmd /C mklink /J` (leaf-level
+     pre-existing junction -> `ReparsePoint`; ancestor-component
+     redirect, e.g. `logs` itself as a junction pointing outside the
+     fake repo root -> `ContainmentEscape`/`ReparsePoint`), each run
+     against a fresh temp-dir fake repo root so no test touches this
+     crate's own working tree or the real repo's `logs/probe/`.
+   - Also fixed one pre-existing `clippy::assigning_clones` pedantic
+     finding in `evidence.rs` (newly surfaced by the current default
+     `stable` toolchain, rustc/cargo 1.98.0, not introduced by this
+     task) -- `pending_initialize_request_id = id.clone()` ->
+     `.clone_from(&id)`.
+   - All gates green (28 tests total: 10 evidence + 6 process + 6
+     transport + 6 workspace) under **both** the default stable
+     (1.98.0) and the `+1.75.0` MSRV toolchain: `cargo check|test|
+     clippy --all-targets -D warnings -D clippy::pedantic`, `cargo fmt
+     --check`, `cargo audit` (clean), plus a `graphtor-core` `cargo
+     check`.
+
 ## Remaining work (not yet started)
 
-- 056.023-T (evidence.rs, serde_json, observer/correlator, finalized
-  lockfile + audit gate)
-- 056.021-T (workspace.rs, isolated workspace/config fixtures,
-  containment check)
 - 056.001-T (exact_cli.rs, real Copilot CLI differential probe; one-shot
-  classification; may end `done` or `blocked`)
+  classification; may end `done` or `blocked`) -- consumes 056.021-T's
+  `ProbeWorkspace`/`McpServerEntrySpec` and 056.022-T's `wrapper`
+  subcommand.
 - 056.002-T (out-of-process serve handshake test driver, main crate,
   independent of chain 1)
 - 056.003-T (serve_preflight.rs hardening in main crate, depends on
