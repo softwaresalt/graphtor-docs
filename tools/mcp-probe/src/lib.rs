@@ -19,6 +19,7 @@
 //! `056.001-T` owns the exact-CLI differential runner.
 
 pub mod evidence;
+pub mod exact_cli;
 pub mod process;
 pub mod transport;
 pub mod workspace;

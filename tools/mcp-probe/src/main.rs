@@ -24,6 +24,7 @@
 //! subcommand is the sole caller that composes `workspace::create_probe_workspace`
 //! with the `wrapper` subcommand above into one real run.
 
+use mcp_probe::exact_cli::{outcome_to_json, parse_exact_cli_args, run_exact_cli};
 use mcp_probe::process::{parse_wrapper_args, run_wrapper, SysinfoProcessObserver, WrapperConfig};
 use std::io::{Read, Write};
 
@@ -34,6 +35,7 @@ fn main() {
         Some("__block") => run_block_child(),
         Some("__exit") => run_exit_child(args),
         Some("wrapper") => run_wrapper_subcommand(args),
+        Some("exact-cli") => run_exact_cli_subcommand(args),
         Some(other) => {
             eprintln!("mcp-probe: unknown subcommand '{other}'");
             std::process::exit(2);
@@ -42,8 +44,7 @@ fn main() {
             eprintln!(
                 "mcp-probe: standalone, non-published diagnostic probe for the \
                  056-F MCP serve initialize-handshake regression investigation. \
-                 Subcommands: wrapper (056.022-T). See 056.001-T for the \
-                 forthcoming exact-cli subcommand."
+                 Subcommands: wrapper (056.022-T), exact-cli (056.001-T)."
             );
             std::process::exit(2);
         }
@@ -80,6 +81,42 @@ fn run_wrapper_subcommand(args: impl Iterator<Item = String>) {
         Ok(outcome) => std::process::exit(outcome.inner_exit_code.unwrap_or(1)),
         Err(err) => {
             eprintln!("mcp-probe wrapper: failed to run inner process: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Composes the isolated `056.021-T` probe workspace, the `056.022-T`
+/// process guards/wrapper, and the `056.023-T` evidence seam for the
+/// `exact-cli` subcommand (`056.001-T`). Prints the full structured
+/// classification outcome as JSON to stdout and exits `0` on any
+/// completed run (including a Gate-1-fail `H3-B-candidate` terminal,
+/// which is a normal `done` outcome, never a failure); exits non-zero
+/// only when argument parsing fails or evidence capture itself could not
+/// even begin (for example, the isolated workspace could not be
+/// created).
+fn run_exact_cli_subcommand(args: impl Iterator<Item = String>) {
+    let parsed = match parse_exact_cli_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("mcp-probe exact-cli: {message}");
+            std::process::exit(2);
+        }
+    };
+
+    match run_exact_cli(&parsed) {
+        Ok(outcome) => {
+            let json = outcome_to_json(&outcome);
+            match serde_json::to_string_pretty(&json) {
+                Ok(text) => println!("{text}"),
+                Err(err) => {
+                    eprintln!("mcp-probe exact-cli: failed to serialize outcome: {err}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(message) => {
+            eprintln!("mcp-probe exact-cli: {message}");
             std::process::exit(1);
         }
     }
