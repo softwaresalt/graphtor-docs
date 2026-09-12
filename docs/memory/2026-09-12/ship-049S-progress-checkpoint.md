@@ -6,9 +6,9 @@
 
 ## Status
 
-- **Progress: 7 of 8 manifest tasks DONE** (056.020-T, 056.022-T,
-  056.023-T, 056.021-T, 056.001-T, 056.002-T, 056.003-T). Only
-  **056.019-T** remains before review/PR/CI/merge/closure.
+- **Progress: 8 of 8 manifest tasks DONE** (056.020-T, 056.022-T,
+  056.023-T, 056.021-T, 056.001-T, 056.002-T, 056.003-T, 056.019-T).
+  Implementation phase complete. Next: review, PR, CI, merge, closure.
 - Shipment 049-S claimed (`active`). All 8 manifest tasks activated by
   backlogit's own claim cascade (side effect, not individually invoked by
   Ship for 7 of the 8). Covering feature 056-F's status also rolled up to
@@ -460,13 +460,67 @@
      is byte-identical to 056.002-T's already-clean run).
    - No new P-021 deferred findings this task; no new stash captures.
 
+8. **056.019-T** -- DONE, committed (`2b187dc`, backlog archival only --
+   no source code changes; see rationale below). **Sole H3-B terminal
+   adjudicator**, closed via the task's own documented fail-closed
+   early-exit clause (first AC bullet): *"If T0 emitted neither an H3-B
+   cwd cause nor an `H3-B-candidate` from a Gate-1 ancestor-config
+   merge, move to `done` with `not-needed: H3-B / isolated-config
+   mechanism not evidenced`."*
+   - **Re-verified directly against `tools/mcp-probe/src/exact_cli.rs`
+     before closing** (not assumed from memory alone):
+     - Gate 1 PASSED on 056.001-T's real production run against the
+       actual installed Copilot CLI (1.0.84-3): the CLI logged
+       `Warning: skipping workspace MCP config "...\ancestor\.mcp.json"
+       because it is malformed` and correctly resolved only the nearest
+       child `.mcp.json` -- nearest-config-wins, zero merge. Read
+       `run_exact_cli`'s Gate-1 branch directly: the `H3-B-candidate`
+       forwarding path is gated EXCLUSIVELY on a Gate-1 FAILURE
+       (ancestor merge or both-legs-foreign). Since Gate 1 passed,
+       `h3_b_candidate=false` is a direct structural consequence, not
+       an inference.
+     - Read `classify_pass()` (the full, exhaustive ordered-cause
+       vocabulary) end-to-end: its only four possible emitted labels
+       are `H0a (cwd-relative database discovery gap) retained`,
+       `No H0a reproduction`, `Cause not resolved by cwd alone`
+       (unresolved -- what the real run actually produced, both legs
+       failed to connect), and `Unexpected asymmetry`. Every branch is
+       either an **H0a** verdict (a distinct, separately-tracked
+       production hypothesis, NOT H3-B) or a hypothesis-neutral
+       as-observed record. There is **categorically no code path** by
+       which 056.001-T's classifier could ever emit a distinct "H3-B
+       cwd cause" label -- the vocabulary simply does not contain one.
+   - **Conclusion**: both trigger conditions in the early-exit clause
+     are positively confirmed absent (not merely unattempted or
+     ambiguous), so this is a genuine CONCLUSIVE terminal verdict per
+     the task's own fail-closed contract (bullet 4) -- never
+     INCONCLUSIVE, never assumed. No isolated-config or
+     working-directory mechanism investigation was performed: the
+     task's own 2nd/3rd AC bullets condition that bounded work strictly
+     on the trigger conditions this task confirms are absent; running
+     either probe anyway would itself be unauthorized scope beyond the
+     task's own charter (and, separately, would re-touch the real
+     Copilot CLI without a live H3-B question to answer).
+   - **No source diff for this task** -- its own AC provides a valid,
+     non-implementation terminal outcome, and the real evidence
+     (already captured and committed under 056.001-T: `0bd8c92`/
+     `d575e6a`/`67a77dc`) selects it directly. Consistent with the
+     `phase:evidence` label and the "conditional" framing in both the
+     task body and the exec plan's own T0/H3-B row.
+   - Per Ship's Role Boundary, the "not-needed: ..." disposition is
+     recorded here (Ship's own continuity artifact) and in the
+     backlog-archival commit message (`2b187dc`), never as a
+     backlogit-item field mutation beyond the permitted `--status done`
+     transition (no `--section`/`--description`/`--labels` write to
+     the task record).
+   - No new P-021 deferred findings this task; no new stash captures.
+
+**All 8 manifest tasks are now DONE.** Shipment 049-S's implementation
+phase is complete. Next: standard multi-persona review + adversarial
+multi-model review, then PR/CI/Copilot-review/merge/closure.
+
 ## Remaining work (not yet started)
 
-- 056.019-T (H3-B terminal adjudication, depends on 056.003-T +
-  056.001-T; expected to resolve `done`/`not-needed` per
-  `h3_b_candidate=false` above, but implemented and confirmed rather
-  than assumed; may legitimately end `blocked` if that expectation
-  proves wrong, which would halt 049-S closure)
 - Standard multi-persona review + adversarial multi-model review before
   PR
 - PR creation, Copilot review cycle, CI, merge (merge commit only, no
