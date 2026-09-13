@@ -293,6 +293,46 @@ fn validate_containment(
     Ok(())
 }
 
+/// Creates one path component of the shared, cross-run parent chain
+/// (`logs/`, then `logs/probe/`) if it does not already exist, and
+/// validates containment (never following a reparse point/junction)
+/// BEFORE ever creating or entering the *next* component beneath it.
+///
+/// This is deliberately NOT `fs::create_dir_all`: a single
+/// `create_dir_all(repo_root.join("logs").join("probe"))` call treats a
+/// pre-existing `logs` as "already there" and transparently creates
+/// `probe` *inside* it -- silently traversing through `logs` even if
+/// `logs` itself is a reparse point/junction redirecting outside
+/// `repo_root`, before any containment check ever runs. Validating each
+/// component in turn, in this exact create-or-check-then-validate
+/// order, closes that gap: a tampered `logs` is caught here, at the
+/// `logs` component itself, before `probe` is ever joined onto it.
+fn create_shared_dir_component_validated(
+    canonical_repo_root: &Path,
+    path: &Path,
+) -> Result<(), WorkspaceError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            // Something already sits at this exact component (the
+            // ordinary case for a shared parent directory reused across
+            // many probe runs). A reparse point/junction/symlink is
+            // never followed or traversed into.
+            if is_reparse_point(&metadata) {
+                return Err(WorkspaceError::ReparsePoint(path.to_path_buf()));
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(path)?;
+        }
+        Err(err) => return Err(WorkspaceError::Io(err)),
+    }
+    // Either freshly created just above, or a pre-existing plain
+    // directory confirmed not to be a reparse point itself: re-validate
+    // containment either way before the caller is allowed to join and
+    // create anything beneath it.
+    validate_containment(canonical_repo_root, path)
+}
+
 /// Builds the `wrapper` subcommand argv (see `056.022-T`'s
 /// `parse_wrapper_args`: `--inner-exe`, repeated `--inner-arg`,
 /// `--evidence-output`, `--run-nonce`) shared byte-for-byte by every
@@ -407,12 +447,15 @@ pub fn create_probe_workspace(
 
     let canonical_repo_root = fs::canonicalize(repo_root)?;
 
-    // Shared parent chain across many probe runs: created if missing,
-    // but still containment-checked every time in case an ancestor
-    // component was tampered with since the last run.
-    let probe_root = repo_root.join("logs").join("probe");
-    fs::create_dir_all(&probe_root)?;
-    validate_containment(&canonical_repo_root, &probe_root)?;
+    // Shared parent chain across many probe runs: each component is
+    // validated (never followed if a reparse point) BEFORE the next
+    // component is joined onto it or created -- see
+    // create_shared_dir_component_validated's doc comment for why this
+    // must NOT be a single fs::create_dir_all call.
+    let logs_dir = repo_root.join("logs");
+    create_shared_dir_component_validated(&canonical_repo_root, &logs_dir)?;
+    let probe_root = logs_dir.join("probe");
+    create_shared_dir_component_validated(&canonical_repo_root, &probe_root)?;
 
     // The exclusively created leaf: reject any pre-existing path first
     // (specific ReparsePoint vs. generic AlreadyExists), then create,

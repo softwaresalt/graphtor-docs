@@ -435,11 +435,12 @@ impl EvidenceCollector {
     /// of copies, which this crate's own self-tests use; production
     /// callers should generally prefer [`Self::new`].
     ///
-    /// # Panics
-    ///
-    /// The dedicated correlator thread spawned here panics only if its
-    /// own internal `Mutex` is poisoned by an earlier panic while
-    /// already holding the lock -- see [`Self::finalize`]'s panic note.
+    /// Never panics on a poisoned internal `Mutex`: the dedicated
+    /// correlator thread spawned here recovers via
+    /// `PoisonError::into_inner` on every lock, so even a caught panic
+    /// while processing one copy (see the `catch_unwind` below) leaves
+    /// the mutex fully usable for every subsequent copy and for
+    /// [`Self::finalize`].
     #[must_use]
     pub fn new_with_capacity(run_nonce: impl Into<String>, capacity: usize) -> Arc<Self> {
         let (tx, rx) = sync_channel::<(Direction, Vec<u8>)>(capacity.max(1));
@@ -452,7 +453,9 @@ impl EvidenceCollector {
             match rx.recv_timeout(WORKER_POLL_INTERVAL) {
                 Ok((direction, bytes)) => {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let mut guard = worker_state.lock().expect("evidence collector state lock");
+                        let mut guard = worker_state
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let lines = match direction {
                             Direction::ClientToChild => guard.client_to_child_lines.push(&bytes),
                             Direction::ChildToClient => guard.child_to_client_lines.push(&bytes),
@@ -462,11 +465,22 @@ impl EvidenceCollector {
                         }
                     }));
                     if result.is_err() {
-                        if let Ok(mut guard) = worker_state.lock() {
-                            guard.mark_invalid(
-                                "observer failure: correlator panicked while processing a copy",
-                            );
-                        }
+                        // A poisoned mutex must still be recovered from
+                        // here, exactly as the closure above does --
+                        // otherwise this exact recovery path (the whole
+                        // reason catch_unwind exists) would itself
+                        // silently no-op forever after the very first
+                        // panic, and every later `.lock()` on this same
+                        // mutex (including finalize()'s) would then
+                        // panic too, escalating one caught, isolated
+                        // correlator panic into an unhandled panic that
+                        // aborts the entire wrapper process.
+                        let mut guard = worker_state
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        guard.mark_invalid(
+                            "observer failure: correlator panicked while processing a copy",
+                        );
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
@@ -499,11 +513,11 @@ impl EvidenceCollector {
         let collector = Arc::clone(self);
         Arc::new(move |direction: Direction, bytes: &[u8]| {
             if collector.tx.try_send((direction, bytes.to_vec())).is_err() {
-                if let Ok(mut guard) = collector.state.lock() {
-                    guard.mark_invalid(
-                        "evidence channel saturated: one or more copies were dropped",
-                    );
-                }
+                let mut guard = collector
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.mark_invalid("evidence channel saturated: one or more copies were dropped");
             }
         })
     }
@@ -515,19 +529,28 @@ impl EvidenceCollector {
     /// joins it (bounded by [`WORKER_POLL_INTERVAL`]). Safe to call at
     /// most once per collector in production.
     ///
-    /// # Panics
-    ///
-    /// Panics only if this collector's own internal `Mutex` guarding the
-    /// worker join-handle or collected state was poisoned by an earlier
-    /// panic while a lock was held -- never as part of ordinary use.
+    /// Never panics on a poisoned internal `Mutex`: every lock on this
+    /// collector's state (here and in [`Self::new_with_capacity`]'s
+    /// correlator thread and [`Self::hook`]) recovers via
+    /// `PoisonError::into_inner` rather than `.expect(...)`, so a single
+    /// caught correlator panic can never escalate into an unhandled
+    /// panic here on the caller's own thread.
     #[must_use]
     pub fn finalize(&self) -> EvidenceSummary {
         thread::sleep(FINALIZE_GRACE_PERIOD);
         self.shutdown.store(true, Ordering::Release);
-        if let Some(handle) = self.worker.lock().expect("worker lock").take() {
+        let worker_handle = self
+            .worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(handle) = worker_handle {
             let _ = handle.join();
         }
-        let guard = self.state.lock().expect("evidence collector state lock");
+        let guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         EvidenceSummary {
             run_nonce: self.run_nonce.clone(),
             valid: guard.valid,
@@ -633,4 +656,75 @@ pub fn write_evidence_output(summary: &EvidenceSummary, path: &Path) -> std::io:
     }
     std::fs::rename(&tmp_path, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Directly proves the poison-recovery contract every lock in this
+    /// module now relies on (`.lock().unwrap_or_else(PoisonError::into_inner)`
+    /// instead of `.lock().expect(...)` / `if let Ok(guard) = ...lock()`):
+    /// a panic while holding the lock on another thread poisons it, and a
+    /// subsequent lock on THIS thread must still succeed and observe the
+    /// state left behind by the panicking thread, rather than being
+    /// permanently unusable. Before this fix, the analogous
+    /// `if let Ok(guard) = mutex.lock() { ... }` recovery pattern used in
+    /// `EvidenceCollector`'s correlator/hook would silently and
+    /// permanently skip its body forever after the first panic, and
+    /// `finalize()`'s own `.lock().expect(...)` would itself panic --
+    /// escalating one caught, isolated panic into an unhandled process
+    /// crash. This test exercises the exact same std `Mutex`
+    /// poison-then-recover mechanism those call sites depend on, using a
+    /// `CollectorState` (this module's own real guarded type) as the
+    /// payload rather than a placeholder type, so a future refactor that
+    /// reverts any of those call sites back to `.expect(...)` would show
+    /// up as this test's own reasoning becoming stale, not as a silent
+    /// behavioral gap.
+    #[test]
+    fn a_poisoned_mutex_recovers_via_poison_error_into_inner_and_observes_prior_state() {
+        let state = Arc::new(Mutex::new(CollectorState::new()));
+
+        let panicking_state = Arc::clone(&state);
+        let joined = thread::spawn(move || {
+            let mut guard = panicking_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.mark_invalid("deliberate: proving poison recovery, not a real failure");
+            panic!("deliberate: poison this mutex while still holding the lock");
+        })
+        .join();
+        assert!(
+            joined.is_err(),
+            "the spawned thread must actually have panicked for this test to prove anything"
+        );
+
+        // The exact recovery pattern used throughout this module: this
+        // must NOT panic, and must NOT silently skip -- it must return a
+        // fully usable guard.
+        let recovered_guard = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            !recovered_guard.valid,
+            "the guard obtained after poison-recovery must observe the mutation the \
+             panicking thread made just before it panicked, proving this is a real \
+             recovered guard over the same underlying state, not a fresh/default one"
+        );
+        assert_eq!(
+            recovered_guard.invalid_reason.as_deref(),
+            Some("deliberate: proving poison recovery, not a real failure")
+        );
+
+        // The mutex must remain fully usable for subsequent, unrelated
+        // locks too -- not just the one immediately after the panic.
+        drop(recovered_guard);
+        let again = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            !again.valid,
+            "state must remain readable on a second, later lock too"
+        );
+    }
 }

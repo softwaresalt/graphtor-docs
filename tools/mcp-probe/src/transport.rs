@@ -109,10 +109,39 @@ fn spawn_delivery_worker(hook: CopyHook) -> (SyncSender<(Direction, Vec<u8>)>, J
     let (tx, rx) = sync_channel::<(Direction, Vec<u8>)>(DELIVERY_CHANNEL_CAPACITY);
     let handle = thread::spawn(move || {
         while let Ok((direction, bytes)) = rx.recv() {
-            hook(direction, &bytes);
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hook(direction, &bytes)));
+            if let Err(payload) = result {
+                // The hook itself panicked. Forwarding is unaffected (this
+                // thread is never one of the two pump threads), but silently
+                // continuing without any signal would mean every future
+                // delivery attempt on this same worker permanently loses its
+                // diagnostic copy with zero indication anywhere that this
+                // happened -- defeating the purpose of a diagnostic tool.
+                // Log once per occurrence and keep draining the channel so a
+                // single bad copy does not also lose every subsequent one.
+                eprintln!(
+                    "mcp-probe: copy-delivery hook panicked, this copy was lost: {}",
+                    panic_payload_message(&payload)
+                );
+            }
         }
     });
     (tx, handle)
+}
+
+/// Best-effort extraction of a human-readable message from a caught panic
+/// payload, for diagnostic logging only. Falls back to a fixed string for
+/// any payload that is not a `&str`/`String` (the two conventional panic
+/// message payload types).
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    }
 }
 
 /// Non-blocking, best-effort delivery of one forwarded copy. Never blocks
@@ -276,42 +305,72 @@ where
     }
 
     if stdin_pump_done {
-        if let Ok((closed, bytes)) = client_to_child.join() {
+        if let Some((closed, bytes)) = join_finished_pump_thread(client_to_child, "client_to_child")
+        {
             outcome.client_to_child_closed = closed;
             outcome.client_to_child_bytes = bytes;
         }
     }
     if stdout_pump_done {
-        if let Ok((closed, bytes)) = child_to_client.join() {
+        if let Some((closed, bytes)) = join_finished_pump_thread(child_to_client, "child_to_client")
+        {
             outcome.child_to_client_closed = closed;
             outcome.child_to_client_bytes = bytes;
         }
     }
 
     // Drop delivery senders so any background delivery worker drains and
-    // exits; deliberately never joined here -- an arbitrarily slow hook
-    // must never delay pump completion, which is exactly the property
-    // this seam guarantees.
+    // exits; deliberately never joined -- an arbitrarily slow hook must
+    // never delay pump completion.
     drop(delivery);
 
-    // The stderr drain thread only reaches EOF once the child's stderr
-    // pipe closes, which (for a wedged child) never happens until the
-    // caller reaps the child -- strictly after this function returns.
-    // Unconditionally joining it here would re-introduce exactly the
-    // hang the deadline exists to bound: a wedged child would deadlock
-    // this whole function against its own not-yet-joined stderr thread.
-    // Only join when the pump did not time out, i.e. both directions
-    // already closed on their own and the child's stdio (stderr
-    // included) is expected to have closed alongside them; on a timeout,
-    // detach the drain thread instead so a still-alive, unreaped child
-    // can never delay pump completion.
-    if let Some(handle) = stderr_handle {
-        if outcome.timed_out {
-            drop(handle);
-        } else {
-            let _ = handle.join();
-        }
-    }
+    // A timed-out direction's `JoinHandle` is intentionally neither joined
+    // nor detached here -- just dropped on return; see
+    // `join_stderr_thread`'s doc comment for why the stderr thread below
+    // follows the same detach-on-timeout shape.
+    join_stderr_thread(stderr_handle, outcome.timed_out);
 
     Ok(outcome)
+}
+
+/// Joins a finished primary pump-thread handle, logging (and returning
+/// `None`, leaving the caller's `PumpOutcome` fields at their `Default`)
+/// if the thread panicked instead of returning normally -- so a panic is
+/// never silently indistinguishable from "this direction never observed
+/// EOF".
+fn join_finished_pump_thread(
+    handle: thread::JoinHandle<(bool, u64)>,
+    label: &str,
+) -> Option<(bool, u64)> {
+    match handle.join() {
+        Ok(result) => Some(result),
+        Err(payload) => {
+            eprintln!(
+                "mcp-probe: {label} pump thread panicked: {}",
+                panic_payload_message(&payload)
+            );
+            None
+        }
+    }
+}
+
+/// Joins the stderr drain thread's handle unless `timed_out` is set, in
+/// which case it is detached (dropped) instead: the stderr pipe only
+/// reaches EOF once the child's stderr closes, which for a wedged,
+/// not-yet-reaped child never happens until strictly after this function
+/// returns, so unconditionally joining here would reintroduce exactly the
+/// hang the deadline exists to bound. A join `Err` (the thread panicked)
+/// is logged rather than silently discarded.
+fn join_stderr_thread(handle: Option<thread::JoinHandle<()>>, timed_out: bool) {
+    let Some(handle) = handle else {
+        return;
+    };
+    if timed_out {
+        drop(handle);
+    } else if let Err(payload) = handle.join() {
+        eprintln!(
+            "mcp-probe: stderr drain thread panicked: {}",
+            panic_payload_message(&payload)
+        );
+    }
 }

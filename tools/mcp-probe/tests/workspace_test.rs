@@ -349,9 +349,79 @@ fn create_probe_workspace_rejects_an_ancestor_component_redirected_outside_the_r
         ),
     }
 
+    // Nothing must ever have been created inside the escape target: the
+    // per-component containment check on `logs` itself must reject the
+    // junction before `probe` is ever joined onto or created beneath it.
+    assert!(
+        !escape_target.join("probe").exists(),
+        "a redirected `logs` ancestor component must be rejected before anything is ever \
+         created inside the escape target"
+    );
+
     // `logs` is itself the junction; removing it removes only the
     // reparse point, never the escape target's contents.
     let _ = std::fs::remove_dir(&logs_path);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    let _ = std::fs::remove_dir_all(&escape_target);
+}
+
+#[test]
+fn create_probe_workspace_rejects_a_redirected_probe_component_under_a_genuine_logs_dir() {
+    let repo_root = fresh_fake_repo_root("probe-component-escape");
+    let entry = fixture_entry();
+
+    // `logs` itself is a genuine, ordinary directory (as it would be
+    // after a prior, legitimate probe run) but `logs/probe` -- the NEXT
+    // component down -- has been redirected to a junction pointing
+    // outside the repo root. This is the scenario
+    // create_shared_dir_component_validated exists to catch: a single
+    // fs::create_dir_all(repo_root/logs/probe) call would see `logs`
+    // already exists and transparently traverse through it, only to
+    // find `probe` is itself the tampered junction -- but by validating
+    // `logs` and `probe` as two SEPARATE components in turn, the `probe`
+    // junction must be caught at that exact component, never followed.
+    let escape_target = fresh_fake_repo_root("probe-component-escape-target");
+    let logs_path = repo_root.join("logs");
+    std::fs::create_dir_all(&logs_path).expect("create genuine logs dir");
+    let probe_path = logs_path.join("probe");
+
+    let mklink_ok = std::process::Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &probe_path.to_string_lossy(),
+            &escape_target.to_string_lossy(),
+        ])
+        .status()
+        .is_ok_and(|status| status.success());
+    if !mklink_ok {
+        eprintln!("skipping: mklink /J failed to create a junction in this environment");
+        let _ = std::fs::remove_dir_all(&repo_root);
+        let _ = std::fs::remove_dir_all(&escape_target);
+        return;
+    }
+
+    let result = create_probe_workspace(&repo_root, "nonce-probe-component-escape", &entry);
+    match result {
+        Err(WorkspaceError::ReparsePoint(path)) => {
+            assert!(path.ends_with("probe"));
+        }
+        other => panic!("expected ReparsePoint for a redirected probe component, got {other:?}"),
+    }
+
+    // Nothing must have been created inside the escape target: `probe`
+    // being a junction must be caught at that exact component, before
+    // any nonce leaf is ever joined onto or created beneath it.
+    assert!(
+        !escape_target.join("nonce-probe-component-escape").exists(),
+        "a redirected `probe` component must be rejected before a nonce leaf is ever created \
+         inside the escape target"
+    );
+
+    // `probe` is itself the junction; removing it removes only the
+    // reparse point, never the escape target's contents.
+    let _ = std::fs::remove_dir(&probe_path);
     let _ = std::fs::remove_dir_all(&repo_root);
     let _ = std::fs::remove_dir_all(&escape_target);
 }
