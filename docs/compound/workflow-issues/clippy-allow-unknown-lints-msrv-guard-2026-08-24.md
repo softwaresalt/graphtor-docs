@@ -102,3 +102,14 @@ this exact situation and is safe to apply regardless.
    1.75.0 (`globset 0.4.18` requires the `edition2024` Cargo feature),
    meaning the MSRV promise is not currently exercisable at all. That is a
    separate, wider issue worth its own follow-up.
+
+**Cross-reference (2026-09-13, added during `049-S` post-merge closure's
+compound library review):** this exact pre-existing MSRV/`globset`
+`edition2024` gap was independently re-encountered and captured as its own
+tracked follow-up item, P-021 deferred-scope stash entry `6C174AA9`
+(chore/medium), during shipment `049-S`'s standard review phase. That stash
+entry is the actionable backlog-facing tracking record for the follow-up
+named in point 4 above; this compound entry remains the durable root-cause/
+prevention write-up. See
+`docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md`
+for the closure record that surfaced this cross-reference.

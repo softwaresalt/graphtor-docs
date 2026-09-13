@@ -4,13 +4,27 @@
 **Discovered:** 2026-04-29  
 **Context:** Shipping shipment 002-S
 
+> **SUPERSEDED (2026-09-13):** The shipment-lifecycle guidance below
+> (`queued -> active -> done -> (archive)` via
+> `backlogit update <id> --status done` + `backlogit archive`) does **not**
+> match the backlogit version now installed in this workspace
+> (`1.10.1-0.20260823032255-b07729386a31+dirty`), empirically confirmed
+> during shipment `049-S` closure. See
+> `docs/compound/2026-05-07-backlogit-shipment-status-constraints.md` for
+> the current, evidence-backed shipment status enum
+> (`queued -> active -> shipped | abandoned`, no `done`, no `blocked`) and
+> the confirmed requirement that only the `backlogit shipment ship`
+> cascade operation (not `move`/`update`) can reach `shipped`. The
+> **Task Status Transitions** section below remains accurate for task
+> artifacts and is unaffected by this supersession.
+
 ## Problem
 
 `backlogit shipment ship <id>` requires the shipment to be in `released`
 status. There is no direct transition from `active` to `released`. Attempting
 `backlogit move <id> released` from `active` fails.
 
-## Solution
+## Solution (superseded for shipments — see notice above)
 
 To close a shipment from `active`:
 
@@ -24,9 +38,10 @@ backlogit archive <shipment-id>
 
 The archived shipment lands in `.backlogit/archive/`.
 
-## State Machine Summary
+## State Machine Summary (superseded for shipments — see notice above)
 
-Valid transitions for shipments (observed in practice):
+Valid transitions for shipments (observed in practice on the 2026-04-29
+backlogit version):
 
 ```
 queued → active → done → (archive)
@@ -34,6 +49,10 @@ queued → active → done → (archive)
 
 The `released` status exists in the schema but is not reachable from `active`
 through normal CLI commands. Do not attempt `backlogit move <id> released`.
+As of the 1.10.1 version confirmed 2026-09-13, the terminal shipment status
+is `shipped` (or `abandoned`), reached only via the `backlogit shipment ship`
+cascade or the non-cascading `shipment-reconcile` safe-close sequence — see
+the superseding entry cited above.
 
 ## Task Status Transitions
 

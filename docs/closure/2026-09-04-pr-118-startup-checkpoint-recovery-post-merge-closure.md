@@ -32,7 +32,7 @@ returns zero backlog items; no feature, task, or shipment record references
 this branch or PR anywhere in `.backlogit/`. Per explicit operator scope for
 this closure, shipments `048-S` (archived, `archived_status: active`) and
 `049-S` (queued, blocked on `048-S` provenance per
-`docs/memory/2026-09-03/checkpoint-resolution-and-049s-topology-blocker-memory.md`)
+`docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`)
 were **not** claimed, mutated, archived, or otherwise touched by this session
 or this closure.
 
@@ -392,7 +392,7 @@ this session and are listed here for completeness of the closure record.
 * `048-S`/`049-S` remain in their current, unmodified state until a future
   Stage/operator session deliberately remediates the `049-S` topology
   blocker described in
-  `docs/memory/2026-09-03/checkpoint-resolution-and-049s-topology-blocker-memory.md`
+  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`
   (explicitly preserved, not compacted or altered by this closure — see
   Compaction below).
 
@@ -549,7 +549,7 @@ internal citation and one frontmatter `source` self-reference were
 corrected to the new archive paths.
 
 The `docs/memory/2026-09-03/checkpoint-quarantine-recurrence-controls-memory.md`
-and `docs/memory/2026-09-03/checkpoint-resolution-and-049s-topology-blocker-memory.md`
+and `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`
 files, and this closure session's own new memory checkpoint, were reviewed
 and **deliberately excluded** from compaction — see the full accounting and
 rationale in
@@ -616,7 +616,7 @@ without itself editing the entry's content — see item 9 below.
    `049-S`'s pipeline-topology readiness with `PREDECESSOR_NOT_SHIPPED`.
    Backlogit 1.10.1 has no supported repair operation for this gap; Ship has
    no authority to invent one. Full detail preserved (not compacted) in
-   `docs/memory/2026-09-03/checkpoint-resolution-and-049s-topology-blocker-memory.md`.
+   `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`.
 5. **Domain account name publicly exposed in 6 merged disposition files**
    (discovered during this closure PR's own local review, via the GraphQL
    `reviews` history for PR #118) — `.backlogit/archive/checkpoints/
@@ -715,7 +715,7 @@ absent.
   (compacted summary of the two now-superseded PR-118-lifecycle memory
   files, produced by the P-020 `compact-context` invocation triggered by
   this closure)
-* `docs/memory/2026-09-03/checkpoint-resolution-and-049s-topology-blocker-memory.md`
+* `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`
   (preserved, **not** compacted — documents open `049-S` blocker work)
 * `docs/compound/workflow-issues/checkpoint-schema-and-lifecycle-controls-2026-09-03.md`
 * `docs/compound/workflow-issues/mcp-json-workspacefolder-camelcase-2026-08-24.md`
