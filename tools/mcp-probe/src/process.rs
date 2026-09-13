@@ -45,7 +45,12 @@ pub const ENV_INHERITANCE_SENTINEL_VAR: &str = "MCP_PROBE_ENV_INHERITANCE_SENTIN
 /// wedged-process scenario -- bounding the wait keeps teardown itself
 /// (and therefore the caller, or `Drop` at scope exit) from blocking
 /// forever (Copilot review, 2026-09 -- 049-S PR #120, round 3).
-const KILL_WAIT_BUDGET: Duration = Duration::from_millis(500);
+///
+/// `pub(crate)` so `crate::exact_cli`'s own pump-then-reap-or-kill shape
+/// (`pump_and_reap`) can reuse the exact same budget for its normal-path
+/// bounded wait instead of duplicating a second magic-number constant
+/// (Copilot review, 2026-09 -- 049-S PR #120, round 5).
+pub(crate) const KILL_WAIT_BUDGET: Duration = Duration::from_millis(500);
 
 /// Poll interval used while bounding the wait after `kill()`.
 const KILL_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -73,6 +78,28 @@ fn bounded_wait_after_kill(child: &mut Child, budget: Duration) -> bool {
     }
 }
 
+/// Polls [`Child::try_wait`] on `child` until it reports the child has
+/// exited (returning its [`ExitStatus`]), or `budget` elapses, whichever
+/// comes first. Never blocks past `budget`. Returns `None` if the budget
+/// elapses while the child is still running, or if `try_wait` itself
+/// returns an OS-level error (treated as "could not confirm exit",
+/// mirroring [`bounded_wait_after_kill`]'s own error handling).
+fn bounded_wait_for_exit(child: &mut Child, budget: Duration) -> Option<ExitStatus> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                thread::sleep(KILL_WAIT_POLL_INTERVAL);
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 /// RAII guard around a directly-owned [`std::process::Child`]: kills and
 /// (bounded) waits on every outcome -- normal drop, error return, or
 /// panic/unwind (stack unwinding) -- so no owned child process ever
@@ -83,6 +110,7 @@ fn bounded_wait_after_kill(child: &mut Child, budget: Duration) -> bool {
 /// ever permitted to kill a process.
 pub struct ChildGuard {
     child: Option<Child>,
+
     label: &'static str,
 }
 
@@ -141,6 +169,35 @@ impl ChildGuard {
         self.child_mut().wait()
     }
 
+    /// Waits for the owned child to exit within `budget`, falling back
+    /// to [`Self::kill_and_wait`] if it has not exited by then. Returns
+    /// `(Some(status), false)` if the child was confirmed to have
+    /// exited on its own within budget; `(None, teardown_incomplete)`
+    /// otherwise, where `teardown_incomplete` is `kill_and_wait`'s own
+    /// negated confirmed-reap result.
+    ///
+    /// This exists because a pump/reader loop ending "normally" (for
+    /// example both stdio directions closing) does not by itself prove
+    /// the child has exited: closing pipes and exiting are two distinct
+    /// events, and a child that closes its pipes but never actually
+    /// terminates would otherwise hang an unconditional, unbounded
+    /// `wait()` call immediately afterward -- and, transitively, its
+    /// caller -- forever (Copilot review, 2026-09 -- 049-S PR #120,
+    /// round 5).
+    #[must_use]
+    pub fn bounded_wait_then_kill(&mut self, budget: Duration) -> (Option<ExitStatus>, bool) {
+        let exited = self
+            .child
+            .as_mut()
+            .and_then(|child| bounded_wait_for_exit(child, budget));
+        if let Some(status) = exited {
+            (Some(status), false)
+        } else {
+            let confirmed = self.kill_and_wait();
+            (None, !confirmed)
+        }
+    }
+
     /// Explicitly kills and (bounded) waits on the owned child right
     /// now, ahead of `Drop`. Used by a caller (for example a deadline
     /// path) that needs teardown to have completed before proceeding,
@@ -150,22 +207,27 @@ impl ChildGuard {
     /// its caller) forever if the killed child never becomes reapable
     /// (Copilot review, 2026-09 -- 049-S PR #120, round 3).
     ///
-    /// Returns `true` only if `kill()` itself succeeded AND the child
-    /// was subsequently confirmed reaped (exited) within
-    /// [`KILL_WAIT_BUDGET`]; `false` if `kill()` failed, or the bounded
-    /// wait elapsed without observing the child exit. Discarding this
-    /// result previously let a caller report teardown as complete even
-    /// though its owned child process could still be alive after the
-    /// budget elapsed -- the caller MUST record an explicit
-    /// incomplete-teardown outcome when this returns `false` rather than
-    /// silently treating teardown as clean (Copilot review, 2026-09 --
-    /// 049-S PR #120, round 4).
+    /// Returns `true` only if the child was subsequently confirmed
+    /// reaped (exited) within [`KILL_WAIT_BUDGET`], regardless of
+    /// whether `kill()` itself reported success; `false` if the bounded
+    /// wait elapsed without observing the child exit. A `kill()` error
+    /// is expected and harmless when the child had already exited on its
+    /// own in the narrow window just before this call -- treating that
+    /// case as an incomplete teardown (by additionally requiring
+    /// `kill()` to have succeeded) previously made this diagnostic
+    /// inaccurate even though the bounded wait had already confirmed the
+    /// child was gone (Copilot review, 2026-09 -- 049-S PR #120,
+    /// round 5). Discarding this result entirely previously let a caller
+    /// report teardown as complete even though its owned child process
+    /// could still be alive after the budget elapsed -- the caller MUST
+    /// record an explicit incomplete-teardown outcome when this returns
+    /// `false` rather than silently treating teardown as clean (Copilot
+    /// review, 2026-09 -- 049-S PR #120, round 4).
     #[must_use]
     pub fn kill_and_wait(&mut self) -> bool {
         self.child.as_mut().is_some_and(|child| {
-            let kill_ok = child.kill().is_ok();
-            let reaped = bounded_wait_after_kill(child, KILL_WAIT_BUDGET);
-            kill_ok && reaped
+            let _ = child.kill();
+            bounded_wait_after_kill(child, KILL_WAIT_BUDGET)
         })
     }
 }
@@ -622,10 +684,21 @@ where
         let confirmed = guard.kill_and_wait();
         (None, !confirmed)
     } else {
-        (guard.wait().ok().and_then(|status| status.code()), false)
+        // Normal pump completion (both stdio directions closed) does
+        // NOT by itself prove the inner child has exited -- it could
+        // still be alive holding neither pipe open. Production `wrapper`
+        // runs configure no pump deadline at all, so an unconditional,
+        // unbounded `wait()` immediately here could hang this call (and
+        // this whole subcommand) forever in that scenario. Bound the
+        // wait, falling back to the same owned kill/reap authority if
+        // the child cannot be confirmed exited within budget (Copilot
+        // review, 2026-09 -- 049-S PR #120, round 5).
+        let (status, teardown_incomplete) = guard.bounded_wait_then_kill(KILL_WAIT_BUDGET);
+        (status.and_then(|s| s.code()), teardown_incomplete)
     };
 
     let wrapper_identity = observer.observe(std::process::id());
+
     let sentinel_inherited = std::env::var(ENV_INHERITANCE_SENTINEL_VAR).ok();
 
     // Re-observe the union of both pre-teardown candidate snapshots
@@ -658,6 +731,14 @@ where
     // detect that on its own either, so it too must be told explicitly
     // before `finalize()`.
     evidence_collector.note_transport_delivery_drain_incomplete(pump.delivery_drain_incomplete);
+    // And likewise, the inner child's own teardown confirmation (see the
+    // `inner_teardown_incomplete` computation above) is another signal
+    // this collector cannot observe on its own -- see
+    // `EvidenceCollector::note_inner_teardown_incomplete`'s own doc
+    // comment for why this makes gating flow through the existing
+    // `leg_has_valid_initialize` pipeline for free (Copilot review,
+    // 2026-09 -- 049-S PR #120, round 5).
+    evidence_collector.note_inner_teardown_incomplete(inner_teardown_incomplete);
     let evidence_summary = evidence_collector.finalize();
     let evidence_valid = evidence_summary.valid;
     let evidence_write_error =

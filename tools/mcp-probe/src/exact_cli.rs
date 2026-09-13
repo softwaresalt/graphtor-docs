@@ -85,7 +85,7 @@
 //! platform's process-environment introspection may itself be
 //! unavailable/restricted).
 
-use crate::process::{ChildGuard, ENV_INHERITANCE_SENTINEL_VAR};
+use crate::process::{ChildGuard, ENV_INHERITANCE_SENTINEL_VAR, KILL_WAIT_BUDGET};
 use crate::transport::{run_duplex_pump, PumpConfig};
 use crate::workspace::{create_probe_workspace, McpServerEntrySpec, ProbeWorkspace};
 use std::fs;
@@ -543,11 +543,18 @@ fn pump_and_reap(
             let confirmed = guard.kill_and_wait();
             (true, None, !confirmed)
         }
-        Ok(_) => (
-            false,
-            guard.wait().ok().and_then(|status| status.code()),
-            false,
-        ),
+        Ok(_) => {
+            // Normal pump completion (both stdio directions closed) does
+            // NOT by itself prove the exact-CLI child has exited. Bound
+            // the wait here too, mirroring `process::run_wrapper`'s
+            // identical normal-completion fix, instead of the prior
+            // unconditional, unbounded `guard.wait()` that could hang
+            // this call forever if the child closed its pipes without
+            // ever actually terminating (Copilot review, 2026-09 --
+            // 049-S PR #120, round 5).
+            let (status, teardown_incomplete) = guard.bounded_wait_then_kill(KILL_WAIT_BUDGET);
+            (false, status.and_then(|s| s.code()), teardown_incomplete)
+        }
         Err(_) => {
             let confirmed = guard.kill_and_wait();
             (false, None, !confirmed)
@@ -924,6 +931,43 @@ fn read_wrapper_evidence(path: &Path) -> (Option<serde_json::Value>, Option<Stri
     }
 }
 
+/// Invalidates the SHARED `evidence_output` path before a leg's own
+/// wrapper gets a chance to run. Both legs of a pass deliberately point
+/// at one `evidence_output` path (see workspace.rs's module docs), and
+/// both legs of a pass share the very same `run_nonce` too -- so a
+/// `run_nonce` equality check on the copied evidence could never
+/// distinguish "this leg's own evidence" from "the other leg's
+/// still-present evidence" within one pass. Removing the shared file
+/// here instead means: if this leg's wrapper never spawns, crashes, or
+/// otherwise fails to (re)write `evidence_output`, the subsequent
+/// `fs::copy` simply fails against a missing source, and this leg is
+/// correctly recorded as having no wrapper evidence rather than
+/// silently inheriting and misattributing a PRIOR leg's still-present
+/// evidence file.
+///
+/// That protection depends entirely on this removal actually succeeding
+/// (or the file already being absent): a REAL removal error -- for
+/// example the shared path being locked or permission-denied -- while a
+/// prior leg's evidence file is still present would previously be
+/// silently discarded, leaving the stale file in place for the
+/// `fs::copy` to pick up and misattribute to THIS leg regardless.
+/// Returns `Some(message)` for any non-"not found" removal error, so the
+/// caller can short-circuit this leg's evidence capture entirely rather
+/// than risk that misattribution; `None` once the path is confirmed
+/// absent (removed, or already gone) (Copilot review, 2026-09 -- 049-S
+/// PR #120, round 5). Extracted purely to keep [`run_leg`] under
+/// `clippy::too_many_lines`.
+fn invalidate_shared_evidence_output(evidence_output: &Path) -> Option<String> {
+    match fs::remove_file(evidence_output) {
+        Ok(()) => None,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => Some(format!(
+            "could not invalidate prior shared evidence at {}: {err}",
+            evidence_output.display()
+        )),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_leg(
     leg: Leg,
@@ -945,19 +989,7 @@ fn run_leg(
     // this exact path; ignore a missing source here, it is handled below.
     let _ = fs::remove_file(&leg_evidence_copy);
 
-    // Invalidate the SHARED evidence_output before this leg's own wrapper
-    // gets a chance to run. Both legs of a pass deliberately point at one
-    // evidence_output path (see workspace.rs's module docs), and both legs
-    // of a pass share the very same `run_nonce` too -- so a `run_nonce`
-    // equality check on the copied evidence could never distinguish
-    // "this leg's own evidence" from "the other leg's still-present
-    // evidence" within one pass. Removing the shared file here instead
-    // means: if this leg's wrapper never spawns, crashes, or otherwise
-    // fails to (re)write evidence_output, the `fs::copy` below simply
-    // fails against a missing source, and this leg is correctly recorded
-    // as having no wrapper evidence rather than silently inheriting and
-    // misattributing a PRIOR leg's still-present evidence file.
-    let _ = fs::remove_file(evidence_output);
+    let evidence_invalidation_error = invalidate_shared_evidence_output(evidence_output);
 
     let mut command = Command::new(copilot_exe);
     command
@@ -1030,13 +1062,22 @@ fn run_leg(
         extract_last_mcp_status(&stdout_text, entry_name);
 
     // Snapshot the shared evidence file for this leg before it can be
-    // overwritten by whichever leg runs next.
-    let snapshot_result = fs::copy(evidence_output, &leg_evidence_copy);
-    let (wrapper_evidence, wrapper_evidence_read_error) = if snapshot_result.is_ok() {
-        read_wrapper_evidence(&leg_evidence_copy)
-    } else {
-        (None, None)
-    };
+    // overwritten by whichever leg runs next. Skipped entirely when this
+    // leg could not first invalidate the PRIOR leg's shared evidence
+    // file above: proceeding to copy/read here regardless would risk
+    // reading and misattributing that stale prior-leg evidence as this
+    // leg's own (Copilot review, 2026-09 -- 049-S PR #120, round 5).
+    let (wrapper_evidence, wrapper_evidence_read_error) =
+        if let Some(invalidation_error) = evidence_invalidation_error {
+            (None, Some(invalidation_error))
+        } else {
+            let snapshot_result = fs::copy(evidence_output, &leg_evidence_copy);
+            if snapshot_result.is_ok() {
+                read_wrapper_evidence(&leg_evidence_copy)
+            } else {
+                (None, None)
+            }
+        };
 
     LegOutcome {
         leg,
@@ -1257,6 +1298,7 @@ fn leg_outcome_to_json(leg: &LegOutcome) -> serde_json::Value {
         "wrapper_evidence": leg.wrapper_evidence,
         "wrapper_evidence_read_error": leg.wrapper_evidence_read_error,
         "stdout_truncated": leg.stdout_truncated,
+        "inner_teardown_incomplete": leg.inner_teardown_incomplete,
     })
 }
 
@@ -1603,13 +1645,46 @@ fn collect_pass_identity_failures(
         .collect()
 }
 
+/// Fails closed on any pass whose control or treatment leg could not
+/// confirm its owned exact-CLI child was reaped after a deadline/error
+/// teardown (`LegOutcome::inner_teardown_incomplete`). Round 4 added
+/// this field purely as an informational, non-gating diagnostic; leaving
+/// it unenforced left `run_exact_cli` able to report `terminal: "done"`
+/// with a causal classification derived from a pass whose own process
+/// ownership was never actually proved -- directly contradicting
+/// `056.001-T`'s own acceptance criteria, which requires this runner to
+/// "fail closed when process ownership... is unproved" (Copilot review,
+/// 2026-09 -- 049-S PR #120, round 5). Mirrors
+/// [`collect_pass_identity_failures`]'s extraction shape.
+fn collect_pass_teardown_failures(passes: &[PassOutcome]) -> Vec<String> {
+    passes
+        .iter()
+        .flat_map(|pass| {
+            [
+                (Leg::Control, &pass.control),
+                (Leg::Treatment, &pass.treatment),
+            ]
+        })
+        .filter(|(_, leg)| leg.inner_teardown_incomplete)
+        .map(|(leg, _)| {
+            format!(
+                "pass build {leg:?} teardown could not be confirmed: process ownership unproved"
+            )
+        })
+        .collect()
+}
+
 /// Builds the `terminal: "blocked"` [`ExactCliOutcome`] for an identity
 /// failure -- either the pre-Gate-1 `identity_failure_message` check
 /// (call with `passes: Vec::new()`) or a post-Gate-1 per-pass identity
 /// failure via [`collect_pass_identity_failures`] -- mirroring
-/// [`gate1_failure_outcome`]'s extraction pattern. Extracted purely to
-/// keep [`run_exact_cli`] under `clippy::too_many_lines` (Copilot
-/// review, 2026-09 -- 049-S PR #120, round 4).
+/// [`gate1_failure_outcome`]'s extraction pattern. Also reused, as of
+/// round 5, for the post-pass teardown-ownership gate via
+/// [`collect_pass_teardown_failures`] -- `blocked_messages` is a
+/// generic causal-classification message list, not identity-specific.
+/// Extracted purely to keep [`run_exact_cli`] under
+/// `clippy::too_many_lines` (Copilot review, 2026-09 -- 049-S PR #120,
+/// round 4).
 #[allow(clippy::too_many_arguments)]
 fn identity_blocked_outcome(
     run_nonce: String,
@@ -1620,7 +1695,7 @@ fn identity_blocked_outcome(
     inner_identity: CopilotIdentity,
     gate1: Gate1Outcome,
     passes: Vec<PassOutcome>,
-    pass_identity_failures: Vec<String>,
+    blocked_messages: Vec<String>,
 ) -> ExactCliOutcome {
     ExactCliOutcome {
         run_nonce,
@@ -1633,10 +1708,64 @@ fn identity_blocked_outcome(
         inner_identity,
         gate1,
         passes,
-        ordered_cause_classification: pass_identity_failures,
+        ordered_cause_classification: blocked_messages,
         h3_b_candidate: false,
         terminal: "blocked",
     }
+}
+
+/// Runs both post-pass fail-closed gates -- per-pass identity
+/// enforcement ([`collect_pass_identity_failures`]) and per-pass
+/// teardown-ownership enforcement ([`collect_pass_teardown_failures`])
+/// -- in sequence, returning `Err` with the `terminal: "blocked"`
+/// outcome for whichever gate finds a failure first, or `Ok(passes)`
+/// (handing ownership back unchanged) once both gates pass clean.
+/// Extracted purely to keep [`run_exact_cli`] under
+/// `clippy::too_many_lines` (Copilot review, 2026-09 -- 049-S PR #120,
+/// round 5).
+#[allow(clippy::too_many_arguments)]
+fn apply_post_pass_gates(
+    run_nonce: &str,
+    sentinel_value: &str,
+    workspace_root: &Path,
+    affected_identity: &CopilotIdentity,
+    stable_identity: Option<&CopilotIdentity>,
+    inner_identity: &CopilotIdentity,
+    gate1: &Gate1Outcome,
+    passes: Vec<PassOutcome>,
+) -> Result<Vec<PassOutcome>, Box<ExactCliOutcome>> {
+    let pass_identity_failures =
+        collect_pass_identity_failures(&passes, affected_identity, stable_identity);
+    if !pass_identity_failures.is_empty() {
+        return Err(Box::new(identity_blocked_outcome(
+            run_nonce.to_string(),
+            sentinel_value.to_string(),
+            workspace_root.to_path_buf(),
+            affected_identity.clone(),
+            stable_identity.cloned(),
+            inner_identity.clone(),
+            gate1.clone(),
+            passes,
+            pass_identity_failures,
+        )));
+    }
+
+    let pass_teardown_failures = collect_pass_teardown_failures(&passes);
+    if !pass_teardown_failures.is_empty() {
+        return Err(Box::new(identity_blocked_outcome(
+            run_nonce.to_string(),
+            sentinel_value.to_string(),
+            workspace_root.to_path_buf(),
+            affected_identity.clone(),
+            stable_identity.cloned(),
+            inner_identity.clone(),
+            gate1.clone(),
+            passes,
+            pass_teardown_failures,
+        )));
+    }
+
+    Ok(passes)
 }
 
 /// Runs the full `exact-cli` classification: creates the isolated probe
@@ -1737,28 +1866,23 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
 
     let passes = run_all_passes(&workspace, args, &wrapper_exe_path, &sentinel_value);
 
-    // Fail closed on any pass's OWN freshly-captured identity before
-    // accepting its causal classification: recording
-    // `PassOutcome::copilot_identity` is not the same as enforcing it
-    // (Copilot review, 2026-09 -- 049-S PR #120, round 4). Each pass is
-    // checked against the SAME build's identity already proven
-    // error-free pre-Gate-1 above.
-    let pass_identity_failures =
-        collect_pass_identity_failures(&passes, &affected_identity, stable_identity.as_ref());
-
-    if !pass_identity_failures.is_empty() {
-        return Ok(identity_blocked_outcome(
-            run_nonce,
-            sentinel_value,
-            workspace.root().to_path_buf(),
-            affected_identity,
-            stable_identity,
-            inner_identity,
-            gate1,
-            passes,
-            pass_identity_failures,
-        ));
-    }
+    // Fail closed on any pass's OWN freshly-captured identity, and on any
+    // pass whose leg teardown could not be confirmed, before accepting
+    // its causal classification -- see `apply_post_pass_gates`'s own doc
+    // comment (Copilot review, 2026-09 -- 049-S PR #120, rounds 4-5).
+    let passes = match apply_post_pass_gates(
+        &run_nonce,
+        &sentinel_value,
+        workspace.root(),
+        &affected_identity,
+        stable_identity.as_ref(),
+        &inner_identity,
+        &gate1,
+        passes,
+    ) {
+        Ok(passes) => passes,
+        Err(outcome) => return Ok(*outcome),
+    };
 
     let ordered_cause_classification = passes.iter().flat_map(classify_pass).collect::<Vec<_>>();
 

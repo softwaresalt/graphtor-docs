@@ -36,7 +36,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -49,6 +49,49 @@ use serde_json::{json, Value};
 /// reached, further bytes are still drained (so the pipe never backs up)
 /// but simply discarded, and [`SessionShutdown::stderr_truncated`] is set.
 const MAX_STDERR_CAPTURE_BYTES: usize = 262_144;
+
+/// Bound on how long [`ServeSession::shutdown`] waits for the killed
+/// child to become reapable after `kill()`, mirroring
+/// `mcp_probe::process::KILL_WAIT_BUDGET`'s identical bounded-wait
+/// rationale in the sibling `tools/mcp-probe` crate: killing a child is
+/// normally followed by it becoming reapable almost immediately, but
+/// `Child::wait()` on its own carries no such guarantee against every
+/// possible wedged-process scenario, and this driver has no deadline of
+/// its own to fall back on -- an unconditional, unbounded `wait()` here
+/// could hang `shutdown()` (and therefore every test calling it) forever
+/// (Copilot review, 2026-09 -- 049-S PR #120, round 5). This root-workspace
+/// test crate cannot reuse `mcp_probe::process`'s private helper directly
+/// (different crate boundary — see this module's own top-level doc
+/// comment), so the same bounded-poll shape is reimplemented locally.
+const SHUTDOWN_REAP_BUDGET: Duration = Duration::from_millis(500);
+
+/// Poll interval used while bounding the wait after `kill()` in
+/// [`bounded_wait_after_kill`].
+const SHUTDOWN_REAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Polls [`Child::try_wait`] on `child` until it reports the child has
+/// exited, or `budget` elapses, whichever comes first. Never blocks past
+/// `budget`. Returns the child's [`ExitStatus`] if it was observed to
+/// have exited within budget; `None` if the budget elapsed while the
+/// child was still running, or if `try_wait` itself returned an
+/// OS-level error (treated as "could not confirm exit" — the caller
+/// already discards the underlying `kill`/`wait` errors on both call
+/// sites this helper replaces).
+fn bounded_wait_after_kill(child: &mut Child, budget: Duration) -> Option<ExitStatus> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                thread::sleep(SHUTDOWN_REAP_POLL_INTERVAL);
+            }
+            Err(_) => return None,
+        }
+    }
+}
 
 /// Path to the real `graphtor-docs` binary under test, resolved via the
 /// Cargo-injected `CARGO_BIN_EXE_graphtor-docs` environment variable.
@@ -321,7 +364,8 @@ impl ServeSession {
             Ok(Some(status)) => status.code(),
             Ok(None) => {
                 let _ = self.child.kill();
-                self.child.wait().ok().and_then(|status| status.code())
+                bounded_wait_after_kill(&mut self.child, SHUTDOWN_REAP_BUDGET)
+                    .and_then(|status| status.code())
             }
             Err(_) => {
                 // Copilot review thread E (PR #120, round 2): an OS
@@ -329,16 +373,21 @@ impl ServeSession {
                 // the child is still alive holding its own end of the
                 // stdout/stderr pipes open -- it must never be treated
                 // as equivalent to an observed exit. Fall back to the
-                // exact same defensive kill()+wait() the `Ok(None)`
+                // exact same defensive kill()+bounded-wait the `Ok(None)`
                 // (still-running) branch above already performs, so the
                 // drain threads joined below are still guaranteed to
                 // see EOF instead of potentially hanging forever on a
                 // child that never noticed stdin's EOF on its own.
-                // `kill()`/`wait()` on an already-exited child are
-                // harmless no-ops (an `Err` from either is simply
-                // discarded, exactly as the sibling branch above does).
+                // `kill()` on an already-exited child is a harmless
+                // no-op (an `Err` is simply discarded, exactly as the
+                // sibling branch above does). The wait itself is bounded
+                // too: an unconditional, unbounded `wait()` here could
+                // hang this whole call forever if the child closes its
+                // pipes without ever actually terminating (Copilot
+                // review, 2026-09 -- 049-S PR #120, round 5).
                 let _ = self.child.kill();
-                self.child.wait().ok().and_then(|status| status.code())
+                bounded_wait_after_kill(&mut self.child, SHUTDOWN_REAP_BUDGET)
+                    .and_then(|status| status.code())
             }
         };
 

@@ -520,7 +520,10 @@ where
 /// is first observed, whether [`CHILD_EXIT_GRACE_BUDGET`] has since
 /// elapsed. Records the first-observed instant into
 /// `child_exit_observed_at` (a no-op on every subsequent call once it is
-/// already `Some`). Extracted from `run_duplex_pump`'s main poll loop
+/// already `Some`). An OS-level `try_wait` observation error is treated
+/// the same as an observed exit rather than as "still running" -- see
+/// this function's body for why (Copilot review, 2026-09 -- 049-S PR
+/// #120, round 5). Extracted from `run_duplex_pump`'s main poll loop
 /// purely to keep that loop within `clippy::pedantic`'s function-length
 /// threshold -- behavior is unchanged from being inlined there.
 ///
@@ -545,8 +548,27 @@ fn child_exit_abandon_deadline_elapsed(
     child_exit_observed_at: &mut Option<Instant>,
 ) -> bool {
     if child_exit_observed_at.is_none() {
-        if let Ok(Some(_status)) = child.try_wait() {
-            *child_exit_observed_at = Some(Instant::now());
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                *child_exit_observed_at = Some(Instant::now());
+            }
+            Ok(None) => {}
+            Err(_) => {
+                // An OS-level observation error proves NOTHING about
+                // whether the child is still alive -- but it also means
+                // this loop has permanently lost the ability to observe
+                // the child's true state via `try_wait` going forward.
+                // Treating that the same as "still running" (the
+                // previous behavior) would defeat the exact hang
+                // mitigation this function exists to provide: with the
+                // production deadline set to `None`, a persistent
+                // status-query error plus a still-blocked client-input
+                // pump would leave this loop waiting on unobservable
+                // state forever. Start the same bounded abandonment
+                // grace period as an observed exit instead (Copilot
+                // review, 2026-09 -- 049-S PR #120, round 5).
+                *child_exit_observed_at = Some(Instant::now());
+            }
         }
     }
     child_exit_observed_at

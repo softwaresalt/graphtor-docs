@@ -629,6 +629,37 @@ impl EvidenceCollector {
         );
     }
 
+    /// Tells this collector that the inner child's own teardown could
+    /// not be confirmed within budget --
+    /// [`crate::process::ChildGuard::kill_and_wait`] (deadline path) or
+    /// [`crate::process::ChildGuard::bounded_wait_then_kill`] (normal
+    /// pump-completion path) returned an incomplete-teardown result.
+    /// Mirrors [`Self::note_transport_delivery_drain_incomplete`]'s
+    /// shape exactly: this collector has no way to observe the inner
+    /// child's process state on its own, so the caller composing the
+    /// wrapper's teardown and this collector together
+    /// (`crate::process::run_wrapper`) MUST call this before
+    /// [`Self::finalize`] whenever teardown could not be confirmed, so a
+    /// summary describing a possibly-still-alive inner process is never
+    /// finalized as `valid: true` -- this is exactly what
+    /// `leg_has_valid_initialize` (`crate::exact_cli`) already checks,
+    /// so gating flows through the existing pipeline with no further
+    /// classification changes required (Copilot review, 2026-09 -- 049-S
+    /// PR #120, round 5). An `incomplete` of `false` is a no-op.
+    pub fn note_inner_teardown_incomplete(&self, incomplete: bool) {
+        if !incomplete {
+            return;
+        }
+        let mut guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.mark_invalid(
+            "the inner child's teardown could not be confirmed within budget; \
+             process ownership is unproved",
+        );
+    }
+
     /// Finalizes collection and returns the resulting [`EvidenceSummary`].
     /// Waits a short, bounded, best-effort grace period (see
     /// [`FINALIZE_GRACE_PERIOD`]) for any already-in-flight trailing copy
