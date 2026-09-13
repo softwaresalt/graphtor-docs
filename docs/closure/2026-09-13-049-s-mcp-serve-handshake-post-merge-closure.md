@@ -123,13 +123,16 @@ compaction, and this closure PR) are the primary subject of this document.
      stronger, git-verifiable proof than a comparison against an ad hoc
      snapshot file: it shows the *net* effect of cascade-then-repair against
      immutable history, not a self-reported intermediate comparison.
-     Reproducible command (bash brace expansion enumerates all 25 exact
-     paths — the two contiguous ID ranges from the operator's exact
-     affected-IDs list, `056.004-T`..`056.018-T` and
-     `056.024-T`..`056.033-T`) and its actual, verified output:
+     Reproducible command, **pinned to the named closure commit
+     `73453f3`** (not a floating `HEAD`, which has since advanced past
+     `73453f3` as this closure's own remediation work continued to commit)
+     — bash brace expansion enumerates all 25 exact paths, the two
+     contiguous ID ranges from the operator's exact affected-IDs list,
+     `056.004-T`..`056.018-T` and `056.024-T`..`056.033-T` — and its
+     actual, re-verified output:
 
      ```
-     $ git diff 5128333..HEAD --numstat -- \
+     $ git diff 5128333..73453f3 --numstat -- \
          .backlogit/queue/056.{004..018}-T.md \
          .backlogit/queue/056.{024..033}-T.md
      1	1	.backlogit/queue/056.004-T.md
