@@ -51,14 +51,36 @@ differential evidence actually existed to attribute the cause.
 ## Root Cause
 
 The generic OS-level pipe-closed error is **not itself diagnostic**. The
-actual regression, once isolated via a real exact-CLI differential probe
-(`tools/mcp-probe`, delivered by `056.020-T`-`056.023-T`) and a genuine
-out-of-process `initialize`-handshake driver (`tests/serve_driver.rs`,
-`056.002-T`), traced to CLI-side launch/version-negotiation behavior rather
-than a `graphtor-docs` server defect. The server's own handshake logic,
-once independently exercised end-to-end (real spawn, real JSON-RPC
-`initialize` request/response, real negotiated `protocolVersion` assertion),
-behaved correctly.
+actual regression mechanism was independently confirmed by a separate,
+earlier evidence capture — redacted live actual-client stderr from
+2026-08-29 (`docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`,
+"H3-A confirmed"): an affected Copilot CLI build sends the MCP **draft**
+method `server/discover` before or instead of `initialize`, which rmcp 1.5
+treats as a fatal non-`initialize` request and exits with code `2` before
+any handshake completes — a client/toolchain-side protocol behavior, not a
+`graphtor-docs` server defect.
+
+**Correction (this session's own Copilot-review remediation pass):** this
+entry previously implied that the exact-CLI differential probe built by
+`056.020-T`-`056.023-T` (`tools/mcp-probe`) itself "traced" the cause to
+CLI-side behavior. That overstates what the probe's actual run delivered:
+per its own recorded classification
+(`docs/archive/memory/2026-09-13/2026-09-12-ship-049S-progress-checkpoint.md`,
+compacted 2026-09-13, see
+`docs/memory/compacted/2026-09-13-049-s-compacted.md`), the stable-vs-affected
+comparison was **not run** (no stable build was available on this host),
+and the ordered cause classification for the affected build alone came back
+**`unresolved`** — both legs captured only `server/discover`, and
+`initialize_correlation` was `null` on both. The probe tool is real and its
+evidence-first classifier is sound, but this specific run did not itself
+confirm the mechanism; the H3-A live-client evidence above did. What the
+probe *did* establish, together with the out-of-process
+`initialize`-handshake driver
+(`tests/common/serve_driver.rs`, `056.002-T`), is that the server's own
+handshake logic — independently exercised end-to-end (real spawn, real
+JSON-RPC `initialize` request/response, real negotiated `protocolVersion`
+assertion) — behaved correctly, which rules out a server-side handshake
+regression as the cause without itself proving the CLI-side attribution.
 
 ## Resolution
 
