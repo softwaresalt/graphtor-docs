@@ -79,17 +79,31 @@ disposable-copy proof trail):
   has out-of-manifest siblings is exposed, regardless of whether that
   feature is itself a manifest member.
 * The safe default close path is `shipment-reconcile`'s **safe-close
-  mode**: a non-cascading sequence (`backlogit move <id> --status shipped`
-  attempted, refused, then the manifest-scoped archive-by-item-ID sequence
-  actually used by safe-close) that archives only the shipment's explicit
-  manifest members, never touching descendants outside that manifest.
+  mode**: a non-cascading sequence that archives only the shipment's
+  explicit manifest members, never touching descendants outside that
+  manifest. **This path does not, by itself, autonomously complete
+  shipment closure on the installed version.** Its own final step
+  attempts the same unconditionally-refused `backlogit move <id> --status
+  shipped` transition described above; per the `shipment-reconcile`
+  skill's own documented halt behavior, that refusal makes safe-close
+  **halt before the shipment record reaches `shipped`**, having already
+  archived the manifest items — exactly what happened for `049-S`. Do not
+  read "safe-close" as a self-sufficient way to reach `shipped`: it
+  performs manifest-item archival/finalization and then requires either
+  the verified fully-covered-root exception below, or an explicit,
+  real-time, operator-authorized cascade exception (with a documented
+  recovery plan for the parent-link-clearing side effect on out-of-manifest
+  siblings), to actually finish transitioning the shipment record itself.
 * A narrow **verified fully-covered-root exception** permits the cascade
   operation directly when, for every feature member of the manifest, it is
   a root with **every** descendant at every depth also present in the
   manifest (positively verified, never inferred) — see P-015 in
   `.github/policies/workflow-policies.md` and the `shipment-reconcile`
   skill's Cascade Close Sub-Procedure for the authoritative classifier.
-  Outside that narrow, machine-checked case, prefer safe-close.
+  Outside that narrow, machine-checked case, prefer safe-close for its
+  manifest-item archival step, understanding that shipment-record
+  finalization to `shipped` still requires the operator-authorized cascade
+  handoff described above.
 
 ## Practical Guidance
 
@@ -98,11 +112,17 @@ disposable-copy proof trail):
 * Do not attempt `backlogit move <shipment-id> --status shipped` (or the
   MCP equivalent) expecting it to succeed directly — it is refused by
   design; this is not a transient bug.
-* Default to `shipment-reconcile`'s Safe-Close Mode for shipment closure.
-  Reach for the cascade `backlogit shipment ship` only when the verified
-  fully-covered-root exception's preconditions are positively confirmed,
-  or under an explicit, real-time, one-time operator-authorized exception
-  with a documented recovery plan for any cascaded protected-set damage
+* Default to `shipment-reconcile`'s Safe-Close Mode for manifest-item
+  archival and finalization. On the currently installed backlogit version,
+  Safe-Close Mode's own final shipment-record transition halts (it is not
+  a silent no-op success) because of the same unconditional
+  `shipment_shipped_requires_envelope` guard — plan for an explicit
+  operator-authorized handoff to actually reach `status: shipped` unless
+  the verified fully-covered-root exception applies. Reach for the cascade
+  `backlogit shipment ship` only when the verified fully-covered-root
+  exception's preconditions are positively confirmed, or under an
+  explicit, real-time, one-time operator-authorized exception with a
+  documented recovery plan for any cascaded protected-set damage
   (parent-link clearing on out-of-manifest siblings).
 * If a cascade is run outside the verified exception and clears
   `parent_id` on out-of-manifest siblings, `backlogit adopt` is **not** a
