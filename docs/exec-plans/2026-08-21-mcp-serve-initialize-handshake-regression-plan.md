@@ -641,15 +641,20 @@ five `053-S` members close.
 
 #### T2g — (Conditional on discriminator mismatch) Generator type/transport discriminator reconciliation — backlog `056.026-T`
 
-> **DISPOSITION 2026-09-13 (Stage remediation cycle 1): `056.026-T` CLOSED
-> `not-needed: no type/transport mismatch evidenced`.** No exact-CLI evidence
-> proves a `type`/`transport` functional mismatch. The evidenced regression cause
-> is H3-A (server-side rmcp pre-`initialize` `server/discover` rejection), and the
-> managed server launched under the current `transport` discriminator (see
-> `docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md` E1).
-> `056.019-T` (H3-B terminal) disclaims selecting this task absent independent
-> mismatch evidence. The wording below is retained as the SAFE reactivation
-> contract only. Record: `docs/decisions/2026-09-13-stage-056.026-T-disposition-not-needed.md`.
+> **DISPOSITION 2026-09-13 (Stage remediation cycle 1; wording corrected cycle 2):
+> `056.026-T` CLOSED `not-needed: no type/transport mismatch evidenced`.** No
+> controlled exact-CLI evidence proves a functional `type`/`transport` mismatch.
+> The evidenced regression cause is H3-A (server-side rmcp pre-`initialize`
+> `server/discover` rejection). E1 (see
+> `docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`) proves
+> ONLY that a graphtor server process reached STDIO startup before that
+> server-side rejection; it does NOT record the launching configuration or
+> discriminator field and therefore does NOT prove whether `type` or `transport`
+> was honored (and the current `.mcp.json` shape is not historical proof). Mismatch
+> remains NOT PROVEN. `056.019-T` (H3-B terminal) disclaims selecting this task
+> absent independent mismatch evidence. The wording below is retained as the SAFE
+> reactivation contract only. Record:
+> `docs/decisions/2026-09-13-stage-056.026-T-disposition-not-needed.md`.
 
 * **Unconditional-when-evidenced, split from T2d.** Whenever exact-CLI evidence
   (T0 / `056.019-T`) shows a docs/generator `type` vs `transport` mismatch,
