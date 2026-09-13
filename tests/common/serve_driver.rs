@@ -185,6 +185,21 @@ pub struct SessionShutdown {
     /// including matched responses, interleaved notifications, and any
     /// malformed line.
     pub observed_lines: Vec<ObservedLine>,
+    /// `true` when [`Self::exit_code`] (via
+    /// [`bounded_wait_after_kill`]/[`SHUTDOWN_REAP_BUDGET`]) could NOT
+    /// confirm the child had actually terminated before this shutdown
+    /// returned. A `kill()` failure, or a child that survives the
+    /// post-kill reap budget, can still hold its own end of the
+    /// stdout/stderr pipes open indefinitely -- joining the drain threads
+    /// unconditionally in that case would silently defeat the very bound
+    /// [`SHUTDOWN_REAP_BUDGET`] exists to enforce (Copilot review, PR
+    /// #120, round 8). When this is `true`, the drain threads were
+    /// deliberately left detached (never joined) rather than risking an
+    /// unbounded hang, so [`Self::stderr`]/[`Self::observed_lines`] only
+    /// reflect whatever had already been captured at the moment of
+    /// detachment and must be treated as a best-effort, possibly-partial
+    /// snapshot rather than a complete session record.
+    pub teardown_incomplete: bool,
 }
 
 /// A live out-of-process `graphtor-docs serve` session: one spawned child,
@@ -354,18 +369,22 @@ impl ServeSession {
     }
 
     /// Cancellation-safe teardown: kills and reaps ONLY this exact owned
-    /// child (never a whole-process-tree claim), joins the drain threads,
-    /// and returns the exit code (if observed), the bounded stderr
-    /// capture, and every observed stdout line. Always called exactly
-    /// once, after a matched response or any diagnostic outcome —
+    /// child (never a whole-process-tree claim), joins the drain threads
+    /// ONLY once reap is confirmed, and returns the exit code (if
+    /// observed), the bounded stderr capture, every observed stdout line,
+    /// and whether teardown had to be left incomplete. Always called
+    /// exactly once, after a matched response or any diagnostic outcome —
     /// shutdown follows the response/diagnostic, it never races it.
     pub fn shutdown(mut self) -> SessionShutdown {
-        let exit_code = match self.child.try_wait() {
-            Ok(Some(status)) => status.code(),
+        // `reap_confirmed` tracks whether the child's termination was
+        // actually *observed* (not merely signalled) before this method
+        // decides whether it is safe to join the drain threads below.
+        let (exit_code, reap_confirmed) = match self.child.try_wait() {
+            Ok(Some(status)) => (status.code(), true),
             Ok(None) => {
                 let _ = self.child.kill();
-                bounded_wait_after_kill(&mut self.child, SHUTDOWN_REAP_BUDGET)
-                    .and_then(|status| status.code())
+                let status = bounded_wait_after_kill(&mut self.child, SHUTDOWN_REAP_BUDGET);
+                (status.and_then(|status| status.code()), status.is_some())
             }
             Err(_) => {
                 // Copilot review thread E (PR #120, round 2): an OS
@@ -386,21 +405,37 @@ impl ServeSession {
                 // pipes without ever actually terminating (Copilot
                 // review, 2026-09 -- 049-S PR #120, round 5).
                 let _ = self.child.kill();
-                bounded_wait_after_kill(&mut self.child, SHUTDOWN_REAP_BUDGET)
-                    .and_then(|status| status.code())
+                let status = bounded_wait_after_kill(&mut self.child, SHUTDOWN_REAP_BUDGET);
+                (status.and_then(|status| status.code()), status.is_some())
             }
         };
 
-        // Dropping stdin closes the pipe; the drain threads exit once
-        // their respective pipes close (which `kill()` above guarantees
-        // even if the child never exits on its own, including on the
-        // `try_wait()` OS-error path).
+        // Dropping stdin closes the pipe regardless of `reap_confirmed` --
+        // that alone is harmless and never blocks.
         drop(self.stdin.take());
-        if let Some(handle) = self.stdout_thread.take() {
-            let _ = handle.join();
-        }
-        if let Some(handle) = self.stderr_thread.take() {
-            let _ = handle.join();
+
+        // Copilot review (PR #120, round 8): `kill()` failing, or the
+        // child surviving the bounded reap above (e.g. stuck in an
+        // uninterruptible wait, or `kill()` itself silently erroring),
+        // means the child can still hold its own end of the stdout/
+        // stderr pipes open indefinitely -- an unconditional `join()`
+        // below would then hang forever waiting for an EOF that may
+        // never come, which would silently defeat the very
+        // `SHUTDOWN_REAP_BUDGET` bound this method exists to enforce.
+        // Only join once reap is actually confirmed; otherwise, detach
+        // the drain threads (a `JoinHandle` dropped without being
+        // joined simply detaches the underlying OS thread -- it does
+        // NOT block) and report the teardown as incomplete so callers
+        // can treat the captured stderr/stdout as a partial snapshot
+        // rather than a complete session record.
+        let teardown_incomplete = !reap_confirmed;
+        if reap_confirmed {
+            if let Some(handle) = self.stdout_thread.take() {
+                let _ = handle.join();
+            }
+            if let Some(handle) = self.stderr_thread.take() {
+                let _ = handle.join();
+            }
         }
 
         let (stderr, stderr_truncated) = {
@@ -418,6 +453,7 @@ impl ServeSession {
             exit_code,
             stderr,
             stderr_truncated,
+            teardown_incomplete,
             observed_lines: std::mem::take(&mut self.observed_lines),
         }
     }
@@ -588,6 +624,14 @@ pub struct HandshakeReport {
     pub stderr_truncated: bool,
     /// The child's exit code, if observed.
     pub exit_code: Option<i32>,
+    /// Propagated from [`SessionShutdown::teardown_incomplete`]: `true`
+    /// when the session's drain threads had to be left detached rather
+    /// than joined because reap could not be confirmed within budget, so
+    /// [`Self::stderr`]/[`Self::observed_lines`] may be an incomplete
+    /// snapshot rather than the full session record. Always `false` when
+    /// the session never reached [`ServeSession::shutdown`] (e.g. spawn
+    /// itself failed).
+    pub teardown_incomplete: bool,
 }
 
 /// Spawns `graphtor-docs serve` (plus `extra_args`) in `cwd`, sends one
@@ -615,6 +659,7 @@ pub fn run_initialize_handshake(
                 stderr: String::new(),
                 stderr_truncated: false,
                 exit_code: None,
+                teardown_incomplete: false,
             };
         }
     };
@@ -637,6 +682,7 @@ pub fn run_initialize_handshake(
         stderr: shutdown.stderr,
         stderr_truncated: shutdown.stderr_truncated,
         exit_code: shutdown.exit_code,
+        teardown_incomplete: shutdown.teardown_incomplete,
     }
 }
 
@@ -721,6 +767,14 @@ pub struct ServerControlReport {
     pub stderr_truncated: bool,
     /// The child's exit code, if observed.
     pub exit_code: Option<i32>,
+    /// Propagated from [`SessionShutdown::teardown_incomplete`]: `true`
+    /// when the session's drain threads had to be left detached rather
+    /// than joined because reap could not be confirmed within budget, so
+    /// [`Self::stderr`]/[`Self::observed_lines`] may be an incomplete
+    /// snapshot rather than the full session record. Always `false` when
+    /// the session never reached [`ServeSession::shutdown`] (e.g. spawn
+    /// itself failed).
+    pub teardown_incomplete: bool,
 }
 
 /// Runs the read-only production-workspace "server control" session
@@ -753,6 +807,7 @@ pub fn run_read_only_server_control(cwd: &Path, timeout: Duration) -> ServerCont
                 stderr: String::new(),
                 stderr_truncated: false,
                 exit_code: None,
+                teardown_incomplete: false,
             };
         }
     };
@@ -797,6 +852,7 @@ pub fn run_read_only_server_control(cwd: &Path, timeout: Duration) -> ServerCont
         stderr: shutdown.stderr,
         stderr_truncated: shutdown.stderr_truncated,
         exit_code: shutdown.exit_code,
+        teardown_incomplete: shutdown.teardown_incomplete,
     }
 }
 
