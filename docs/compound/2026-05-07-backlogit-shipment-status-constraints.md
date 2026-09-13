@@ -3,6 +3,12 @@
 **Category:** Workflow / Tooling
 **Discovered:** 2026-05-07 (cited by agent/skill instructions since); confirmed and
 corrected with direct empirical evidence during shipment `049-S` closure, 2026-09-13.
+**Created:** 2026-09-13 — this file did not exist before this date. The
+`2026-05-07` filename/date reflects the date the concept was first cited by
+other instruction files as a forward reference to an authoritative source
+that had not yet been written, not the authorship date of this document.
+This closure filled that pre-existing citation gap; see the
+`2026-09-13-049-s-compound-refresh.md` closure report for the audit trail.
 **Context:** This filename is cited by `.github/agents/_orchestrator.agent.md`,
 `.github/agents/_ship.agent.md`, `.github/instructions/backlogit.instructions.md`,
 and `.github/skills/shipment-reconcile/SKILL.md` as the authoritative source for
@@ -56,15 +62,22 @@ disposable-copy proof trail):
 * The cascade operation is **P-015-forbidden as a default path** because it
   recursively resolves `releaseScopeItemIDs` for every manifest item —
   including every descendant at every depth via the live `parent_id`
-  graph — and will requeue/detach and re-parent any descendant that is
-  **not** itself a manifest member. For a shipment manifest that mixes a
-  covering feature with only a **subset** of its descendant tasks (the
-  common partial-feature-shipment shape), this cascades outside the
-  manifest boundary and silently clears `parent_id` on out-of-manifest
-  siblings — confirmed in this session on 25 sibling tasks
-  (`056.004-T`–`056.018-T`, `056.024-T`–`056.033-T`) when the cascade was
-  run under an explicit, deliberate, operator-authorized one-time P-015
-  exception.
+  graph. Critically, this resolution is **not** limited to walking
+  *downward* from an explicitly-included feature member: for a **task**
+  manifest member, `ShipShipment` first resolves **upward** to that task's
+  covering feature (via `parent_id`), then walks **downward** again from
+  that feature to collect its full descendant set — and requeues/detaches
+  and re-parents any descendant in that set that is **not** itself a
+  manifest member. `049-S`'s own manifest proves this: it was **task-only**
+  — `056-F` (the covering feature) was **not** a manifest member at all —
+  yet the cascade still cleared `parent_id` on 25 out-of-manifest siblings
+  of a manifest task's covering feature (`056.004-T`–`056.018-T`,
+  `056.024-T`–`056.033-T`) when run under an explicit, deliberate,
+  operator-authorized one-time P-015 exception. A future reader should
+  **not** conclude that a feature-free/task-only manifest is safe from this
+  hazard — the opposite is true: any manifest task whose covering feature
+  has out-of-manifest siblings is exposed, regardless of whether that
+  feature is itself a manifest member.
 * The safe default close path is `shipment-reconcile`'s **safe-close
   mode**: a non-cascading sequence (`backlogit move <id> --status shipped`
   attempted, refused, then the manifest-scoped archive-by-item-ID sequence

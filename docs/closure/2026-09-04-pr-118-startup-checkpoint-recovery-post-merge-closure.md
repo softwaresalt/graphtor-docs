@@ -36,6 +36,17 @@ this closure, shipments `048-S` (archived, `archived_status: active`) and
 were **not** claimed, mutated, archived, or otherwise touched by this session
 or this closure.
 
+**[As of 2026-09-13: this section's "049-S (queued, blocked ...)" framing is
+historical.** `049-S` subsequently shipped (PR #120,
+`98f8fc63024095b0b8697545986646a564677917`) and completed its own
+post-merge closure — see
+`docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md`.
+Every other `049-S` reference below in this document (state tables,
+follow-up lists, cross-references) describes this PR #118 closure session's
+own point-in-time observations and is left unmodified as an accurate
+historical record; it is not a standing claim about `049-S`'s current
+state.]
+
 Consequently:
 
 * **`shipment-reconcile` is non-applicable.** The skill's `mode: pre` /

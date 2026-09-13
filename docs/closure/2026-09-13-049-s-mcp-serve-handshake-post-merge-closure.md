@@ -110,6 +110,56 @@ compaction, and this closure PR) are the primary subject of this document.
      field, hierarchy path, or `origin_feature` change in any of the 25).
      `backlogit sync` was re-run afterward (`Indexed 527 artifacts`, 0
      parse failures) and content was re-verified unchanged post-sync.
+  8. **Persisted, reproducible git-history evidence (added post-adversarial-review,
+     addressing finding F1/F5 of
+     `docs/closure/2026-09-13-049-s-post-merge-closure-adversarial-review.md`)**:
+     the commit at `5128333` (tip of PR #120's own implementation work,
+     before the cascade/repair cycle ever touched the working tree) already
+     contained the correct, uncascaded `parent_id: 056-F` on all 25 sibling
+     files. The cascade removal and the field-only repair both happened
+     entirely in the **uncommitted working tree** across the prior and this
+     session — neither state was committed independently — so a diff from
+     that last real commit to the closure commit (`73453f3`) is a strictly
+     stronger, git-verifiable proof than a comparison against an ad hoc
+     snapshot file: it shows the *net* effect of cascade-then-repair against
+     immutable history, not a self-reported intermediate comparison.
+     Reproducible commands and their actual output:
+
+     ```
+     $ git diff 5128333..HEAD --numstat -- .backlogit/queue/056.004-T.md .backlogit/queue/056.005-T.md ... (all 25)
+     1  1  .backlogit/queue/056.004-T.md
+     1  1  .backlogit/queue/056.005-T.md
+     ... (all 25 files show exactly "1 1" — one line added, one line removed)
+     ```
+
+     Inspecting the actual line-level diff for every one of the 25 files
+     confirms the single changed line in each is `updated_at:` only —
+     `parent_id: 056-F` does not appear in any hunk at all, meaning it is
+     **byte-identical** to the last real commit, net of the cascade+repair
+     round-trip. Sample (`056.004-T.md`):
+
+     ```diff
+     -updated_at: 2026-08-29T16:45:19.4597226Z
+     +updated_at: 2026-09-13T07:15:48.7327483Z
+     ```
+
+     `056-F` itself: `git diff 5128333..HEAD -- .backlogit/queue/056-F.md`
+     produces **zero output** — not merely SHA-256-equal to a snapshot, but
+     literally no diff against the last real commit at all.
+
+     The 8 finalized manifest task archives show a uniform `5 2` numstat
+     (queue -> archive relocation adds `archived_from`, `archived_status`,
+     `commit`, and flips `status: done` -> `status: archived`, plus the
+     `updated_at` timestamp bump) with `parent_id: 056-F` present as an
+     unchanged context line in every hunk — confirmed via
+     `git diff 5128333..HEAD -- .backlogit/archive/056.001-T.md` (and the
+     other 7), e.g. no `origin_feature`, no ID change, no other drift.
+
+     `049-S` itself: `git diff 5128333..HEAD --numstat -- .backlogit/archive/049-S.md`
+     shows `5 2` for the queue->archive rename, consistent with the same
+     relocation pattern (`archived_status: shipped`,
+     `commit: 98f8fc63024095b0b8697545986646a564677917` added, `status`
+     flipped, `updated_at` bumped) — no other field touched.
 * **Post-archive reconciliation** (`mode: post`,
   `merge_commit_sha: 98f8fc63024095b0b8697545986646a564677917`): documented
   in the halt handoff's Post-Mode addendum — archive presence confirmed for
@@ -363,6 +413,27 @@ document's own commit/push completes.
   — session memory from the halt and resume-confirmation phases.
 * `docs/closure/2026-09-13-fix-mcp-serve-initialize-handshake-regression-adversarial-review.md`
   — pre-merge adversarial review for PR #120.
+* `docs/closure/2026-09-13-049-s-post-merge-closure-adversarial-review.md`
+  — post-merge **closure-artifact** adversarial review (3-reviewer
+  multi-model pool, report-only mode) covering this closure's own commits
+  (`73453f3`, `5f4457b`): backlog integrity of the 25-file repair,
+  shipment archive correctness, no unintended deletions among the 8
+  manifest task archives, documentation accuracy, cross-reference
+  integrity, and P-021 scope discipline. Outcome:
+  `READY_WITH_FOLLOWUPS` (0 consensus/HIGH-confidence findings; 3
+  MEDIUM-confidence majority findings F1–F3 and 3 LOW-confidence unique
+  findings F4–F6, none blocking). **All six findings (F1–F6) were
+  remediated directly in this same closure** — same-contract-surface
+  fixes to documents this closure itself authored/touched (P-021 C1/C3:
+  completing this deliverable's own documentation is in scope, not an
+  expansion) — rather than deferred: F1/F5 (persist reproducible
+  `git diff`/`numstat` evidence for the repair and scope claims), F2/F6
+  (superseded-annotations on stale historical prose exposed by the
+  citation-path fix), F3 (authorship-vs-filename-date clarification), F4
+  (corrected the cascade-hazard mechanism description in the new compound
+  entry to state upward-then-downward `parent_id` graph resolution, since
+  `049-S`'s manifest was task-only with zero feature members yet still
+  triggered the cascade).
 * `docs/closure/2026-09-13-049-s-compound-refresh.md` — compound library
   maintenance performed as part of this closure.
 * `docs/closure/2026-09-04-pr-118-startup-checkpoint-recovery-post-merge-closure.md`
