@@ -883,6 +883,17 @@ pub struct LegOutcome {
     /// being silently discarded (Copilot review, 2026-09 -- 049-S PR
     /// #120, round 4).
     pub inner_teardown_incomplete: bool,
+    /// `Some(message)` only when this leg's exact-CLI child could not
+    /// even be spawned (see [`spawn_piped_child`]'s `Err` case in
+    /// [`run_leg`]). Every other field on such a leg is left in its
+    /// ordinary "no evidence captured" shape (`exit_code: None`,
+    /// `inner_teardown_incomplete: false`, an unaffected
+    /// `sentinel_observation`), which -- before this field existed --
+    /// let a mid-run-unlaunchable executable be silently accepted by
+    /// both post-pass gates and `classify_pass` as an ordinary causal
+    /// result instead of an explicit, unproven-launch blocker (Copilot
+    /// review, 2026-09 -- 049-S PR #120, round 6).
+    pub leg_spawn_error: Option<String>,
 }
 
 fn extract_last_mcp_status(stdout: &str, entry_name: &str) -> (Option<String>, Option<i64>) {
@@ -968,6 +979,38 @@ fn invalidate_shared_evidence_output(evidence_output: &Path) -> Option<String> {
     }
 }
 
+/// Snapshots this leg's shared `evidence_output` file to its own
+/// `leg_evidence_copy` path and reads it back, or short-circuits
+/// entirely with an explicit error when either step cannot be trusted.
+/// Skips the copy/read altogether when `evidence_invalidation_error` is
+/// `Some(...)` -- this leg could not first invalidate the PRIOR leg's
+/// shared evidence file, so proceeding regardless would risk reading
+/// and misattributing that stale prior-leg evidence as this leg's own.
+/// Otherwise, any `fs::copy` error (not just a missing source) is
+/// preserved into `wrapper_evidence_read_error` instead of being
+/// silently discarded as an ordinary "no evidence" outcome (Copilot
+/// review, 2026-09 -- 049-S PR #120, round 6). Extracted purely to keep
+/// [`run_leg`] under `clippy::too_many_lines`.
+fn snapshot_and_read_wrapper_evidence(
+    evidence_output: &Path,
+    leg_evidence_copy: &Path,
+    evidence_invalidation_error: Option<String>,
+) -> (Option<serde_json::Value>, Option<String>) {
+    if let Some(invalidation_error) = evidence_invalidation_error {
+        return (None, Some(invalidation_error));
+    }
+    match fs::copy(evidence_output, leg_evidence_copy) {
+        Ok(_) => read_wrapper_evidence(leg_evidence_copy),
+        Err(err) => (
+            None,
+            Some(format!(
+                "could not snapshot this leg's wrapper evidence from {}: {err}",
+                evidence_output.display()
+            )),
+        ),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_leg(
     leg: Leg,
@@ -1013,6 +1056,7 @@ fn run_leg(
         sentinel_observation,
         stdout_truncated,
         inner_teardown_incomplete,
+        leg_spawn_error,
     ) = match spawn_piped_child(command) {
         Ok(mut guard) => {
             let watcher = guard.pid().map(|pid| {
@@ -1043,9 +1087,10 @@ fn run_leg(
                 sentinel_observation,
                 stdout_truncated,
                 teardown_incomplete,
+                None,
             )
         }
-        Err(_) => (
+        Err(err) => (
             Vec::new(),
             false,
             None,
@@ -1055,6 +1100,7 @@ fn run_leg(
             ),
             false,
             false,
+            Some(err.to_string()),
         ),
     };
     let stdout_text = String::from_utf8_lossy(&stdout_bytes).into_owned();
@@ -1067,17 +1113,11 @@ fn run_leg(
     // file above: proceeding to copy/read here regardless would risk
     // reading and misattributing that stale prior-leg evidence as this
     // leg's own (Copilot review, 2026-09 -- 049-S PR #120, round 5).
-    let (wrapper_evidence, wrapper_evidence_read_error) =
-        if let Some(invalidation_error) = evidence_invalidation_error {
-            (None, Some(invalidation_error))
-        } else {
-            let snapshot_result = fs::copy(evidence_output, &leg_evidence_copy);
-            if snapshot_result.is_ok() {
-                read_wrapper_evidence(&leg_evidence_copy)
-            } else {
-                (None, None)
-            }
-        };
+    let (wrapper_evidence, wrapper_evidence_read_error) = snapshot_and_read_wrapper_evidence(
+        evidence_output,
+        &leg_evidence_copy,
+        evidence_invalidation_error,
+    );
 
     LegOutcome {
         leg,
@@ -1090,6 +1130,7 @@ fn run_leg(
         wrapper_evidence_read_error,
         stdout_truncated,
         inner_teardown_incomplete,
+        leg_spawn_error,
     }
 }
 
@@ -1299,6 +1340,7 @@ fn leg_outcome_to_json(leg: &LegOutcome) -> serde_json::Value {
         "wrapper_evidence_read_error": leg.wrapper_evidence_read_error,
         "stdout_truncated": leg.stdout_truncated,
         "inner_teardown_incomplete": leg.inner_teardown_incomplete,
+        "leg_spawn_error": leg.leg_spawn_error,
     })
 }
 
@@ -1674,6 +1716,36 @@ fn collect_pass_teardown_failures(passes: &[PassOutcome]) -> Vec<String> {
         .collect()
 }
 
+/// Fails closed on any pass whose control or treatment leg's exact-CLI
+/// child could not even be spawned
+/// (`LegOutcome::leg_spawn_error.is_some()`). Without this gate, an
+/// unlaunchable executable mid-run left every other [`LegOutcome`]
+/// field in its ordinary "no evidence captured" shape (`exit_code:
+/// None`, `inner_teardown_incomplete: false`, an unaffected per-pass
+/// identity), which both of the OTHER two post-pass gates -- and
+/// `classify_pass` itself -- would accept as an ordinary causal result
+/// rather than the explicit, unproven-launch blocker it actually is,
+/// directly contradicting `056.001-T`'s own acceptance criteria, which
+/// requires this runner to "fail closed when process ownership... is
+/// unproved" (Copilot review, 2026-09 -- 049-S PR #120, round 6).
+/// Mirrors [`collect_pass_teardown_failures`]'s extraction shape.
+fn collect_pass_spawn_failures(passes: &[PassOutcome]) -> Vec<String> {
+    passes
+        .iter()
+        .flat_map(|pass| {
+            [
+                (Leg::Control, &pass.control),
+                (Leg::Treatment, &pass.treatment),
+            ]
+        })
+        .filter_map(|(leg, outcome)| {
+            outcome.leg_spawn_error.as_ref().map(|err| {
+                format!("pass build {leg:?} exact-CLI child could not be spawned: {err}")
+            })
+        })
+        .collect()
+}
+
 /// Builds the `terminal: "blocked"` [`ExactCliOutcome`] for an identity
 /// failure -- either the pre-Gate-1 `identity_failure_message` check
 /// (call with `passes: Vec::new()`) or a post-Gate-1 per-pass identity
@@ -1714,15 +1786,20 @@ fn identity_blocked_outcome(
     }
 }
 
-/// Runs both post-pass fail-closed gates -- per-pass identity
-/// enforcement ([`collect_pass_identity_failures`]) and per-pass
-/// teardown-ownership enforcement ([`collect_pass_teardown_failures`])
-/// -- in sequence, returning `Err` with the `terminal: "blocked"`
-/// outcome for whichever gate finds a failure first, or `Ok(passes)`
-/// (handing ownership back unchanged) once both gates pass clean.
-/// Extracted purely to keep [`run_exact_cli`] under
-/// `clippy::too_many_lines` (Copilot review, 2026-09 -- 049-S PR #120,
-/// round 5).
+/// Runs all three post-pass fail-closed gates -- per-pass spawn-ownership
+/// enforcement ([`collect_pass_spawn_failures`], round 6), per-pass
+/// identity enforcement ([`collect_pass_identity_failures`]), and
+/// per-pass teardown-ownership enforcement
+/// ([`collect_pass_teardown_failures`]) -- in that order, returning
+/// `Err` with the `terminal: "blocked"` outcome for whichever gate finds
+/// a failure first, or `Ok(passes)` (handing ownership back unchanged)
+/// once all three gates pass clean. The spawn gate runs first since an
+/// unlaunchable child leaves the other two gates with nothing to
+/// observe (no identity impact, `inner_teardown_incomplete: false`) --
+/// checking it last would let a spawn failure hide behind two gates
+/// that trivially "pass" on a leg that never ran. Extracted purely to
+/// keep [`run_exact_cli`] under `clippy::too_many_lines` (Copilot
+/// review, 2026-09 -- 049-S PR #120, round 5; spawn gate added round 6).
 #[allow(clippy::too_many_arguments)]
 fn apply_post_pass_gates(
     run_nonce: &str,
@@ -1734,6 +1811,21 @@ fn apply_post_pass_gates(
     gate1: &Gate1Outcome,
     passes: Vec<PassOutcome>,
 ) -> Result<Vec<PassOutcome>, Box<ExactCliOutcome>> {
+    let pass_spawn_failures = collect_pass_spawn_failures(&passes);
+    if !pass_spawn_failures.is_empty() {
+        return Err(Box::new(identity_blocked_outcome(
+            run_nonce.to_string(),
+            sentinel_value.to_string(),
+            workspace_root.to_path_buf(),
+            affected_identity.clone(),
+            stable_identity.cloned(),
+            inner_identity.clone(),
+            gate1.clone(),
+            passes,
+            pass_spawn_failures,
+        )));
+    }
+
     let pass_identity_failures =
         collect_pass_identity_failures(&passes, affected_identity, stable_identity);
     if !pass_identity_failures.is_empty() {
@@ -2152,6 +2244,7 @@ mod tests {
                 wrapper_evidence_read_error: None,
                 stdout_truncated: false,
                 inner_teardown_incomplete: false,
+                leg_spawn_error: None,
             },
             treatment: LegOutcome {
                 leg: Leg::Treatment,
@@ -2172,6 +2265,7 @@ mod tests {
                 wrapper_evidence_read_error: None,
                 stdout_truncated: false,
                 inner_teardown_incomplete: false,
+                leg_spawn_error: None,
             },
         };
         let causes = classify_pass(&pass);
@@ -2200,6 +2294,7 @@ mod tests {
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
             inner_teardown_incomplete: false,
+            leg_spawn_error: None,
         };
         let pass = PassOutcome {
             build: "affected".to_string(),
@@ -2231,6 +2326,7 @@ mod tests {
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
             inner_teardown_incomplete: false,
+            leg_spawn_error: None,
         };
         let pass = PassOutcome {
             build: "affected".to_string(),
@@ -2430,6 +2526,7 @@ mod tests {
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
             inner_teardown_incomplete: false,
+            leg_spawn_error: None,
         }
     }
 
@@ -2657,6 +2754,7 @@ mod tests {
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
             inner_teardown_incomplete: false,
+            leg_spawn_error: None,
         };
         assert!(
             !leg_has_valid_initialize(&leg),
@@ -2680,6 +2778,7 @@ mod tests {
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
             inner_teardown_incomplete: false,
+            leg_spawn_error: None,
         };
         assert!(!leg_has_valid_initialize(&leg));
     }
@@ -2700,6 +2799,7 @@ mod tests {
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
             inner_teardown_incomplete: false,
+            leg_spawn_error: None,
         };
         assert!(leg_has_valid_initialize(&leg));
     }
