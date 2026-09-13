@@ -2627,9 +2627,10 @@ async fn cmd_serve(
     // We check before opening any databases so that a mis-configured
     // registry is rejected immediately without creating empty DB files.
     if !generation_config.sources.is_empty() {
-        if let Some(exit_code) =
-            run_duplicate_intake_preflight(&generation_config, db_path, cwd, false)?
-        {
+        if let Some(exit_code) = trace_stage(
+            ServePreflightErrorStage::DuplicateIntake,
+            run_duplicate_intake_preflight(&generation_config, db_path, cwd, false),
+        )? {
             ServePreflightExit::DuplicateIntakeConflict.trace();
             return Ok(exit_code);
         }

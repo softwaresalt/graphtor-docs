@@ -425,3 +425,53 @@ fn create_probe_workspace_rejects_a_redirected_probe_component_under_a_genuine_l
     let _ = std::fs::remove_dir_all(&repo_root);
     let _ = std::fs::remove_dir_all(&escape_target);
 }
+
+/// Security Reviewer finding (`056` shipment review): every generated
+/// `.mcp.json` fixture embeds the real, unredacted production
+/// `--inner-exe`/`--inner-arg` values by design -- redacting them would
+/// break the differential reproduction itself, since these files are the
+/// actual launch config the exact-CLI runner points a real Copilot CLI
+/// process at (see `workspace.rs`'s module docs, "Real, unredacted args
+/// are written by design"). The compensating control is owner-only
+/// (`0600`) file permissions from the very first inode, not content
+/// redaction -- mirroring `workspace::mcp_config`'s identical rationale
+/// for the same real `.mcp.json` file kind. Unix-only: Windows
+/// `std::fs::Permissions` tracks only a readonly bit with no owner-only
+/// mode concept.
+#[test]
+#[cfg(unix)]
+fn generated_mcp_json_fixtures_are_created_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo_root = fresh_fake_repo_root("owner-only-perms");
+    let entry = fixture_entry();
+
+    let workspace = create_probe_workspace(&repo_root, "nonce-owner-only", &entry)
+        .expect("create_probe_workspace should succeed");
+
+    for path in [
+        &workspace.control_config_path,
+        &workspace.treatment_config_path,
+        &workspace.ancestor_run_config_path,
+    ] {
+        let mode = std::fs::metadata(path)
+            .unwrap_or_else(|err| panic!("metadata {}: {err}", path.display()))
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode,
+            0o600,
+            "{} must be created owner-only (0600), not umask-default -- it carries the \
+             real, unredacted production inner-exe/inner-args verbatim",
+            path.display()
+        );
+    }
+
+    // The deliberately-invalid ancestor sentinel carries no real
+    // production data (a fixed, never-meant-to-parse constant), so it is
+    // NOT subject to this owner-only requirement.
+    assert!(workspace.ancestor_config_path.is_file());
+
+    let _ = std::fs::remove_dir_all(&repo_root);
+}

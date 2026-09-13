@@ -52,8 +52,30 @@
 //! **alone** adds a `cwd` key (the canonical repository root, the H3-B
 //! candidate fix) to its JSON object. No other arg, env, target, or
 //! stdio-discriminator difference is ever introduced.
+//!
+//! # Real, unredacted args are written by design (owner-only permissions,
+//! # not content redaction, is the control)
+//!
+//! The generated `.mcp.json` fixtures embed the real, unredacted
+//! production `--inner-exe` / `--inner-arg` values verbatim (see
+//! [`wrapper_argv`]). This is intentional and cannot be otherwise: these
+//! files are the actual launch configuration `056.001-T`'s exact-CLI
+//! runner points a real Copilot CLI process at, so the wrapper it spawns
+//! must receive the exact, real inner command to reproduce the targeted
+//! regression -- redacting any part of it here (for example, via
+//! `evidence::redact_argv`/`redact_env`, which exist for and are applied
+//! only to genuinely diagnostic-only output such as the correlator's
+//! persisted `initialize` frame bodies, never to a functional launch
+//! config) would silently break the very reproduction this tool exists
+//! to perform. Because a real inner command's args can carry
+//! credentials, the compensating control is access restriction, not
+//! content redaction: every fixture written by this module is created
+//! owner-only (Unix `0600`) from its very first inode, mirroring
+//! `workspace::mcp_config`'s identical `0600`-at-creation rationale for
+//! the same real `.mcp.json` file kind. See [`write_owner_only`].
 
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Deliberately syntactically-invalid contents for the ancestor
@@ -408,7 +430,44 @@ fn write_wrapper_mcp_json(
     );
 
     let bytes = serde_json::to_vec_pretty(&serde_json::Value::Object(document))?;
-    fs::write(path, bytes)?;
+    write_owner_only(path, &bytes)?;
+    Ok(())
+}
+
+/// Creates `path` fresh (fails on any pre-existing path, same as every
+/// other exclusive-creation call in this module) and writes `bytes` to
+/// it, owner-only (Unix `0600`) from the very first inode.
+///
+/// This file embeds the real, unredacted production
+/// `--inner-exe`/`--inner-arg` values (see the module docs' "Real,
+/// unredacted args are written by design" section for why they cannot
+/// be redacted here without breaking the differential reproduction
+/// itself) and so must never be even briefly group/other-readable --
+/// not even for the instant between an ordinary `fs::write` and a
+/// later `chmod`, since Unix permission checks happen at `open()`, not
+/// per-read: a local attacker who opens the file in that window could
+/// retain a readable fd across the later `chmod`. Applying `0600` via
+/// `OpenOptionsExt::mode` at the same `open()` call that creates the
+/// file closes that window entirely, mirroring
+/// `workspace::mcp_config::generate_mcp_config`'s identical
+/// create-with-mode rationale for the same real `.mcp.json` file kind.
+///
+/// `path`'s parent directory must already exist; every call site in
+/// this module writes into a freshly, exclusively created workspace
+/// subdirectory. On Windows, `std::fs::Permissions` tracks only a
+/// readonly bit with no owner-only mode concept, so this reduces to a
+/// plain create-new write there -- containment there instead relies on
+/// this module's own exclusive-workspace-creation guarantees.
+fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), WorkspaceError> {
+    let mut open_opts = fs::OpenOptions::new();
+    open_opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        open_opts.mode(0o600);
+    }
+    let mut file = open_opts.open(path)?;
+    file.write_all(bytes)?;
     Ok(())
 }
 

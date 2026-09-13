@@ -165,6 +165,10 @@ pub enum ServePreflightErrorStage {
     Schema,
     /// Resolving the embedding model used for semantic search.
     EmbeddingModel,
+    /// Running the cross-database duplicate-intake preflight check shared
+    /// with `sync`/`prewarm` (`run_duplicate_intake_preflight`) against the
+    /// `serve` background-sync path's own generation-mode source set.
+    DuplicateIntake,
 }
 
 impl fmt::Display for ServePreflightErrorStage {
@@ -176,6 +180,7 @@ impl fmt::Display for ServePreflightErrorStage {
             Self::DatabaseOpen => "database_open",
             Self::Schema => "schema",
             Self::EmbeddingModel => "embedding_model",
+            Self::DuplicateIntake => "duplicate_intake",
         };
         write!(f, "{s}")
     }
@@ -316,6 +321,7 @@ mod tests {
             ServePreflightErrorStage::DatabaseOpen,
             ServePreflightErrorStage::Schema,
             ServePreflightErrorStage::EmbeddingModel,
+            ServePreflightErrorStage::DuplicateIntake,
         ]
     }
 
@@ -337,6 +343,7 @@ mod tests {
                 "database_open",
                 "schema",
                 "embedding_model",
+                "duplicate_intake",
             ]
             .into_iter()
             .map(String::from)
