@@ -91,12 +91,19 @@ fn run_wrapper_subcommand(args: impl Iterator<Item = String>) {
 /// Composes the isolated `056.021-T` probe workspace, the `056.022-T`
 /// process guards/wrapper, and the `056.023-T` evidence seam for the
 /// `exact-cli` subcommand (`056.001-T`). Prints the full structured
-/// classification outcome as JSON to stdout and exits `0` on any
-/// completed run (including a Gate-1-fail `H3-B-candidate` terminal,
-/// which is a normal `done` outcome, never a failure); exits non-zero
-/// only when argument parsing fails or evidence capture itself could not
-/// even begin (for example, the isolated workspace could not be
-/// created).
+/// classification outcome as JSON to stdout and exits `0` only when the
+/// run both completed classification AND the `056.023-T` evidence seam's
+/// JSON persistence under the probe workspace succeeded (a completed
+/// classification with a Gate-1-fail `H3-B-candidate` terminal is a
+/// normal `done` outcome and does not by itself affect the exit code).
+/// Exits non-zero when argument parsing fails, when evidence capture
+/// itself could not even begin (for example, the isolated workspace
+/// could not be created), or when the classification completed but its
+/// mandatory result-JSON persistence failed -- the last case still
+/// prints the outcome JSON to stdout for the caller/manual inspection,
+/// but must never silently report success (exit `0`) for a run whose
+/// required evidence artifact was not durably written (Copilot review
+/// thread C, 2026-09 -- 049-S PR #120, round 2).
 fn run_exact_cli_subcommand(args: impl Iterator<Item = String>) {
     let parsed = match parse_exact_cli_args(args) {
         Ok(parsed) => parsed,
@@ -108,10 +115,11 @@ fn run_exact_cli_subcommand(args: impl Iterator<Item = String>) {
 
     match run_exact_cli(&parsed) {
         Ok(outcome) => {
-            if let Err(err) = persist_outcome_json(&outcome) {
+            let persist_error = persist_outcome_json(&outcome).err();
+            if let Some(err) = &persist_error {
                 eprintln!(
-                    "mcp-probe exact-cli: warning: failed to persist result JSON under the \
-                     probe workspace: {err}"
+                    "mcp-probe exact-cli: failed to persist result JSON under the probe \
+                     workspace: {err}"
                 );
             }
             let json = outcome_to_json(&outcome);
@@ -121,6 +129,13 @@ fn run_exact_cli_subcommand(args: impl Iterator<Item = String>) {
                     eprintln!("mcp-probe exact-cli: failed to serialize outcome: {err}");
                     std::process::exit(1);
                 }
+            }
+            if persist_error.is_some() {
+                // The classification itself completed and was printed
+                // above, but the mandatory `056.023-T` evidence-seam
+                // persistence did not happen -- this must never be
+                // reported as a clean `0` exit.
+                std::process::exit(1);
             }
         }
         Err(message) => {

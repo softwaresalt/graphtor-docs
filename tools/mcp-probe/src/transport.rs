@@ -59,6 +59,18 @@ pub type CopyHook = Arc<dyn Fn(Direction, &[u8]) + Send + Sync + 'static>;
 /// blocking a pump thread.
 const DELIVERY_CHANNEL_CAPACITY: usize = 64;
 
+/// Bounded, best-effort window `run_duplex_pump` waits for its own
+/// delivery worker thread to fully drain and exit on its own, once both
+/// primary pump directions have already completed (or timed out) and
+/// every sender clone it does not itself own has therefore already been
+/// dropped. This never delays the PRIMARY byte forwarding (both pump
+/// threads are already finished by the time this budget starts) -- it
+/// only bounds how long `run_duplex_pump` itself waits before returning,
+/// so an arbitrarily slow or wedged hook still cannot hang the caller
+/// indefinitely (Copilot review thread H, 2026-09 -- 049-S PR #120,
+/// round 2).
+const DELIVERY_DRAIN_BUDGET: Duration = Duration::from_millis(250);
+
 /// Default per-read buffer size, in bytes, for both pump directions.
 const DEFAULT_PUMP_BUFFER_SIZE: usize = 8192;
 
@@ -85,7 +97,16 @@ impl Default for PumpConfig {
 }
 
 /// Outcome of one full-duplex pump session.
+///
+/// Four independent, orthogonal boolean outcome flags is over
+/// `clippy::pedantic`'s default `struct_excessive_bools` threshold, but
+/// each one reports a genuinely separate yes/no fact about this one
+/// pump run (which half closed, whether the deadline fired, whether the
+/// diagnostic delivery worker fully drained) -- there is no shared state
+/// machine or mutually exclusive grouping among them that a two-variant
+/// enum would clarify; that refactor would only add indirection here.
 #[derive(Debug, Default, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct PumpOutcome {
     /// `true` once the incoming (client) reader reached EOF (or errored)
     /// and the child's stdin half-close was propagated by dropping it.
@@ -111,6 +132,22 @@ pub struct PumpOutcome {
     /// the hook (and therefore before the observer) ever sees the copy,
     /// so the observer has no way to detect this loss on its own.
     pub transport_copies_dropped: u64,
+    /// `true` when the delivery worker thread did not finish draining
+    /// its already-enqueued (successfully `try_send`-accepted) copies
+    /// within [`DELIVERY_DRAIN_BUDGET`] after both pump directions
+    /// completed, so it was detached rather than joined. This is
+    /// DISTINCT from `transport_copies_dropped`: a dropped copy never
+    /// reached the channel at all (rejected by `try_send`), whereas a
+    /// copy counted here for `true` WAS accepted into the channel but
+    /// its hook invocation may never complete/observe before this
+    /// function returns. Always `false` when no `copy_hook` was
+    /// supplied, or when the worker (if any) finished within budget. A
+    /// caller composing this transport with a downstream observer must
+    /// treat `true` here exactly like a nonzero `transport_copies_dropped`
+    /// -- as its own signal that the observer's summary may be
+    /// incomplete and must not be reported as cleanly `valid` (Copilot
+    /// review thread H, 2026-09 -- 049-S PR #120, round 2).
+    pub delivery_drain_incomplete: bool,
 }
 
 /// Spawns a background delivery worker that drains a bounded channel and
@@ -356,10 +393,40 @@ where
         }
     }
 
-    // Drop delivery senders so any background delivery worker drains and
-    // exits; deliberately never joined -- an arbitrarily slow hook must
-    // never delay pump completion.
-    drop(delivery);
+    // Drop the delivery sender (this function's own clone; the two pump
+    // threads' clones -- `stdin_tx`/`stdout_tx` -- are already dropped
+    // above whenever their owning thread was actually joined) so the
+    // delivery worker's `rx.recv()` loop can observe channel closure
+    // once every sender is gone, then give that worker thread a short,
+    // bounded window to drain whatever it had already accepted and exit
+    // on its own -- never joined unboundedly, so an arbitrarily slow or
+    // wedged hook still cannot delay this function's return past
+    // `DELIVERY_DRAIN_BUDGET`. Previously this only dropped the sender
+    // and detached the `JoinHandle` unconditionally, with no signal at
+    // all when already-enqueued copies were left stranded mid-delivery
+    // (Copilot review thread H, 2026-09 -- 049-S PR #120, round 2):
+    // that silently produced an evidence summary reported as `valid`
+    // despite missing data.
+    if let Some((tx, handle)) = delivery {
+        drop(tx);
+        let drain_deadline = Instant::now() + DELIVERY_DRAIN_BUDGET;
+        while !handle.is_finished() && Instant::now() < drain_deadline {
+            thread::sleep(poll_interval);
+        }
+        if handle.is_finished() {
+            // Already fully drained (every accepted copy's hook
+            // invocation ran to completion, panic-caught or not) --
+            // reclaim the thread; this call itself cannot block.
+            let _ = handle.join();
+        } else {
+            // Still not finished after the bounded window -- detach
+            // rather than block further, but the caller MUST now treat
+            // this exactly like a nonzero `transport_copies_dropped`:
+            // some already-accepted copies may never reach the hook.
+            outcome.delivery_drain_incomplete = true;
+            drop(handle);
+        }
+    }
 
     // The primary pumps can both finish (e.g. the child closed stdout
     // and stdin) while the child is still alive and holding stderr

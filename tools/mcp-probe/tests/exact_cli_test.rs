@@ -29,6 +29,21 @@ fn fresh_fake_repo_root(label: &str) -> PathBuf {
     root
 }
 
+/// A real, spawnable, near-instantly-exiting stand-in for the exact
+/// target Copilot CLI: this crate's own compiled binary (via the same
+/// `CARGO_BIN_EXE_mcp-probe` pattern already used by
+/// `process_test.rs`/`transport_test.rs`/`evidence_test.rs`). Any
+/// argument list this test drives it with (`--version`, or Gate 1's own
+/// `-C <dir> mcp get <entry> --json`) is an unrecognized subcommand to
+/// `main.rs`'s own dispatch, so it exits quickly with a non-zero code
+/// without ever hanging. Because the file genuinely exists and is
+/// readable, `identify_copilot` always succeeds against it (no
+/// `identify_error`), letting a test isolate an `identify_inner_exe`
+/// failure as the sole identity-check trigger.
+fn spawnable_fast_exiting_exe() -> String {
+    env!("CARGO_BIN_EXE_mcp-probe").to_string()
+}
+
 #[test]
 fn run_exact_cli_fails_closed_with_a_blocked_terminal_when_gate1_cannot_spawn_the_exact_cli() {
     let repo_root = fresh_fake_repo_root("gate1-spawn-failure");
@@ -187,6 +202,110 @@ fn run_exact_cli_persists_the_result_json_under_the_probe_workspace() {
         serde_json::from_str(&persisted_text).expect("persisted content must be valid JSON");
     assert_eq!(persisted_json["run_nonce"], outcome.run_nonce);
     assert_eq!(persisted_json["terminal"], outcome.terminal);
+
+    let _ = std::fs::remove_dir_all(&repo_root);
+}
+
+#[test]
+fn run_exact_cli_fails_closed_when_the_inner_executable_identity_cannot_be_read() {
+    // Copilot review thread B (PR #120, round 2): recording an identity
+    // failure is not the same as ENFORCING it. Use a real, spawnable
+    // stand-in for `--copilot-exe` (so `identify_copilot` succeeds and
+    // cannot itself trigger the identity fail-closed path) paired with a
+    // deliberately nonexistent `--inner-exe`, and assert the run still
+    // fails closed on the inner-executable identity, regardless of
+    // whatever Gate 1 itself observes.
+    let repo_root = fresh_fake_repo_root("inner-identity-fail-closed");
+    let spawnable_copilot_exe = spawnable_fast_exiting_exe();
+
+    let args = ExactCliArgs {
+        copilot_exe: spawnable_copilot_exe,
+        stable_copilot_exe: None,
+        repo_root: repo_root.to_string_lossy().into_owned(),
+        inner_exe: "definitely-does-not-exist-inner-server".to_string(),
+        inner_args: Vec::new(),
+        entry_name: "graphtor-docs".to_string(),
+        run_nonce: Some("exact-cli-test-inner-identity-fail-closed".to_string()),
+        leg_deadline: Duration::from_secs(5),
+        gate1_deadline: Duration::from_secs(5),
+        prompt: "diagnostic probe prompt".to_string(),
+        sentinel_value: None,
+    };
+
+    let outcome = run_exact_cli(&args).expect(
+        "run_exact_cli only errors on workspace-creation failure, which is not exercised here",
+    );
+
+    assert!(
+        outcome.affected_identity.identify_error.is_none(),
+        "the spawnable stand-in exe is a real, readable file, so its own identity capture \
+         must succeed -- proving this test isolates the INNER identity failure, not a \
+         copilot-identity failure"
+    );
+    assert!(
+        outcome.inner_identity.identify_error.is_some(),
+        "the nonexistent inner exe must surface a read error"
+    );
+    assert_eq!(
+        outcome.terminal, "blocked",
+        "an unproved inner-executable identity must fail closed regardless of Gate 1's own \
+         result (056.001-T: fail closed when ... same-inner-executable ... parity is unproved)"
+    );
+    assert!(!outcome.h3_b_candidate);
+    assert!(outcome.passes.is_empty());
+    assert!(
+        outcome.ordered_cause_classification[0].contains("inner executable's identity"),
+        "the blocked reason must cite the inner-executable identity failure specifically, \
+         got: {:?}",
+        outcome.ordered_cause_classification
+    );
+
+    let _ = std::fs::remove_dir_all(&repo_root);
+}
+
+#[test]
+fn run_exact_cli_does_not_classify_a_gate1_timeout_as_an_h3_b_candidate() {
+    // Copilot review thread G (PR #120, round 2): a Gate 1 timeout (or
+    // malformed/empty successful output) proves NOTHING about whether
+    // the exact CLI read or merged the ancestor config -- it must fail
+    // closed as "blocked", never be classified as the causal
+    // `H3-B-candidate` reserved for a positively OBSERVED ancestor
+    // merge.
+    let repo_root = fresh_fake_repo_root("gate1-timeout-not-h3-b");
+    let spawnable_copilot_exe = spawnable_fast_exiting_exe();
+
+    let args = ExactCliArgs {
+        copilot_exe: spawnable_copilot_exe,
+        stable_copilot_exe: None,
+        repo_root: repo_root.to_string_lossy().into_owned(),
+        inner_exe: "definitely-does-not-exist-inner-server".to_string(),
+        inner_args: Vec::new(),
+        entry_name: "graphtor-docs".to_string(),
+        run_nonce: Some("exact-cli-test-gate1-timeout-not-h3-b".to_string()),
+        leg_deadline: Duration::from_secs(5),
+        gate1_deadline: Duration::from_secs(5),
+        prompt: "diagnostic probe prompt".to_string(),
+        sentinel_value: None,
+    };
+
+    let outcome = run_exact_cli(&args).expect(
+        "run_exact_cli only errors on workspace-creation failure, which is not exercised here",
+    );
+
+    // The spawnable stand-in exits quickly on an unrecognized subcommand
+    // (never a JSON `mcp get --json` response), so Gate 1 itself fails
+    // with a parse error here -- but this test's fixed point is that the
+    // OVERALL outcome is never H3-B-candidate for ANY unproved Gate 1
+    // shape (spawn failure, timeout, non-zero exit, or parse error);
+    // the inner-identity failure above additionally guarantees a
+    // "blocked" terminal regardless of Gate 1's own classification.
+    assert!(!outcome.gate1.passed);
+    assert!(
+        !outcome.h3_b_candidate,
+        "Gate 1 never positively observed an ancestor-merge sourcePath here, so this must \
+         never be reported as an H3-B-candidate"
+    );
+    assert_eq!(outcome.terminal, "blocked");
 
     let _ = std::fs::remove_dir_all(&repo_root);
 }

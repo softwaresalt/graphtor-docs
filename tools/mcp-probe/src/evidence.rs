@@ -599,6 +599,36 @@ impl EvidenceCollector {
         ));
     }
 
+    /// Records that the transport's own delivery worker thread did not
+    /// finish draining its already-accepted copies within its bounded
+    /// drain window before `run_duplex_pump` returned -- i.e.
+    /// `crate::transport::PumpOutcome::delivery_drain_incomplete` was
+    /// `true`. This is DISTINCT from [`Self::note_transport_drops`]: a
+    /// drain-incomplete copy WAS accepted into transport's channel (so
+    /// it may still arrive at [`Self::hook`] for a brief window, exactly
+    /// like [`FINALIZE_GRACE_PERIOD`] already accounts for), but this
+    /// collector has no way to prove every such copy was actually
+    /// delivered before it stops listening; the caller composing the
+    /// pump and this collector together (see `crate::process::run_wrapper`)
+    /// MUST call this after the pump returns and before [`Self::finalize`]
+    /// whenever the pump reports `delivery_drain_incomplete: true`, so a
+    /// summary with possibly-missing trailing data is never finalized as
+    /// `valid: true` (Copilot review thread H, 2026-09 -- 049-S PR #120,
+    /// round 2). An `incomplete` of `false` is a no-op.
+    pub fn note_transport_delivery_drain_incomplete(&self, incomplete: bool) {
+        if !incomplete {
+            return;
+        }
+        let mut guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.mark_invalid(
+            "transport-level delivery worker did not finish draining already-accepted \
+             copies before the pump returned; evidence may be incomplete",
+        );
+    }
+
     /// Finalizes collection and returns the resulting [`EvidenceSummary`].
     /// Waits a short, bounded, best-effort grace period (see
     /// [`FINALIZE_GRACE_PERIOD`]) for any already-in-flight trailing copy
@@ -934,6 +964,38 @@ mod tests {
                 .as_deref()
                 .is_some_and(|reason| reason.contains("transport-level")),
             "the invalid reason must explain the transport-level drop, got: {:?}",
+            summary.invalid_reason
+        );
+    }
+
+    #[test]
+    fn note_transport_delivery_drain_incomplete_is_a_no_op_for_false_and_invalidates_for_true() {
+        // Copilot review thread H (PR #120, round 2): a transport-level
+        // delivery worker that did not finish draining before the pump
+        // returned is a distinct, but equally undetectable-on-its-own,
+        // completeness signal this collector must be told about
+        // explicitly.
+        let collector = EvidenceCollector::new("test-nonce-drain-complete");
+        collector.note_transport_delivery_drain_incomplete(false);
+        let summary = collector.finalize();
+        assert!(
+            summary.valid,
+            "a complete drain must never invalidate an otherwise-clean summary"
+        );
+
+        let collector = EvidenceCollector::new("test-nonce-drain-incomplete");
+        collector.note_transport_delivery_drain_incomplete(true);
+        let summary = collector.finalize();
+        assert!(
+            !summary.valid,
+            "an incomplete drain must invalidate the summary"
+        );
+        assert!(
+            summary
+                .invalid_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("delivery worker")),
+            "the invalid reason must explain the incomplete delivery drain, got: {:?}",
             summary.invalid_reason
         );
     }

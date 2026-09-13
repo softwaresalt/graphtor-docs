@@ -266,3 +266,80 @@ fn slow_delivery_hook_never_delays_or_alters_forwarded_stream() {
     std::thread::sleep(Duration::from_millis(200));
     assert!(hook_invocations.load(Ordering::SeqCst) >= 1);
 }
+
+#[test]
+fn a_hook_that_keeps_up_reports_delivery_as_fully_drained() {
+    // Copilot review thread H (PR #120, round 2): when the delivery
+    // worker DOES finish draining within its bounded window, the
+    // outcome must report `delivery_drain_incomplete: false` -- the
+    // common, well-behaved case must never be penalized by the new
+    // completeness signal.
+    let mut guard = spawn_echo_child();
+    let payload = b"small payload, fast hook\n".to_vec();
+    let incoming = Cursor::new(payload.clone());
+    let outgoing = CapturingWriter::default();
+
+    let hook_invocations = Arc::new(AtomicUsize::new(0));
+    let hook_invocations_for_closure = hook_invocations.clone();
+    let hook: CopyHook = Arc::new(move |_direction: Direction, _bytes: &[u8]| {
+        hook_invocations_for_closure.fetch_add(1, Ordering::SeqCst);
+    });
+
+    let outcome = run_duplex_pump(
+        incoming,
+        outgoing.clone(),
+        &mut guard.0,
+        &PumpConfig::default(),
+        Some(hook),
+    )
+    .expect("duplex pump run");
+
+    assert_eq!(outgoing.snapshot(), payload);
+    assert!(
+        !outcome.delivery_drain_incomplete,
+        "a fast hook must fully drain within the bounded window"
+    );
+    assert!(hook_invocations.load(Ordering::SeqCst) >= 1);
+}
+
+#[test]
+fn a_wedged_hook_reports_delivery_drain_as_incomplete_without_hanging() {
+    // Copilot review thread H (PR #120, round 2): a hook that cannot
+    // possibly finish within the bounded drain window must cause
+    // `run_duplex_pump` to report `delivery_drain_incomplete: true` and
+    // still return promptly, rather than either hanging indefinitely or
+    // silently reporting a clean (complete) drain.
+    let mut guard = spawn_echo_child();
+    let payload = b"payload for a wedged hook\n".to_vec();
+    let incoming = Cursor::new(payload.clone());
+    let outgoing = CapturingWriter::default();
+
+    let hook: CopyHook = Arc::new(move |_direction: Direction, _bytes: &[u8]| {
+        // Far longer than `DELIVERY_DRAIN_BUDGET` (250ms) -- this proves
+        // the bounded window actually bounds the wait rather than
+        // blocking on it.
+        std::thread::sleep(Duration::from_secs(2));
+    });
+
+    let start = Instant::now();
+    let outcome = run_duplex_pump(
+        incoming,
+        outgoing.clone(),
+        &mut guard.0,
+        &PumpConfig::default(),
+        Some(hook),
+    )
+    .expect("duplex pump run");
+
+    assert_eq!(outgoing.snapshot(), payload);
+    assert!(
+        outcome.delivery_drain_incomplete,
+        "a hook that cannot finish within the bounded window must be reported as incomplete"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "the bounded drain window must keep the pump's own return well under the wedged \
+         hook's own 2-second sleep, took {:?}",
+        start.elapsed()
+    );
+}

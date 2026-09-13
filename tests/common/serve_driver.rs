@@ -323,12 +323,29 @@ impl ServeSession {
                 let _ = self.child.kill();
                 self.child.wait().ok().and_then(|status| status.code())
             }
-            Err(_) => None,
+            Err(_) => {
+                // Copilot review thread E (PR #120, round 2): an OS
+                // error from `try_wait()` proves NOTHING about whether
+                // the child is still alive holding its own end of the
+                // stdout/stderr pipes open -- it must never be treated
+                // as equivalent to an observed exit. Fall back to the
+                // exact same defensive kill()+wait() the `Ok(None)`
+                // (still-running) branch above already performs, so the
+                // drain threads joined below are still guaranteed to
+                // see EOF instead of potentially hanging forever on a
+                // child that never noticed stdin's EOF on its own.
+                // `kill()`/`wait()` on an already-exited child are
+                // harmless no-ops (an `Err` from either is simply
+                // discarded, exactly as the sibling branch above does).
+                let _ = self.child.kill();
+                self.child.wait().ok().and_then(|status| status.code())
+            }
         };
 
         // Dropping stdin closes the pipe; the drain threads exit once
         // their respective pipes close (which `kill()` above guarantees
-        // even if the child never exits on its own).
+        // even if the child never exits on its own, including on the
+        // `try_wait()` OS-error path).
         drop(self.stdin.take());
         if let Some(handle) = self.stdout_thread.take() {
             let _ = handle.join();

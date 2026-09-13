@@ -996,8 +996,16 @@ fn run_pass(
     }
 }
 
+/// A leg is only "connected" when `last_mcp_status` reports it AND the
+/// stdout capture that produced that status was not truncated. A
+/// truncated capture means a later status transition (for example a
+/// disconnect) could have arrived after the capture cap and been
+/// discarded, so `last_mcp_status == Some("connected")` observed from a
+/// truncated capture is never authoritative on its own (Copilot review,
+/// 2026-09 -- 049-S PR #120, round 2; see [`LegOutcome::stdout_truncated`]'s
+/// own doc comment).
 fn leg_connected(leg: &LegOutcome) -> bool {
-    leg.last_mcp_status.as_deref() == Some("connected")
+    !leg.stdout_truncated && leg.last_mcp_status.as_deref() == Some("connected")
 }
 
 /// Requires BOTH a well-formed, non-null `initialize_correlation` AND
@@ -1060,18 +1068,28 @@ fn classify_pass(pass: &PassOutcome) -> Vec<String> {
     } else if !control_ok && !treatment_ok {
         causes.push(format!(
             "Cause not resolved by cwd alone for build '{}': neither leg reached a connected, \
-             initialize-correlated state (control last_mcp_status={:?}, treatment \
-             last_mcp_status={:?}). See each leg's wrapper evidence \
+             initialize-correlated state (control last_mcp_status={:?}, \
+             control_stdout_truncated={}, treatment last_mcp_status={:?}, \
+             treatment_stdout_truncated={}). See each leg's wrapper evidence \
              (invalid_reason/events/exit-vs-still-alive) for framing-level detail.",
-            pass.build, control.last_mcp_status, treatment.last_mcp_status
+            pass.build,
+            control.last_mcp_status,
+            control.stdout_truncated,
+            treatment.last_mcp_status,
+            treatment.stdout_truncated,
         ));
     } else {
         causes.push(format!(
             "Unexpected asymmetry for build '{}': control leg connected/initialized but the \
-             treatment leg (cwd-corrected) did not (control last_mcp_status={:?}, treatment \
-             last_mcp_status={:?}); recorded as-observed rather than forced into an existing \
-             hypothesis.",
-            pass.build, control.last_mcp_status, treatment.last_mcp_status
+             treatment leg (cwd-corrected) did not (control last_mcp_status={:?}, \
+             control_stdout_truncated={}, treatment last_mcp_status={:?}, \
+             treatment_stdout_truncated={}); recorded as-observed rather than forced into an \
+             existing hypothesis.",
+            pass.build,
+            control.last_mcp_status,
+            control.stdout_truncated,
+            treatment.last_mcp_status,
+            treatment.stdout_truncated,
         ));
     }
 
@@ -1193,6 +1211,14 @@ pub const RESULT_FILE_NAME: &str = "exact-cli-result.json";
 /// external caller chose to redirect stdout (Copilot review, 2026-09 --
 /// 049-S PR #120).
 ///
+/// This result embeds each leg's `wrapper_evidence`, the same
+/// evidence-summary content `evidence::write_evidence_output` protects
+/// with owner-only (Unix `0o600`) permissions -- key-based redaction
+/// cannot catch a secret embedded inside an otherwise benign-keyed
+/// value, so this file is created with the identical owner-only mode at
+/// creation time, never a separate `set_permissions` call afterward
+/// (Copilot review, 2026-09 -- 049-S PR #120, round 2).
+///
 /// # Errors
 ///
 /// Returns an error if the outcome cannot be serialized, the temporary
@@ -1208,11 +1234,14 @@ pub fn persist_outcome_json(outcome: &ExactCliOutcome) -> io::Result<PathBuf> {
         .join(format!(".{RESULT_FILE_NAME}.tmp-{}", std::process::id()));
 
     {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&tmp_path)?;
+        let mut open_opts = fs::OpenOptions::new();
+        open_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            open_opts.mode(0o600);
+        }
+        let mut file = open_opts.open(&tmp_path)?;
         file.write_all(&bytes)?;
         file.flush()?;
     }
@@ -1220,12 +1249,35 @@ pub fn persist_outcome_json(outcome: &ExactCliOutcome) -> io::Result<PathBuf> {
     Ok(final_path)
 }
 
-/// Builds the terminal [`ExactCliOutcome`] for a Gate 1 failure: either a
-/// genuine spawn-failure `"blocked"` terminal (isolation was never proven
-/// either way) or the pre-existing `"done"` H3-B-candidate terminal (Gate
-/// 1 ran to completion but did not prove shadowing). Extracted from
-/// [`run_exact_cli`] to keep that function under
-/// `clippy::too_many_lines`'s pedantic threshold.
+/// `true` only when Gate 1 ran to completion, its output parsed cleanly,
+/// and it resolved a CONCRETE source path that does not match the
+/// expected isolated-child path -- i.e. positive evidence that the exact
+/// CLI actually read or merged some other (presumably ancestor) config,
+/// which is the one situation 056.001-T's own acceptance criteria call
+/// an `H3-B-candidate` ("If the exact CLI reads or merges the ancestor
+/// config ... emit typed H3-B-candidate evidence"). Every other
+/// `!gate1.passed` case -- a spawn failure, a timeout, a non-zero exit,
+/// a JSON parse error, or a clean parse with no `sourcePath` field at
+/// all -- proves NOTHING about whether isolation held or failed, so none
+/// of them may be classified as `H3-B-candidate` (Copilot review,
+/// 2026-09 -- 049-S PR #120, round 2).
+fn gate1_proves_ancestor_merge(gate1: &Gate1Outcome) -> bool {
+    !gate1.passed
+        && gate1.spawn_error.is_none()
+        && !gate1.timed_out
+        && gate1.parse_error.is_none()
+        && gate1.exit_code == Some(0)
+        && gate1.resolved_source_path.is_some()
+}
+
+/// Builds the terminal [`ExactCliOutcome`] for a Gate 1 failure: either
+/// the `"done"` H3-B-candidate terminal (Gate 1 ran to completion, parsed
+/// cleanly, and positively resolved a different config -- see
+/// [`gate1_proves_ancestor_merge`]) or a `"blocked"` terminal covering
+/// every other case (spawn failure, timeout, non-zero exit, parse
+/// error, or a clean-but-empty resolution), since none of those prove
+/// isolation failed either. Extracted from [`run_exact_cli`] to keep
+/// that function under `clippy::too_many_lines`'s pedantic threshold.
 #[allow(clippy::too_many_arguments)]
 fn gate1_failure_outcome(
     run_nonce: String,
@@ -1236,16 +1288,7 @@ fn gate1_failure_outcome(
     inner_identity: CopilotIdentity,
     gate1: Gate1Outcome,
 ) -> ExactCliOutcome {
-    // A spawn failure (the exact target CLI could not even be
-    // launched) fails closed here: isolation was never PROVEN
-    // either way, so this is NOT the same signal as a genuine Gate
-    // 1 run that observed a merged/ambiguous ancestor config. Only
-    // the latter is a causal `H3-B-candidate`; the former blocks
-    // evidence capture for this explicit, non-H3-B reason and
-    // reports it as such (Copilot review, 2026-09 -- 049-S PR #120;
-    // 056.001-T's own acceptance criteria: "Fail closed when ...
-    // ancestor config-isolation ... is unproved").
-    if let Some(spawn_error) = gate1.spawn_error.clone() {
+    if gate1_proves_ancestor_merge(&gate1) {
         return ExactCliOutcome {
             run_nonce,
             sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
@@ -1257,15 +1300,37 @@ fn gate1_failure_outcome(
             inner_identity,
             gate1,
             passes: Vec::new(),
-            ordered_cause_classification: vec![format!(
-                "blocked: Gate 1 (ancestor config-isolation) could not even spawn the \
-                 exact target CLI ({spawn_error}); isolation was never proven either way, \
-                 so no causal classification is emitted and this is NOT an H3-B-candidate."
-            )],
-            h3_b_candidate: false,
-            terminal: "blocked",
+            ordered_cause_classification: vec![
+                "H3-B-candidate: Gate 1 (ancestor config-isolation) did not prove the nearest \
+                 child .mcp.json shadowed the sentinel ancestor without merging it; causal H0 \
+                 comparison stopped, forwarding to 056.019-T (the sole H3-B terminal)."
+                    .to_string(),
+            ],
+            h3_b_candidate: true,
+            terminal: "done",
         };
     }
+
+    // Every other `!passed` shape -- a spawn failure, a deadline timeout,
+    // a non-zero exit, a JSON parse error, or a clean parse with no
+    // `sourcePath` at all -- fails closed here: isolation was never
+    // PROVEN either way, so none of these are the same signal as a
+    // genuine Gate 1 run that positively observed a merged/ambiguous
+    // ancestor config (056.001-T's own acceptance criteria: "Fail closed
+    // when ... ancestor config-isolation ... is unproved").
+    let reason = if let Some(spawn_error) = &gate1.spawn_error {
+        format!("could not even spawn the exact target CLI ({spawn_error})")
+    } else if gate1.timed_out {
+        "timed out before it produced a result".to_string()
+    } else if let Some(parse_error) = &gate1.parse_error {
+        format!("produced output that could not be parsed as JSON ({parse_error})")
+    } else if gate1.exit_code != Some(0) {
+        format!("exited non-zero ({:?})", gate1.exit_code)
+    } else {
+        "exited zero and parsed cleanly but resolved no sourcePath at all, so no ancestor-merge \
+         evidence was obtained either way"
+            .to_string()
+    };
     ExactCliOutcome {
         run_nonce,
         sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
@@ -1277,15 +1342,56 @@ fn gate1_failure_outcome(
         inner_identity,
         gate1,
         passes: Vec::new(),
-        ordered_cause_classification: vec![
-            "H3-B-candidate: Gate 1 (ancestor config-isolation) did not prove the nearest \
-             child .mcp.json shadowed the sentinel ancestor without merging it; causal H0 \
-             comparison stopped, forwarding to 056.019-T (the sole H3-B terminal)."
-                .to_string(),
-        ],
-        h3_b_candidate: true,
-        terminal: "done",
+        ordered_cause_classification: vec![format!(
+            "blocked: Gate 1 (ancestor config-isolation) {reason}; isolation was never proven \
+             either way, so no causal classification is emitted and this is NOT an \
+             H3-B-candidate."
+        )],
+        h3_b_candidate: false,
+        terminal: "blocked",
     }
+}
+
+/// Returns a `"blocked"` classification message the first time one of
+/// the three recorded identities (`affected`, optional `stable`, or
+/// `inner`) carries an `identify_error`, or `None` if all recorded
+/// identities were read/hashed successfully. 056.001-T's own acceptance
+/// criteria require failing closed when "exact CLI identity ... or
+/// same-inner-executable control/treatment parity is unproved" --
+/// merely RECORDING an identify failure (as the pre-existing
+/// `CopilotIdentity.identify_error` field already did) is not the same
+/// as ENFORCING it, so this check is applied unconditionally, ahead of
+/// any Gate 1 or causal-pass classification (Copilot review, 2026-09 --
+/// 049-S PR #120, round 2).
+fn identity_failure_message(
+    affected_identity: &CopilotIdentity,
+    stable_identity: Option<&CopilotIdentity>,
+    inner_identity: &CopilotIdentity,
+) -> Option<String> {
+    if let Some(err) = &affected_identity.identify_error {
+        return Some(format!(
+            "blocked: the exact target Copilot CLI's identity could not be recorded/hashed \
+             ({err}); exact CLI identity is unproved, so no causal classification is emitted \
+             (056.001-T: \"Fail closed when ... exact CLI identity ... is unproved\")."
+        ));
+    }
+    if let Some(err) = stable_identity.and_then(|identity| identity.identify_error.as_ref()) {
+        return Some(format!(
+            "blocked: the last-known-stable Copilot CLI's identity could not be recorded/hashed \
+             ({err}); exact CLI identity is unproved for the stable-build comparison, so no \
+             causal classification is emitted (056.001-T: \"Fail closed when ... exact CLI \
+             identity ... is unproved\")."
+        ));
+    }
+    if let Some(err) = &inner_identity.identify_error {
+        return Some(format!(
+            "blocked: the inner executable's identity could not be recorded/hashed ({err}); \
+             same-inner-executable control/treatment parity is unproved, so no causal \
+             classification is emitted (056.001-T: \"Fail closed when ... same-inner-executable \
+             control/treatment parity is unproved\")."
+        ));
+    }
+    None
 }
 
 /// Runs the full `exact-cli` classification: creates the isolated probe
@@ -1346,6 +1452,35 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
         &args.entry_name,
         args.gate1_deadline,
     );
+
+    // Fail closed on an unproved identity BEFORE evaluating Gate 1's own
+    // result: 056.001-T's acceptance criteria list "exact CLI identity"
+    // and "same-inner-executable ... parity" as independent fail-closed
+    // conditions alongside "ancestor config-isolation", so an identity
+    // capture failure takes priority over -- and is never masked by --
+    // whatever Gate 1 itself observed (Copilot review, 2026-09 -- 049-S
+    // PR #120, round 2).
+    if let Some(message) = identity_failure_message(
+        &affected_identity,
+        stable_identity.as_ref(),
+        &inner_identity,
+    ) {
+        return Ok(ExactCliOutcome {
+            run_nonce,
+            sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
+            sentinel_value,
+            manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
+            workspace_root: workspace.root.clone(),
+            affected_identity,
+            stable_identity,
+            inner_identity,
+            gate1,
+            passes: Vec::new(),
+            ordered_cause_classification: vec![message],
+            h3_b_candidate: false,
+            terminal: "blocked",
+        });
+    }
 
     if !gate1.passed {
         return Ok(gate1_failure_outcome(
@@ -1713,6 +1848,160 @@ mod tests {
         assert!(!outcome.passed);
     }
 
+    /// A `Gate1Outcome` builder for [`gate1_proves_ancestor_merge`]'s
+    /// unit tests below, defaulting to the one shape that DOES prove an
+    /// ancestor merge (clean parse, zero exit, no spawn/parse/timeout
+    /// failure, and a concrete, non-matching `resolved_source_path`) so
+    /// each test only overrides the single field it means to exercise.
+    fn base_gate1_that_proves_ancestor_merge() -> Gate1Outcome {
+        Gate1Outcome {
+            passed: false,
+            exit_code: Some(0),
+            timed_out: false,
+            resolved_source_path: Some("C:\\repo\\ancestor\\.mcp.json".to_string()),
+            expected_source_path: "C:\\repo\\child\\.mcp.json".to_string(),
+            raw_stdout: "{\"sourcePath\": \"C:\\\\repo\\\\ancestor\\\\.mcp.json\"}".to_string(),
+            parse_error: None,
+            spawn_error: None,
+        }
+    }
+
+    #[test]
+    fn gate1_proves_ancestor_merge_is_true_only_for_a_clean_parse_with_a_resolved_source_path() {
+        assert!(gate1_proves_ancestor_merge(
+            &base_gate1_that_proves_ancestor_merge()
+        ));
+    }
+
+    #[test]
+    fn gate1_proves_ancestor_merge_is_false_when_gate1_actually_passed() {
+        let mut gate1 = base_gate1_that_proves_ancestor_merge();
+        gate1.passed = true;
+        assert!(!gate1_proves_ancestor_merge(&gate1));
+    }
+
+    #[test]
+    fn gate1_proves_ancestor_merge_is_false_on_spawn_error() {
+        let mut gate1 = base_gate1_that_proves_ancestor_merge();
+        gate1.spawn_error = Some("could not launch".to_string());
+        assert!(!gate1_proves_ancestor_merge(&gate1));
+    }
+
+    #[test]
+    fn gate1_proves_ancestor_merge_is_false_on_timeout() {
+        let mut gate1 = base_gate1_that_proves_ancestor_merge();
+        gate1.timed_out = true;
+        assert!(!gate1_proves_ancestor_merge(&gate1));
+    }
+
+    #[test]
+    fn gate1_proves_ancestor_merge_is_false_on_parse_error() {
+        let mut gate1 = base_gate1_that_proves_ancestor_merge();
+        gate1.parse_error = Some("unexpected token".to_string());
+        assert!(!gate1_proves_ancestor_merge(&gate1));
+    }
+
+    #[test]
+    fn gate1_proves_ancestor_merge_is_false_on_nonzero_exit() {
+        let mut gate1 = base_gate1_that_proves_ancestor_merge();
+        gate1.exit_code = Some(1);
+        assert!(!gate1_proves_ancestor_merge(&gate1));
+    }
+
+    #[test]
+    fn gate1_proves_ancestor_merge_is_false_when_no_source_path_was_resolved() {
+        let mut gate1 = base_gate1_that_proves_ancestor_merge();
+        gate1.resolved_source_path = None;
+        assert!(!gate1_proves_ancestor_merge(&gate1));
+    }
+
+    fn identity_ok(exe_path: &str) -> CopilotIdentity {
+        CopilotIdentity {
+            exe_path: exe_path.to_string(),
+            version_output: None,
+            content_hash_hex: "deadbeef".to_string(),
+            content_len: 4,
+            identify_error: None,
+        }
+    }
+
+    fn identity_failed(exe_path: &str) -> CopilotIdentity {
+        CopilotIdentity {
+            exe_path: exe_path.to_string(),
+            version_output: None,
+            content_hash_hex: String::new(),
+            content_len: 0,
+            identify_error: Some("no such file".to_string()),
+        }
+    }
+
+    #[test]
+    fn identity_failure_message_is_none_when_every_identity_is_readable() {
+        assert!(identity_failure_message(
+            &identity_ok("copilot.exe"),
+            Some(&identity_ok("copilot-stable.exe")),
+            &identity_ok("inner.exe"),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn identity_failure_message_is_none_when_stable_identity_is_absent() {
+        assert!(identity_failure_message(
+            &identity_ok("copilot.exe"),
+            None,
+            &identity_ok("inner.exe")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn identity_failure_message_fires_on_affected_identity_failure() {
+        let message = identity_failure_message(
+            &identity_failed("copilot.exe"),
+            Some(&identity_ok("copilot-stable.exe")),
+            &identity_ok("inner.exe"),
+        )
+        .expect("affected identity failure must fail closed");
+        assert!(message.contains("exact target Copilot CLI's identity"));
+    }
+
+    #[test]
+    fn identity_failure_message_fires_on_stable_identity_failure() {
+        let message = identity_failure_message(
+            &identity_ok("copilot.exe"),
+            Some(&identity_failed("copilot-stable.exe")),
+            &identity_ok("inner.exe"),
+        )
+        .expect("stable identity failure must fail closed");
+        assert!(message.contains("last-known-stable Copilot CLI's identity"));
+    }
+
+    #[test]
+    fn identity_failure_message_fires_on_inner_identity_failure() {
+        let message = identity_failure_message(
+            &identity_ok("copilot.exe"),
+            Some(&identity_ok("copilot-stable.exe")),
+            &identity_failed("inner.exe"),
+        )
+        .expect("inner identity failure must fail closed");
+        assert!(message.contains("inner executable's identity"));
+    }
+
+    #[test]
+    fn identity_failure_message_prioritizes_affected_over_inner() {
+        // When both the affected and inner identities fail, the affected
+        // identity's message takes priority (checked first) -- proving
+        // the check order is deterministic rather than arbitrary.
+        let message = identity_failure_message(
+            &identity_failed("copilot.exe"),
+            None,
+            &identity_failed("inner.exe"),
+        )
+        .expect("either failure must fail closed");
+        assert!(message.contains("exact target Copilot CLI's identity"));
+    }
+
     #[test]
     fn outcome_to_json_round_trips_top_level_shape() {
         let outcome = ExactCliOutcome {
@@ -1758,6 +2047,69 @@ mod tests {
         assert_eq!(json["ordered_cause_classification"][0], "placeholder");
         assert_eq!(json["inner_identity"]["exe_path"], "inner.exe");
         assert_eq!(json["inner_identity"]["content_hash_hex"], "cafef00d");
+    }
+
+    #[test]
+    fn persist_outcome_json_fails_closed_when_the_workspace_root_does_not_exist() {
+        // Copilot review thread C (PR #120, round 2): `main.rs`'s
+        // caller must be able to detect and fail closed on a
+        // persistence failure. This proves the underlying signal it
+        // relies on is real: writing under a workspace root that was
+        // never created (no `create_probe_workspace` call preceded it)
+        // must return `Err`, not silently succeed or panic.
+        let mut missing_root = std::env::temp_dir();
+        missing_root.push(format!(
+            "mcp-probe-persist-json-missing-root-{}-{}",
+            std::process::id(),
+            fnv1a_64(b"persist_outcome_json_fails_closed_when_the_workspace_root_does_not_exist")
+        ));
+        // Deliberately never created -- `persist_outcome_json` must not
+        // create it either; only `create_probe_workspace` does that.
+        assert!(!missing_root.exists());
+
+        let outcome = ExactCliOutcome {
+            run_nonce: "nonce-missing-root".to_string(),
+            sentinel_env_var: "MCP_PROBE_ENV_INHERITANCE_SENTINEL".to_string(),
+            sentinel_value: "sentinel-missing-root".to_string(),
+            manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
+            workspace_root: missing_root,
+            affected_identity: CopilotIdentity {
+                exe_path: "copilot.exe".to_string(),
+                version_output: None,
+                content_hash_hex: "deadbeef".to_string(),
+                content_len: 4,
+                identify_error: None,
+            },
+            stable_identity: None,
+            inner_identity: CopilotIdentity {
+                exe_path: "inner.exe".to_string(),
+                version_output: None,
+                content_hash_hex: "cafef00d".to_string(),
+                content_len: 4,
+                identify_error: None,
+            },
+            gate1: Gate1Outcome {
+                passed: false,
+                exit_code: None,
+                timed_out: false,
+                resolved_source_path: None,
+                expected_source_path: "expected".to_string(),
+                raw_stdout: String::new(),
+                parse_error: None,
+                spawn_error: Some("could not launch".to_string()),
+            },
+            passes: Vec::new(),
+            ordered_cause_classification: vec!["placeholder".to_string()],
+            h3_b_candidate: false,
+            terminal: "blocked",
+        };
+
+        let result = persist_outcome_json(&outcome);
+        assert!(
+            result.is_err(),
+            "persisting under a workspace root that was never created must fail closed, not \
+             silently succeed"
+        );
     }
 
     // ── Adversarial-review remediation regression tests ──────────────

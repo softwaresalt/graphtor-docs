@@ -445,6 +445,13 @@ where
     // `finalize()`, or a summary with silently missing data could be
     // finalized as `valid: true`.
     evidence_collector.note_transport_drops(pump.transport_copies_dropped);
+    // Likewise, `pump.delivery_drain_incomplete` (Copilot review thread
+    // H, 2026-09 -- 049-S PR #120, round 2) signals that transport's own
+    // delivery worker did not finish draining its already-accepted
+    // copies before the pump returned; this collector has no way to
+    // detect that on its own either, so it too must be told explicitly
+    // before `finalize()`.
+    evidence_collector.note_transport_delivery_drain_incomplete(pump.delivery_drain_incomplete);
     let evidence_summary = evidence_collector.finalize();
     let evidence_valid = evidence_summary.valid;
     let evidence_write_error =
