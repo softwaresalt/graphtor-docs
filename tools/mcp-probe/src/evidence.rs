@@ -1,0 +1,1033 @@
+//! Copy-only, read-only observation, JSON-RPC `initialize` correlation,
+//! and redacted evidence-summary capture for the standalone `mcp-probe`
+//! diagnostic crate (`056.023-T`), composed onto the `056.020-T`
+//! transport's post-write, bounded, non-blocking copy-delivery hook
+//! ([`crate::transport::CopyHook`]) and executed INSIDE the `056.022-T`
+//! wrapper process (see [`crate::process::run_wrapper`]).
+//!
+//! # Ordering and isolation guarantee
+//!
+//! [`crate::transport::run_duplex_pump`] already writes-and-flushes each
+//! forwarded chunk on its owning pump thread BEFORE ever delivering a
+//! copy to any hook, and it invokes hooks from a single dedicated
+//! delivery thread that is never one of the two pump threads. This
+//! module's [`EvidenceCollector::hook`] is deliberately as cheap as
+//! possible (an owned byte-vec clone plus one non-blocking channel send)
+//! so it can never itself become the slow part of that already-isolated
+//! seam; the real newline-reassembly / JSON-RPC parsing / correlation
+//! work happens on a SEPARATE dedicated thread owned by this module,
+//! decoupled from transport's delivery thread by this module's OWN
+//! bounded channel. This means an arbitrarily slow or even fully wedged
+//! correlator can only ever fill up this module's own channel -- it can
+//! never delay, reorder, or block byte forwarding in either direction,
+//! and it never takes a cross-direction lock that the pump could
+//! contend on.
+//!
+//! # Failure and saturation semantics
+//!
+//! On channel saturation (this module's own bounded channel is full) or
+//! an internal correlator failure (a caught panic while processing one
+//! copy), the returned [`EvidenceSummary`] is atomically marked
+//! `valid: false` with a human-readable reason. Forwarding itself is
+//! completely unaffected either way -- this seam has no way to slow,
+//! alter, or block the wire.
+//!
+//! # No raw-frame persistence
+//!
+//! Raw frame bytes never leave wrapper memory. Only a redacted,
+//! structured [`EvidenceSummary`] -- carrying the `initialize`
+//! correlation (with redacted `params`/`result` copies), lightweight
+//! per-frame metadata (kind / method / id / byte length / a non-secure
+//! content digest), and a validity flag -- is ever written to the
+//! wrapper-owned `--evidence-output` file, via [`write_evidence_output`].
+//! Every JSON value this module parses or builds uses `serde_json`
+//! directly (`Value` / the `json!` macro) rather than `#[derive(Serialize)]`,
+//! so this task's only new dependency is the standalone `serde_json`
+//! crate -- no `serde` derive dependency is introduced.
+
+use crate::transport::{CopyHook, Direction};
+use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
+use std::io::Write as _;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+/// Default bounded capacity of this module's own copy-delivery channel,
+/// fully separate from `056.020-T` transport's internal delivery
+/// channel. A dedicated channel (rather than doing correlation work
+/// directly inside the hook on transport's shared delivery thread) is
+/// what makes saturation observable and testable at all: transport's own
+/// internal channel silently discards on overflow with no signal to any
+/// hook, so a correlator sharing that channel could never detect or
+/// report a drop.
+const DEFAULT_EVIDENCE_CHANNEL_CAPACITY: usize = 256;
+
+/// How often the dedicated correlator thread checks the shutdown flag
+/// between blocking waits for the next copy.
+const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Bounded, best-effort grace period `finalize` waits before signaling
+/// shutdown. `056.020-T`'s transport deliberately never joins its own
+/// delivery thread (so a slow hook can never delay pump completion),
+/// which means a handful of already-in-flight trailing copies MAY still
+/// be delivered to this module's hook for a brief window after
+/// `run_duplex_pump` itself has already returned. This is NOT a
+/// synchronization guarantee -- it is a short, documented window to let
+/// that small, already-bounded backlog (transport's own delivery channel
+/// capacity) drain through a fast hook before this collector stops
+/// listening. Evidence completeness is always best-effort; forwarding
+/// correctness never depends on it.
+const FINALIZE_GRACE_PERIOD: Duration = Duration::from_millis(50);
+
+/// Absolute cap on bytes buffered by one direction's [`LineReassembler`]
+/// while waiting for a terminating `\n`. Without this bound, an
+/// unterminated frame (a child that never emits a newline, or emits an
+/// arbitrarily long line) would let `pending` grow without limit for the
+/// life of the wrapper process. On overflow the accumulated partial line
+/// is discarded (never recoverable) rather than grown further, and the
+/// summary is marked invalid -- a subsequent newline resynchronizes
+/// cleanly with whatever bytes arrive after the discard point.
+const MAX_PENDING_LINE_BYTES: usize = 1_048_576;
+
+/// Absolute cap on the number of [`FrameEvent`]s retained by one
+/// collector run. Without this bound, a long-lived session emitting a
+/// sustained stream of small, valid frames would let `events` grow
+/// without limit for the life of the wrapper process. Once the cap is
+/// reached, further frames are still classified (so `initialize`
+/// correlation is unaffected) but are no longer retained as metadata,
+/// and the summary is marked invalid.
+const MAX_RECORDED_EVENTS: usize = 65_536;
+
+/// Case-insensitive substrings marking an argv/env/JSON key as
+/// secret-bearing for redaction purposes. Intentionally conservative
+/// (over-redact rather than under-redact) since this is diagnostic
+/// evidence, not a wire-protocol concern.
+const SENSITIVE_KEY_SUBSTRINGS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "authorization",
+    "apikey",
+    "api_key",
+    "access_key",
+    "private_key",
+    "cookie",
+];
+
+/// Placeholder substituted for any redacted value.
+pub const REDACTED_PLACEHOLDER: &str = "<redacted>";
+
+fn is_sensitive_key(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    SENSITIVE_KEY_SUBSTRINGS
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+/// Redacts `--name=value`-style argv entries whose `name` matches a
+/// sensitive key substring, replacing only the value half. Bare flags,
+/// positional arguments, and space-separated `--name value` pairs (where
+/// the value is a distinct argv entry) are left unchanged -- this task
+/// covers the common inline-assignment form only, which is the form
+/// `056.022-T`'s own wrapper argv contract actually uses
+/// (`--inner-arg=...` style is NOT currently used by the wrapper's own
+/// parser, but downstream inner-process argv forwarded verbatim through
+/// `--inner-arg` may use it).
+#[must_use]
+pub fn redact_argv(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .map(|arg| match arg.split_once('=') {
+            Some((name, _value)) if is_sensitive_key(name) => {
+                format!("{name}={REDACTED_PLACEHOLDER}")
+            }
+            _ => arg.clone(),
+        })
+        .collect()
+}
+
+/// Redacts environment-variable values whose key matches a sensitive key
+/// substring. Returns a `BTreeMap` (rather than the input's original map
+/// type) so a persisted summary is always deterministically ordered.
+#[must_use]
+pub fn redact_env(env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    env.iter()
+        .map(|(key, value)| {
+            if is_sensitive_key(key) {
+                (key.clone(), REDACTED_PLACEHOLDER.to_string())
+            } else {
+                (key.clone(), value.clone())
+            }
+        })
+        .collect()
+}
+
+/// Recursively redacts a parsed JSON value in place: any object member
+/// whose key matches a sensitive key substring has its value replaced
+/// with [`REDACTED_PLACEHOLDER`] regardless of its original type; arrays
+/// and nested objects are walked recursively. Never adds, removes, or
+/// reorders keys -- only ever replaces sensitive values.
+pub fn redact_json_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, entry) in map.iter_mut() {
+                if is_sensitive_key(key) {
+                    *entry = serde_json::Value::String(REDACTED_PLACEHOLDER.to_string());
+                } else {
+                    redact_json_value(entry);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                redact_json_value(item);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+/// Classification of one observed, newline-delimited JSON-RPC frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// Has both `method` and `id`.
+    Request,
+    /// Has `id` and (`result` or `error`), no `method`.
+    Response,
+    /// Has `method`, no `id`.
+    Notification,
+    /// Not valid UTF-8, not valid JSON, or none of the shapes above.
+    Unparseable,
+}
+
+/// Lightweight, non-secret metadata recorded for one observed frame.
+/// Deliberately excludes the frame's full body -- only the
+/// `initialize` request/response pair gets a (redacted) body copy, via
+/// [`InitializeCorrelation`], since that is this module's one
+/// substantive correlation responsibility; every other frame is recorded
+/// as metadata only, never persisted verbatim.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameEvent {
+    pub direction: Direction,
+    /// Monotonically increasing sequence number across both directions,
+    /// assigned in the order lines were reassembled (not necessarily wall
+    /// -clock order between directions, but stable and unique).
+    pub sequence: u64,
+    pub kind: FrameKind,
+    pub method: Option<String>,
+    pub id: Option<serde_json::Value>,
+    pub byte_len: usize,
+    /// A std-only, non-cryptographic 64-bit content digest
+    /// (`DefaultHasher`/SipHash-1-3) of the raw line bytes, formatted as
+    /// lowercase hex -- sufficient for diagnostic identity comparison
+    /// between observed frames. This is NOT a security digest and must
+    /// never be represented as one.
+    pub digest_hex: String,
+}
+
+/// Redacted correlation of the exact `initialize` request id to a
+/// `jsonrpc: "2.0"` non-error `result.protocolVersion`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InitializeCorrelation {
+    pub request_id: serde_json::Value,
+    pub protocol_version: String,
+    /// Redacted copy of the `initialize` request's `params`, if present.
+    pub redacted_request_params: Option<serde_json::Value>,
+    /// Redacted copy of the correlated response's `result` (the same
+    /// value `protocol_version` was extracted from).
+    pub redacted_result: Option<serde_json::Value>,
+}
+
+/// The complete, redacted, persistable evidence summary for one wrapper
+/// run. Never carries a raw frame body beyond the `initialize`
+/// correlation's redacted copies.
+// The `Evidence` prefix is deliberate and clearer than a bare `Summary`
+// for a type re-exported from the crate root's public API surface.
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvidenceSummary {
+    pub run_nonce: String,
+    pub valid: bool,
+    pub invalid_reason: Option<String>,
+    pub initialize_correlation: Option<InitializeCorrelation>,
+    pub events: Vec<FrameEvent>,
+}
+
+/// Incrementally reassembles a byte stream into newline-delimited lines.
+/// Any bytes after the final unterminated fragment remain buffered for
+/// the next call -- this is exactly what lets fragmented/partial frames
+/// (a single JSON-RPC line split across multiple delivered copies) be
+/// handled correctly.
+#[derive(Default)]
+struct LineReassembler {
+    pending: Vec<u8>,
+}
+
+impl LineReassembler {
+    /// Appends `chunk` and returns any newly completed lines, in order,
+    /// with the trailing `\n` (and a preceding `\r`, if present) removed,
+    /// plus whether the accumulated partial line was discarded this call
+    /// because it exceeded [`MAX_PENDING_LINE_BYTES`] before a
+    /// terminating newline arrived.
+    fn push(&mut self, chunk: &[u8]) -> (Vec<Vec<u8>>, bool) {
+        self.pending.extend_from_slice(chunk);
+        let mut overflowed = false;
+        if self.pending.len() > MAX_PENDING_LINE_BYTES {
+            self.pending.clear();
+            overflowed = true;
+        }
+        let mut lines = Vec::new();
+        while let Some(pos) = self.pending.iter().position(|&byte| byte == b'\n') {
+            let mut line: Vec<u8> = self.pending.drain(..=pos).collect();
+            line.pop(); // trailing '\n'
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            lines.push(line);
+        }
+        (lines, overflowed)
+    }
+}
+
+fn content_digest_hex(bytes: &[u8]) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Mutable state owned exclusively by this module's dedicated correlator
+/// thread (see [`EvidenceCollector::new_with_capacity`]); never shared
+/// or locked by the pump threads or transport's own delivery thread.
+struct CollectorState {
+    valid: bool,
+    invalid_reason: Option<String>,
+    sequence: u64,
+    client_to_child_lines: LineReassembler,
+    child_to_client_lines: LineReassembler,
+    pending_initialize_request_id: Option<serde_json::Value>,
+    pending_initialize_params: Option<serde_json::Value>,
+    initialize_correlation: Option<InitializeCorrelation>,
+    events: Vec<FrameEvent>,
+}
+
+impl CollectorState {
+    fn new() -> Self {
+        Self {
+            valid: true,
+            invalid_reason: None,
+            sequence: 0,
+            client_to_child_lines: LineReassembler::default(),
+            child_to_client_lines: LineReassembler::default(),
+            pending_initialize_request_id: None,
+            pending_initialize_params: None,
+            initialize_correlation: None,
+            events: Vec::new(),
+        }
+    }
+
+    fn mark_invalid(&mut self, reason: &str) {
+        self.valid = false;
+        self.invalid_reason
+            .get_or_insert_with(|| reason.to_string());
+    }
+
+    /// Records `event` if the retained-events bound has not yet been
+    /// reached; otherwise discards it and marks the summary invalid (see
+    /// [`MAX_RECORDED_EVENTS`]). Frame classification/correlation (which
+    /// happens in `process_line` before this is called) is unaffected
+    /// either way -- only retained per-frame metadata is bounded.
+    fn record_event(&mut self, event: FrameEvent) {
+        if self.events.len() >= MAX_RECORDED_EVENTS {
+            self.mark_invalid(
+                "observer failure: recorded frame-event count reached the bound; further \
+                 frame metadata was discarded",
+            );
+            return;
+        }
+        self.events.push(event);
+    }
+}
+
+/// Processes one already-reassembled, newline-delimited line observed in
+/// `direction`: classifies it, records a [`FrameEvent`], and -- for the
+/// `initialize` request/response pair only -- captures a redacted body
+/// copy for [`InitializeCorrelation`]. Never affects wire bytes; this
+/// function only ever reads `line`, it never persists it verbatim.
+fn process_line(state: &mut CollectorState, direction: Direction, line: &[u8]) {
+    state.sequence += 1;
+    let sequence = state.sequence;
+    let byte_len = line.len();
+    let digest_hex = content_digest_hex(line);
+
+    let parsed = std::str::from_utf8(line)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
+
+    let Some(value) = parsed else {
+        state.record_event(FrameEvent {
+            direction,
+            sequence,
+            kind: FrameKind::Unparseable,
+            method: None,
+            id: None,
+            byte_len,
+            digest_hex,
+        });
+        return;
+    };
+
+    let method = value
+        .get("method")
+        .and_then(|method| method.as_str())
+        .map(str::to_owned);
+    let id = value.get("id").cloned();
+    let has_result_or_error = value.get("result").is_some() || value.get("error").is_some();
+
+    let kind = if method.is_some() && id.is_some() {
+        FrameKind::Request
+    } else if method.is_some() {
+        FrameKind::Notification
+    } else if id.is_some() && has_result_or_error {
+        FrameKind::Response
+    } else {
+        FrameKind::Unparseable
+    };
+
+    if kind == FrameKind::Request && method.as_deref() == Some("initialize") {
+        state.pending_initialize_request_id.clone_from(&id);
+        state.pending_initialize_params = value.get("params").cloned().map(|mut params| {
+            redact_json_value(&mut params);
+            params
+        });
+    }
+
+    if kind == FrameKind::Response && state.initialize_correlation.is_none() {
+        if let (Some(expected_id), Some(observed_id)) =
+            (state.pending_initialize_request_id.as_ref(), id.as_ref())
+        {
+            let jsonrpc_ok = value.get("jsonrpc").and_then(|v| v.as_str()) == Some("2.0");
+            let is_error = value.get("error").is_some();
+            if expected_id == observed_id && jsonrpc_ok && !is_error {
+                if let Some(protocol_version) = value
+                    .get("result")
+                    .and_then(|result| result.get("protocolVersion"))
+                    .and_then(|version| version.as_str())
+                {
+                    let mut redacted_result = value.get("result").cloned();
+                    if let Some(result) = redacted_result.as_mut() {
+                        redact_json_value(result);
+                    }
+                    state.initialize_correlation = Some(InitializeCorrelation {
+                        request_id: expected_id.clone(),
+                        protocol_version: protocol_version.to_string(),
+                        redacted_request_params: state.pending_initialize_params.clone(),
+                        redacted_result,
+                    });
+                }
+            }
+        }
+    }
+
+    state.record_event(FrameEvent {
+        direction,
+        sequence,
+        kind,
+        method,
+        id,
+        byte_len,
+        digest_hex,
+    });
+}
+
+/// In-wrapper, copy-only observer: reassembles and correlates the
+/// `initialize` handshake over a `056.020-T` transport's copy-delivery
+/// hook, using its own dedicated bounded channel and correlator thread
+/// (see module docs for why). Construct one per wrapper run
+/// ([`EvidenceCollector::new`]), attach [`EvidenceCollector::hook`] to
+/// [`crate::transport::run_duplex_pump`]'s `copy_hook` parameter, and
+/// call [`EvidenceCollector::finalize`] once the pump has returned.
+// The `Evidence` prefix is deliberate and clearer than a bare `Collector`
+// for a type re-exported from the crate root's public API surface.
+#[allow(clippy::module_name_repetitions)]
+pub struct EvidenceCollector {
+    tx: SyncSender<(Direction, Vec<u8>)>,
+    state: Arc<Mutex<CollectorState>>,
+    run_nonce: String,
+    shutdown: Arc<AtomicBool>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl EvidenceCollector {
+    /// Constructs a collector with the default channel capacity.
+    #[must_use]
+    pub fn new(run_nonce: impl Into<String>) -> Arc<Self> {
+        Self::new_with_capacity(run_nonce, DEFAULT_EVIDENCE_CHANNEL_CAPACITY)
+    }
+
+    /// Constructs a collector with an explicit bounded channel capacity.
+    /// A smaller capacity makes saturation (and thus the `valid: false`
+    /// path) easier to reach deterministically-in-practice under a burst
+    /// of copies, which this crate's own self-tests use; production
+    /// callers should generally prefer [`Self::new`].
+    ///
+    /// Never panics on a poisoned internal `Mutex`: the dedicated
+    /// correlator thread spawned here recovers via
+    /// `PoisonError::into_inner` on every lock, so even a caught panic
+    /// while processing one copy (see the `catch_unwind` below) leaves
+    /// the mutex fully usable for every subsequent copy and for
+    /// [`Self::finalize`].
+    #[must_use]
+    pub fn new_with_capacity(run_nonce: impl Into<String>, capacity: usize) -> Arc<Self> {
+        let (tx, rx) = sync_channel::<(Direction, Vec<u8>)>(capacity.max(1));
+        let state = Arc::new(Mutex::new(CollectorState::new()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let worker_state = Arc::clone(&state);
+        let worker_shutdown = Arc::clone(&shutdown);
+        let worker = thread::spawn(move || loop {
+            match rx.recv_timeout(WORKER_POLL_INTERVAL) {
+                Ok((direction, bytes)) => {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let mut guard = worker_state
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let (lines, overflowed) = match direction {
+                            Direction::ClientToChild => guard.client_to_child_lines.push(&bytes),
+                            Direction::ChildToClient => guard.child_to_client_lines.push(&bytes),
+                        };
+                        if overflowed {
+                            guard.mark_invalid(
+                                "observer failure: buffered partial frame exceeded the bound \
+                                 before a terminating newline arrived; the partial frame was \
+                                 discarded",
+                            );
+                        }
+                        for line in &lines {
+                            process_line(&mut guard, direction, line);
+                        }
+                    }));
+                    if result.is_err() {
+                        // A poisoned mutex must still be recovered from
+                        // here, exactly as the closure above does --
+                        // otherwise this exact recovery path (the whole
+                        // reason catch_unwind exists) would itself
+                        // silently no-op forever after the very first
+                        // panic, and every later `.lock()` on this same
+                        // mutex (including finalize()'s) would then
+                        // panic too, escalating one caught, isolated
+                        // correlator panic into an unhandled panic that
+                        // aborts the entire wrapper process.
+                        let mut guard = worker_state
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        guard.mark_invalid(
+                            "observer failure: correlator panicked while processing a copy",
+                        );
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if worker_shutdown.load(Ordering::Acquire) {
+                        break;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        });
+
+        Arc::new(Self {
+            tx,
+            state,
+            run_nonce: run_nonce.into(),
+            shutdown,
+            worker: Mutex::new(Some(worker)),
+        })
+    }
+
+    /// Returns a cheap, non-blocking [`CopyHook`] suitable for
+    /// `run_duplex_pump`'s `copy_hook` parameter. The hook itself never
+    /// parses or correlates -- it only forwards an owned copy (already
+    /// cloned by transport before any hook is invoked) into this
+    /// collector's own bounded channel via a non-blocking send. On
+    /// saturation, the summary is atomically marked invalid; forwarding
+    /// is completely unaffected either way.
+    #[must_use]
+    pub fn hook(self: &Arc<Self>) -> CopyHook {
+        let collector = Arc::clone(self);
+        Arc::new(move |direction: Direction, bytes: &[u8]| {
+            if collector.tx.try_send((direction, bytes.to_vec())).is_err() {
+                let mut guard = collector
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.mark_invalid("evidence channel saturated: one or more copies were dropped");
+            }
+        })
+    }
+
+    /// Records that the transport composed with this collector (see
+    /// `crate::transport::run_duplex_pump`'s `copy_hook` parameter)
+    /// dropped one or more copies at its OWN, outer delivery channel
+    /// -- i.e. `crate::transport::PumpOutcome::transport_copies_dropped`
+    /// was nonzero. A drop at that outer, transport-level channel
+    /// happens BEFORE this collector's [`Self::hook`] (and therefore
+    /// before this collector) ever sees the copy, so this collector has
+    /// no way to detect that loss on its own; the caller composing the
+    /// pump and this collector together (see `crate::process::run_wrapper`)
+    /// MUST call this after the pump returns and before [`Self::finalize`]
+    /// whenever the pump reports a nonzero drop count, so a summary with
+    /// silently missing data is never finalized as `valid: true`.
+    /// A `count` of `0` is a no-op.
+    pub fn note_transport_drops(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
+        let mut guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.mark_invalid(&format!(
+            "transport-level delivery channel dropped {count} copy(ies) before this \
+             collector's own hook ever observed them; evidence is incomplete"
+        ));
+    }
+
+    /// Records that the transport's own delivery worker thread did not
+    /// finish draining its already-accepted copies within its bounded
+    /// drain window before `run_duplex_pump` returned -- i.e.
+    /// `crate::transport::PumpOutcome::delivery_drain_incomplete` was
+    /// `true`. This is DISTINCT from [`Self::note_transport_drops`]: a
+    /// drain-incomplete copy WAS accepted into transport's channel (so
+    /// it may still arrive at [`Self::hook`] for a brief window, exactly
+    /// like [`FINALIZE_GRACE_PERIOD`] already accounts for), but this
+    /// collector has no way to prove every such copy was actually
+    /// delivered before it stops listening; the caller composing the
+    /// pump and this collector together (see `crate::process::run_wrapper`)
+    /// MUST call this after the pump returns and before [`Self::finalize`]
+    /// whenever the pump reports `delivery_drain_incomplete: true`, so a
+    /// summary with possibly-missing trailing data is never finalized as
+    /// `valid: true` (Copilot review thread H, 2026-09 -- 049-S PR #120,
+    /// round 2). An `incomplete` of `false` is a no-op.
+    pub fn note_transport_delivery_drain_incomplete(&self, incomplete: bool) {
+        if !incomplete {
+            return;
+        }
+        let mut guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.mark_invalid(
+            "transport-level delivery worker did not finish draining already-accepted \
+             copies before the pump returned; evidence may be incomplete",
+        );
+    }
+
+    /// Tells this collector that the inner child's own teardown could
+    /// not be confirmed within budget --
+    /// [`crate::process::ChildGuard::kill_and_wait`] (deadline path) or
+    /// [`crate::process::ChildGuard::bounded_wait_then_kill`] (normal
+    /// pump-completion path) returned an incomplete-teardown result.
+    /// Mirrors [`Self::note_transport_delivery_drain_incomplete`]'s
+    /// shape exactly: this collector has no way to observe the inner
+    /// child's process state on its own, so the caller composing the
+    /// wrapper's teardown and this collector together
+    /// (`crate::process::run_wrapper`) MUST call this before
+    /// [`Self::finalize`] whenever teardown could not be confirmed, so a
+    /// summary describing a possibly-still-alive inner process is never
+    /// finalized as `valid: true` -- this is exactly what
+    /// `leg_has_valid_initialize` (`crate::exact_cli`) already checks,
+    /// so gating flows through the existing pipeline with no further
+    /// classification changes required (Copilot review, 2026-09 -- 049-S
+    /// PR #120, round 5). An `incomplete` of `false` is a no-op.
+    pub fn note_inner_teardown_incomplete(&self, incomplete: bool) {
+        if !incomplete {
+            return;
+        }
+        let mut guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.mark_invalid(
+            "the inner child's teardown could not be confirmed within budget; \
+             process ownership is unproved",
+        );
+    }
+
+    /// Finalizes collection and returns the resulting [`EvidenceSummary`].
+    /// Waits a short, bounded, best-effort grace period (see
+    /// [`FINALIZE_GRACE_PERIOD`]) for any already-in-flight trailing copy
+    /// to arrive, signals the dedicated correlator thread to stop, and
+    /// joins it (bounded by [`WORKER_POLL_INTERVAL`]). Safe to call at
+    /// most once per collector in production.
+    ///
+    /// Never panics on a poisoned internal `Mutex`: every lock on this
+    /// collector's state (here and in [`Self::new_with_capacity`]'s
+    /// correlator thread and [`Self::hook`]) recovers via
+    /// `PoisonError::into_inner` rather than `.expect(...)`, so a single
+    /// caught correlator panic can never escalate into an unhandled
+    /// panic here on the caller's own thread.
+    #[must_use]
+    pub fn finalize(&self) -> EvidenceSummary {
+        thread::sleep(FINALIZE_GRACE_PERIOD);
+        self.shutdown.store(true, Ordering::Release);
+        let worker_handle = self
+            .worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(handle) = worker_handle {
+            let _ = handle.join();
+        }
+        let guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        EvidenceSummary {
+            run_nonce: self.run_nonce.clone(),
+            valid: guard.valid,
+            invalid_reason: guard.invalid_reason.clone(),
+            initialize_correlation: guard.initialize_correlation.clone(),
+            events: guard.events.clone(),
+        }
+    }
+}
+
+fn frame_kind_str(kind: FrameKind) -> &'static str {
+    match kind {
+        FrameKind::Request => "request",
+        FrameKind::Response => "response",
+        FrameKind::Notification => "notification",
+        FrameKind::Unparseable => "unparseable",
+    }
+}
+
+fn direction_str(direction: Direction) -> &'static str {
+    match direction {
+        Direction::ClientToChild => "client_to_child",
+        Direction::ChildToClient => "child_to_client",
+    }
+}
+
+fn frame_event_to_json(event: &FrameEvent) -> serde_json::Value {
+    serde_json::json!({
+        "direction": direction_str(event.direction),
+        "sequence": event.sequence,
+        "kind": frame_kind_str(event.kind),
+        "method": event.method,
+        "id": event.id,
+        "byte_len": event.byte_len,
+        "digest_hex": event.digest_hex,
+    })
+}
+
+fn initialize_correlation_to_json(correlation: &InitializeCorrelation) -> serde_json::Value {
+    serde_json::json!({
+        "request_id": correlation.request_id,
+        "protocol_version": correlation.protocol_version,
+        "redacted_request_params": correlation.redacted_request_params,
+        "redacted_result": correlation.redacted_result,
+    })
+}
+
+/// Builds the exact JSON value persisted to `--evidence-output`. Built
+/// directly as a `serde_json::Value` (via the `json!` macro) rather than
+/// `#[derive(Serialize)]`, so this task needs no `serde` derive
+/// dependency beyond the standalone `serde_json` crate already in use
+/// for parsing.
+// The `evidence_summary` prefix is deliberate and clearer than a bare
+// `to_json` for a function re-exported from the crate root's public API
+// surface, matching this module's own `EvidenceSummary` type name.
+#[allow(clippy::module_name_repetitions)]
+#[must_use]
+pub fn evidence_summary_to_json(summary: &EvidenceSummary) -> serde_json::Value {
+    serde_json::json!({
+        "run_nonce": summary.run_nonce,
+        "valid": summary.valid,
+        "invalid_reason": summary.invalid_reason,
+        "initialize_correlation": summary
+            .initialize_correlation
+            .as_ref()
+            .map(initialize_correlation_to_json),
+        "events": summary.events.iter().map(frame_event_to_json).collect::<Vec<_>>(),
+        "digest_note": "digest_hex values are a std-only, non-cryptographic 64-bit \
+            content digest (DefaultHasher/SipHash-1-3) for diagnostic identity \
+            comparison only -- not a security digest",
+    })
+}
+
+/// Atomically writes the redacted evidence summary to `path`: serializes
+/// to a temporary file in the same directory, then renames it into place
+/// (an atomic replace on both Windows and Unix for same-volume renames).
+/// Never writes raw frame bytes -- only [`evidence_summary_to_json`]'s
+/// redacted, structured output.
+///
+/// # Errors
+///
+/// Returns an error if the summary cannot be serialized, the temporary
+/// file cannot be created/written/flushed, or the final rename fails.
+pub fn write_evidence_output(summary: &EvidenceSummary, path: &Path) -> std::io::Result<()> {
+    let value = evidence_summary_to_json(summary);
+    let bytes = serde_json::to_vec_pretty(&value)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("evidence-output.json");
+    let tmp_name = format!(".{file_name}.tmp-{}", std::process::id());
+    let tmp_path = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(tmp_name),
+        _ => std::path::PathBuf::from(tmp_name),
+    };
+
+    {
+        // Owner-only permissions on Unix, mirroring `workspace::write_owner_only`'s
+        // `0o600`-at-creation pattern used for the `.mcp.json` fixtures (which
+        // deliberately carry unredacted real secrets). This evidence-output file only
+        // ever carries key-redacted content (see `redact_json_value`), but key-based
+        // redaction cannot catch a secret embedded inside an otherwise benign-keyed
+        // value -- so owner-only permissions here are defense-in-depth for that gap,
+        // not a claim that this file is known to contain secrets today. Applied via
+        // `OpenOptions::mode` at creation time (not a separate `set_permissions` call
+        // afterward) so there is no window where the file briefly exists with wider
+        // permissions.
+        let mut open_opts = std::fs::OpenOptions::new();
+        open_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            open_opts.mode(0o600);
+        }
+        let mut file = open_opts.open(&tmp_path)?;
+        file.write_all(&bytes)?;
+        file.flush()?;
+    }
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Directly proves the poison-recovery contract every lock in this
+    /// module now relies on (`.lock().unwrap_or_else(PoisonError::into_inner)`
+    /// instead of `.lock().expect(...)` / `if let Ok(guard) = ...lock()`):
+    /// a panic while holding the lock on another thread poisons it, and a
+    /// subsequent lock on THIS thread must still succeed and observe the
+    /// state left behind by the panicking thread, rather than being
+    /// permanently unusable. Before this fix, the analogous
+    /// `if let Ok(guard) = mutex.lock() { ... }` recovery pattern used in
+    /// `EvidenceCollector`'s correlator/hook would silently and
+    /// permanently skip its body forever after the first panic, and
+    /// `finalize()`'s own `.lock().expect(...)` would itself panic --
+    /// escalating one caught, isolated panic into an unhandled process
+    /// crash. This test exercises the exact same std `Mutex`
+    /// poison-then-recover mechanism those call sites depend on, using a
+    /// `CollectorState` (this module's own real guarded type) as the
+    /// payload rather than a placeholder type, so a future refactor that
+    /// reverts any of those call sites back to `.expect(...)` would show
+    /// up as this test's own reasoning becoming stale, not as a silent
+    /// behavioral gap.
+    #[test]
+    fn a_poisoned_mutex_recovers_via_poison_error_into_inner_and_observes_prior_state() {
+        let state = Arc::new(Mutex::new(CollectorState::new()));
+
+        let panicking_state = Arc::clone(&state);
+        let joined = thread::spawn(move || {
+            let mut guard = panicking_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.mark_invalid("deliberate: proving poison recovery, not a real failure");
+            panic!("deliberate: poison this mutex while still holding the lock");
+        })
+        .join();
+        assert!(
+            joined.is_err(),
+            "the spawned thread must actually have panicked for this test to prove anything"
+        );
+
+        // The exact recovery pattern used throughout this module: this
+        // must NOT panic, and must NOT silently skip -- it must return a
+        // fully usable guard.
+        let recovered_guard = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            !recovered_guard.valid,
+            "the guard obtained after poison-recovery must observe the mutation the \
+             panicking thread made just before it panicked, proving this is a real \
+             recovered guard over the same underlying state, not a fresh/default one"
+        );
+        assert_eq!(
+            recovered_guard.invalid_reason.as_deref(),
+            Some("deliberate: proving poison recovery, not a real failure")
+        );
+
+        // The mutex must remain fully usable for subsequent, unrelated
+        // locks too -- not just the one immediately after the panic.
+        drop(recovered_guard);
+        let again = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            !again.valid,
+            "state must remain readable on a second, later lock too"
+        );
+    }
+
+    // ── Adversarial-review remediation regression tests ──────────────
+
+    #[test]
+    fn line_reassembler_splits_on_newline_across_multiple_pushes() {
+        let mut reassembler = LineReassembler::default();
+        let (lines, overflowed) = reassembler.push(b"partial-line-no-newline-yet");
+        assert!(lines.is_empty());
+        assert!(!overflowed);
+
+        let (lines, overflowed) = reassembler.push(b" completed\nsecond line\r\nthird-partial");
+        assert!(!overflowed);
+        assert_eq!(
+            lines,
+            vec![
+                b"partial-line-no-newline-yet completed".to_vec(),
+                b"second line".to_vec(),
+            ],
+            "must strip the trailing \\n (and a preceding \\r) and preserve order"
+        );
+
+        let (lines, overflowed) = reassembler.push(b"\n");
+        assert!(!overflowed);
+        assert_eq!(lines, vec![b"third-partial".to_vec()]);
+    }
+
+    #[test]
+    fn line_reassembler_discards_and_flags_overflow_before_a_newline_arrives() {
+        // U-5: an unbounded LineReassembler would grow `pending` without
+        // limit if the child never emits a terminating newline. Once the
+        // bound is exceeded, the partial line must be discarded (not
+        // silently retained forever) and the caller must be told so it
+        // can invalidate the summary.
+        let mut reassembler = LineReassembler::default();
+        let oversized = vec![b'x'; MAX_PENDING_LINE_BYTES + 1];
+        let (lines, overflowed) = reassembler.push(&oversized);
+        assert!(lines.is_empty());
+        assert!(overflowed);
+        assert!(
+            reassembler.pending.is_empty(),
+            "the oversized partial line must be discarded, not retained"
+        );
+
+        // Must recover cleanly and resync on the next newline-terminated
+        // line rather than staying permanently wedged.
+        let (lines, overflowed) = reassembler.push(b"resynced-line\n");
+        assert!(!overflowed);
+        assert_eq!(lines, vec![b"resynced-line".to_vec()]);
+    }
+
+    #[test]
+    fn collector_state_record_event_bounds_retained_events_and_marks_invalid() {
+        let mut state = CollectorState::new();
+        for i in 0..MAX_RECORDED_EVENTS {
+            state.record_event(FrameEvent {
+                direction: Direction::ClientToChild,
+                sequence: i as u64,
+                kind: FrameKind::Notification,
+                method: None,
+                id: None,
+                byte_len: 0,
+                digest_hex: String::new(),
+            });
+        }
+        assert!(state.valid, "must remain valid while under the bound");
+        assert_eq!(state.events.len(), MAX_RECORDED_EVENTS);
+
+        // One more push past the bound: discarded, and the summary is
+        // marked invalid rather than growing `events` further.
+        state.record_event(FrameEvent {
+            direction: Direction::ClientToChild,
+            sequence: MAX_RECORDED_EVENTS as u64,
+            kind: FrameKind::Notification,
+            method: None,
+            id: None,
+            byte_len: 0,
+            digest_hex: String::new(),
+        });
+        assert!(!state.valid);
+        assert_eq!(
+            state.events.len(),
+            MAX_RECORDED_EVENTS,
+            "events must never grow past the bound"
+        );
+    }
+
+    #[test]
+    fn note_transport_drops_is_a_no_op_for_zero_and_invalidates_for_nonzero() {
+        // U-6: a nonzero transport-level drop count happens strictly
+        // before this collector's own hook ever sees the copy, so it has
+        // no way to detect the loss on its own -- the composing caller
+        // (`process::run_wrapper`) must tell it explicitly.
+        let collector = EvidenceCollector::new("test-nonce-zero-drops");
+        collector.note_transport_drops(0);
+        let summary = collector.finalize();
+        assert!(
+            summary.valid,
+            "a zero drop count must never invalidate an otherwise-clean summary"
+        );
+
+        let collector = EvidenceCollector::new("test-nonce-nonzero-drops");
+        collector.note_transport_drops(3);
+        let summary = collector.finalize();
+        assert!(
+            !summary.valid,
+            "a nonzero drop count must invalidate the summary"
+        );
+        assert!(
+            summary
+                .invalid_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("transport-level")),
+            "the invalid reason must explain the transport-level drop, got: {:?}",
+            summary.invalid_reason
+        );
+    }
+
+    #[test]
+    fn note_transport_delivery_drain_incomplete_is_a_no_op_for_false_and_invalidates_for_true() {
+        // Copilot review thread H (PR #120, round 2): a transport-level
+        // delivery worker that did not finish draining before the pump
+        // returned is a distinct, but equally undetectable-on-its-own,
+        // completeness signal this collector must be told about
+        // explicitly.
+        let collector = EvidenceCollector::new("test-nonce-drain-complete");
+        collector.note_transport_delivery_drain_incomplete(false);
+        let summary = collector.finalize();
+        assert!(
+            summary.valid,
+            "a complete drain must never invalidate an otherwise-clean summary"
+        );
+
+        let collector = EvidenceCollector::new("test-nonce-drain-incomplete");
+        collector.note_transport_delivery_drain_incomplete(true);
+        let summary = collector.finalize();
+        assert!(
+            !summary.valid,
+            "an incomplete drain must invalidate the summary"
+        );
+        assert!(
+            summary
+                .invalid_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("delivery worker")),
+            "the invalid reason must explain the incomplete delivery drain, got: {:?}",
+            summary.invalid_reason
+        );
+    }
+}
