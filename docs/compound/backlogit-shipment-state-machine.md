@@ -50,9 +50,15 @@ queued → active → done → (archive)
 The `released` status exists in the schema but is not reachable from `active`
 through normal CLI commands. Do not attempt `backlogit move <id> released`.
 As of the 1.10.1 version confirmed 2026-09-13, the terminal shipment status
-is `shipped` (or `abandoned`), reached only via the `backlogit shipment ship`
-cascade or the non-cascading `shipment-reconcile` safe-close sequence — see
-the superseding entry cited above.
+is `shipped` (or `abandoned`), reached **only** via the `backlogit shipment
+ship` cascade operation. The non-cascading `backlogit move <id> --status
+shipped` command — including the one `shipment-reconcile`'s safe-close mode
+itself attempts as its first step — is unconditionally refused by the
+installed version (error code `shipment_shipped_requires_envelope`); it
+never sets a shipment record's live status to `shipped`. Do not read
+"safe-close" as a second way to reach `shipped` directly: see the
+superseding entry cited above for the full empirical evidence trail
+(`docs/compound/2026-05-07-backlogit-shipment-status-constraints.md`).
 
 ## Task Status Transitions
 

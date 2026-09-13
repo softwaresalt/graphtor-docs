@@ -48,15 +48,31 @@ manifest references task IDs, not a queue-vs-archive path).
 
 ## Resolution
 
-Adopted a deliberate ordering rule for this and future shipments: defer ALL
-per-task `--commit {sha}` evidence writes to the mandatory Step 6
-post-merge `shipment-reconcile` safe-close phase, once the real merge SHA
-actually exists, rather than writing an interim feature-branch SHA at
-`done`-transition time. This matches the Ship agent template's own
-Mutation Classification table, which already anticipates a task landing in
-`.backlogit/archive/` before its commit evidence is finalized (the
-"archived-current-delivery-pending-finalization" path for
+Adopted a deliberate ordering rule for this and future shipments: defer
+per-task `--commit {sha}` evidence writes for
+**`current-delivery-pending-finalization`** items -- tasks that are members
+of *this* shipment's own manifest and were archive-relocated by the
+`done`-transition behavior above *before* the real merge SHA existed -- to
+the mandatory Step 6 post-merge `shipment-reconcile` safe-close phase, once
+the real merge SHA actually exists, rather than writing an interim
+feature-branch SHA at `done`-transition time. This matches the Ship agent
+template's own Mutation Classification table, which already anticipates a
+task landing in `.backlogit/archive/` before its commit evidence is
+finalized (the "archived-current-delivery-pending-finalization" path for
 `backlogit_update_item`).
+
+**This deferral is scoped to `current-delivery-pending-finalization` items
+only -- it is not "defer ALL archived-task commit writes" and must never be
+read that broadly.** A **`pre-archived`** item -- a task already archived
+from an earlier, unrelated shipment or delivery, encountered while
+resolving *this* shipment's manifest, protected set, or sibling scan --
+already carries its own, earlier delivery's commit evidence. That evidence
+belongs to the delivery that actually produced it and must **never** be
+touched, deferred-to, or overwritten by a later shipment's merge SHA. The
+`shipment-reconcile` skill's own `current-delivery-pending-finalization` vs
+`pre-archived` split (Safe-Close Mode step 4) is the authoritative
+classifier that draws this line; this compound entry's deferral guidance
+applies to the former class only.
 
 ## Prevention
 
@@ -66,7 +82,15 @@ Mutation Classification table, which already anticipates a task landing in
   from the shipment's status.
 * Write per-task commit-SHA evidence at Step 6 safe-close time (real merge
   SHA), not at `done`-transition time (only a feature-branch SHA would be
-  available then).
+  available then) -- and only for tasks classified
+  `current-delivery-pending-finalization` against *this* shipment's own
+  manifest.
+* Before writing or deferring any commit-evidence write, classify the task
+  as `current-delivery-pending-finalization` or `pre-archived` per the
+  `shipment-reconcile` skill's authoritative split. Never write, overwrite,
+  or defer-and-later-write commit evidence for a `pre-archived` item --
+  its existing `commit` field belongs to a different, already-completed
+  delivery.
 * When computing a shipment's protected set or manifest membership, resolve
   by task ID and read from whichever of `.backlogit/queue/` or
   `.backlogit/archive/` currently holds that ID -- never assume queue-only.

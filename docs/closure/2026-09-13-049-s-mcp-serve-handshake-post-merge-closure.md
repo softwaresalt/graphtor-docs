@@ -57,8 +57,14 @@ compaction, and this closure PR) are the primary subject of this document.
 
 * **Pre-archive reconciliation** (`mode: pre`, `expected_status: done`):
   `.backlogit/reconcile/049-S-pre-20260913T052820Z.md`, recommendation
-  `PROCEED` — all 8 manifest items confirmed `status: done` in queue with no
-  duplicate-assignment conflicts.
+  `PROCEED` — all 8 manifest items were found already relocated into
+  `.backlogit/archive/` (frontmatter `status: done`, no `commit` yet), the
+  defined `archived-provenance-deferred` outcome for items that reached
+  terminal `done` and were archive-relocated by the installed status
+  routing before the PR merge SHA existed. This is an allowed, non-blocking
+  Pre-Mode classification (not `missing`/`status-mismatch`/`orphan`), with
+  no duplicate-assignment conflicts against either live shipment's
+  manifest (`052-S`, `053-S`).
 * **Safe-close attempt, halt, operator-authorized cascade exception,
   post-cascade repair, and resolution**: fully documented in
   `.backlogit/reconcile/049-S-halt-20260913T053721Z.md`

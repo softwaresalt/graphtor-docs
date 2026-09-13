@@ -54,6 +54,17 @@ verification tasks (V1–V6, mapped 1:1 to the user's six review requirements).
 All three returned structured JSON findings only. No alternate-provider
 override was requested for this run.
 
+**Note on reviewer-model identity across closure documents**: this review's
+`reviewer_routes` (Reviewer-C: `claude-opus-5`) is a **separate, independent
+run** from the pre-merge adversarial review of the original implementation
+PR #120
+(`docs/closure/2026-09-13-fix-mcp-serve-initialize-handshake-regression-adversarial-review.md`,
+Reviewer-C: `claude-opus-4.8`, a logged substitution for an unavailable
+`claude-opus-4.6`). The two documents review different diffs (PR #120's
+implementation change set vs. this PR #121's post-merge closure change set)
+in different sessions and are not required to route the same tier-3 model;
+neither figure is in error.
+
 ---
 
 ## V1–V6 Verification Results

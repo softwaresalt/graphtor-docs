@@ -45,9 +45,14 @@ post-merge closure — see
 `docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md`.
 Every other `049-S` reference below in this document (state tables,
 follow-up lists, cross-references) describes this PR #118 closure session's
-own point-in-time observations and is left unmodified as an accurate
-historical record; it is not a standing claim about `049-S`'s current
-state.]
+own point-in-time observations and is left **substantively** unmodified as
+an accurate historical record — it is not a standing claim about `049-S`'s
+current state. Note that `049-S`'s own 2026-09-13 closure/Copilot-review
+remediation did apply mechanical fixes to some of those later references
+(broken citation paths repointed to their post-archival locations,
+superseded/historical-framing annotations added) where they had gone stale;
+those are citation-accuracy corrections, not changes to this document's
+historical claims, observations, or reasoning.]
 
 Consequently:
 
