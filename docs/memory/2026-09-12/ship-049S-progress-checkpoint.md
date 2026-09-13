@@ -519,15 +519,103 @@
 phase is complete. Next: standard multi-persona review + adversarial
 multi-model review, then PR/CI/Copilot-review/merge/closure.
 
+## Standard multi-persona review phase (complete)
+
+Ran the full persona battery manually via the `task` tool (Constitution
+Reviewer, Rust Reviewer, Correctness Reviewer, Maintainability Reviewer,
+Concurrency Reviewer, Architecture Strategist, Security Reviewer, Scope
+Boundary Auditor, plus a read-only Learnings Researcher pass) against all
+`tools/mcp-probe/` and touched root-crate changes. All P0/P1 findings were
+either fixed in-scope or, for the one genuinely new-scope finding,
+P-021-deferred. Final consolidated outcome: **READY_WITH_FOLLOWUPS**
+(residual P2/P3 items recorded below as follow-up handoffs for Stage; no
+unresolved P0/P1).
+
+### P0/P1 findings -- all resolved
+
+| # | Persona(s) | Severity | Finding | Resolution | Commit |
+|---|---|---|---|---|---|
+| 1 | Rust/Correctness | P1 | `create_probe_workspace` created the `--run-nonce` leaf directory via `fs::create_dir` BEFORE `validate_containment` ran, letting a malformed/malicious nonce escape `logs/probe/` before the check fired | Added `validate_nonce()` (rejects empty/`.`/`..`/embedded separators/absolute), called first, before any join/create | `c94940c` |
+| 2 | Correctness | P1 | Same bug class at the shared `logs`/`logs/probe` ancestor-chain level: `fs::create_dir_all` spanned multiple unvalidated components, so a tampered/junctioned `logs` or `logs/probe` could be silently traversed through before any containment check | Added `create_shared_dir_component_validated()`: checks/creates ONE component at a time, validates immediately, before the next is ever joined | `89eb868` |
+| 3 | Concurrency | P0 (x3) | `evidence.rs`'s poison-"recovery" branches (`if let Ok(guard) = ...lock()`) permanently no-op after the first correlator panic (poisoning is permanent); `finalize()`'s own `.lock().expect(...)` would then itself panic, escalating one caught panic into a full process crash | Replaced every unsafe `.lock()` site with `.unwrap_or_else(std::sync::PoisonError::into_inner)`, the pattern already used correctly elsewhere in this shipment. Added a same-module regression test proving recovery + continued usability | `89eb868` |
+| 4 | Concurrency | P1 (x3) | `transport.rs` silently discarded every spawned-thread panic: delivery-thread `hook()` had no `catch_unwind`; both primary pump-thread `.join()`s and the stderr-thread join discarded `Err(payload)` via `if let Ok(...)`/`let _ = ...` | Delivery worker now wraps `hook()` in `catch_unwind` + logs; extracted `join_finished_pump_thread()`/`join_stderr_thread()` helpers that log a panic's payload instead of discarding it | `89eb868` |
+| 5 | Security | P1 | `wrapper_argv`/`write_wrapper_mcp_json` write the real, unredacted production `--inner-exe`/`--inner-arg` to disk fixture `.mcp.json` files; `evidence.rs`'s `redact_argv`/`redact_env` never wired in | Investigated wiring redaction in directly -- confirmed it would be a **functional regression** (these files are the real launch config the exact-CLI runner spawns from; redacting would break the differential reproduction itself). Correct fix: mirrored `workspace::mcp_config::generate_mcp_config`'s existing `0600`-owner-only-at-creation precedent for the identical real-`.mcp.json`-with-secrets situation. Added `write_owner_only()` + `cfg(unix)` regression test | `1e19930` |
+| 6 | Security + Constitution | P1 (x2, confirmed independently) | `--allow-all-tools` real Copilot CLI invocation has only a prompt-level safety gate, no technical enforcement | **P-021 C2 deferred** (genuinely new design/scope, not a mechanical completion of any of the 8 tasks' AC) -- see below | n/a (deferred) |
+
+### P2/P3 findings -- in-scope mechanical completions fixed
+
+| Persona | Finding | Resolution | Commit |
+|---|---|---|---|
+| Correctness/Rust | `main.rs`'s serve background-sync duplicate-intake preflight call site was the one remaining propagated-error path in `cmd_serve` not routed through `trace_stage`, contradicting 056.003-T's own exhaustiveness goal | Added `ServePreflightErrorStage::DuplicateIntake`, wrapped the call site with `trace_stage`; extended the exhaustive-Display-mapping unit tests | `1e19930` |
+| Scope Boundary Auditor | `tools/mcp-probe/Cargo.toml` carried explicit `[[bin]]`/`[lib]` sections despite 056.020-T's own AC: "Add no root `[[bin]]`" | Removed both (functionally inert -- identical to Cargo's implicit auto-discovery defaults); verified all gates + full test suite still resolve the same `mcp-probe` bin / `mcp_probe` lib names | `1e19930` |
+
+### P-021 C2 deferred-scope-expansion capture
+
+Ran the mandatory discovery-first lookup across **both** the active
+(`.backlogit/queue/`) and archived (`.backlogit/archive/`) stash/backlog
+stores for `DEFERRED SCOPE EXPANSION` / `allow-all-tools` / `allow_all_tools`
+-- **zero matches**. No reusable entry existed; proceeded to capture.
+
+Captured via `backlogit stash add` (threadless path -- no PR/review-thread
+exists yet at capture time, so no thread reply/resolve applies):
+
+- **Deferred entry ID: `ECD56875`**
+- Kind: `feature`, provisional priority: `high`
+- Six-field payload: literal `DEFERRED SCOPE EXPANSION` token; one-sentence
+  expansion statement (add real technical tool-invocation
+  allowlist/sandbox enforcement for `tools/mcp-probe`'s
+  `--allow-all-tools` real Copilot CLI invocation, replacing today's
+  prompt-level-only gate); P-021 C1 out-of-scope rationale (none of the
+  8 authorized manifest tasks' AC scoped a technical enforcement
+  mechanism -- new design/implementation scope, fails the
+  same-contract-surface test); source refs (task IDs 056.001-T +
+  056.020-T/021-T/022-T/023-T, feature ID 056-F, shipment ID 049-S, PR
+  number N/A, review-thread ID N/A -- both genuinely not yet existing at
+  capture time); `requires deliberation: true`.
+- This is the **only** stash mutation Ship performed this session, per
+  the Role Boundary's C5 capture-only carve-out. Cite `ECD56875` in the
+  closure residual-risk record and the final operator report.
+
+### Read-only Learnings Researcher pass (no mutation)
+
+Confirmed 4 candidate new-compound-learning topics for post-merge
+`compound`/`compound-refresh` capture (containment-reimplementation
+pattern, typed observability-seam pattern, backlogit 1.10.1
+auto-archive-on-`done` behavior, "OS error 232" root-cause signature),
+plus one existing entry
+(`docs/compound/clippy-allow-unknown-lints-msrv-guard-2026-08-24.md`)
+that should be cross-referenced to stash `6C174AA9` (the pre-existing
+MSRV/globset break captured earlier this session) rather than left as an
+orphaned note. Deferred to post-merge Step 6 per the Ship pipeline (no
+mutation performed now).
+
+### Full verification (this phase)
+
+- `tools/mcp-probe`: `cargo check`, `cargo clippy --all-targets -D
+  warnings -D clippy::pedantic`, `cargo fmt --all -- --check`, `cargo
+  audit` (clean), full `cargo test` (50 tests across all targets, up
+  from 48 at start of this phase) -- all pass.
+- Root workspace: `cargo check`, `cargo clippy --all-targets -D warnings
+  -D clippy::pedantic`, full `cargo test` (all targets, 0 failures) --
+  all pass, confirming `main.rs`/`serve_preflight.rs` changes introduced
+  no regressions.
+- 3 commits this phase: `89eb868` (concurrency + ancestor-chain
+  containment), `1e19930` (DuplicateIntake trace wrap + owner-only
+  `.mcp.json` writes + Cargo.toml cleanup). (`c94940c`, the nonce-fix
+  commit, landed in the prior session segment.)
+
+**Next**: mandatory adversarial multi-model review (separate battery,
+`reviewers: 3`, per the user's Step 3 directive), then PR creation.
+
 ## Remaining work (not yet started)
 
-- Standard multi-persona review + adversarial multi-model review before
-  PR
+- Mandatory adversarial multi-model review (`reviewers: 3`) before PR
 - PR creation, Copilot review cycle, CI, merge (merge commit only, no
   admin fallback)
 - Post-merge: shipment-reconcile (pre -> safe-close -> post),
-  runtime-verification, operational-closure, compound-refresh, mandatory
-  P-020 compact-context, index resync
+  runtime-verification, operational-closure, compound-refresh (capture
+  the 4 candidate learnings + cross-reference stash `6C174AA9`),
+  mandatory P-020 compact-context, index resync
 
 ## Key files
 
