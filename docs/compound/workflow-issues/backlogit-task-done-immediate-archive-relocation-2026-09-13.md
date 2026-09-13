@@ -12,7 +12,8 @@ severity: "medium"
 message: "n/a -- behavioral discovery, not an error"
 file_path: ".backlogit/queue/{task-id}.md"
 citations:
-  - "docs/memory/2026-09-12/ship-049S-progress-checkpoint.md"
+  - "docs/archive/memory/2026-09-13/2026-09-12-ship-049S-progress-checkpoint.md"
+  - "compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md"
   - ".github/agents/_ship.agent.md (Mutation Classification: archived-current-delivery-pending-finalization path)"
   - "docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md"
 tags:

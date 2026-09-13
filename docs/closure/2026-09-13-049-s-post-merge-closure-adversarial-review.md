@@ -387,6 +387,17 @@ No CRITICAL/consensus-level findings were raised by any reviewer, and no
 reviewer flagged actual data corruption. The six findings raised (F1–F6) are
 documentation-quality, evidentiary-completeness, and knowledge-base-precision
 issues — real and worth fixing, but none block merging this backlog/docs-only
-closure change set. Recommended before the next session relies on the new
-compound entry as authoritative: fix F4 (mechanism description) and F1/F2
-(evidentiary rigor + stale prose), both low-cost, low-risk text edits.
+closure change set.
+
+**Post-remediation update (see "Post-remediation review" section above):**
+all six findings (F1–F6) have since been remediated directly, and the
+residual state is `residual_findings: 0`. The recommendation that
+previously stood here — to fix F4 (mechanism description) and F1/F2
+(evidentiary rigor + stale prose) before the next session relies on the new
+compound entry as authoritative — is satisfied and superseded by that
+remediation; no outstanding review-finding fixes remain from this artifact.
+The only still-open item affecting overall releasability is the
+pre-existing, independently tracked `mcp-client-smoke` manual-checkpoint
+condition recorded in the main closure document's Releasability section
+(deferred pending a live MCP client session — not a finding raised by this
+review, and not blocking for a backlog/docs-only change set).

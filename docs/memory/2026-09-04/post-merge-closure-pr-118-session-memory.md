@@ -142,7 +142,8 @@ needed.
   fully-completed, merged PR #118 work, no external citations found via
   `git grep`. **Explicitly excluding** both 2026-09-03 files
   (`checkpoint-quarantine-recurrence-controls-memory.md`,
-  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13)`) from
+  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+  — compacted 2026-09-13) from
   compaction: the second is cited by the resolution file's own reference,
   and — more importantly — the resolution file documents *open, unresolved*
   work (the `049-S` topology blocker) that a future session needs intact
@@ -182,7 +183,8 @@ needed.
   violation).
 * Do not touch `048-S`/`049-S` in any way beyond read-only verification.
 * Do not compact or otherwise edit
-  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13)` — it documents
+  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+  (compacted 2026-09-13) — it documents
   live, unresolved cross-shipment work that must remain discoverable and
   intact for whichever future session remediates the `049-S` blocker.
   **Superseded 2026-09-13**: this decision described this session's own

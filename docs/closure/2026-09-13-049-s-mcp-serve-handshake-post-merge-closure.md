@@ -123,14 +123,47 @@ compaction, and this closure PR) are the primary subject of this document.
      stronger, git-verifiable proof than a comparison against an ad hoc
      snapshot file: it shows the *net* effect of cascade-then-repair against
      immutable history, not a self-reported intermediate comparison.
-     Reproducible commands and their actual output:
+     Reproducible command (bash brace expansion enumerates all 25 exact
+     paths — the two contiguous ID ranges from the operator's exact
+     affected-IDs list, `056.004-T`..`056.018-T` and
+     `056.024-T`..`056.033-T`) and its actual, verified output:
 
      ```
-     $ git diff 5128333..HEAD --numstat -- .backlogit/queue/056.004-T.md .backlogit/queue/056.005-T.md ... (all 25)
-     1  1  .backlogit/queue/056.004-T.md
-     1  1  .backlogit/queue/056.005-T.md
-     ... (all 25 files show exactly "1 1" — one line added, one line removed)
+     $ git diff 5128333..HEAD --numstat -- \
+         .backlogit/queue/056.{004..018}-T.md \
+         .backlogit/queue/056.{024..033}-T.md
+     1	1	.backlogit/queue/056.004-T.md
+     1	1	.backlogit/queue/056.005-T.md
+     1	1	.backlogit/queue/056.006-T.md
+     1	1	.backlogit/queue/056.007-T.md
+     1	1	.backlogit/queue/056.008-T.md
+     1	1	.backlogit/queue/056.009-T.md
+     1	1	.backlogit/queue/056.010-T.md
+     1	1	.backlogit/queue/056.011-T.md
+     1	1	.backlogit/queue/056.012-T.md
+     1	1	.backlogit/queue/056.013-T.md
+     1	1	.backlogit/queue/056.014-T.md
+     1	1	.backlogit/queue/056.015-T.md
+     1	1	.backlogit/queue/056.016-T.md
+     1	1	.backlogit/queue/056.017-T.md
+     1	1	.backlogit/queue/056.018-T.md
+     1	1	.backlogit/queue/056.024-T.md
+     1	1	.backlogit/queue/056.025-T.md
+     1	1	.backlogit/queue/056.026-T.md
+     1	1	.backlogit/queue/056.027-T.md
+     1	1	.backlogit/queue/056.028-T.md
+     1	1	.backlogit/queue/056.029-T.md
+     1	1	.backlogit/queue/056.030-T.md
+     1	1	.backlogit/queue/056.031-T.md
+     1	1	.backlogit/queue/056.032-T.md
+     1	1	.backlogit/queue/056.033-T.md
      ```
+
+     All 25 files show exactly "1 1" (one line added, one line removed) —
+     re-verified directly (via the PowerShell equivalent, enumerating each
+     of the 25 exact paths rather than a shell glob) during this session's
+     own Copilot-review remediation pass, confirming the claim independently
+     of the original self-reported table.
 
      Inspecting the actual line-level diff for every one of the 25 files
      confirms the single changed line in each is `updated_at:` only —
@@ -380,12 +413,33 @@ memory files spanning the full `049-S` lifecycle (2026-08-24 PR #106
 staging through 2026-09-13 cascade-recovery halt) were compacted into
 `docs/memory/compacted/2026-09-13-049-s-compacted.md` and the verbose
 originals archived to `docs/archive/memory/2026-09-13/` with content fully
-preserved. Three external documents citing the old paths were corrected to
-the new archive paths (`docs/compound/workflow-issues/mcp-json-workspacefolder-camelcase-2026-08-24.md`,
+preserved. Six external documents citing the old, pre-archival paths were
+corrected to the new archive paths
+(`docs/compound/workflow-issues/mcp-json-workspacefolder-camelcase-2026-08-24.md`,
 `docs/closure/2026-09-04-pr-118-startup-checkpoint-recovery-post-merge-closure.md`,
-`docs/memory/2026-09-04/post-merge-closure-pr-118-session-memory.md`);
-zero stale citations remain (verified via repo-wide `git grep` for every
-old path). All Stage-owned memory for the same shipment/feature (files
+`docs/memory/2026-09-04/post-merge-closure-pr-118-session-memory.md`,
+`docs/closure/2026-09-13-049-s-compound-refresh.md`,
+`docs/compound/runtime-errors/mcp-serve-os-error-232-handshake-signature-2026-09-13.md`,
+`docs/compound/workflow-issues/backlogit-task-done-immediate-archive-relocation-2026-09-13.md`).
+**Correction (this session's own Copilot-review remediation pass):** the
+last three of the six were *not* caught by the original repo-wide `git
+grep` sweep referenced in the prior version of this paragraph — that sweep
+predated this closure's own new compound entries and the compound-refresh
+report, which themselves cited the pre-archival paths and were therefore
+missed by a scan run before they existed. Copilot's PR review on this
+closure's own PR subsequently flagged the gap; all six are now corrected
+and re-verified via a fresh repo-wide `git grep` for every old path,
+performed as part of this remediation. The only remaining matches for
+the old, pre-archival paths are legitimate frozen historical artifacts
+that document point-in-time state and are intentionally not rewritten:
+`.backlogit/reconcile/049-S-halt-20260913T053721Z.md` (a frozen recovery
+record), the archived memory file
+`docs/archive/memory/2026-09-13/2026-09-13-ship-049S-safeclose-step8-halt-checkpoint.md`
+itself (preserved verbatim per the compaction contract), and this
+compaction's own `source_originals` provenance list in
+`docs/memory/compacted/2026-09-13-049-s-compacted.md` (which records the
+pre-archival filenames by design). All Stage-owned memory for
+the same shipment/feature (files
 prefixed `stage-`/`049-s-stage-`, plus the Stage-authored
 `049S-reassessment-memory.md`) was deliberately excluded from this
 compaction — Ship does not mutate another agent's memory (Continuity row
@@ -408,8 +462,10 @@ document's own commit/push completes.
 * `.backlogit/checkpoints/checkpoint-20260913-053918.json`,
   `checkpoint-20260913-070341.json`, `checkpoint-20260913-073130.json` —
   resolved Ship checkpoints across this recovery arc.
-* `docs/memory/2026-09-13/ship-049S-safeclose-step8-halt-checkpoint.md`,
-  `docs/memory/2026-09-13/ship-049S-resume-blocker-reconfirmed-20260913T0703Z.md`
+* `docs/archive/memory/2026-09-13/2026-09-13-ship-049S-safeclose-step8-halt-checkpoint.md`,
+  `docs/archive/memory/2026-09-13/2026-09-13-ship-049S-resume-blocker-reconfirmed-20260913T0703Z.md`
+  (compacted 2026-09-13, see
+  `docs/memory/compacted/2026-09-13-049-s-compacted.md`)
   — session memory from the halt and resume-confirmation phases.
 * `docs/closure/2026-09-13-fix-mcp-serve-initialize-handshake-regression-adversarial-review.md`
   — pre-merge adversarial review for PR #120.

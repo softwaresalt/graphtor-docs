@@ -69,7 +69,9 @@ referenced by four separate agent/skill instruction files.
 * `docs/compound/workflow-issues/clippy-allow-unknown-lints-msrv-guard-2026-08-24.md`
   — **update**. The Learnings Researcher pass recorded during `049-S`'s
   standard review phase
-  (`docs/memory/2026-09-12/ship-049S-progress-checkpoint.md`) flagged that
+  (`docs/archive/memory/2026-09-13/2026-09-12-ship-049S-progress-checkpoint.md`,
+  compacted 2026-09-13, see
+  `docs/memory/compacted/2026-09-13-049-s-compacted.md`) flagged that
   this entry's own MSRV/`globset`/`edition2024` follow-up note (Prevention
   point 4) had never been cross-referenced to the P-021 deferred-scope
   stash entry that independently re-captured the same gap
@@ -84,7 +86,9 @@ Researcher pass were captured as new compound entries during this closure
 observability-seam pattern — were reviewed and intentionally left
 uncaptured this cycle as lower-priority architecture-pattern write-ups; not
 lost, since the source pass remains cited in
-`docs/memory/2026-09-12/ship-049S-progress-checkpoint.md` for a future
+`docs/archive/memory/2026-09-13/2026-09-12-ship-049S-progress-checkpoint.md`
+(compacted 2026-09-13, see
+`docs/memory/compacted/2026-09-13-049-s-compacted.md`) for a future
 session to pick up):
 
 * `docs/compound/runtime-errors/mcp-serve-os-error-232-handshake-signature-2026-09-13.md`
@@ -103,7 +107,9 @@ session to pick up):
   action, not a backlog/stash item).
 * The two uncaptured candidate learnings noted above (containment-
   reimplementation pattern, typed observability-seam pattern) remain
-  available for a future compound-capture pass, sourced from
-  `docs/memory/2026-09-12/ship-049S-progress-checkpoint.md`'s "Adversarial
-  multi-model review + remediation" section — not urgent, no code/backlog
-  impact.
+  available for a future compound-capture pass, sourced from the
+  "Adversarial multi-model review + remediation" section of
+  `docs/archive/memory/2026-09-13/2026-09-12-ship-049S-progress-checkpoint.md`
+  (compacted 2026-09-13, see
+  `docs/memory/compacted/2026-09-13-049-s-compacted.md`) — not urgent, no
+  code/backlog impact.

@@ -75,7 +75,9 @@ behaved correctly.
   guard for this exact failure class.
 * Corrected the deliberation's premature "leading hypothesis"/differential-
   confidence framing to stay evidence-first once it was flagged (see
-  `docs/memory/2026-08-24/049-s-ship-evidence-first-causal-attribution-memory.md`).
+  `docs/archive/memory/2026-09-13/2026-08-24-049-s-ship-evidence-first-causal-attribution-memory.md`
+  — compacted 2026-09-13, see
+  `docs/memory/compacted/2026-09-13-049-s-compacted.md`).
 
 ## Prevention
 

@@ -32,7 +32,9 @@ returns zero backlog items; no feature, task, or shipment record references
 this branch or PR anywhere in `.backlogit/`. Per explicit operator scope for
 this closure, shipments `048-S` (archived, `archived_status: active`) and
 `049-S` (queued, blocked on `048-S` provenance per
-`docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`)
+`docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+— compacted 2026-09-13, see
+`docs/memory/compacted/2026-09-13-049-s-compacted.md`)
 were **not** claimed, mutated, archived, or otherwise touched by this session
 or this closure.
 
@@ -403,9 +405,20 @@ this session and are listed here for completeness of the closure record.
 * `048-S`/`049-S` remain in their current, unmodified state until a future
   Stage/operator session deliberately remediates the `049-S` topology
   blocker described in
-  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`
-  (explicitly preserved, not compacted or altered by this closure — see
-  Compaction below).
+  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+  (preserved unmodified by *this* PR #118 closure at the time this section
+  was written on 2026-09-04 — see Compaction below).
+  **[Superseded as of 2026-09-13: `049-S` subsequently shipped (PR #120)
+  and, as part of its own post-merge closure, this file was compacted
+  (moved to its current `docs/archive/memory/2026-09-13/` path, content
+  preserved verbatim) by that later, independent closure session — not by
+  this PR #118 closure. See
+  `docs/memory/compacted/2026-09-13-049-s-compacted.md` and
+  `docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md`
+  for that compaction's accounting. This bullet's "remain in their current,
+  unmodified state" framing describes this PR #118 closure's own action
+  (none taken here) at the time it ran, not the file's entire subsequent
+  history.]**
 
 ## Failure Signals
 
@@ -560,14 +573,26 @@ internal citation and one frontmatter `source` self-reference were
 corrected to the new archive paths.
 
 The `docs/memory/2026-09-03/checkpoint-quarantine-recurrence-controls-memory.md`
-and `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`
+and
+`docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+(compacted 2026-09-13, see
+`docs/memory/compacted/2026-09-13-049-s-compacted.md`)
 files, and this closure session's own new memory checkpoint, were reviewed
-and **deliberately excluded** from compaction — see the full accounting and
-rationale in
+and **deliberately excluded** from compaction *by this PR #118 closure
+session* — see the full accounting and rationale in
 `docs/memory/compacted/2026-09-04-pr-118-startup-checkpoint-recovery-compacted.md`.
-In particular, the `049-S` topology-blocker file documents *open*, not
-completed, work and remains fully intact and undisturbed for a future
-Stage/operator session.
+In particular, the `049-S` topology-blocker file documented *open*, not
+completed, work at that time and remained fully intact and undisturbed for
+a future Stage/operator session.
+**[Superseded as of 2026-09-13: that future session arrived — `049-S`
+shipped as PR #120 and its own post-merge closure subsequently compacted
+this same file (moved to its current `docs/archive/memory/2026-09-13/`
+path, content preserved verbatim). See
+`docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md`
+for that later closure's own accounting. The "deliberately excluded" and
+"remains fully intact and undisturbed" statements above describe this PR
+#118 closure's own action at the time it ran, not the file's entire
+subsequent history.]**
 
 ## Documentation / Knowledge Graduation Review
 
@@ -626,8 +651,15 @@ without itself editing the entry's content — see item 9 below.
    (`docs/closure/2026-09-01-047-s-048-s-closure-summary.md`), which blocks
    `049-S`'s pipeline-topology readiness with `PREDECESSOR_NOT_SHIPPED`.
    Backlogit 1.10.1 has no supported repair operation for this gap; Ship has
-   no authority to invent one. Full detail preserved (not compacted) in
-   `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`.
+   no authority to invent one. Full detail preserved, at the time this PR
+   #118 closure ran, in
+   `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`.
+   **[Superseded as of 2026-09-13: `049-S` subsequently shipped as PR #120;
+   this file was later compacted (content preserved verbatim, moved to its
+   current `docs/archive/memory/2026-09-13/` path) by that shipment's own
+   post-merge closure — see
+   `docs/memory/compacted/2026-09-13-049-s-compacted.md` and
+   `docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md`.]**
 5. **Domain account name publicly exposed in 6 merged disposition files**
    (discovered during this closure PR's own local review, via the GraphQL
    `reviews` history for PR #118) — `.backlogit/archive/checkpoints/
@@ -726,8 +758,11 @@ absent.
   (compacted summary of the two now-superseded PR-118-lifecycle memory
   files, produced by the P-020 `compact-context` invocation triggered by
   this closure)
-* `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md (compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md)`
-  (preserved, **not** compacted — documents open `049-S` blocker work)
+* `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+  — preserved, **not** compacted *by this PR #118 closure* — documented
+  open `049-S` blocker work at that time. **[Superseded as of 2026-09-13:
+  compacted verbatim by `049-S`'s own later post-merge closure; see
+  `docs/memory/compacted/2026-09-13-049-s-compacted.md`.]**
 * `docs/compound/workflow-issues/checkpoint-schema-and-lifecycle-controls-2026-09-03.md`
 * `docs/compound/workflow-issues/mcp-json-workspacefolder-camelcase-2026-08-24.md`
 * Follow-up items (stash, read-only pointer, not mutated): `CCAC612D`,
