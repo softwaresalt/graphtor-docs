@@ -607,9 +607,116 @@ mutation performed now).
 **Next**: mandatory adversarial multi-model review (separate battery,
 `reviewers: 3`, per the user's Step 3 directive), then PR creation.
 
+## Adversarial multi-model review + remediation (this phase)
+
+- Invoked the **Adversarial Review** custom agent (`reviewers: 3`,
+  `output_mode: full`, `post_remediation_review: false`) against the
+  full diff scope: all `tools/mcp-probe/src/**`,
+  `tools/mcp-probe/tests/**`, `src/main.rs`, `src/workspace/mod.rs`,
+  `src/workspace/serve_preflight.rs`, `tests/common/**`,
+  `tests/serve_*`.
+  - Reviewers: `gpt-5.6-sol` (Anchor), `claude-haiku-4.5` (Reviewer-A,
+    returned 0 findings), `claude-opus-4.8` substituting for an
+    unavailable `claude-opus-4.6` (Reviewer-C).
+  - Report: `docs/closure/2026-09-13-fix-mcp-serve-initialize-handshake-regression-adversarial-review.md`.
+  - Result: **0 HIGH-confidence consensus findings**; 1 MEDIUM (M-1,
+    `gated_auto`); 10 LOW-confidence (6 MAJOR `manual`, 4 MINOR
+    `advisory`); one reviewer claim independently refuted and excluded
+    (a Windows `rename` claim); one reframed (a workspace-containment
+    finding downgraded from security to portability, U-7).
+- **P-021 scope classification**: every finding is in code newly
+  authored by this very shipment (the `mcp-probe` tool did not exist
+  before 049-S), so every fix below is a same-contract-surface
+  completion (P-021 C1/C3), not a scope expansion.
+- **Fixed** (commit `767dd47`):
+  - **M-1** -- `CaptureSink`'s in-memory stdout capture was unbounded.
+    Added `MAX_CAPTURE_BYTES` (262,144, mirrors `serve_driver.rs`'s
+    `BoundedCapture`); new bounded `CaptureBuf`; `stdout_truncated`
+    threaded through `pump_and_reap`/`spawn_and_capture`/`run_leg`/
+    `LegOutcome`.
+  - **U-1** -- both legs of a pass share one `run_nonce` (verified via
+    `workspace.rs`), so a `run_nonce`-based staleness check (the
+    reviewer's literal suggestion) would not actually distinguish
+    control-leg-stale-data from treatment-leg's-own-data. Fix:
+    `run_leg` removes the shared `evidence_output` file before each leg
+    spawns (verified safe -- Gate1 uses a wholly separate
+    `ancestor_run_evidence_output` path).
+  - **U-2** -- `leg_has_valid_initialize` now requires
+    `wrapper_evidence["valid"] == true` in addition to a non-null
+    `initialize_correlation`.
+  - **U-3** -- `identify_copilot` now takes a `deadline: Duration` and
+    runs through the existing `spawn_and_capture`/`ChildGuard`
+    composition instead of a raw blocking `Command::output()`.
+    Documented trade-off: stderr is drained to the wrapper's own
+    stderr (via the shared pump's unconditional stderr drain) rather
+    than combined into `version_output`, since the shared primitive has
+    no stderr-capture path.
+  - **U-4** -- `run_read_only_server_control` now treats a truncated
+    stderr capture as `Diagnostic` (indeterminate) rather than falling
+    through to `Control`, since a write-path marker beyond the
+    truncation point is unobservable to `stderr_shows_write_path`.
+  - **U-5** -- `LineReassembler`/`CollectorState` were unbounded. Added
+    `MAX_PENDING_LINE_BYTES` (1 MiB) / `MAX_RECORDED_EVENTS` (65,536);
+    overflow discards-and-invalidates rather than growing without
+    limit.
+  - **U-6** -- a drop at `transport`'s own outer delivery channel is
+    invisible to `EvidenceCollector` (it happens before the collector's
+    hook ever sees the copy). Added `PumpOutcome::transport_copies_dropped`
+    and `EvidenceCollector::note_transport_drops`, wired from
+    `process::run_wrapper` right after `run_duplex_pump` returns and
+    before `finalize()`.
+  - **U-7** -- `create_probe_workspace` built returned paths from the
+    raw, non-canonicalized `repo_root` instead of `canonical_repo_root`
+    (a correctness/portability gap, not the containment-escape the
+    reviewer originally claimed -- `validate_containment` already
+    re-canonicalizes and catches genuine escapes regardless). Fixed;
+    updated `workspace_test.rs`'s layout assertion to match the now-
+    canonical returned paths.
+  - **U-8** -- corrected `DELIVERY_CHANNEL_CAPACITY`'s doc comment
+    (falsely claimed "evicts oldest"; `try_send` actually drops the
+    current copy, never an already-queued one).
+  - **U-9** -- `write_evidence_output` now writes owner-only (Unix
+    `0o600`) permissions, mirroring `workspace::write_owner_only`, as
+    defense-in-depth since key-based redaction cannot catch a secret
+    embedded inside an otherwise benign-keyed value.
+- **Acknowledged, no fix needed**: **U-10** (`redact_argv` only handles
+  the inline `--name=value` form) is already self-documented as an
+  intentional scope limit in its own doc comment.
+- Added regression tests for every fix: `CaptureBuf`/`CaptureSink`
+  truncation, `leg_has_valid_initialize`'s valid-flag/correlation
+  gating, `LineReassembler` overflow/resync, `CollectorState`'s
+  recorded-event bound, `note_transport_drops`, `deliver_copy`'s
+  `try_send` drop/disconnect semantics.
+- **P-021 C2 capture** (stash `ECD56875`, high/feature): both the
+  Security Reviewer and Constitution Reviewer (standard review, prior
+  phase) independently flagged `--allow-all-tools`'s prompt-only gate
+  as a P1 real-safety concern; confirmed out of scope for 049-S's 8
+  manifest tasks and captured per C2/C5 (see commit `7416aa3`).
+- **Full verification battery** (all clean): `tools/mcp-probe` --
+  `cargo check`, `cargo clippy --all-targets -D warnings -D
+  clippy::pedantic`, `cargo fmt --all -- --check`, `cargo audit`, full
+  `cargo test` (35 unit + integration tests across all targets, up
+  from ~48 baseline plus new regression coverage). Root workspace --
+  `cargo check`, `cargo clippy --all-targets -D warnings -D
+  clippy::pedantic`, `cargo fmt --all -- --check`, full `cargo test`
+  (362 + 224 + ... all green, 1 ignored pre-existing), `cargo audit`
+  with the CI-equivalent `--ignore` allowlist (matches
+  `.github/workflows/ci.yml` exactly; the one un-ignored advisory,
+  RUSTSEC-2026-0041, is the pre-existing, already-tracked `lz4_flex`
+  break owned by task `013.008-T`, unrelated to 049-S).
+- Commits this phase: `767dd47` (code + tests),
+  `7416aa3` (adversarial review report + `ECD56875` stash capture).
+
+**Next**: reapply the legacy `pipeline-topology --force` override
+(`PREDECESSOR_NOT_SHIPPED` naming `048-S`) at the `lifecycle` phase,
+then proceed to PR creation (Step 5): final quality gates already
+green, PR body with the `## Local Review Readiness` block,
+`pr-lifecycle` skill invocation, Copilot review request/wait/fix/reply/
+resolve cycle via `gh api graphql`, CI/merge gates (P-018/P-009/P-014),
+merge with merge-commit only, no admin fallback.
+
 ## Remaining work (not yet started)
 
-- Mandatory adversarial multi-model review (`reviewers: 3`) before PR
 - PR creation, Copilot review cycle, CI, merge (merge commit only, no
   admin fallback)
 - Post-merge: shipment-reconcile (pre -> safe-close -> post),
