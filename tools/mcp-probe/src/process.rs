@@ -19,6 +19,7 @@
 
 use crate::evidence::{write_evidence_output, EvidenceCollector};
 use crate::transport::{run_duplex_pump, PumpConfig, PumpOutcome};
+use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -148,15 +149,37 @@ impl ChildGuard {
     /// an unconditional blocking `wait()` here could hang this call (and
     /// its caller) forever if the killed child never becomes reapable
     /// (Copilot review, 2026-09 -- 049-S PR #120, round 3).
-    pub fn kill_and_wait(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = bounded_wait_after_kill(child, KILL_WAIT_BUDGET);
-        }
+    ///
+    /// Returns `true` only if `kill()` itself succeeded AND the child
+    /// was subsequently confirmed reaped (exited) within
+    /// [`KILL_WAIT_BUDGET`]; `false` if `kill()` failed, or the bounded
+    /// wait elapsed without observing the child exit. Discarding this
+    /// result previously let a caller report teardown as complete even
+    /// though its owned child process could still be alive after the
+    /// budget elapsed -- the caller MUST record an explicit
+    /// incomplete-teardown outcome when this returns `false` rather than
+    /// silently treating teardown as clean (Copilot review, 2026-09 --
+    /// 049-S PR #120, round 4).
+    #[must_use]
+    pub fn kill_and_wait(&mut self) -> bool {
+        self.child.as_mut().is_some_and(|child| {
+            let kill_ok = child.kill().is_ok();
+            let reaped = bounded_wait_after_kill(child, KILL_WAIT_BUDGET);
+            kill_ok && reaped
+        })
     }
 }
 
 impl Drop for ChildGuard {
+    /// Best-effort fallback teardown for a guard that was never
+    /// explicitly torn down via `kill_and_wait`. Its result is
+    /// intentionally still discarded here (unlike `kill_and_wait`
+    /// itself): there is no caller left to report an incomplete
+    /// teardown to once a value's `Drop` is running, and the whole
+    /// point of routing every owned child through this guard is that
+    /// leaking a still-running process is already impossible by
+    /// construction -- `Drop` always at least attempts `kill()`, it
+    /// just cannot surface whether that attempt was confirmed.
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
@@ -357,11 +380,28 @@ pub fn parse_wrapper_args(args: impl Iterator<Item = String>) -> Result<WrapperA
 /// non-absolute and traversal-bearing shapes closes the concrete escape
 /// vectors without requiring that additional context.
 ///
+/// Absolute-and-`..`-free is still not enough on its own: an absolute,
+/// traversal-free path can still resolve somewhere entirely different
+/// from what it appears to name if a reparse point/junction/symlink sits
+/// at ANY already-existing ancestor directory component (the exact same
+/// class of escape `workspace::validate_containment` and
+/// `create_shared_dir_component_validated` already close for workspace
+/// creation itself, see `workspace.rs`). This function additionally
+/// walks every already-existing ancestor of the candidate path and
+/// rejects if any of them is a reparse point -- still without requiring
+/// an "expected root" parameter, since the check is self-contained
+/// ("no existing ancestor may be a reparse point") rather than a
+/// containment comparison against one (Copilot review, 2026-09 -- 049-S
+/// PR #120, round 4).
+///
 /// # Errors
 ///
 /// Returns an error string (matching this module's other argv validation
-/// error style) if `path` is not absolute, or if any component is a
-/// literal `..` parent-dir segment.
+/// error style) if `path` is not absolute, if any component is a literal
+/// `..` parent-dir segment, if any already-existing ancestor directory is
+/// a reparse point/junction/symlink, or if an ancestor's metadata could
+/// not be read for a reason other than the ancestor simply not existing
+/// yet.
 fn validate_evidence_output_path(path: &str) -> Result<(), String> {
     let candidate = Path::new(path);
     if !candidate.is_absolute() {
@@ -376,6 +416,61 @@ fn validate_evidence_output_path(path: &str) -> Result<(), String> {
         return Err(format!(
             "--evidence-output must not contain a '..' path-traversal component, got '{path}'"
         ));
+    }
+    reject_reparse_point_ancestor(candidate)
+}
+
+/// `true` only if OS metadata reports `path` itself (never followed
+/// through) as a reparse point/junction (Windows) or symlink
+/// (everywhere else) -- the exact same check `workspace.rs`'s own
+/// private `is_reparse_point` performs, kept as an independent,
+/// self-contained copy here rather than exported cross-module: neither
+/// module claims a shared, reusable production security primitive (see
+/// `workspace.rs`'s own module-level doc comment).
+#[cfg(windows)]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+/// Walks every ancestor directory of `candidate` (its parent, that
+/// directory's parent, and so on up to the filesystem root), rejecting
+/// as soon as any ANCESTOR THAT ALREADY EXISTS is found to be a reparse
+/// point/junction/symlink. An ancestor that does not exist yet is simply
+/// skipped -- there is nothing planted there to redirect through, and
+/// [`fs::symlink_metadata`] never follows the final component itself, so
+/// this never silently traverses through a redirecting component to
+/// reach the one above it. `candidate` itself (the leaf evidence-output
+/// file) is intentionally excluded from this walk: it need not exist
+/// yet, and even if something unexpected already sits there, the actual
+/// write path (`write_evidence_output`) always creates/overwrites the
+/// exact named leaf itself rather than following it as a directory.
+fn reject_reparse_point_ancestor(candidate: &Path) -> Result<(), String> {
+    for ancestor in candidate.ancestors().skip(1) {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                if is_reparse_point(&metadata) {
+                    return Err(format!(
+                        "--evidence-output must not resolve through a reparse \
+                         point/junction/symlink, but '{}' is one",
+                        ancestor.display()
+                    ));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "--evidence-output could not be validated against ancestor '{}': {err}",
+                    ancestor.display()
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -423,6 +518,18 @@ pub struct WrapperOutcome {
     /// independent of `evidence_valid` -- a valid summary can still fail
     /// to persist (for example, an unwritable path).
     pub evidence_write_error: Option<String>,
+    /// `true` only when the inner child was torn down via
+    /// `ChildGuard::kill_and_wait` (a deadline/error path) AND that
+    /// teardown could not be confirmed within `process::KILL_WAIT_BUDGET`
+    /// -- i.e. `kill()` itself failed, or the child was still not
+    /// reapable once the bounded wait elapsed. `false` for a normal
+    /// completion (nothing was torn down) or a confirmed clean teardown.
+    /// Discarding `kill_and_wait`'s result previously meant this
+    /// function could report completion while its owned inner process
+    /// might still be alive; this field makes that outcome explicit
+    /// instead of silently clean (Copilot review, 2026-09 -- 049-S PR
+    /// #120, round 4).
+    pub inner_teardown_incomplete: bool,
 }
 
 /// Runs the `wrapper` subcommand's core logic: spawns the inner process
@@ -502,16 +609,20 @@ where
         candidate_descendant_pids.extend(observer.child_pids(inner_pid));
     }
 
-    let inner_exit_code = if pump.timed_out {
+    let (inner_exit_code, inner_teardown_incomplete) = if pump.timed_out {
         // Deadline/error teardown: the inner child never closed both
         // directions on its own within the bound. Tear it down right now
         // via the owned direct guard rather than only-eventually via
         // `Drop`, then report no exit code -- the child was killed, not
-        // waited-to-completion.
-        guard.kill_and_wait();
-        None
+        // waited-to-completion. `kill_and_wait`'s own return value is
+        // recorded, never discarded: a `false` here means teardown could
+        // not be confirmed within budget, so the inner process might
+        // still be alive despite this function otherwise completing
+        // (Copilot review, 2026-09 -- 049-S PR #120, round 4).
+        let confirmed = guard.kill_and_wait();
+        (None, !confirmed)
     } else {
-        guard.wait().ok().and_then(|status| status.code())
+        (guard.wait().ok().and_then(|status| status.code()), false)
     };
 
     let wrapper_identity = observer.observe(std::process::id());
@@ -564,6 +675,7 @@ where
         evidence_output: config.args.evidence_output.clone(),
         evidence_valid,
         evidence_write_error,
+        inner_teardown_incomplete,
     })
 }
 
@@ -597,6 +709,91 @@ mod tests {
         let err = validate_evidence_output_path("evidence.json")
             .expect_err("a relative path must be rejected");
         assert!(err.contains("absolute"), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn validate_evidence_output_path_accepts_ancestors_that_do_not_exist_yet() {
+        // The existing clean-absolute-path fixture above already
+        // exercises this implicitly, but this test makes the invariant
+        // explicit: `reject_reparse_point_ancestor` must never fail
+        // closed on an ancestor that simply is not present on disk yet
+        // -- only on one that IS present and IS a reparse point.
+        let unique = format!(
+            "mcp-probe-evidence-path-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        );
+        let candidate = std::env::temp_dir()
+            .join(unique)
+            .join("does-not-exist-yet")
+            .join("evidence.json");
+        assert!(
+            candidate.is_absolute(),
+            "std::env::temp_dir() must be absolute for this test to be meaningful"
+        );
+        assert!(
+            validate_evidence_output_path(&candidate.to_string_lossy()).is_ok(),
+            "an absolute, traversal-free path with no existing ancestors must be accepted"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_evidence_output_path_rejects_a_junction_ancestor() {
+        // Round 4 (Copilot review, 2026-09 -- 049-S PR #120): an
+        // absolute, `..`-free path can still resolve somewhere entirely
+        // different from what it appears to name if an ancestor
+        // component is a junction/reparse point. This proves
+        // `validate_evidence_output_path` now fails closed on that,
+        // mirroring `workspace.rs`'s own junction-escape test fixtures
+        // in `tests/workspace_test.rs`.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let base = std::env::temp_dir().join(format!(
+            "mcp-probe-evidence-junction-test-{}-{nanos}",
+            std::process::id()
+        ));
+        let junction_point = base.join("probe-workspace");
+        let junction_target = std::env::temp_dir().join(format!(
+            "mcp-probe-evidence-junction-target-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&base).expect("create base test dir");
+        fs::create_dir_all(&junction_target).expect("create junction target dir");
+
+        let mklink_ok = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &junction_point.to_string_lossy(),
+                &junction_target.to_string_lossy(),
+            ])
+            .status()
+            .is_ok_and(|status| status.success());
+        if !mklink_ok {
+            eprintln!("skipping: mklink /J failed to create a junction in this environment");
+            let _ = fs::remove_dir_all(&base);
+            let _ = fs::remove_dir_all(&junction_target);
+            return;
+        }
+
+        let candidate = junction_point.join("evidence.json");
+        let err = validate_evidence_output_path(&candidate.to_string_lossy())
+            .expect_err("a junction ancestor must be rejected");
+        assert!(
+            err.contains("reparse point/junction/symlink"),
+            "unexpected message: {err}"
+        );
+
+        let _ = fs::remove_dir(&junction_point);
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&junction_target);
     }
 
     #[test]

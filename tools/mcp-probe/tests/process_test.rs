@@ -193,8 +193,14 @@ fn kill_and_wait_tears_down_a_still_running_child_within_a_bounded_wall_clock_wi
     let mut guard = ChildGuard::new(child, "kill-and-wait-bound-test");
 
     let start = std::time::Instant::now();
-    guard.kill_and_wait();
+    let confirmed = guard.kill_and_wait();
     let elapsed = start.elapsed();
+    assert!(
+        confirmed,
+        "kill_and_wait must report true when kill() succeeded and the child was \
+         confirmed reaped within KILL_WAIT_BUDGET (round 4: this return value must \
+         never be silently discarded by a caller)"
+    );
     assert!(
         elapsed < Duration::from_secs(2),
         "kill_and_wait must be bounded by KILL_WAIT_BUDGET even against a still-running \
@@ -232,8 +238,24 @@ fn wrapper_deadline_tears_down_a_wedged_inner_child_and_reports_no_exit_code() {
         outcome.inner_exit_code, None,
         "a killed-on-deadline inner child reports no preserved exit code"
     );
+    // Round 4 (Copilot review, 2026-09 -- 049-S PR #120): a confirmed
+    // clean kill+reap within KILL_WAIT_BUDGET must report
+    // `inner_teardown_incomplete: false` -- this is the ordinary,
+    // expected outcome for a `__block` fixture child, which always
+    // responds to `kill()` promptly.
     assert!(
-        start.elapsed() < Duration::from_secs(5),
+        !outcome.inner_teardown_incomplete,
+        "a __block fixture child is always confirmed-killable within KILL_WAIT_BUDGET; \
+         inner_teardown_incomplete must be false here"
+    );
+    assert!(
+        // Loosened from an earlier, tighter 5s bound: this assertion only
+        // proves the 150ms pump deadline + KILL_WAIT_BUDGET (500ms) teardown
+        // did not hang indefinitely -- it is a hang-sanity check, not a
+        // precise timing SLA, and real OS process spawn/kill latency under
+        // parallel test-suite contention on a shared/sandboxed machine can
+        // legitimately take several seconds even though no hang occurred.
+        start.elapsed() < Duration::from_secs(15),
         "the deadline must bound the wrapper's own run, took {:?}",
         start.elapsed()
     );

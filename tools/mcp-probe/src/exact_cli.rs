@@ -320,7 +320,14 @@ fn version_probe_failure_reason(
 fn identify_copilot(exe_path: &str, deadline: Duration) -> CopilotIdentity {
     let mut command = Command::new(exe_path);
     command.arg("--version");
-    let (stdout_bytes, timed_out, exit_code, stdout_truncated, spawn_error) =
+    // `teardown_incomplete` is deliberately not folded into
+    // `version_probe_failure_reason`'s inputs: that function already
+    // fails closed on `timed_out` alone (a `--version` probe that had to
+    // be torn down is already treated as a failed identity probe
+    // regardless of whether the teardown itself could be confirmed), so
+    // there is no additional caller-visible outcome this flag would
+    // change here (Copilot review, 2026-09 -- 049-S PR #120, round 4).
+    let (stdout_bytes, timed_out, exit_code, stdout_truncated, spawn_error, _teardown_incomplete) =
         spawn_and_capture(command, deadline);
     let probe_failure = version_probe_failure_reason(
         timed_out,
@@ -505,9 +512,19 @@ fn spawn_piped_child(mut command: Command) -> io::Result<ChildGuard> {
 /// applied here to the exact Copilot CLI child. Returns the captured
 /// stdout bytes, whether the deadline elapsed, the child's exit code
 /// (`None` only when the deadline elapsed and teardown killed it instead
-/// of it exiting on its own), and whether the stdout capture was
-/// truncated at [`MAX_CAPTURE_BYTES`].
-fn pump_and_reap(guard: &mut ChildGuard, deadline: Duration) -> (Vec<u8>, bool, Option<i32>, bool) {
+/// of it exiting on its own), whether the stdout capture was truncated
+/// at [`MAX_CAPTURE_BYTES`], and -- ONLY on a deadline/spawn-error
+/// teardown path, `false` otherwise -- whether `ChildGuard::kill_and_wait`
+/// could not confirm the child was reaped within
+/// `process::KILL_WAIT_BUDGET`. That last flag is never silently
+/// discarded here as it previously was (Copilot review, 2026-09 -- 049-S
+/// PR #120, round 4): every `kill_and_wait` call site records its result
+/// into this return tuple's `teardown_incomplete` slot instead of a bare
+/// `guard.kill_and_wait();` statement.
+fn pump_and_reap(
+    guard: &mut ChildGuard,
+    deadline: Duration,
+) -> (Vec<u8>, bool, Option<i32>, bool, bool) {
     let capture = CaptureSink::new();
     let pump_config = PumpConfig {
         deadline: Some(deadline),
@@ -521,44 +538,64 @@ fn pump_and_reap(guard: &mut ChildGuard, deadline: Duration) -> (Vec<u8>, bool, 
         None,
     );
 
-    let (timed_out, exit_code) = match pump {
+    let (timed_out, exit_code, teardown_incomplete) = match pump {
         Ok(outcome) if outcome.timed_out => {
-            guard.kill_and_wait();
-            (true, None)
+            let confirmed = guard.kill_and_wait();
+            (true, None, !confirmed)
         }
-        Ok(_) => (false, guard.wait().ok().and_then(|status| status.code())),
+        Ok(_) => (
+            false,
+            guard.wait().ok().and_then(|status| status.code()),
+            false,
+        ),
         Err(_) => {
-            guard.kill_and_wait();
-            (false, None)
+            let confirmed = guard.kill_and_wait();
+            (false, None, !confirmed)
         }
     };
 
     let (stdout_bytes, stdout_truncated) = capture.into_parts();
-    (stdout_bytes, timed_out, exit_code, stdout_truncated)
+    (
+        stdout_bytes,
+        timed_out,
+        exit_code,
+        stdout_truncated,
+        teardown_incomplete,
+    )
 }
 
 /// Spawns and bounded-captures `command` in one call, for callers (Gate
 /// 1) that need no concurrent sentinel watcher.
 ///
-/// Returns empty output, `timed_out: false`, `exit_code: None`, and
-/// `stdout_truncated: false` if the child could not even be spawned; the
-/// fifth element carries `Some(spawn error message)` in that exact case
-/// and `None` in every other case, so a caller that gates a causal
-/// classification on `exit_code`/`timed_out` alone (as plain process
-/// output) can still fail closed on an unlaunchable executable rather
-/// than silently treating it the same as an ordinary non-zero exit
-/// (Copilot review, 2026-09 -- 049-S PR #120).
+/// Returns empty output, `timed_out: false`, `exit_code: None`,
+/// `stdout_truncated: false`, and `teardown_incomplete: false` if the
+/// child could not even be spawned -- there is no child to fail to tear
+/// down; the fifth element carries `Some(spawn error message)` in that
+/// exact case and `None` in every other case, so a caller that gates a
+/// causal classification on `exit_code`/`timed_out` alone (as plain
+/// process output) can still fail closed on an unlaunchable executable
+/// rather than silently treating it the same as an ordinary non-zero
+/// exit (Copilot review, 2026-09 -- 049-S PR #120). The final element is
+/// [`pump_and_reap`]'s own `teardown_incomplete` flag, passed straight
+/// through unchanged.
 fn spawn_and_capture(
     command: Command,
     deadline: Duration,
-) -> (Vec<u8>, bool, Option<i32>, bool, Option<String>) {
+) -> (Vec<u8>, bool, Option<i32>, bool, Option<String>, bool) {
     match spawn_piped_child(command) {
         Ok(mut guard) => {
-            let (stdout_bytes, timed_out, exit_code, stdout_truncated) =
+            let (stdout_bytes, timed_out, exit_code, stdout_truncated, teardown_incomplete) =
                 pump_and_reap(&mut guard, deadline);
-            (stdout_bytes, timed_out, exit_code, stdout_truncated, None)
+            (
+                stdout_bytes,
+                timed_out,
+                exit_code,
+                stdout_truncated,
+                None,
+                teardown_incomplete,
+            )
         }
-        Err(err) => (Vec::new(), false, None, false, Some(err.to_string())),
+        Err(err) => (Vec::new(), false, None, false, Some(err.to_string()), false),
     }
 }
 
@@ -728,8 +765,13 @@ fn run_gate1(
     // truncation flag is not surfaced on `Gate1Outcome` (unlike
     // `LegOutcome`, see `run_leg`) since a bounded config-resolution
     // response truncating would already fail JSON parsing below and be
-    // reported via `parse_error`.
-    let (stdout_bytes, timed_out, exit_code, _stdout_truncated, spawn_error) =
+    // reported via `parse_error`. `teardown_incomplete` is similarly not
+    // surfaced here: Gate 1 already fails closed on `timed_out` alone
+    // two lines below (`if timed_out || exit_code != Some(0)`), so a
+    // deadline teardown that could not be confirmed produces the exact
+    // same `passed: false` outcome either way (Copilot review, 2026-09
+    // -- 049-S PR #120, round 4).
+    let (stdout_bytes, timed_out, exit_code, _stdout_truncated, spawn_error, _teardown_incomplete) =
         spawn_and_capture(command, deadline);
     let raw_stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     let expected_source_path = workspace
@@ -822,6 +864,18 @@ pub struct LegOutcome {
     /// treat `last_mcp_status`/`session_result_exit_code` as
     /// non-authoritative when this is `true`.
     pub stdout_truncated: bool,
+    /// `true` only when this leg's exact-CLI child had to be torn down
+    /// via [`pump_and_reap`]'s deadline/spawn-error path AND
+    /// `ChildGuard::kill_and_wait` could not confirm the child was
+    /// reaped within `process::KILL_WAIT_BUDGET`. `false` for a normal
+    /// completion or a confirmed-clean teardown. This is purely
+    /// informational (never changes `timed_out`/`exit_code` or any pass
+    /// classification) -- it exists so a caller inspecting a
+    /// deadline-teardown leg can distinguish "confirmed killed" from
+    /// "kill attempted, reap unconfirmed" instead of that distinction
+    /// being silently discarded (Copilot review, 2026-09 -- 049-S PR
+    /// #120, round 4).
+    pub inner_teardown_incomplete: bool,
 }
 
 fn extract_last_mcp_status(stdout: &str, entry_name: &str) -> (Option<String>, Option<i64>) {
@@ -920,53 +974,57 @@ fn run_leg(
         .arg("-s")
         .env(ENV_INHERITANCE_SENTINEL_VAR, sentinel_value);
 
-    let (stdout_bytes, timed_out, exit_code, sentinel_observation, stdout_truncated) =
-        match spawn_piped_child(command) {
-            Ok(mut guard) => {
-                let watcher = guard.pid().map(|pid| {
-                    spawn_sentinel_watcher(
-                        pid,
-                        wrapper_exe.to_path_buf(),
-                        sentinel_value.to_string(),
-                    )
-                });
-                let (stdout_bytes, timed_out, exit_code, stdout_truncated) =
-                    pump_and_reap(&mut guard, deadline);
-                let sentinel_observation = match watcher {
-                    Some((stop_flag, handle)) => {
-                        stop_flag.store(true, Ordering::SeqCst);
-                        handle.join().unwrap_or_else(|_| {
-                            SentinelObservation::not_observed(
-                                "the sentinel-inheritance watcher thread panicked; treated as \
+    let (
+        stdout_bytes,
+        timed_out,
+        exit_code,
+        sentinel_observation,
+        stdout_truncated,
+        inner_teardown_incomplete,
+    ) = match spawn_piped_child(command) {
+        Ok(mut guard) => {
+            let watcher = guard.pid().map(|pid| {
+                spawn_sentinel_watcher(pid, wrapper_exe.to_path_buf(), sentinel_value.to_string())
+            });
+            let (stdout_bytes, timed_out, exit_code, stdout_truncated, teardown_incomplete) =
+                pump_and_reap(&mut guard, deadline);
+            let sentinel_observation = match watcher {
+                Some((stop_flag, handle)) => {
+                    stop_flag.store(true, Ordering::SeqCst);
+                    handle.join().unwrap_or_else(|_| {
+                        SentinelObservation::not_observed(
+                            "the sentinel-inheritance watcher thread panicked; treated as \
                                  a best-effort non-observation, never as proof of \
                                  non-inheritance",
-                            )
-                        })
-                    }
-                    None => SentinelObservation::not_observed(
-                        "this leg's exact-CLI child process id was unavailable; \
+                        )
+                    })
+                }
+                None => SentinelObservation::not_observed(
+                    "this leg's exact-CLI child process id was unavailable; \
                          sentinel-inheritance watching was skipped",
-                    ),
-                };
-                (
-                    stdout_bytes,
-                    timed_out,
-                    exit_code,
-                    sentinel_observation,
-                    stdout_truncated,
-                )
-            }
-            Err(_) => (
-                Vec::new(),
-                false,
-                None,
-                SentinelObservation::not_observed(
-                    "the exact-CLI child process could not be spawned for this leg; \
-                     sentinel-inheritance watching was skipped",
                 ),
-                false,
+            };
+            (
+                stdout_bytes,
+                timed_out,
+                exit_code,
+                sentinel_observation,
+                stdout_truncated,
+                teardown_incomplete,
+            )
+        }
+        Err(_) => (
+            Vec::new(),
+            false,
+            None,
+            SentinelObservation::not_observed(
+                "the exact-CLI child process could not be spawned for this leg; \
+                     sentinel-inheritance watching was skipped",
             ),
-        };
+            false,
+            false,
+        ),
+    };
     let stdout_text = String::from_utf8_lossy(&stdout_bytes).into_owned();
     let (last_mcp_status, session_result_exit_code) =
         extract_last_mcp_status(&stdout_text, entry_name);
@@ -990,6 +1048,7 @@ fn run_leg(
         wrapper_evidence,
         wrapper_evidence_read_error,
         stdout_truncated,
+        inner_teardown_incomplete,
     }
 }
 
@@ -1441,6 +1500,145 @@ fn identity_failure_message(
     None
 }
 
+/// Returns a `"blocked"` classification message if `pass`'s own,
+/// freshly-captured [`PassOutcome::copilot_identity`] (captured
+/// immediately before that pass's control/treatment legs run -- see
+/// [`run_pass`]) carries an `identify_error`, or if its content hash
+/// does not match `baseline_identity` (the SAME build's identity already
+/// captured once, pre-Gate-1, by [`run_exact_cli`], and already proven
+/// free of `identify_error` there by [`identity_failure_message`] before
+/// Gate 1 or any pass ever ran). Recording a per-pass identity probe (as
+/// [`PassOutcome`] already did) is not the same as enforcing it: without
+/// this check, a `--version` failure/timeout during the pass, or the
+/// executable changing on disk between the pre-Gate-1 capture and this
+/// pass's own probe, would silently let [`classify_pass`]'s causal
+/// classification for that pass be accepted for a CLI identity that was
+/// never actually proven at the time this specific pass ran (Copilot
+/// review, 2026-09 -- 049-S PR #120, round 4).
+fn pass_identity_failure_message(
+    pass: &PassOutcome,
+    baseline_identity: &CopilotIdentity,
+) -> Option<String> {
+    if let Some(err) = &pass.copilot_identity.identify_error {
+        return Some(format!(
+            "blocked: the {build} build's Copilot CLI identity could not be recorded/hashed \
+             immediately before its causal pass ({err}); exact CLI identity is unproved for \
+             this pass, so its causal classification is not accepted (056.001-T: \"Fail closed \
+             when ... exact CLI identity ... is unproved\").",
+            build = pass.build
+        ));
+    }
+    if pass.copilot_identity.content_hash_hex != baseline_identity.content_hash_hex {
+        return Some(format!(
+            "blocked: the {build} build's Copilot CLI content hash captured immediately before \
+             its causal pass ({observed}) does not match the identity recorded before Gate 1 \
+             ({expected}); the executable changed mid-run, so this pass's causal classification \
+             is not accepted (056.001-T: \"Fail closed when ... exact CLI identity ... is \
+             unproved\").",
+            build = pass.build,
+            observed = pass.copilot_identity.content_hash_hex,
+            expected = baseline_identity.content_hash_hex
+        ));
+    }
+    None
+}
+
+/// Runs the mandatory "affected" pass plus the optional "stable" pass
+/// (only when `args.stable_copilot_exe` is set), returning them in a
+/// single vector in that fixed order. Extracted out of
+/// [`run_exact_cli`] purely to keep that function under
+/// `clippy::too_many_lines` (Copilot review, 2026-09 -- 049-S PR #120,
+/// round 4).
+fn run_all_passes(
+    workspace: &ProbeWorkspace,
+    args: &ExactCliArgs,
+    wrapper_exe_path: &Path,
+    sentinel_value: &str,
+) -> Vec<PassOutcome> {
+    let mut passes = vec![run_pass(
+        "affected",
+        &args.copilot_exe,
+        workspace,
+        args,
+        wrapper_exe_path,
+        sentinel_value,
+    )];
+    if let Some(stable_exe) = &args.stable_copilot_exe {
+        passes.push(run_pass(
+            "stable",
+            stable_exe,
+            workspace,
+            args,
+            wrapper_exe_path,
+            sentinel_value,
+        ));
+    }
+    passes
+}
+
+/// Collects, for every pass in `passes`, the fail-closed message (if
+/// any) produced by comparing its own freshly-captured
+/// `copilot_identity` against the SAME build's identity already proven
+/// error-free pre-Gate-1 ([`pass_identity_failure_message`]). Extracted
+/// out of [`run_exact_cli`] purely to keep that function under
+/// `clippy::too_many_lines` after the round-4 pass-identity-enforcement
+/// fix (Copilot review, 2026-09 -- 049-S PR #120, round 4).
+fn collect_pass_identity_failures(
+    passes: &[PassOutcome],
+    affected_identity: &CopilotIdentity,
+    stable_identity: Option<&CopilotIdentity>,
+) -> Vec<String> {
+    passes
+        .iter()
+        .filter_map(|pass| {
+            let baseline = if pass.build == "stable" {
+                stable_identity
+            } else {
+                Some(affected_identity)
+            };
+            baseline.and_then(|baseline_identity| {
+                pass_identity_failure_message(pass, baseline_identity)
+            })
+        })
+        .collect()
+}
+
+/// Builds the `terminal: "blocked"` [`ExactCliOutcome`] for an identity
+/// failure -- either the pre-Gate-1 `identity_failure_message` check
+/// (call with `passes: Vec::new()`) or a post-Gate-1 per-pass identity
+/// failure via [`collect_pass_identity_failures`] -- mirroring
+/// [`gate1_failure_outcome`]'s extraction pattern. Extracted purely to
+/// keep [`run_exact_cli`] under `clippy::too_many_lines` (Copilot
+/// review, 2026-09 -- 049-S PR #120, round 4).
+#[allow(clippy::too_many_arguments)]
+fn identity_blocked_outcome(
+    run_nonce: String,
+    sentinel_value: String,
+    workspace_root: PathBuf,
+    affected_identity: CopilotIdentity,
+    stable_identity: Option<CopilotIdentity>,
+    inner_identity: CopilotIdentity,
+    gate1: Gate1Outcome,
+    passes: Vec<PassOutcome>,
+    pass_identity_failures: Vec<String>,
+) -> ExactCliOutcome {
+    ExactCliOutcome {
+        run_nonce,
+        sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
+        sentinel_value,
+        manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
+        workspace_root,
+        affected_identity,
+        stable_identity,
+        inner_identity,
+        gate1,
+        passes,
+        ordered_cause_classification: pass_identity_failures,
+        h3_b_candidate: false,
+        terminal: "blocked",
+    }
+}
+
 /// Runs the full `exact-cli` classification: creates the isolated probe
 /// workspace, records both target identities, proves Gate 1, and -- only
 /// if Gate 1 passes -- runs the bounded one-shot control/treatment
@@ -1512,21 +1710,17 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
         stable_identity.as_ref(),
         &inner_identity,
     ) {
-        return Ok(ExactCliOutcome {
+        return Ok(identity_blocked_outcome(
             run_nonce,
-            sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
             sentinel_value,
-            manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
-            workspace_root: workspace.root().to_path_buf(),
+            workspace.root().to_path_buf(),
             affected_identity,
             stable_identity,
             inner_identity,
             gate1,
-            passes: Vec::new(),
-            ordered_cause_classification: vec![message],
-            h3_b_candidate: false,
-            terminal: "blocked",
-        });
+            Vec::new(),
+            vec![message],
+        ));
     }
 
     if !gate1.passed {
@@ -1541,22 +1735,28 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
         ));
     }
 
-    let mut passes = vec![run_pass(
-        "affected",
-        &args.copilot_exe,
-        &workspace,
-        args,
-        &wrapper_exe_path,
-        &sentinel_value,
-    )];
-    if let Some(stable_exe) = &args.stable_copilot_exe {
-        passes.push(run_pass(
-            "stable",
-            stable_exe,
-            &workspace,
-            args,
-            &wrapper_exe_path,
-            &sentinel_value,
+    let passes = run_all_passes(&workspace, args, &wrapper_exe_path, &sentinel_value);
+
+    // Fail closed on any pass's OWN freshly-captured identity before
+    // accepting its causal classification: recording
+    // `PassOutcome::copilot_identity` is not the same as enforcing it
+    // (Copilot review, 2026-09 -- 049-S PR #120, round 4). Each pass is
+    // checked against the SAME build's identity already proven
+    // error-free pre-Gate-1 above.
+    let pass_identity_failures =
+        collect_pass_identity_failures(&passes, &affected_identity, stable_identity.as_ref());
+
+    if !pass_identity_failures.is_empty() {
+        return Ok(identity_blocked_outcome(
+            run_nonce,
+            sentinel_value,
+            workspace.root().to_path_buf(),
+            affected_identity,
+            stable_identity,
+            inner_identity,
+            gate1,
+            passes,
+            pass_identity_failures,
         ));
     }
 
@@ -1827,6 +2027,7 @@ mod tests {
                 wrapper_evidence: None,
                 wrapper_evidence_read_error: None,
                 stdout_truncated: false,
+                inner_teardown_incomplete: false,
             },
             treatment: LegOutcome {
                 leg: Leg::Treatment,
@@ -1846,6 +2047,7 @@ mod tests {
                 })),
                 wrapper_evidence_read_error: None,
                 stdout_truncated: false,
+                inner_teardown_incomplete: false,
             },
         };
         let causes = classify_pass(&pass);
@@ -1873,6 +2075,7 @@ mod tests {
             })),
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
+            inner_teardown_incomplete: false,
         };
         let pass = PassOutcome {
             build: "affected".to_string(),
@@ -1903,6 +2106,7 @@ mod tests {
             wrapper_evidence: None,
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
+            inner_teardown_incomplete: false,
         };
         let pass = PassOutcome {
             build: "affected".to_string(),
@@ -2088,6 +2292,58 @@ mod tests {
         )
         .expect("either failure must fail closed");
         assert!(message.contains("exact target Copilot CLI's identity"));
+    }
+
+    fn minimal_leg(leg: Leg) -> LegOutcome {
+        LegOutcome {
+            leg,
+            exit_code: Some(0),
+            timed_out: false,
+            last_mcp_status: Some("connected".to_string()),
+            session_result_exit_code: Some(0),
+            sentinel_observation: SentinelObservation::not_observed("test fixture: unused"),
+            wrapper_evidence: None,
+            wrapper_evidence_read_error: None,
+            stdout_truncated: false,
+            inner_teardown_incomplete: false,
+        }
+    }
+
+    fn pass_with_identity(build: &str, copilot_identity: CopilotIdentity) -> PassOutcome {
+        PassOutcome {
+            build: build.to_string(),
+            copilot_identity,
+            control: minimal_leg(Leg::Control),
+            treatment: minimal_leg(Leg::Treatment),
+        }
+    }
+
+    #[test]
+    fn pass_identity_failure_message_is_none_when_hash_matches_baseline() {
+        let pass = pass_with_identity("affected", identity_ok("copilot.exe"));
+        assert!(pass_identity_failure_message(&pass, &identity_ok("copilot.exe")).is_none());
+    }
+
+    #[test]
+    fn pass_identity_failure_message_fires_when_pass_probe_itself_failed() {
+        let pass = pass_with_identity("affected", identity_failed("copilot.exe"));
+        let message = pass_identity_failure_message(&pass, &identity_ok("copilot.exe"))
+            .expect("a failed per-pass identity probe must fail closed");
+        assert!(message.contains("could not be recorded/hashed"));
+        assert!(message.contains("affected"));
+    }
+
+    #[test]
+    fn pass_identity_failure_message_fires_on_content_hash_mismatch() {
+        let mut changed = identity_ok("copilot.exe");
+        changed.content_hash_hex = "cafef00d".to_string();
+        let pass = pass_with_identity("stable", changed);
+        let message = pass_identity_failure_message(&pass, &identity_ok("copilot.exe")).expect(
+            "a content-hash mismatch between the pre-Gate-1 and per-pass identity \
+                     probes must fail closed",
+        );
+        assert!(message.contains("does not match the identity recorded before Gate 1"));
+        assert!(message.contains("stable"));
     }
 
     #[test]
@@ -2276,6 +2532,7 @@ mod tests {
             })),
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
+            inner_teardown_incomplete: false,
         };
         assert!(
             !leg_has_valid_initialize(&leg),
@@ -2298,6 +2555,7 @@ mod tests {
             })),
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
+            inner_teardown_incomplete: false,
         };
         assert!(!leg_has_valid_initialize(&leg));
     }
@@ -2317,6 +2575,7 @@ mod tests {
             })),
             wrapper_evidence_read_error: None,
             stdout_truncated: false,
+            inner_teardown_incomplete: false,
         };
         assert!(leg_has_valid_initialize(&leg));
     }
