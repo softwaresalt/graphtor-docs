@@ -641,6 +641,21 @@ five `053-S` members close.
 
 #### T2g — (Conditional on discriminator mismatch) Generator type/transport discriminator reconciliation — backlog `056.026-T`
 
+> **DISPOSITION 2026-09-13 (Stage remediation cycle 1; wording corrected cycle 2):
+> `056.026-T` CLOSED `not-needed: no type/transport mismatch evidenced`.** No
+> controlled exact-CLI evidence proves a functional `type`/`transport` mismatch.
+> The evidenced regression cause is H3-A (server-side rmcp pre-`initialize`
+> `server/discover` rejection). E1 (see
+> `docs/decisions/2026-08-29-mcp-serve-discover-preinitialize-evidence.md`) proves
+> ONLY that a graphtor server process reached STDIO startup before that
+> server-side rejection; it does NOT record the launching configuration or
+> discriminator field and therefore does NOT prove whether `type` or `transport`
+> was honored (and the current `.mcp.json` shape is not historical proof). Mismatch
+> remains NOT PROVEN. `056.019-T` (H3-B terminal) disclaims selecting this task
+> absent independent mismatch evidence. The wording below is retained as the SAFE
+> reactivation contract only. Record:
+> `docs/decisions/2026-09-13-stage-056.026-T-disposition-not-needed.md`.
+
 * **Unconditional-when-evidenced, split from T2d.** Whenever exact-CLI evidence
   (T0 / `056.019-T`) shows a docs/generator `type` vs `transport` mismatch,
   reconcile the generated stdio discriminator in `managed_server_value` to the
@@ -649,12 +664,21 @@ five `053-S` members close.
   evidenced`.
 * **Depends only on `056.019-T`** (the completed evidence classification), NOT on
   `056.017-T`/`056.024-T`/`056.018-T`. Owns ONLY the `managed_server_value`
-  discriminator field plus exact legacy-shape recognition (`is_exact_legacy_shape`,
-  recognizing both the pre- and post-reconciliation discriminator) and focused
-  generation tests. No cwd field (`056.008-T`), no mutation API (`056.017-T`), no
+  discriminator field plus exact legacy-shape recognition (`is_exact_legacy_shape`)
+  and focused generation tests. SAFE-CONTRACT (P1 data-loss guard): the surgical
+  edit changes the emitted discriminator ONLY in `managed_server_value` and the
+  MARKED test fixture; already-installed refresh flows through the
+  discriminator-agnostic `x-graphtor-managed` MARKER path; the UNMARKED-legacy
+  `is_exact_legacy_shape` recognizer stays `transport`-only and MUST retain its
+  exact-key-count==3 + narrow `LEGACY_COMMAND_SHAPES` guard so user-authored
+  `type`-shaped or 4-key both-discriminator entries stay `Collision` (never
+  migrated/pruned). No cwd field (`056.008-T`), no mutation API (`056.017-T`), no
   recovery, no delivery.
 * **Test-first:** red-then-green three groups — discriminator reconciled to the
-  CLI-honored field; legacy-shape recognition across old and new discriminator;
+  CLI-honored field (exactly one key); recognition + fail-closed preservation
+  (MARKED old-discriminator entry auto-refreshes then is idempotent; a genuine
+  unmarked pre-marker `transport` graphtor entry still migrates; unmarked user
+  `type`-shaped / 4-key both-discriminator entries stay `Collision`);
   containment/marker preservation. This proves generation only.
 * **Co-selection assembly rule:** when both the discriminator remedy and the
   H0a/H3-B1 cwd remedy (`056.008-T`) are selected into one managed-config
