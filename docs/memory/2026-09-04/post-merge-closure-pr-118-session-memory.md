@@ -142,12 +142,23 @@ needed.
   fully-completed, merged PR #118 work, no external citations found via
   `git grep`. **Explicitly excluding** both 2026-09-03 files
   (`checkpoint-quarantine-recurrence-controls-memory.md`,
-  `checkpoint-resolution-and-049s-topology-blocker-memory.md`) from
+  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+  — compacted 2026-09-13) from
   compaction: the second is cited by the resolution file's own reference,
   and — more importantly — the resolution file documents *open, unresolved*
   work (the `049-S` topology blocker) that a future session needs intact
-  and undisturbed, not a completed unit eligible for compaction. This
-  memory file (the one you are reading) is also excluded — it describes
+  and undisturbed, not a completed unit eligible for compaction.
+  **Superseded 2026-09-13**: the `049-S` topology blocker this exclusion
+  guarded against was resolved when `049-S` itself shipped (PR #120,
+  `98f8fc63024095b0b8697545986646a564677917`) and completed post-merge
+  closure; the file was consequently compacted as part of that closure's
+  own P-020 compact-context pass (see
+  `docs/memory/compacted/2026-09-13-049-s-compacted.md` and
+  `docs/closure/2026-09-13-049-s-mcp-serve-handshake-post-merge-closure.md`).
+  This "do not compact" instruction described this session's own
+  point-in-time stance and is retained verbatim as a historical record; it
+  no longer reflects the current, correct disposition of that file.
+  This memory file (the one you are reading) is also excluded — it describes
   this closure session itself, which is not yet complete pending closure PR
   review/approval.
 * Update this closure artifact's `compaction` frontmatter field to `done`
@@ -172,9 +183,15 @@ needed.
   violation).
 * Do not touch `048-S`/`049-S` in any way beyond read-only verification.
 * Do not compact or otherwise edit
-  `checkpoint-resolution-and-049s-topology-blocker-memory.md` — it documents
+  `docs/archive/memory/2026-09-13/2026-09-03-checkpoint-resolution-and-049s-topology-blocker-memory.md`
+  (compacted 2026-09-13) — it documents
   live, unresolved cross-shipment work that must remain discoverable and
   intact for whichever future session remediates the `049-S` blocker.
+  **Superseded 2026-09-13**: this decision described this session's own
+  point-in-time stance; the `049-S` blocker was subsequently resolved when
+  `049-S` shipped, and the file was compacted as part of `049-S`'s own
+  post-merge closure. See the annotation above this section for the full
+  cross-reference.
 * Do not create, edit, or archive any of the 4 pre-existing P-021 stash
   entries — cite them read-only in the closure Follow-Up Handoff section.
 * ~~Treat the launcher scripts and `.mcp.json`/config changes as

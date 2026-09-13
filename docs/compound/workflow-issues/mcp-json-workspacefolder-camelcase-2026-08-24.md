@@ -11,7 +11,8 @@ message: "BACKLOGIT_WORKSPACE=${workspace_folder} (literal, unsubstituted)"
 file_path: ".mcp.json"
 citations:
   - "PR #106: chore/stage-049-S, Ship commit 1af5239"
-  - "docs/memory/2026-08-24/049-s-ship-pr-106-lifecycle-memory.md"
+  - "docs/archive/memory/2026-09-13/2026-08-24-049-s-ship-pr-106-lifecycle-memory.md"
+  - "compacted 2026-09-13, see docs/memory/compacted/2026-09-13-049-s-compacted.md"
 tags:
   - "mcp"
   - "vscode"
