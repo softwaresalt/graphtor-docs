@@ -837,6 +837,25 @@ pub fn run_read_only_server_control(cwd: &Path, timeout: Duration) -> ServerCont
                      of the session"
                 .to_string(),
         }
+    } else if shutdown.teardown_incomplete {
+        // Copilot review (PR #120, round 9): a teardown that could not
+        // confirm reap (see `ServeSession::shutdown` / round 8's
+        // `SessionShutdown::teardown_incomplete`) detaches the drain
+        // threads rather than joining them, so `shutdown.stderr` may
+        // only reflect whatever had already been captured at the
+        // moment of detachment -- an *unbounded* stream, unlike the
+        // fixed-size `stderr_truncated` cap above, but the exact same
+        // "the boundary check did not see the full stream" problem
+        // this function's doc contract requires treating as
+        // indeterminate rather than a clean `Control` success.
+        ServerControlOutcome::Diagnostic {
+            stage: "boundary-check",
+            detail: "session teardown could not confirm the child had terminated, so \
+                     stderr capture may be an incomplete snapshot; the read-only \
+                     boundary claim cannot be verified for whatever was not yet \
+                     captured at the moment teardown gave up"
+                .to_string(),
+        }
     } else {
         match result {
             Ok(success) => ServerControlOutcome::Control(success),
