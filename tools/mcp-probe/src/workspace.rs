@@ -210,32 +210,134 @@ pub struct McpServerEntrySpec {
 
 /// The complete set of paths this module produced inside one exclusively
 /// created `logs/probe/<nonce>` workspace.
+///
+/// Every field is deliberately private (Copilot review, 2026-09 -- 049-S
+/// PR #120, round 3): the only way to obtain a `ProbeWorkspace` is
+/// [`create_probe_workspace`], which proves containment before this type
+/// is ever constructed. If every field were `pub` (as originally
+/// written), any caller could build an arbitrary `ProbeWorkspace` value
+/// -- with `root` pointing anywhere at all -- and hand it to
+/// [`remove_probe_workspace`], which trusted that field verbatim. Read
+/// access for legitimate callers is still available through the
+/// accessor methods below; only direct field construction and mutation
+/// are closed off.
 #[derive(Debug, Clone)]
 pub struct ProbeWorkspace {
     /// The exclusively created `logs/probe/<nonce>` directory itself --
     /// the only path [`remove_probe_workspace`] is ever allowed to
     /// remove.
-    pub root: PathBuf,
-    pub nonce: String,
+    root: PathBuf,
+    nonce: String,
     /// Shared by both the control and treatment `.mcp.json` entries (see
     /// module docs: wrapper args are byte-identical on both legs), so
     /// this is deliberately one path, not two.
-    pub evidence_output: PathBuf,
-    pub control_dir: PathBuf,
-    pub control_config_path: PathBuf,
-    pub treatment_dir: PathBuf,
-    pub treatment_config_path: PathBuf,
+    evidence_output: PathBuf,
+    control_dir: PathBuf,
+    control_config_path: PathBuf,
+    treatment_dir: PathBuf,
+    treatment_config_path: PathBuf,
     /// The candidate working directory written into the treatment leg's
     /// `cwd` -- the canonical repository root.
-    pub treatment_cwd: PathBuf,
-    pub ancestor_dir: PathBuf,
+    treatment_cwd: PathBuf,
+    ancestor_dir: PathBuf,
     /// The deliberately invalid/sentinel ancestor `.mcp.json`.
-    pub ancestor_config_path: PathBuf,
-    pub ancestor_run_dir: PathBuf,
+    ancestor_config_path: PathBuf,
+    ancestor_run_dir: PathBuf,
     /// The intended, valid, temporary child `.mcp.json` that must shadow
     /// (not merge with) `ancestor_config_path`.
-    pub ancestor_run_config_path: PathBuf,
-    pub ancestor_run_evidence_output: PathBuf,
+    ancestor_run_config_path: PathBuf,
+    ancestor_run_evidence_output: PathBuf,
+    /// The canonical repository root this workspace was proven to live
+    /// under at creation time. Retained (never re-derived from `root`,
+    /// which is itself already inside it) solely so
+    /// [`remove_probe_workspace`] can revalidate containment
+    /// immediately before its one destructive call, rather than trusting
+    /// a value that could in principle have been carried across a
+    /// long-lived run.
+    canonical_repo_root: PathBuf,
+}
+
+impl ProbeWorkspace {
+    /// The exclusively created `logs/probe/<nonce>` directory itself.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The `--run-nonce` this workspace was created with.
+    #[must_use]
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+
+    /// The evidence-output path shared by both the control and treatment
+    /// `.mcp.json` entries.
+    #[must_use]
+    pub fn evidence_output(&self) -> &Path {
+        &self.evidence_output
+    }
+
+    /// The control leg's own directory.
+    #[must_use]
+    pub fn control_dir(&self) -> &Path {
+        &self.control_dir
+    }
+
+    /// The control leg's generated `.mcp.json` path.
+    #[must_use]
+    pub fn control_config_path(&self) -> &Path {
+        &self.control_config_path
+    }
+
+    /// The treatment leg's own directory.
+    #[must_use]
+    pub fn treatment_dir(&self) -> &Path {
+        &self.treatment_dir
+    }
+
+    /// The treatment leg's generated `.mcp.json` path.
+    #[must_use]
+    pub fn treatment_config_path(&self) -> &Path {
+        &self.treatment_config_path
+    }
+
+    /// The candidate working directory written into the treatment leg's
+    /// `cwd` -- the canonical repository root.
+    #[must_use]
+    pub fn treatment_cwd(&self) -> &Path {
+        &self.treatment_cwd
+    }
+
+    /// The ancestor config-discovery fixture's own directory.
+    #[must_use]
+    pub fn ancestor_dir(&self) -> &Path {
+        &self.ancestor_dir
+    }
+
+    /// The deliberately invalid/sentinel ancestor `.mcp.json`.
+    #[must_use]
+    pub fn ancestor_config_path(&self) -> &Path {
+        &self.ancestor_config_path
+    }
+
+    /// The ancestor fixture's nested child run directory.
+    #[must_use]
+    pub fn ancestor_run_dir(&self) -> &Path {
+        &self.ancestor_run_dir
+    }
+
+    /// The intended, valid, temporary child `.mcp.json` that must shadow
+    /// (not merge with) [`Self::ancestor_config_path`].
+    #[must_use]
+    pub fn ancestor_run_config_path(&self) -> &Path {
+        &self.ancestor_run_config_path
+    }
+
+    /// The ancestor fixture's own evidence-output path.
+    #[must_use]
+    pub fn ancestor_run_evidence_output(&self) -> &Path {
+        &self.ancestor_run_evidence_output
+    }
 }
 
 #[cfg(windows)]
@@ -578,6 +680,7 @@ pub fn create_probe_workspace(
         ancestor_run_dir,
         ancestor_run_config_path,
         ancestor_run_evidence_output,
+        canonical_repo_root,
     })
 }
 
@@ -595,10 +698,25 @@ pub fn create_probe_workspace(
 /// operator-approval discipline as any other destructive cleanup in this
 /// repository's workflow policies before ever calling it.
 ///
+/// # Containment is revalidated here, not just trusted from creation
+///
+/// `ProbeWorkspace`'s fields are private and the only public constructor
+/// is [`create_probe_workspace`], which already proves containment once.
+/// This function proves it again -- reusing the exact same
+/// `canonicalize` + `symlink_metadata` [`validate_containment`] check --
+/// immediately before its one destructive call, rather than trusting a
+/// value that could in principle have been carried across a long-lived
+/// run (Copilot review, 2026-09 -- 049-S PR #120, round 3).
+///
 /// # Errors
 ///
-/// Returns an error if the underlying recursive removal fails (for
+/// Returns [`WorkspaceError::ContainmentEscape`] or
+/// [`WorkspaceError::ReparsePoint`] if `workspace.root` no longer
+/// canonicalizes under the repository root it was created in, and
+/// [`WorkspaceError::Io`] if the underlying recursive removal fails (for
 /// example, a file still open elsewhere).
-pub fn remove_probe_workspace(workspace: &ProbeWorkspace) -> std::io::Result<()> {
-    fs::remove_dir_all(&workspace.root)
+pub fn remove_probe_workspace(workspace: &ProbeWorkspace) -> Result<(), WorkspaceError> {
+    validate_containment(&workspace.canonical_repo_root, &workspace.root)?;
+    fs::remove_dir_all(&workspace.root)?;
+    Ok(())
 }

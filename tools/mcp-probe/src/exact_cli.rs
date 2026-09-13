@@ -252,7 +252,9 @@ pub fn fnv1a_64(bytes: &[u8]) -> u64 {
 /// Recorded identity of one exact target Copilot executable: its path,
 /// best-effort `--version` output, and a diagnostic (non-cryptographic)
 /// content digest/length. `identify_error` is populated, never panics,
-/// when the executable cannot be read from disk.
+/// when the executable cannot be read from disk, OR when the
+/// `--version` probe itself failed to spawn, timed out, was truncated,
+/// or exited with a non-zero/missing status ([`version_probe_failure_reason`]).
 #[derive(Debug, Clone)]
 pub struct CopilotIdentity {
     pub exe_path: String,
@@ -260,6 +262,37 @@ pub struct CopilotIdentity {
     pub content_hash_hex: String,
     pub content_len: u64,
     pub identify_error: Option<String>,
+}
+
+/// Turns a `--version` probe's raw outcome into a fail-closed
+/// `identify_error` reason, or `None` when the probe genuinely succeeded
+/// (a clean, non-timed-out, zero-exit run with a fully captured
+/// stdout). A readable-but-unlaunchable, wedged, crashing, or
+/// truncated-output CLI must never be treated as having a proven exact
+/// identity just because its executable bytes were still readable from
+/// disk -- `identify_copilot` folds this into `identify_error` exactly
+/// like a `fs::read` failure, so `identity_failure_message` fails closed
+/// on it too (Copilot review, 2026-09 -- 049-S PR #120, round 3).
+fn version_probe_failure_reason(
+    timed_out: bool,
+    exit_code: Option<i32>,
+    stdout_truncated: bool,
+    spawn_error: Option<&str>,
+) -> Option<String> {
+    if let Some(err) = spawn_error {
+        return Some(format!("version probe failed to spawn: {err}"));
+    }
+    if timed_out {
+        return Some("version probe timed out before exiting".to_string());
+    }
+    match exit_code {
+        None => Some("version probe exited without an observable status".to_string()),
+        Some(code) if code != 0 => Some(format!("version probe exited with nonzero status {code}")),
+        Some(_) if stdout_truncated => {
+            Some("version probe output was truncated before it could be fully captured".to_string())
+        }
+        Some(_) => None,
+    }
 }
 
 /// Invokes `exe_path --version` through the same deadline-governed
@@ -276,11 +309,25 @@ pub struct CopilotIdentity {
 /// This preserves stderr's diagnostic visibility without pulling
 /// stderr-capture plumbing into the pump primitive shared by every other
 /// call site.
+///
+/// A readable-but-unlaunchable or wedged CLI must never be reported as
+/// having a proven identity merely because its bytes could still be
+/// read from disk: [`version_probe_failure_reason`] turns a version
+/// probe spawn error, timeout, truncation, or non-zero/missing exit
+/// status into `identify_error` so [`identity_failure_message`] fails
+/// closed on it exactly as it already does for an unreadable executable
+/// (Copilot review, 2026-09 -- 049-S PR #120, round 3).
 fn identify_copilot(exe_path: &str, deadline: Duration) -> CopilotIdentity {
     let mut command = Command::new(exe_path);
     command.arg("--version");
-    let (stdout_bytes, timed_out, exit_code, _stdout_truncated, _spawn_error) =
+    let (stdout_bytes, timed_out, exit_code, stdout_truncated, spawn_error) =
         spawn_and_capture(command, deadline);
+    let probe_failure = version_probe_failure_reason(
+        timed_out,
+        exit_code,
+        stdout_truncated,
+        spawn_error.as_deref(),
+    );
     let version_output = if timed_out || exit_code.is_none() {
         None
     } else {
@@ -298,7 +345,7 @@ fn identify_copilot(exe_path: &str, deadline: Duration) -> CopilotIdentity {
             version_output,
             content_hash_hex: format!("{:016x}", fnv1a_64(&bytes)),
             content_len: bytes.len() as u64,
-            identify_error: None,
+            identify_error: probe_failure,
         },
         Err(err) => CopilotIdentity {
             exe_path: exe_path.to_string(),
@@ -671,7 +718,7 @@ fn run_gate1(
     let mut command = Command::new(copilot_exe);
     command
         .arg("-C")
-        .arg(&workspace.ancestor_run_dir)
+        .arg(workspace.ancestor_run_dir())
         .arg("mcp")
         .arg("get")
         .arg(entry_name)
@@ -686,7 +733,7 @@ fn run_gate1(
         spawn_and_capture(command, deadline);
     let raw_stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     let expected_source_path = workspace
-        .ancestor_run_config_path
+        .ancestor_run_config_path()
         .to_string_lossy()
         .into_owned();
 
@@ -968,8 +1015,8 @@ fn run_pass(
     let control = run_leg(
         Leg::Control,
         copilot_exe,
-        &workspace.control_dir,
-        &workspace.evidence_output,
+        workspace.control_dir(),
+        workspace.evidence_output(),
         &args.entry_name,
         &args.prompt,
         sentinel_value,
@@ -979,8 +1026,8 @@ fn run_pass(
     let treatment = run_leg(
         Leg::Treatment,
         copilot_exe,
-        &workspace.treatment_dir,
-        &workspace.evidence_output,
+        workspace.treatment_dir(),
+        workspace.evidence_output(),
         &args.entry_name,
         &args.prompt,
         sentinel_value,
@@ -1470,7 +1517,7 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
             sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
             sentinel_value,
             manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
-            workspace_root: workspace.root.clone(),
+            workspace_root: workspace.root().to_path_buf(),
             affected_identity,
             stable_identity,
             inner_identity,
@@ -1486,7 +1533,7 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
         return Ok(gate1_failure_outcome(
             run_nonce,
             sentinel_value,
-            workspace.root.clone(),
+            workspace.root().to_path_buf(),
             affected_identity,
             stable_identity,
             inner_identity,
@@ -1520,7 +1567,7 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
         sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
         sentinel_value,
         manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
-        workspace_root: workspace.root.clone(),
+        workspace_root: workspace.root().to_path_buf(),
         affected_identity,
         stable_identity,
         inner_identity,
@@ -1543,6 +1590,47 @@ mod tests {
         let c = fnv1a_64(b"hello world!");
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn version_probe_failure_reason_is_none_for_a_clean_zero_exit() {
+        assert!(version_probe_failure_reason(false, Some(0), false, None).is_none());
+    }
+
+    #[test]
+    fn version_probe_failure_reason_fires_on_spawn_error() {
+        let reason = version_probe_failure_reason(false, None, false, Some("no such file"));
+        assert!(reason.unwrap().contains("failed to spawn"));
+    }
+
+    #[test]
+    fn version_probe_failure_reason_fires_on_timeout() {
+        let reason = version_probe_failure_reason(true, None, false, None);
+        assert!(reason.unwrap().contains("timed out"));
+    }
+
+    #[test]
+    fn version_probe_failure_reason_fires_on_missing_exit_status() {
+        let reason = version_probe_failure_reason(false, None, false, None);
+        assert!(reason.unwrap().contains("without an observable status"));
+    }
+
+    #[test]
+    fn version_probe_failure_reason_fires_on_nonzero_exit() {
+        let reason = version_probe_failure_reason(false, Some(1), false, None);
+        assert!(reason.unwrap().contains("nonzero status 1"));
+    }
+
+    #[test]
+    fn version_probe_failure_reason_fires_on_truncated_output_even_with_a_zero_exit() {
+        let reason = version_probe_failure_reason(false, Some(0), true, None);
+        assert!(reason.unwrap().contains("truncated"));
+    }
+
+    #[test]
+    fn version_probe_failure_reason_prioritizes_spawn_error_over_every_other_signal() {
+        let reason = version_probe_failure_reason(true, Some(1), true, Some("spawn boom"));
+        assert!(reason.unwrap().contains("failed to spawn"));
     }
 
     #[test]

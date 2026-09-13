@@ -22,7 +22,8 @@ use crate::transport::{run_duplex_pump, PumpConfig, PumpOutcome};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Name of the sentinel environment variable used to prove downstream
 /// environment-variable inheritance for `056.006-T`'s selection
@@ -33,6 +34,43 @@ use std::time::Duration;
 /// only: never used to alter the wire or gate any behavior in this
 /// crate.
 pub const ENV_INHERITANCE_SENTINEL_VAR: &str = "MCP_PROBE_ENV_INHERITANCE_SENTINEL";
+
+/// Bounded budget for the poll-based wait after `kill()` inside
+/// [`ChildGuard::kill_and_wait`] and its `Drop` teardown, mirroring
+/// `crate::transport`'s `DELIVERY_DRAIN_BUDGET` bounded-wait pattern. A
+/// killed child is normally reaped almost immediately once the OS
+/// delivers the termination signal, but an unconditional blocking
+/// `Child::wait()` has no such guarantee against every possible
+/// wedged-process scenario -- bounding the wait keeps teardown itself
+/// (and therefore the caller, or `Drop` at scope exit) from blocking
+/// forever (Copilot review, 2026-09 -- 049-S PR #120, round 3).
+const KILL_WAIT_BUDGET: Duration = Duration::from_millis(500);
+
+/// Poll interval used while bounding the wait after `kill()`.
+const KILL_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Polls [`Child::try_wait`] on `child` until it reports the child has
+/// exited, or `budget` elapses, whichever comes first. Never blocks past
+/// `budget`. Returns `true` if the child was observed to have exited
+/// within budget; `false` if the budget elapsed while the child was
+/// still running, or if `try_wait` itself returned an OS-level error
+/// (treated as "could not confirm exit", never propagated -- teardown
+/// callers already discard the underlying `kill`/`wait` errors).
+fn bounded_wait_after_kill(child: &mut Child, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => return true,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(KILL_WAIT_POLL_INTERVAL);
+            }
+            Err(_) => return false,
+        }
+    }
+}
 
 /// RAII guard around a directly-owned [`std::process::Child`]: kills and
 /// (bounded) waits on every outcome -- normal drop, error return, or
@@ -105,11 +143,15 @@ impl ChildGuard {
     /// Explicitly kills and (bounded) waits on the owned child right
     /// now, ahead of `Drop`. Used by a caller (for example a deadline
     /// path) that needs teardown to have completed before proceeding,
-    /// rather than only guaranteed-eventually via `Drop`.
+    /// rather than only guaranteed-eventually via `Drop`. The wait is
+    /// bounded by [`KILL_WAIT_BUDGET`] via [`bounded_wait_after_kill`]:
+    /// an unconditional blocking `wait()` here could hang this call (and
+    /// its caller) forever if the killed child never becomes reapable
+    /// (Copilot review, 2026-09 -- 049-S PR #120, round 3).
     pub fn kill_and_wait(&mut self) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = bounded_wait_after_kill(child, KILL_WAIT_BUDGET);
         }
     }
 }
@@ -118,7 +160,7 @@ impl Drop for ChildGuard {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = bounded_wait_after_kill(&mut child, KILL_WAIT_BUDGET);
         }
     }
 }
@@ -250,8 +292,10 @@ pub struct WrapperArgs {
 /// # Errors
 ///
 /// Returns an error string when an unknown flag is encountered, a flag
-/// requiring a value has none following it, or a required flag
-/// (`--inner-exe`, `--evidence-output`, `--run-nonce`) is absent.
+/// requiring a value has none following it, a required flag
+/// (`--inner-exe`, `--evidence-output`, `--run-nonce`) is absent, or
+/// `--evidence-output` fails [`validate_evidence_output_path`] (not an
+/// absolute path, or contains a `..` path-traversal component).
 pub fn parse_wrapper_args(args: impl Iterator<Item = String>) -> Result<WrapperArgs, String> {
     let mut inner_exe = None;
     let mut inner_args = Vec::new();
@@ -277,12 +321,63 @@ pub fn parse_wrapper_args(args: impl Iterator<Item = String>) -> Result<WrapperA
         }
     }
 
+    let evidence_output = evidence_output.ok_or("--evidence-output is required")?;
+    validate_evidence_output_path(&evidence_output)?;
+
     Ok(WrapperArgs {
         inner_exe: inner_exe.ok_or("--inner-exe is required")?,
         inner_args,
-        evidence_output: evidence_output.ok_or("--evidence-output is required")?,
+        evidence_output,
         run_nonce: run_nonce.ok_or("--run-nonce is required")?,
     })
+}
+
+/// Rejects an `--evidence-output` value that is not a "safe" path shape:
+/// relative (deferring resolution to an ambient, caller-controlled
+/// current working directory rather than the path this crate itself
+/// resolved), or containing a literal `..` parent-dir component (a
+/// path-traversal escape attempt). Every legitimately generated
+/// evidence-output path is always built by
+/// `workspace::create_probe_workspace` as an already-canonicalized,
+/// absolute, `..`-free path under the caller's own isolated probe
+/// workspace; this check exists purely to fail closed on anything else
+/// BEFORE this module ever opens/creates/renames a file at that path.
+/// Previously the parsed value was accepted verbatim with no shape
+/// validation at all, so a crafted or tampered `--evidence-output`
+/// argument could direct a write anywhere on the filesystem the running
+/// process had permission to reach (Copilot review, 2026-09 -- 049-S PR
+/// #120, round 3).
+///
+/// This is deliberately a shape check, not a full
+/// `workspace::validate_containment`-style canonicalize-and-compare: the
+/// target file need not exist yet (this function runs before
+/// `write_evidence_output` ever creates it), and the wrapper subcommand
+/// has no independent notion of "the expected workspace root" to compare
+/// against -- it only ever receives this single path via argv. Rejecting
+/// non-absolute and traversal-bearing shapes closes the concrete escape
+/// vectors without requiring that additional context.
+///
+/// # Errors
+///
+/// Returns an error string (matching this module's other argv validation
+/// error style) if `path` is not absolute, or if any component is a
+/// literal `..` parent-dir segment.
+fn validate_evidence_output_path(path: &str) -> Result<(), String> {
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        return Err(format!(
+            "--evidence-output must be an absolute path, got '{path}'"
+        ));
+    }
+    if candidate
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "--evidence-output must not contain a '..' path-traversal component, got '{path}'"
+        ));
+    }
+    Ok(())
 }
 
 /// Full configuration for [`run_wrapper`]. `pump_deadline` is a
@@ -470,4 +565,65 @@ where
         evidence_valid,
         evidence_write_error,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `bounded_wait_after_kill`'s own process-spawning regression
+    // coverage lives in the integration test
+    // `kill_and_wait_tears_down_a_still_running_child_within_a_bounded_wall_clock_window`
+    // in `tests/process_test.rs`, not here: a unit test's own
+    // `std::env::current_exe()`/`CARGO_BIN_EXE_mcp-probe` story does not
+    // resolve to this crate's real `main.rs` dispatch from inside the
+    // `cargo test` harness binary that runs THIS module -- see
+    // `crate::transport`'s module doc comment for the full rationale,
+    // which applies identically here. This module only covers the pure,
+    // non-process-spawning logic added alongside that fix.
+
+    #[test]
+    fn validate_evidence_output_path_accepts_a_clean_absolute_path() {
+        let candidate = if cfg!(windows) {
+            r"C:\probe-workspace\evidence.json"
+        } else {
+            "/probe-workspace/evidence.json"
+        };
+        assert!(validate_evidence_output_path(candidate).is_ok());
+    }
+
+    #[test]
+    fn validate_evidence_output_path_rejects_a_relative_path() {
+        let err = validate_evidence_output_path("evidence.json")
+            .expect_err("a relative path must be rejected");
+        assert!(err.contains("absolute"), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn validate_evidence_output_path_rejects_a_traversal_component() {
+        let candidate = if cfg!(windows) {
+            r"C:\probe-workspace\..\..\secrets\evidence.json"
+        } else {
+            "/probe-workspace/../../secrets/evidence.json"
+        };
+        let err = validate_evidence_output_path(candidate)
+            .expect_err("a '..' component must be rejected even inside an absolute path");
+        assert!(err.contains(".."), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn parse_wrapper_args_surfaces_the_evidence_output_validation_error() {
+        let args = vec![
+            "--inner-exe".to_string(),
+            "some-exe".to_string(),
+            "--evidence-output".to_string(),
+            "relative/evidence.json".to_string(),
+            "--run-nonce".to_string(),
+            "nonce".to_string(),
+        ];
+        let err = parse_wrapper_args(args.into_iter()).expect_err(
+            "a relative --evidence-output must fail parsing, not just be accepted verbatim",
+        );
+        assert!(err.contains("absolute"), "unexpected message: {err}");
+    }
 }

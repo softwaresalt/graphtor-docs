@@ -32,14 +32,15 @@ fn fresh_fake_repo_root(label: &str) -> PathBuf {
 /// A real, spawnable, near-instantly-exiting stand-in for the exact
 /// target Copilot CLI: this crate's own compiled binary (via the same
 /// `CARGO_BIN_EXE_mcp-probe` pattern already used by
-/// `process_test.rs`/`transport_test.rs`/`evidence_test.rs`). Any
-/// argument list this test drives it with (`--version`, or Gate 1's own
-/// `-C <dir> mcp get <entry> --json`) is an unrecognized subcommand to
-/// `main.rs`'s own dispatch, so it exits quickly with a non-zero code
-/// without ever hanging. Because the file genuinely exists and is
-/// readable, `identify_copilot` always succeeds against it (no
-/// `identify_error`), letting a test isolate an `identify_inner_exe`
-/// failure as the sole identity-check trigger.
+/// `process_test.rs`/`transport_test.rs`/`evidence_test.rs`). `main.rs`
+/// gives `--version` a real, successful (exit 0) responder specifically
+/// so this stand-in's own identity always succeeds (no
+/// `identify_error`), letting a test isolate an `identify_inner_exe` (or
+/// Gate 1) failure as the sole trigger; every OTHER argument list this
+/// test drives it with (Gate 1's own `-C <dir> mcp get <entry> --json`,
+/// or a full `run_leg` invocation) is still an unrecognized subcommand
+/// to `main.rs`'s dispatch, so it still exits quickly with a non-zero
+/// code without ever hanging.
 fn spawnable_fast_exiting_exe() -> String {
     env!("CARGO_BIN_EXE_mcp-probe").to_string()
 }

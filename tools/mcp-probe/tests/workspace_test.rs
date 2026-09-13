@@ -60,16 +60,16 @@ fn create_probe_workspace_produces_the_expected_layout() {
     let workspace = create_probe_workspace(&repo_root, "nonce-layout", &entry)
         .expect("create_probe_workspace should succeed for a fresh nonce");
 
-    assert!(workspace.root.is_dir());
-    assert!(workspace.control_dir.is_dir());
-    assert!(workspace.treatment_dir.is_dir());
-    assert!(workspace.ancestor_dir.is_dir());
-    assert!(workspace.ancestor_run_dir.is_dir());
-    assert!(workspace.control_config_path.is_file());
-    assert!(workspace.treatment_config_path.is_file());
-    assert!(workspace.ancestor_config_path.is_file());
-    assert!(workspace.ancestor_run_config_path.is_file());
-    assert_eq!(workspace.nonce, "nonce-layout");
+    assert!(workspace.root().is_dir());
+    assert!(workspace.control_dir().is_dir());
+    assert!(workspace.treatment_dir().is_dir());
+    assert!(workspace.ancestor_dir().is_dir());
+    assert!(workspace.ancestor_run_dir().is_dir());
+    assert!(workspace.control_config_path().is_file());
+    assert!(workspace.treatment_config_path().is_file());
+    assert!(workspace.ancestor_config_path().is_file());
+    assert!(workspace.ancestor_run_config_path().is_file());
+    assert_eq!(workspace.nonce(), "nonce-layout");
 
     // The workspace root itself must be exactly logs/probe/<nonce> under
     // the CANONICAL repo root (U-7: every returned `ProbeWorkspace` path
@@ -78,17 +78,17 @@ fn create_probe_workspace_produces_the_expected_layout() {
     // regardless of what form the caller's `repo_root` took).
     let canonical_repo_root = std::fs::canonicalize(&repo_root).expect("canonicalize repo root");
     let canonical_workspace_root =
-        std::fs::canonicalize(&workspace.root).expect("canonicalize workspace root");
+        std::fs::canonicalize(workspace.root()).expect("canonicalize workspace root");
     assert!(canonical_workspace_root.starts_with(&canonical_repo_root));
     assert_eq!(
-        workspace.root,
+        workspace.root(),
         canonical_repo_root
             .join("logs")
             .join("probe")
             .join("nonce-layout")
     );
 
-    let control_doc = read_json(&workspace.control_config_path);
+    let control_doc = read_json(workspace.control_config_path());
     let control_entry = server_entry(&control_doc, &entry.entry_name);
     assert_eq!(control_entry["type"], "stdio");
     assert_eq!(control_entry["command"], entry.wrapper_exe);
@@ -120,8 +120,8 @@ fn control_and_treatment_wrapper_args_are_byte_identical_except_for_cwd() {
     let workspace = create_probe_workspace(&repo_root, "nonce-parity", &entry)
         .expect("create_probe_workspace should succeed");
 
-    let control_doc = read_json(&workspace.control_config_path);
-    let treatment_doc = read_json(&workspace.treatment_config_path);
+    let control_doc = read_json(workspace.control_config_path());
+    let treatment_doc = read_json(workspace.treatment_config_path());
     let control_entry = server_entry(&control_doc, &entry.entry_name);
     let treatment_entry = server_entry(&treatment_doc, &entry.entry_name);
 
@@ -144,7 +144,7 @@ fn control_and_treatment_wrapper_args_are_byte_identical_except_for_cwd() {
         .expect("cwd must be a string");
     let canonical_repo_root = std::fs::canonicalize(&repo_root).expect("canonicalize repo root");
     assert_eq!(treatment_cwd, canonical_repo_root.to_string_lossy());
-    assert_eq!(workspace.treatment_cwd, canonical_repo_root);
+    assert_eq!(workspace.treatment_cwd(), canonical_repo_root);
 
     let _ = std::fs::remove_dir_all(&repo_root);
 }
@@ -177,14 +177,14 @@ fn ancestor_fixture_is_invalid_and_ancestor_run_fixture_is_valid() {
         .expect("create_probe_workspace should succeed");
 
     let ancestor_bytes =
-        std::fs::read(&workspace.ancestor_config_path).expect("read ancestor sentinel config");
+        std::fs::read(workspace.ancestor_config_path()).expect("read ancestor sentinel config");
     let ancestor_parse: Result<serde_json::Value, _> = serde_json::from_slice(&ancestor_bytes);
     assert!(
         ancestor_parse.is_err(),
         "ancestor config must be deliberately invalid JSON, a CLI that reads it must fail loudly"
     );
 
-    let ancestor_run_doc = read_json(&workspace.ancestor_run_config_path);
+    let ancestor_run_doc = read_json(workspace.ancestor_run_config_path());
     let ancestor_run_entry = server_entry(&ancestor_run_doc, &entry.entry_name);
     assert_eq!(ancestor_run_entry["type"], "stdio");
     assert!(
@@ -196,12 +196,13 @@ fn ancestor_fixture_is_invalid_and_ancestor_run_fixture_is_valid() {
     // The ancestor-run leg owns its own separate evidence_output, distinct
     // from the shared control/treatment one.
     assert_ne!(
-        workspace.ancestor_run_evidence_output, workspace.evidence_output,
+        workspace.ancestor_run_evidence_output(),
+        workspace.evidence_output(),
         "the ancestor-run leg must not share the control/treatment evidence_output path"
     );
     assert!(workspace
-        .ancestor_run_dir
-        .starts_with(&workspace.ancestor_dir));
+        .ancestor_run_dir()
+        .starts_with(workspace.ancestor_dir()));
 
     let _ = std::fs::remove_dir_all(&repo_root);
 }
@@ -456,9 +457,9 @@ fn generated_mcp_json_fixtures_are_created_owner_only() {
         .expect("create_probe_workspace should succeed");
 
     for path in [
-        &workspace.control_config_path,
-        &workspace.treatment_config_path,
-        &workspace.ancestor_run_config_path,
+        workspace.control_config_path(),
+        workspace.treatment_config_path(),
+        workspace.ancestor_run_config_path(),
     ] {
         let mode = std::fs::metadata(path)
             .unwrap_or_else(|err| panic!("metadata {}: {err}", path.display()))
@@ -477,7 +478,7 @@ fn generated_mcp_json_fixtures_are_created_owner_only() {
     // The deliberately-invalid ancestor sentinel carries no real
     // production data (a fixed, never-meant-to-parse constant), so it is
     // NOT subject to this owner-only requirement.
-    assert!(workspace.ancestor_config_path.is_file());
+    assert!(workspace.ancestor_config_path().is_file());
 
     let _ = std::fs::remove_dir_all(&repo_root);
 }

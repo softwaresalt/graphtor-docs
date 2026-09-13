@@ -10,11 +10,14 @@
 //! `056.020-T` owns only the core transport (exposed via the `mcp_probe`
 //! library target's `transport` module -- see `src/lib.rs`) and this thin
 //! entry point, plus the hidden, in-crate, platform-portable self-test
-//! helper modes below (`__echo` / `__block` / `__exit`). These helper
-//! modes are consumed by this crate's own black-box integration
-//! self-tests (`tools/mcp-probe/tests/`) via
-//! `env!("CARGO_BIN_EXE_mcp-probe")`, re-exec'ing this exact binary rather
-//! than an external OS-specific helper. `056.022-T` adds the versioned
+//! helper modes below (`__echo` / `__block` / `__exit`), plus a real
+//! `--version` responder used by this crate's own black-box tests as a
+//! spawnable, always-successful stand-in exact-target CLI (see
+//! `exact_cli::identify_copilot`). These helper modes are consumed by
+//! this crate's own black-box integration self-tests
+//! (`tools/mcp-probe/tests/`) via `env!("CARGO_BIN_EXE_mcp-probe")`,
+//! re-exec'ing this exact binary rather than an external OS-specific
+//! helper. `056.022-T` adds the versioned
 //! `wrapper` subcommand (composing process spawning/teardown onto the
 //! `056.020-T` transport -- see `src/process.rs`). `056.021-T` adds the
 //! isolated `logs/probe/<nonce>` workspace and control/treatment/ancestor
@@ -38,6 +41,22 @@ fn main() {
         Some("__exit") => run_exit_child(args),
         Some("wrapper") => run_wrapper_subcommand(args),
         Some("exact-cli") => run_exact_cli_subcommand(args),
+        // A genuine `--version` responder, not another hidden self-test
+        // mode: `exact_cli::identify_copilot` always probes an exact
+        // target CLI with the literal argument `--version` (never a
+        // `__`-prefixed self-test flag), and this crate's own compiled
+        // binary is used as a real, spawnable stand-in for that target
+        // in this crate's own black-box tests (see
+        // `tests/exact_cli_test.rs::spawnable_fast_exiting_exe`). Without
+        // this arm, that stand-in would fall through to the "unknown
+        // subcommand" branch below and exit non-zero, which -- after the
+        // round-3 fix that folds a failed version probe into
+        // `identify_error` -- would incorrectly report the stand-in's
+        // own identity as unproved (Copilot review, 2026-09 -- 049-S PR
+        // #120, round 3).
+        Some("--version") => {
+            println!("mcp-probe (056.020-T/056.022-T self-test build)");
+        }
         Some(other) => {
             eprintln!("mcp-probe: unknown subcommand '{other}'");
             std::process::exit(2);

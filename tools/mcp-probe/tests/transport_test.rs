@@ -79,6 +79,37 @@ fn spawn_block_child() -> TestChildGuard {
     TestChildGuard(child)
 }
 
+/// A child that exits almost immediately on its own, touching none of its
+/// piped stdio at all -- simulating an inner server that crashes or
+/// completes independent of whatever the client-facing side of the pump
+/// is doing.
+fn spawn_immediately_exiting_child() -> TestChildGuard {
+    let child = Command::new(probe_bin())
+        .arg("__exit")
+        .arg("0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn immediately-exiting fixture child");
+    TestChildGuard(child)
+}
+
+/// A `Read` whose `read` call never returns -- standing in for a real,
+/// external, still-open client stdin that has no reason to produce EOF
+/// (or any bytes at all) just because the wrapped child happened to
+/// exit. `std::thread::park` can spuriously wake, so this loops rather
+/// than parking only once.
+struct NeverEofReader;
+
+impl std::io::Read for NeverEofReader {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            std::thread::park();
+        }
+    }
+}
+
 /// A `Write` sink that accumulates bytes behind an `Arc<Mutex<_>>` so the
 /// test thread can inspect them after the pump completes.
 #[derive(Clone, Default)]
@@ -197,6 +228,52 @@ fn deadline_signals_without_hanging_on_a_wedged_child() {
         start.elapsed() < Duration::from_secs(5),
         "deadline must bound the wait even against a wedged child, took {:?}",
         start.elapsed()
+    );
+}
+
+/// Regression for Copilot review thread 5 (2026-09 -- 049-S PR #120,
+/// round 3): production `wrapper` runs configure NO deadline at all
+/// (`PumpConfig::deadline: None`, exactly like this test), so before
+/// this fix a child that exited on its own while `client_to_child` was
+/// still blocked reading a never-closing "incoming" would hang
+/// `run_duplex_pump` (and therefore `run_wrapper`) forever -- the
+/// deadline-based escape hatch above never applies with no deadline
+/// configured. This proves the independent child-exit detection closes
+/// that gap even with `deadline: None`.
+#[test]
+fn a_child_that_exits_on_its_own_with_no_deadline_configured_does_not_hang_the_pump() {
+    let mut guard = spawn_immediately_exiting_child();
+    let incoming = NeverEofReader;
+    let outgoing = CapturingWriter::default();
+    let config = PumpConfig {
+        buffer_size: 4096,
+        deadline: None,
+    };
+
+    let start = Instant::now();
+    let outcome =
+        run_duplex_pump(incoming, outgoing, &mut guard.0, &config, None).expect("duplex pump run");
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "an already-exited child must not leave the pump waiting on a never-closing \
+         client reader, even with no deadline configured, took {elapsed:?}"
+    );
+    assert!(
+        outcome.abandoned_after_child_exit,
+        "the pump must record that it gave up waiting on client_to_child after \
+         observing the child's own independent exit"
+    );
+    assert!(
+        !outcome.timed_out,
+        "this is a distinct signal from a caller-configured deadline, which was not \
+         configured here at all"
+    );
+    assert!(
+        outcome.child_to_client_closed,
+        "child_to_client should still have converged normally once the child's own \
+         stdout closed on exit"
     );
 }
 

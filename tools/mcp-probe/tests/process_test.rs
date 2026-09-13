@@ -169,6 +169,48 @@ fn child_guard_reaps_its_owned_child_even_when_the_holding_scope_panics() {
     );
 }
 
+/// Regression for Copilot review thread 2 (2026-09 -- 049-S PR #120,
+/// round 3): `ChildGuard::kill_and_wait` previously called the
+/// unconditional blocking `Child::wait()` right after `kill()`, with no
+/// bound at all -- if the killed child somehow never became reapable,
+/// this call (and therefore any caller relying on it, including
+/// `Drop`) could hang forever. `kill_and_wait` now routes through the
+/// internal `bounded_wait_after_kill` helper (`KILL_WAIT_BUDGET`), so
+/// this proves BOTH that teardown completes within a small, bounded
+/// wall-clock window against a still-running child AND that the child
+/// really was killed (not merely abandoned) by the time the call
+/// returns.
+#[test]
+fn kill_and_wait_tears_down_a_still_running_child_within_a_bounded_wall_clock_window() {
+    let child = Command::new(probe_bin())
+        .arg("__block")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn block fixture child");
+    let pid = child.id();
+    let mut guard = ChildGuard::new(child, "kill-and-wait-bound-test");
+
+    let start = std::time::Instant::now();
+    guard.kill_and_wait();
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "kill_and_wait must be bounded by KILL_WAIT_BUDGET even against a still-running \
+         child, took {elapsed:?}"
+    );
+
+    // Give the OS a moment to finish reaping/reporting after kill_and_wait
+    // returned, mirroring the panic test's own post-teardown check above.
+    std::thread::sleep(Duration::from_millis(300));
+    let observer = SysinfoProcessObserver::new();
+    assert!(
+        observer.observe(pid).is_none(),
+        "kill_and_wait must have actually killed the child, but pid {pid} is still observable"
+    );
+}
+
 // --- Scenario 2: deadline/error teardown by the direct owned handle ---
 
 #[test]

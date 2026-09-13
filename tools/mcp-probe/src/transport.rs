@@ -71,6 +71,20 @@ const DELIVERY_CHANNEL_CAPACITY: usize = 64;
 /// round 2).
 const DELIVERY_DRAIN_BUDGET: Duration = Duration::from_millis(250);
 
+/// Bounded grace window `run_duplex_pump` gives its two pump directions
+/// to converge naturally, once `child` itself has been observed to have
+/// already exited on its own while at least one direction was still
+/// running. This is DISTINCT from `PumpConfig::deadline` (an optional,
+/// caller-configured, whole-session wall-clock bound): this budget
+/// applies unconditionally, deadline configured or not, and is keyed off
+/// the child's own OS-level exit rather than elapsed session time. It
+/// exists specifically so a production `wrapper` run (which configures
+/// no deadline at all) still cannot hang forever if the child it wraps
+/// exits while `client_to_child` remains blocked reading the real,
+/// external, still-open client stdin (Copilot review, 2026-09 -- 049-S
+/// PR #120, round 3).
+const CHILD_EXIT_GRACE_BUDGET: Duration = Duration::from_millis(250);
+
 /// Default per-read buffer size, in bytes, for both pump directions.
 const DEFAULT_PUMP_BUFFER_SIZE: usize = 8192;
 
@@ -98,13 +112,15 @@ impl Default for PumpConfig {
 
 /// Outcome of one full-duplex pump session.
 ///
-/// Four independent, orthogonal boolean outcome flags is over
+/// Five independent, orthogonal boolean outcome flags is over
 /// `clippy::pedantic`'s default `struct_excessive_bools` threshold, but
 /// each one reports a genuinely separate yes/no fact about this one
 /// pump run (which half closed, whether the deadline fired, whether the
-/// diagnostic delivery worker fully drained) -- there is no shared state
-/// machine or mutually exclusive grouping among them that a two-variant
-/// enum would clarify; that refactor would only add indirection here.
+/// diagnostic delivery worker fully drained, whether the child's own
+/// independent exit forced early abandonment) -- there is no shared
+/// state machine or mutually exclusive grouping among them that a
+/// two-variant enum would clarify; that refactor would only add
+/// indirection here.
 #[derive(Debug, Default, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct PumpOutcome {
@@ -148,6 +164,27 @@ pub struct PumpOutcome {
     /// incomplete and must not be reported as cleanly `valid` (Copilot
     /// review thread H, 2026-09 -- 049-S PR #120, round 2).
     pub delivery_drain_incomplete: bool,
+    /// `true` when `child` was observed to have already exited on its
+    /// own while at least one pump direction had not yet finished, that
+    /// direction still had not converged after
+    /// [`CHILD_EXIT_GRACE_BUDGET`], and this function therefore gave up
+    /// waiting on it rather than blocking forever. This is DISTINCT from
+    /// `timed_out`: `timed_out` means the CALLER's own configured
+    /// wall-clock `PumpConfig::deadline` elapsed, whereas this means the
+    /// wrapped child itself exited and a pump direction simply never
+    /// reached its own natural EOF afterward (typically
+    /// `client_to_child`, blocked reading a real, external, still-open
+    /// client stdin that has no reason to close just because this
+    /// child happened to exit). Always `false` when both directions
+    /// closed on their own, or when a configured deadline fired first.
+    /// A caller must treat `true` here as a signal that the still-open
+    /// direction's byte/close accounting may be incomplete, exactly
+    /// like a deadline timeout -- but, unlike a deadline timeout, the
+    /// child itself already exited normally, so its real exit code
+    /// remains available via an ordinary (fast, non-blocking) `wait()`
+    /// rather than requiring a forced kill (Copilot review, 2026-09 --
+    /// 049-S PR #120, round 3).
+    pub abandoned_after_child_exit: bool,
 }
 
 /// Spawns a background delivery worker that drains a bounded channel and
@@ -265,6 +302,29 @@ fn pump_one_direction<R: Read, W: Write>(
     (total, dropped)
 }
 
+/// Takes ownership of `child`'s piped stdio handles. Extracted from
+/// `run_duplex_pump` purely to keep that function within
+/// `clippy::pedantic`'s function-length threshold -- behavior
+/// (including the error case) is unchanged from being inlined there.
+fn take_child_pipes(
+    child: &mut Child,
+) -> io::Result<(
+    std::process::ChildStdin,
+    std::process::ChildStdout,
+    Option<std::process::ChildStderr>,
+)> {
+    let child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child stdin not piped"))?;
+    let child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child stdout not piped"))?;
+    let child_stderr = child.stderr.take();
+    Ok((child_stdin, child_stdout, child_stderr))
+}
+
 /// Runs the core synchronous, full-duplex byte pump between `incoming`
 /// (the client-facing reader; production callers pass `io::stdin()`),
 /// `outgoing` (the client-facing writer; production callers pass
@@ -304,15 +364,7 @@ where
     R: Read + Send + 'static,
     W: Write + Send + 'static,
 {
-    let child_stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child stdin not piped"))?;
-    let child_stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child stdout not piped"))?;
-    let child_stderr = child.stderr.take();
+    let (child_stdin, child_stdout, child_stderr) = take_child_pipes(child)?;
 
     let delivery = copy_hook.map(spawn_delivery_worker);
     let stdin_tx = delivery.as_ref().map(|(tx, _)| tx.clone());
@@ -358,6 +410,9 @@ where
     let mut stdin_pump_done = false;
     let mut stdout_pump_done = false;
     let poll_interval = Duration::from_millis(5);
+    // First observed instant the child was seen to have exited early;
+    // see `child_exit_abandon_deadline_elapsed`'s doc comment for why.
+    let mut child_exit_observed_at: Option<Instant> = None;
 
     loop {
         stdin_pump_done = stdin_pump_done || client_to_child.is_finished();
@@ -370,6 +425,10 @@ where
                 outcome.timed_out = true;
                 break;
             }
+        }
+        if child_exit_abandon_deadline_elapsed(child, &mut child_exit_observed_at) {
+            outcome.abandoned_after_child_exit = true;
+            break;
         }
         thread::sleep(poll_interval);
     }
@@ -455,6 +514,43 @@ where
     join_stderr_thread(stderr_handle, outcome.timed_out);
 
     Ok(outcome)
+}
+
+/// Checks whether `child` has already exited on its own, and, once that
+/// is first observed, whether [`CHILD_EXIT_GRACE_BUDGET`] has since
+/// elapsed. Records the first-observed instant into
+/// `child_exit_observed_at` (a no-op on every subsequent call once it is
+/// already `Some`). Extracted from `run_duplex_pump`'s main poll loop
+/// purely to keep that loop within `clippy::pedantic`'s function-length
+/// threshold -- behavior is unchanged from being inlined there.
+///
+/// Production `wrapper` runs configure no deadline at all (the outer
+/// bound is a caller concern -- see [`PumpConfig::deadline`]'s doc
+/// comment), so without this check a child that exits on its own while
+/// `client_to_child` is still blocked inside a plain `Read::read` on
+/// `incoming` (the real, external, still-open client stdin -- which has
+/// no reason to close just because this child happened to exit) would
+/// never be observed: neither pump thread ever becomes finished, and
+/// with no deadline configured `run_duplex_pump`'s own deadline check
+/// never fires either, so its main loop -- and therefore `run_wrapper`
+/// waiting on it -- would hang forever even though the inner process it
+/// was wrapping is already gone (Copilot review, 2026-09 -- 049-S PR
+/// #120, round 3). Detecting the child's own exit independently of the
+/// two pump threads, bounding how long the caller then waits for them to
+/// converge on their own, and giving up on whichever direction has not
+/// converged by then closes that gap without requiring every production
+/// caller to configure a deadline just to stay safe.
+fn child_exit_abandon_deadline_elapsed(
+    child: &mut Child,
+    child_exit_observed_at: &mut Option<Instant>,
+) -> bool {
+    if child_exit_observed_at.is_none() {
+        if let Ok(Some(_status)) = child.try_wait() {
+            *child_exit_observed_at = Some(Instant::now());
+        }
+    }
+    child_exit_observed_at
+        .is_some_and(|observed_at| observed_at.elapsed() >= CHILD_EXIT_GRACE_BUDGET)
 }
 
 /// Polls `handle` (if present) for completion within `budget`, without
