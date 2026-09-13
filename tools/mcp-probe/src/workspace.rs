@@ -511,7 +511,7 @@ pub fn create_probe_workspace(
     // component is joined onto it or created -- see
     // create_shared_dir_component_validated's doc comment for why this
     // must NOT be a single fs::create_dir_all call.
-    let logs_dir = repo_root.join("logs");
+    let logs_dir = canonical_repo_root.join("logs");
     create_shared_dir_component_validated(&canonical_repo_root, &logs_dir)?;
     let probe_root = logs_dir.join("probe");
     create_shared_dir_component_validated(&canonical_repo_root, &probe_root)?;

@@ -111,6 +111,14 @@ pub const MANUAL_VERIFICATION_INVOCATION: &str = "/mcp show graphtor-docs";
 const DEFAULT_ENTRY_NAME: &str = "graphtor-docs";
 const DEFAULT_LEG_DEADLINE_SECS: u64 = 45;
 const DEFAULT_GATE1_DEADLINE_SECS: u64 = 15;
+/// Absolute cap on bytes captured in memory from a child's stdout via
+/// [`CaptureSink`] (mirrors `tests/common/serve_driver.rs`'s
+/// `MAX_STDERR_CAPTURE_BYTES` bound). This is a *bounded* capture, never a
+/// ring buffer -- once the cap is reached, further bytes are silently
+/// discarded (never causing the pipe to back up) and the capture is
+/// flagged truncated rather than allowed to grow without limit for the
+/// entire deadline window.
+const MAX_CAPTURE_BYTES: usize = 262_144;
 const DEFAULT_PROMPT: &str = "Automated MCP connectivity diagnostic for the 056-F regression \
 investigation. Do not call any tools, do not perform any action, and do not answer any \
 question. Reply with exactly: DIAGNOSTIC_OK";
@@ -254,22 +262,35 @@ pub struct CopilotIdentity {
     pub identify_error: Option<String>,
 }
 
-fn identify_copilot(exe_path: &str) -> CopilotIdentity {
-    let version_output = Command::new(exe_path)
-        .arg("--version")
-        .output()
-        .ok()
-        .map(|output| {
-            let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
-            let stderr_text = String::from_utf8_lossy(&output.stderr);
-            if !stderr_text.trim().is_empty() {
-                if !combined.is_empty() {
-                    combined.push('\n');
-                }
-                combined.push_str(stderr_text.trim());
-            }
-            combined.trim().to_string()
-        });
+/// Invokes `exe_path --version` through the same deadline-governed
+/// `ChildGuard`/pump-and-reap composition [`run_leg`] uses for the exact
+/// Copilot CLI child, rather than a raw blocking `Command::output()` call.
+/// A wedged or intentionally hanging `--version` invocation is killed at
+/// `deadline` instead of blocking the entire probe run indefinitely.
+///
+/// Only stdout is captured into `version_output` (bounded, via
+/// [`CaptureSink`]); stderr is drained -- to this process's own stderr,
+/// same as every other child this crate spawns through
+/// [`run_duplex_pump`] -- rather than combined into the returned string,
+/// since the shared pump-and-reap primitive has no capture path for it.
+/// This preserves stderr's diagnostic visibility without pulling
+/// stderr-capture plumbing into the pump primitive shared by every other
+/// call site.
+fn identify_copilot(exe_path: &str, deadline: Duration) -> CopilotIdentity {
+    let mut command = Command::new(exe_path);
+    command.arg("--version");
+    let (stdout_bytes, timed_out, exit_code, _stdout_truncated) =
+        spawn_and_capture(command, deadline);
+    let version_output = if timed_out || exit_code.is_none() {
+        None
+    } else {
+        let text = String::from_utf8_lossy(&stdout_bytes).trim().to_string();
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    };
 
     match fs::read(exe_path) {
         Ok(bytes) => CopilotIdentity {
@@ -289,30 +310,64 @@ fn identify_copilot(exe_path: &str) -> CopilotIdentity {
     }
 }
 
-/// A `Write` sink that appends every write into a shared, lock-protected
-/// buffer -- used as `run_duplex_pump`'s `outgoing` side so the exact
-/// Copilot CLI child's own stdout is captured in memory rather than
-/// forwarded anywhere, without introducing a second pump implementation.
+/// Bounded buffer backing [`CaptureSink`]: never grows past
+/// [`MAX_CAPTURE_BYTES`]. Once the cap is reached, further bytes are
+/// discarded (the write still reports success to its caller -- a `Write`
+/// impl reporting the byte count it was asked to accept, never the count
+/// it actually retained, mirrors `tests/common/serve_driver.rs`'s
+/// `BoundedCapture` and keeps the pump's own write-side never observing
+/// an error solely because the cap was reached) and `truncated` is set.
+#[derive(Debug, Default)]
+struct CaptureBuf {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+impl CaptureBuf {
+    fn push(&mut self, data: &[u8]) {
+        if self.truncated {
+            return;
+        }
+        let remaining = MAX_CAPTURE_BYTES.saturating_sub(self.bytes.len());
+        if data.len() > remaining {
+            self.bytes.extend_from_slice(&data[..remaining]);
+            self.truncated = true;
+        } else {
+            self.bytes.extend_from_slice(data);
+        }
+    }
+}
+
+/// A `Write` sink that appends every write into a shared, lock-protected,
+/// size-bounded buffer -- used as `run_duplex_pump`'s `outgoing` side so
+/// the exact Copilot CLI child's own stdout is captured in memory rather
+/// than forwarded anywhere, without introducing a second pump
+/// implementation. Bounded (see [`CaptureBuf`]) so a verbose, misbehaving,
+/// or adversarial child cannot grow the wrapper's memory without limit
+/// for the entire leg deadline window.
 #[derive(Clone, Default)]
-struct CaptureSink(Arc<Mutex<Vec<u8>>>);
+struct CaptureSink(Arc<Mutex<CaptureBuf>>);
 
 impl CaptureSink {
     fn new() -> Self {
         Self::default()
     }
 
-    fn into_bytes(self) -> Vec<u8> {
+    /// Consumes the sink, returning the captured bytes and whether the
+    /// capture was truncated at [`MAX_CAPTURE_BYTES`].
+    fn into_parts(self) -> (Vec<u8>, bool) {
         Arc::try_unwrap(self.0).map_or_else(
             |shared| {
-                shared
+                let guard = shared
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                (guard.bytes.clone(), guard.truncated)
             },
             |mutex| {
-                mutex
+                let buf = mutex
                     .into_inner()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                (buf.bytes, buf.truncated)
             },
         )
     }
@@ -323,7 +378,7 @@ impl Write for CaptureSink {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend_from_slice(buf);
+            .push(buf);
         Ok(buf.len())
     }
 
@@ -369,10 +424,11 @@ fn spawn_piped_child(mut command: Command) -> io::Result<ChildGuard> {
 /// kills the child via the SAME pump-then-reap-or-kill shape
 /// `crate::process::run_wrapper` already uses for its inner child,
 /// applied here to the exact Copilot CLI child. Returns the captured
-/// stdout bytes, whether the deadline elapsed, and the child's exit code
+/// stdout bytes, whether the deadline elapsed, the child's exit code
 /// (`None` only when the deadline elapsed and teardown killed it instead
-/// of it exiting on its own).
-fn pump_and_reap(guard: &mut ChildGuard, deadline: Duration) -> (Vec<u8>, bool, Option<i32>) {
+/// of it exiting on its own), and whether the stdout capture was
+/// truncated at [`MAX_CAPTURE_BYTES`].
+fn pump_and_reap(guard: &mut ChildGuard, deadline: Duration) -> (Vec<u8>, bool, Option<i32>, bool) {
     let capture = CaptureSink::new();
     let pump_config = PumpConfig {
         deadline: Some(deadline),
@@ -398,18 +454,19 @@ fn pump_and_reap(guard: &mut ChildGuard, deadline: Duration) -> (Vec<u8>, bool, 
         }
     };
 
-    (capture.into_bytes(), timed_out, exit_code)
+    let (stdout_bytes, stdout_truncated) = capture.into_parts();
+    (stdout_bytes, timed_out, exit_code, stdout_truncated)
 }
 
 /// Spawns and bounded-captures `command` in one call, for callers (Gate
 /// 1) that need no concurrent sentinel watcher.
 ///
-/// Returns empty output, `timed_out: false`, and `exit_code: None` if the
-/// child could not even be spawned.
-fn spawn_and_capture(command: Command, deadline: Duration) -> (Vec<u8>, bool, Option<i32>) {
+/// Returns empty output, `timed_out: false`, `exit_code: None`, and
+/// `stdout_truncated: false` if the child could not even be spawned.
+fn spawn_and_capture(command: Command, deadline: Duration) -> (Vec<u8>, bool, Option<i32>, bool) {
     match spawn_piped_child(command) {
         Ok(mut guard) => pump_and_reap(&mut guard, deadline),
-        Err(_) => (Vec::new(), false, None),
+        Err(_) => (Vec::new(), false, None, false),
     }
 }
 
@@ -565,7 +622,13 @@ fn run_gate1(
         .arg(entry_name)
         .arg("--json");
 
-    let (stdout_bytes, timed_out, exit_code) = spawn_and_capture(command, deadline);
+    // Gate 1's `mcp get --json` output is small structured JSON; the
+    // truncation flag is not surfaced on `Gate1Outcome` (unlike
+    // `LegOutcome`, see `run_leg`) since a bounded config-resolution
+    // response truncating would already fail JSON parsing below and be
+    // reported via `parse_error`.
+    let (stdout_bytes, timed_out, exit_code, _stdout_truncated) =
+        spawn_and_capture(command, deadline);
     let raw_stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     let expected_source_path = workspace
         .ancestor_run_config_path
@@ -647,6 +710,13 @@ pub struct LegOutcome {
     pub sentinel_observation: SentinelObservation,
     pub wrapper_evidence: Option<serde_json::Value>,
     pub wrapper_evidence_read_error: Option<String>,
+    /// Whether this leg's exact-CLI child stdout capture was truncated
+    /// at [`MAX_CAPTURE_BYTES`] (see [`CaptureSink`]). A truncated
+    /// capture means [`extract_last_mcp_status`] may have missed a later
+    /// status transition that arrived after the cap -- callers should
+    /// treat `last_mcp_status`/`session_result_exit_code` as
+    /// non-authoritative when this is `true`.
+    pub stdout_truncated: bool,
 }
 
 fn extract_last_mcp_status(stdout: &str, entry_name: &str) -> (Option<String>, Option<i64>) {
@@ -716,6 +786,20 @@ fn run_leg(
     // this exact path; ignore a missing source here, it is handled below.
     let _ = fs::remove_file(&leg_evidence_copy);
 
+    // Invalidate the SHARED evidence_output before this leg's own wrapper
+    // gets a chance to run. Both legs of a pass deliberately point at one
+    // evidence_output path (see workspace.rs's module docs), and both legs
+    // of a pass share the very same `run_nonce` too -- so a `run_nonce`
+    // equality check on the copied evidence could never distinguish
+    // "this leg's own evidence" from "the other leg's still-present
+    // evidence" within one pass. Removing the shared file here instead
+    // means: if this leg's wrapper never spawns, crashes, or otherwise
+    // fails to (re)write evidence_output, the `fs::copy` below simply
+    // fails against a missing source, and this leg is correctly recorded
+    // as having no wrapper evidence rather than silently inheriting and
+    // misattributing a PRIOR leg's still-present evidence file.
+    let _ = fs::remove_file(evidence_output);
+
     let mut command = Command::new(copilot_exe);
     command
         .arg("-C")
@@ -731,7 +815,7 @@ fn run_leg(
         .arg("-s")
         .env(ENV_INHERITANCE_SENTINEL_VAR, sentinel_value);
 
-    let (stdout_bytes, timed_out, exit_code, sentinel_observation) =
+    let (stdout_bytes, timed_out, exit_code, sentinel_observation, stdout_truncated) =
         match spawn_piped_child(command) {
             Ok(mut guard) => {
                 let watcher = guard.pid().map(|pid| {
@@ -741,7 +825,8 @@ fn run_leg(
                         sentinel_value.to_string(),
                     )
                 });
-                let (stdout_bytes, timed_out, exit_code) = pump_and_reap(&mut guard, deadline);
+                let (stdout_bytes, timed_out, exit_code, stdout_truncated) =
+                    pump_and_reap(&mut guard, deadline);
                 let sentinel_observation = match watcher {
                     Some((stop_flag, handle)) => {
                         stop_flag.store(true, Ordering::SeqCst);
@@ -758,7 +843,13 @@ fn run_leg(
                          sentinel-inheritance watching was skipped",
                     ),
                 };
-                (stdout_bytes, timed_out, exit_code, sentinel_observation)
+                (
+                    stdout_bytes,
+                    timed_out,
+                    exit_code,
+                    sentinel_observation,
+                    stdout_truncated,
+                )
             }
             Err(_) => (
                 Vec::new(),
@@ -768,6 +859,7 @@ fn run_leg(
                     "the exact-CLI child process could not be spawned for this leg; \
                      sentinel-inheritance watching was skipped",
                 ),
+                false,
             ),
         };
     let stdout_text = String::from_utf8_lossy(&stdout_bytes).into_owned();
@@ -792,6 +884,7 @@ fn run_leg(
         sentinel_observation,
         wrapper_evidence,
         wrapper_evidence_read_error,
+        stdout_truncated,
     }
 }
 
@@ -813,7 +906,7 @@ fn run_pass(
     wrapper_exe: &Path,
     sentinel_value: &str,
 ) -> PassOutcome {
-    let copilot_identity = identify_copilot(copilot_exe);
+    let copilot_identity = identify_copilot(copilot_exe, args.gate1_deadline);
     let control = run_leg(
         Leg::Control,
         copilot_exe,
@@ -849,11 +942,21 @@ fn leg_connected(leg: &LegOutcome) -> bool {
     leg.last_mcp_status.as_deref() == Some("connected")
 }
 
+/// Requires BOTH a well-formed, non-null `initialize_correlation` AND
+/// the evidence summary's own top-level `valid` flag being `true`.
+/// `valid: false` (with a populated `invalid_reason`) is the collector's
+/// own signal that it detected a problem (e.g. internal channel
+/// saturation, see `EvidenceCollector::new_with_capacity`'s doc comment)
+/// -- evidence explicitly marked invalid must never be treated as "this
+/// leg had a valid initialize" merely because `initialize_correlation`
+/// happened to populate before the invalidating event occurred.
 fn leg_has_valid_initialize(leg: &LegOutcome) -> bool {
-    leg.wrapper_evidence
-        .as_ref()
-        .and_then(|value| value.get("initialize_correlation"))
-        .is_some_and(|value| !value.is_null())
+    leg.wrapper_evidence.as_ref().is_some_and(|value| {
+        value.get("valid").and_then(serde_json::Value::as_bool) == Some(true)
+            && value
+                .get("initialize_correlation")
+                .is_some_and(|correlation| !correlation.is_null())
+    })
 }
 
 /// Produces the current ordered cause classification from one pass's
@@ -966,6 +1069,7 @@ fn leg_outcome_to_json(leg: &LegOutcome) -> serde_json::Value {
         },
         "wrapper_evidence": leg.wrapper_evidence,
         "wrapper_evidence_read_error": leg.wrapper_evidence_read_error,
+        "stdout_truncated": leg.stdout_truncated,
     })
 }
 
@@ -1043,8 +1147,11 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
     let workspace = create_probe_workspace(repo_root, &run_nonce, &entry)
         .map_err(|err| format!("failed to create isolated probe workspace: {err}"))?;
 
-    let affected_identity = identify_copilot(&args.copilot_exe);
-    let stable_identity = args.stable_copilot_exe.as_deref().map(identify_copilot);
+    let affected_identity = identify_copilot(&args.copilot_exe, args.gate1_deadline);
+    let stable_identity = args
+        .stable_copilot_exe
+        .as_deref()
+        .map(|exe| identify_copilot(exe, args.gate1_deadline));
 
     let gate1 = run_gate1(
         &args.copilot_exe,
@@ -1318,6 +1425,7 @@ mod tests {
                 ),
                 wrapper_evidence: None,
                 wrapper_evidence_read_error: None,
+                stdout_truncated: false,
             },
             treatment: LegOutcome {
                 leg: Leg::Treatment,
@@ -1336,6 +1444,7 @@ mod tests {
                     "initialize_correlation": {"protocol_version": "2024-11-05"},
                 })),
                 wrapper_evidence_read_error: None,
+                stdout_truncated: false,
             },
         };
         let causes = classify_pass(&pass);
@@ -1362,6 +1471,7 @@ mod tests {
                 "initialize_correlation": {"protocol_version": "2024-11-05"},
             })),
             wrapper_evidence_read_error: None,
+            stdout_truncated: false,
         };
         let pass = PassOutcome {
             build: "affected".to_string(),
@@ -1391,6 +1501,7 @@ mod tests {
             sentinel_observation: SentinelObservation::not_observed("test fixture: not observed"),
             wrapper_evidence: None,
             wrapper_evidence_read_error: None,
+            stdout_truncated: false,
         };
         let pass = PassOutcome {
             build: "affected".to_string(),
@@ -1458,5 +1569,126 @@ mod tests {
         assert_eq!(json["gate1"]["passed"], true);
         assert_eq!(json["terminal"], "done");
         assert_eq!(json["ordered_cause_classification"][0], "placeholder");
+    }
+
+    // ── Adversarial-review remediation regression tests ──────────────
+
+    #[test]
+    fn capture_buf_retains_bytes_under_the_cap_and_reports_no_truncation() {
+        let mut buf = CaptureBuf::default();
+        buf.push(b"hello");
+        buf.push(b" world");
+        assert_eq!(buf.bytes, b"hello world");
+        assert!(!buf.truncated);
+    }
+
+    #[test]
+    fn capture_buf_truncates_at_the_cap_and_discards_everything_after() {
+        let mut buf = CaptureBuf::default();
+        // Fill to exactly the cap, then push more: the excess must be
+        // dropped and `truncated` must latch `true` permanently (M-1).
+        buf.push(&vec![b'a'; MAX_CAPTURE_BYTES - 4]);
+        assert!(!buf.truncated);
+        buf.push(b"BCDE"); // fills the last 4 bytes exactly to the cap
+        assert!(!buf.truncated, "reaching the cap exactly is not truncation");
+        assert_eq!(buf.bytes.len(), MAX_CAPTURE_BYTES);
+
+        buf.push(b"overflow-should-be-dropped");
+        assert!(buf.truncated);
+        assert_eq!(
+            buf.bytes.len(),
+            MAX_CAPTURE_BYTES,
+            "buffer must never grow past the cap"
+        );
+
+        // Once truncated, further pushes must be pure no-ops (M-1: a
+        // misbehaving child cannot grow memory without limit).
+        buf.push(&vec![b'z'; 1024]);
+        assert!(buf.truncated);
+        assert_eq!(buf.bytes.len(), MAX_CAPTURE_BYTES);
+    }
+
+    #[test]
+    fn capture_sink_write_always_reports_the_full_len_even_once_truncated() {
+        // `Write::write` must report the number of bytes the caller asked
+        // to write, never the number actually retained -- otherwise a
+        // pump loop that checks the returned count against the input
+        // length would treat a capped-but-successful write as a
+        // short-write error (see CaptureBuf's own doc comment).
+        let mut sink = CaptureSink::new();
+        let filler = vec![0u8; MAX_CAPTURE_BYTES];
+        let n0 = sink.write(&filler).expect("write never errors");
+        assert_eq!(n0, filler.len());
+        let n = sink
+            .write(b"more-bytes-after-the-cap")
+            .expect("write never errors");
+        assert_eq!(n, "more-bytes-after-the-cap".len());
+        let (bytes, truncated) = sink.into_parts();
+        assert!(truncated);
+        assert_eq!(bytes.len(), MAX_CAPTURE_BYTES);
+    }
+
+    #[test]
+    fn leg_has_valid_initialize_requires_the_valid_flag_true() {
+        // U-2: a populated `initialize_correlation` alone must never be
+        // enough -- the collector's own `valid: false` signal (e.g. a
+        // saturated evidence channel) must veto it.
+        let leg = LegOutcome {
+            leg: Leg::Control,
+            exit_code: Some(0),
+            timed_out: false,
+            last_mcp_status: Some("connected".to_string()),
+            session_result_exit_code: Some(0),
+            sentinel_observation: SentinelObservation::not_observed("test fixture"),
+            wrapper_evidence: Some(serde_json::json!({
+                "valid": false,
+                "invalid_reason": "evidence channel saturated: one or more copies were dropped",
+                "initialize_correlation": {"protocol_version": "2024-11-05"},
+            })),
+            wrapper_evidence_read_error: None,
+            stdout_truncated: false,
+        };
+        assert!(
+            !leg_has_valid_initialize(&leg),
+            "valid: false must veto an otherwise-populated initialize_correlation"
+        );
+    }
+
+    #[test]
+    fn leg_has_valid_initialize_requires_a_non_null_correlation() {
+        let leg = LegOutcome {
+            leg: Leg::Control,
+            exit_code: Some(0),
+            timed_out: false,
+            last_mcp_status: Some("connected".to_string()),
+            session_result_exit_code: Some(0),
+            sentinel_observation: SentinelObservation::not_observed("test fixture"),
+            wrapper_evidence: Some(serde_json::json!({
+                "valid": true,
+                "initialize_correlation": null,
+            })),
+            wrapper_evidence_read_error: None,
+            stdout_truncated: false,
+        };
+        assert!(!leg_has_valid_initialize(&leg));
+    }
+
+    #[test]
+    fn leg_has_valid_initialize_true_when_both_conditions_hold() {
+        let leg = LegOutcome {
+            leg: Leg::Control,
+            exit_code: Some(0),
+            timed_out: false,
+            last_mcp_status: Some("connected".to_string()),
+            session_result_exit_code: Some(0),
+            sentinel_observation: SentinelObservation::not_observed("test fixture"),
+            wrapper_evidence: Some(serde_json::json!({
+                "valid": true,
+                "initialize_correlation": {"protocol_version": "2024-11-05"},
+            })),
+            wrapper_evidence_read_error: None,
+            stdout_truncated: false,
+        };
+        assert!(leg_has_valid_initialize(&leg));
     }
 }

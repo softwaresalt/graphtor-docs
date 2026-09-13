@@ -83,6 +83,25 @@ const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// correctness never depends on it.
 const FINALIZE_GRACE_PERIOD: Duration = Duration::from_millis(50);
 
+/// Absolute cap on bytes buffered by one direction's [`LineReassembler`]
+/// while waiting for a terminating `\n`. Without this bound, an
+/// unterminated frame (a child that never emits a newline, or emits an
+/// arbitrarily long line) would let `pending` grow without limit for the
+/// life of the wrapper process. On overflow the accumulated partial line
+/// is discarded (never recoverable) rather than grown further, and the
+/// summary is marked invalid -- a subsequent newline resynchronizes
+/// cleanly with whatever bytes arrive after the discard point.
+const MAX_PENDING_LINE_BYTES: usize = 1_048_576;
+
+/// Absolute cap on the number of [`FrameEvent`]s retained by one
+/// collector run. Without this bound, a long-lived session emitting a
+/// sustained stream of small, valid frames would let `events` grow
+/// without limit for the life of the wrapper process. Once the cap is
+/// reached, further frames are still classified (so `initialize`
+/// correlation is unaffected) but are no longer retained as metadata,
+/// and the summary is marked invalid.
+const MAX_RECORDED_EVENTS: usize = 65_536;
+
 /// Case-insensitive substrings marking an argv/env/JSON key as
 /// secret-bearing for redaction purposes. Intentionally conservative
 /// (over-redact rather than under-redact) since this is diagnostic
@@ -254,9 +273,17 @@ struct LineReassembler {
 
 impl LineReassembler {
     /// Appends `chunk` and returns any newly completed lines, in order,
-    /// with the trailing `\n` (and a preceding `\r`, if present) removed.
-    fn push(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
+    /// with the trailing `\n` (and a preceding `\r`, if present) removed,
+    /// plus whether the accumulated partial line was discarded this call
+    /// because it exceeded [`MAX_PENDING_LINE_BYTES`] before a
+    /// terminating newline arrived.
+    fn push(&mut self, chunk: &[u8]) -> (Vec<Vec<u8>>, bool) {
         self.pending.extend_from_slice(chunk);
+        let mut overflowed = false;
+        if self.pending.len() > MAX_PENDING_LINE_BYTES {
+            self.pending.clear();
+            overflowed = true;
+        }
         let mut lines = Vec::new();
         while let Some(pos) = self.pending.iter().position(|&byte| byte == b'\n') {
             let mut line: Vec<u8> = self.pending.drain(..=pos).collect();
@@ -266,7 +293,7 @@ impl LineReassembler {
             }
             lines.push(line);
         }
-        lines
+        (lines, overflowed)
     }
 }
 
@@ -311,6 +338,22 @@ impl CollectorState {
         self.invalid_reason
             .get_or_insert_with(|| reason.to_string());
     }
+
+    /// Records `event` if the retained-events bound has not yet been
+    /// reached; otherwise discards it and marks the summary invalid (see
+    /// [`MAX_RECORDED_EVENTS`]). Frame classification/correlation (which
+    /// happens in `process_line` before this is called) is unaffected
+    /// either way -- only retained per-frame metadata is bounded.
+    fn record_event(&mut self, event: FrameEvent) {
+        if self.events.len() >= MAX_RECORDED_EVENTS {
+            self.mark_invalid(
+                "observer failure: recorded frame-event count reached the bound; further \
+                 frame metadata was discarded",
+            );
+            return;
+        }
+        self.events.push(event);
+    }
 }
 
 /// Processes one already-reassembled, newline-delimited line observed in
@@ -329,7 +372,7 @@ fn process_line(state: &mut CollectorState, direction: Direction, line: &[u8]) {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
 
     let Some(value) = parsed else {
-        state.events.push(FrameEvent {
+        state.record_event(FrameEvent {
             direction,
             sequence,
             kind: FrameKind::Unparseable,
@@ -393,7 +436,7 @@ fn process_line(state: &mut CollectorState, direction: Direction, line: &[u8]) {
         }
     }
 
-    state.events.push(FrameEvent {
+    state.record_event(FrameEvent {
         direction,
         sequence,
         kind,
@@ -456,10 +499,17 @@ impl EvidenceCollector {
                         let mut guard = worker_state
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let lines = match direction {
+                        let (lines, overflowed) = match direction {
                             Direction::ClientToChild => guard.client_to_child_lines.push(&bytes),
                             Direction::ChildToClient => guard.child_to_client_lines.push(&bytes),
                         };
+                        if overflowed {
+                            guard.mark_invalid(
+                                "observer failure: buffered partial frame exceeded the bound \
+                                 before a terminating newline arrived; the partial frame was \
+                                 discarded",
+                            );
+                        }
                         for line in &lines {
                             process_line(&mut guard, direction, line);
                         }
@@ -520,6 +570,33 @@ impl EvidenceCollector {
                 guard.mark_invalid("evidence channel saturated: one or more copies were dropped");
             }
         })
+    }
+
+    /// Records that the transport composed with this collector (see
+    /// `crate::transport::run_duplex_pump`'s `copy_hook` parameter)
+    /// dropped one or more copies at its OWN, outer delivery channel
+    /// -- i.e. `crate::transport::PumpOutcome::transport_copies_dropped`
+    /// was nonzero. A drop at that outer, transport-level channel
+    /// happens BEFORE this collector's [`Self::hook`] (and therefore
+    /// before this collector) ever sees the copy, so this collector has
+    /// no way to detect that loss on its own; the caller composing the
+    /// pump and this collector together (see `crate::process::run_wrapper`)
+    /// MUST call this after the pump returns and before [`Self::finalize`]
+    /// whenever the pump reports a nonzero drop count, so a summary with
+    /// silently missing data is never finalized as `valid: true`.
+    /// A `count` of `0` is a no-op.
+    pub fn note_transport_drops(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
+        let mut guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.mark_invalid(&format!(
+            "transport-level delivery channel dropped {count} copy(ies) before this \
+             collector's own hook ever observed them; evidence is incomplete"
+        ));
     }
 
     /// Finalizes collection and returns the resulting [`EvidenceSummary`].
@@ -650,7 +727,24 @@ pub fn write_evidence_output(summary: &EvidenceSummary, path: &Path) -> std::io:
     };
 
     {
-        let mut file = std::fs::File::create(&tmp_path)?;
+        // Owner-only permissions on Unix, mirroring `workspace::write_owner_only`'s
+        // `0o600`-at-creation pattern used for the `.mcp.json` fixtures (which
+        // deliberately carry unredacted real secrets). This evidence-output file only
+        // ever carries key-redacted content (see `redact_json_value`), but key-based
+        // redaction cannot catch a secret embedded inside an otherwise benign-keyed
+        // value -- so owner-only permissions here are defense-in-depth for that gap,
+        // not a claim that this file is known to contain secrets today. Applied via
+        // `OpenOptions::mode` at creation time (not a separate `set_permissions` call
+        // afterward) so there is no window where the file briefly exists with wider
+        // permissions.
+        let mut open_opts = std::fs::OpenOptions::new();
+        open_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            open_opts.mode(0o600);
+        }
+        let mut file = open_opts.open(&tmp_path)?;
         file.write_all(&bytes)?;
         file.flush()?;
     }
@@ -725,6 +819,122 @@ mod tests {
         assert!(
             !again.valid,
             "state must remain readable on a second, later lock too"
+        );
+    }
+
+    // ── Adversarial-review remediation regression tests ──────────────
+
+    #[test]
+    fn line_reassembler_splits_on_newline_across_multiple_pushes() {
+        let mut reassembler = LineReassembler::default();
+        let (lines, overflowed) = reassembler.push(b"partial-line-no-newline-yet");
+        assert!(lines.is_empty());
+        assert!(!overflowed);
+
+        let (lines, overflowed) = reassembler.push(b" completed\nsecond line\r\nthird-partial");
+        assert!(!overflowed);
+        assert_eq!(
+            lines,
+            vec![
+                b"partial-line-no-newline-yet completed".to_vec(),
+                b"second line".to_vec(),
+            ],
+            "must strip the trailing \\n (and a preceding \\r) and preserve order"
+        );
+
+        let (lines, overflowed) = reassembler.push(b"\n");
+        assert!(!overflowed);
+        assert_eq!(lines, vec![b"third-partial".to_vec()]);
+    }
+
+    #[test]
+    fn line_reassembler_discards_and_flags_overflow_before_a_newline_arrives() {
+        // U-5: an unbounded LineReassembler would grow `pending` without
+        // limit if the child never emits a terminating newline. Once the
+        // bound is exceeded, the partial line must be discarded (not
+        // silently retained forever) and the caller must be told so it
+        // can invalidate the summary.
+        let mut reassembler = LineReassembler::default();
+        let oversized = vec![b'x'; MAX_PENDING_LINE_BYTES + 1];
+        let (lines, overflowed) = reassembler.push(&oversized);
+        assert!(lines.is_empty());
+        assert!(overflowed);
+        assert!(
+            reassembler.pending.is_empty(),
+            "the oversized partial line must be discarded, not retained"
+        );
+
+        // Must recover cleanly and resync on the next newline-terminated
+        // line rather than staying permanently wedged.
+        let (lines, overflowed) = reassembler.push(b"resynced-line\n");
+        assert!(!overflowed);
+        assert_eq!(lines, vec![b"resynced-line".to_vec()]);
+    }
+
+    #[test]
+    fn collector_state_record_event_bounds_retained_events_and_marks_invalid() {
+        let mut state = CollectorState::new();
+        for i in 0..MAX_RECORDED_EVENTS {
+            state.record_event(FrameEvent {
+                direction: Direction::ClientToChild,
+                sequence: i as u64,
+                kind: FrameKind::Notification,
+                method: None,
+                id: None,
+                byte_len: 0,
+                digest_hex: String::new(),
+            });
+        }
+        assert!(state.valid, "must remain valid while under the bound");
+        assert_eq!(state.events.len(), MAX_RECORDED_EVENTS);
+
+        // One more push past the bound: discarded, and the summary is
+        // marked invalid rather than growing `events` further.
+        state.record_event(FrameEvent {
+            direction: Direction::ClientToChild,
+            sequence: MAX_RECORDED_EVENTS as u64,
+            kind: FrameKind::Notification,
+            method: None,
+            id: None,
+            byte_len: 0,
+            digest_hex: String::new(),
+        });
+        assert!(!state.valid);
+        assert_eq!(
+            state.events.len(),
+            MAX_RECORDED_EVENTS,
+            "events must never grow past the bound"
+        );
+    }
+
+    #[test]
+    fn note_transport_drops_is_a_no_op_for_zero_and_invalidates_for_nonzero() {
+        // U-6: a nonzero transport-level drop count happens strictly
+        // before this collector's own hook ever sees the copy, so it has
+        // no way to detect the loss on its own -- the composing caller
+        // (`process::run_wrapper`) must tell it explicitly.
+        let collector = EvidenceCollector::new("test-nonce-zero-drops");
+        collector.note_transport_drops(0);
+        let summary = collector.finalize();
+        assert!(
+            summary.valid,
+            "a zero drop count must never invalidate an otherwise-clean summary"
+        );
+
+        let collector = EvidenceCollector::new("test-nonce-nonzero-drops");
+        collector.note_transport_drops(3);
+        let summary = collector.finalize();
+        assert!(
+            !summary.valid,
+            "a nonzero drop count must invalidate the summary"
+        );
+        assert!(
+            summary
+                .invalid_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("transport-level")),
+            "the invalid reason must explain the transport-level drop, got: {:?}",
+            summary.invalid_reason
         );
     }
 }

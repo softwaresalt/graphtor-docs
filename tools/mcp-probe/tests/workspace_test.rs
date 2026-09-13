@@ -72,14 +72,20 @@ fn create_probe_workspace_produces_the_expected_layout() {
     assert_eq!(workspace.nonce, "nonce-layout");
 
     // The workspace root itself must be exactly logs/probe/<nonce> under
-    // the repo root.
+    // the CANONICAL repo root (U-7: every returned `ProbeWorkspace` path
+    // is built from `canonical_repo_root`, not the raw, possibly
+    // relative/symlinked `repo_root` argument, so it stays portable
+    // regardless of what form the caller's `repo_root` took).
     let canonical_repo_root = std::fs::canonicalize(&repo_root).expect("canonicalize repo root");
     let canonical_workspace_root =
         std::fs::canonicalize(&workspace.root).expect("canonicalize workspace root");
     assert!(canonical_workspace_root.starts_with(&canonical_repo_root));
     assert_eq!(
         workspace.root,
-        repo_root.join("logs").join("probe").join("nonce-layout")
+        canonical_repo_root
+            .join("logs")
+            .join("probe")
+            .join("nonce-layout")
     );
 
     let control_doc = read_json(&workspace.control_config_path);

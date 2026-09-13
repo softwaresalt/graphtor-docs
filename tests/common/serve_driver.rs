@@ -698,6 +698,24 @@ pub fn run_read_only_server_control(cwd: &Path, timeout: Duration) -> ServerCont
         ServerControlOutcome::BoundaryViolated {
             evidence: shutdown.stderr.clone(),
         }
+    } else if shutdown.stderr_truncated {
+        // The write-path boundary check above can only scan the bytes
+        // actually retained by the bounded stderr capture (see
+        // `BoundedCapture`/`MAX_STDERR_CAPTURE_BYTES`); once that cap is
+        // hit, any write-path marker emitted after the cutoff is
+        // silently unobservable to `stderr_shows_write_path`. This
+        // function's own doc contract is that a boundary violation
+        // "always fails the control closed", which is only true if the
+        // check actually saw the full stream -- so a truncated capture
+        // must be reported as indeterminate, never allowed to fall
+        // through to a `Control` success.
+        ServerControlOutcome::Diagnostic {
+            stage: "boundary-check",
+            detail: "stderr capture was truncated at the bounded cap; the read-only \
+                     boundary claim cannot be verified for the untruncated remainder \
+                     of the session"
+                .to_string(),
+        }
     } else {
         match result {
             Ok(success) => ServerControlOutcome::Control(success),

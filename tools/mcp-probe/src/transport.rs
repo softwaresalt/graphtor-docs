@@ -53,8 +53,10 @@ pub type CopyHook = Arc<dyn Fn(Direction, &[u8]) + Send + Sync + 'static>;
 
 /// Bounded capacity of the internal copy-delivery channel. This is a
 /// diagnostic side-channel, not a buffering strategy for the primary
-/// forwarded stream: a full channel silently drops the oldest-pending
-/// delivery attempt rather than ever blocking a pump thread.
+/// forwarded stream: a full channel silently drops the copy currently
+/// being delivered (via `try_send`, which never evicts an
+/// already-queued item -- see [`deliver_copy`]) rather than ever
+/// blocking a pump thread.
 const DELIVERY_CHANNEL_CAPACITY: usize = 64;
 
 /// Default per-read buffer size, in bytes, for both pump directions.
@@ -98,6 +100,17 @@ pub struct PumpOutcome {
     pub client_to_child_bytes: u64,
     /// Total bytes forwarded child -> client.
     pub child_to_client_bytes: u64,
+    /// Total diagnostic copies dropped at this transport's own bounded
+    /// delivery channel (across both directions combined), because the
+    /// channel was full or the delivery worker had already exited. This
+    /// is always `0` when no `copy_hook` was supplied. A caller composing
+    /// this transport with a downstream observer (e.g.
+    /// `crate::evidence::EvidenceCollector`) should treat a nonzero value
+    /// here as its own signal that the observer's summary is incomplete
+    /// -- a drop at this outer, transport-level channel happens BEFORE
+    /// the hook (and therefore before the observer) ever sees the copy,
+    /// so the observer has no way to detect this loss on its own.
+    pub transport_copies_dropped: u64,
 }
 
 /// Spawns a background delivery worker that drains a bounded channel and
@@ -146,10 +159,15 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// Non-blocking, best-effort delivery of one forwarded copy. Never blocks
 /// the caller: a full channel (slow or wedged hook) silently drops the
-/// copy rather than delaying forwarding.
-fn deliver_copy(tx: &SyncSender<(Direction, Vec<u8>)>, direction: Direction, bytes: &[u8]) {
+/// copy rather than delaying forwarding. Returns `true` when the copy was
+/// dropped (channel full or the delivery worker already exited), so
+/// callers can accumulate a diagnostic drop count -- see
+/// [`PumpOutcome::transport_copies_dropped`].
+#[must_use]
+fn deliver_copy(tx: &SyncSender<(Direction, Vec<u8>)>, direction: Direction, bytes: &[u8]) -> bool {
     match tx.try_send((direction, bytes.to_vec())) {
-        Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
+        Ok(()) => false,
+        Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => true,
     }
 }
 
@@ -170,6 +188,44 @@ fn drain_stderr<R: Read, W: Write>(mut reader: R, mut sink: W) {
             }
         }
     }
+}
+
+/// Shared read-and-forward loop for one primary pump direction: reads
+/// `reader` to EOF (or first error), writing (and flushing) each chunk to
+/// `writer`, optionally attempting a non-blocking diagnostic delivery of
+/// the same bytes via `tx`. Returns `(total_bytes_forwarded,
+/// copies_dropped)`. Extracted once and reused for both `client_to_child`
+/// and `child_to_client` in [`run_duplex_pump`] -- the two directions'
+/// loops are otherwise identical, and duplicating them risked one being
+/// fixed (e.g. for the drop-counting added alongside
+/// [`PumpOutcome::transport_copies_dropped`]) without the other.
+fn pump_one_direction<R: Read, W: Write>(
+    mut reader: R,
+    mut writer: W,
+    buffer_size: usize,
+    direction: Direction,
+    tx: Option<&SyncSender<(Direction, Vec<u8>)>>,
+) -> (u64, u64) {
+    let mut buf = vec![0_u8; buffer_size];
+    let mut total = 0_u64;
+    let mut dropped = 0_u64;
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if writer.write_all(&buf[..n]).is_err() || writer.flush().is_err() {
+                    break;
+                }
+                total += n as u64;
+                if let Some(tx) = tx {
+                    if deliver_copy(tx, direction, &buf[..n]) {
+                        dropped += 1;
+                    }
+                }
+            }
+        }
+    }
+    (total, dropped)
 }
 
 /// Runs the core synchronous, full-duplex byte pump between `incoming`
@@ -237,51 +293,28 @@ where
     // client -> child: read `incoming` to EOF, forwarding each chunk to
     // `child_stdin`. EOF (or a read/write error) closes `child_stdin` by
     // dropping it, propagating the half-close to the child.
-    let client_to_child = thread::spawn(move || -> (bool, u64) {
-        let mut reader = incoming;
-        let mut writer = child_stdin;
-        let mut buf = vec![0_u8; buffer_size];
-        let mut total = 0_u64;
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if writer.write_all(&buf[..n]).is_err() || writer.flush().is_err() {
-                        break;
-                    }
-                    total += n as u64;
-                    if let Some(tx) = &stdin_tx {
-                        deliver_copy(tx, Direction::ClientToChild, &buf[..n]);
-                    }
-                }
-            }
-        }
-        drop(writer);
-        (true, total)
+    let client_to_child = thread::spawn(move || -> (bool, u64, u64) {
+        let (total, dropped) = pump_one_direction(
+            incoming,
+            child_stdin,
+            buffer_size,
+            Direction::ClientToChild,
+            stdin_tx.as_ref(),
+        );
+        (true, total, dropped)
     });
 
     // child -> client: read the child's stdout to EOF, forwarding each
     // chunk to `outgoing`.
-    let child_to_client = thread::spawn(move || -> (bool, u64) {
-        let mut reader = child_stdout;
-        let mut writer = outgoing;
-        let mut buf = vec![0_u8; buffer_size];
-        let mut total = 0_u64;
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if writer.write_all(&buf[..n]).is_err() || writer.flush().is_err() {
-                        break;
-                    }
-                    total += n as u64;
-                    if let Some(tx) = &stdout_tx {
-                        deliver_copy(tx, Direction::ChildToClient, &buf[..n]);
-                    }
-                }
-            }
-        }
-        (true, total)
+    let child_to_client = thread::spawn(move || -> (bool, u64, u64) {
+        let (total, dropped) = pump_one_direction(
+            child_stdout,
+            outgoing,
+            buffer_size,
+            Direction::ChildToClient,
+            stdout_tx.as_ref(),
+        );
+        (true, total, dropped)
     });
 
     let mut outcome = PumpOutcome::default();
@@ -305,17 +338,21 @@ where
     }
 
     if stdin_pump_done {
-        if let Some((closed, bytes)) = join_finished_pump_thread(client_to_child, "client_to_child")
+        if let Some((closed, bytes, dropped)) =
+            join_finished_pump_thread(client_to_child, "client_to_child")
         {
             outcome.client_to_child_closed = closed;
             outcome.client_to_child_bytes = bytes;
+            outcome.transport_copies_dropped += dropped;
         }
     }
     if stdout_pump_done {
-        if let Some((closed, bytes)) = join_finished_pump_thread(child_to_client, "child_to_client")
+        if let Some((closed, bytes, dropped)) =
+            join_finished_pump_thread(child_to_client, "child_to_client")
         {
             outcome.child_to_client_closed = closed;
             outcome.child_to_client_bytes = bytes;
+            outcome.transport_copies_dropped += dropped;
         }
     }
 
@@ -337,11 +374,11 @@ where
 /// `None`, leaving the caller's `PumpOutcome` fields at their `Default`)
 /// if the thread panicked instead of returning normally -- so a panic is
 /// never silently indistinguishable from "this direction never observed
-/// EOF".
+/// EOF". The returned tuple is `(closed, bytes_forwarded, copies_dropped)`.
 fn join_finished_pump_thread(
-    handle: thread::JoinHandle<(bool, u64)>,
+    handle: thread::JoinHandle<(bool, u64, u64)>,
     label: &str,
-) -> Option<(bool, u64)> {
+) -> Option<(bool, u64, u64)> {
     match handle.join() {
         Ok(result) => Some(result),
         Err(payload) => {
@@ -371,6 +408,51 @@ fn join_stderr_thread(handle: Option<thread::JoinHandle<()>>, timed_out: bool) {
         eprintln!(
             "mcp-probe: stderr drain thread panicked: {}",
             panic_payload_message(&payload)
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Adversarial-review remediation regression tests (U-6) ────────
+
+    #[test]
+    fn deliver_copy_reports_false_when_the_channel_accepts_the_copy() {
+        let (tx, _rx) = sync_channel::<(Direction, Vec<u8>)>(1);
+        let dropped = deliver_copy(&tx, Direction::ClientToChild, b"hello");
+        assert!(!dropped);
+    }
+
+    #[test]
+    fn deliver_copy_reports_true_and_never_blocks_when_the_channel_is_full() {
+        // U-6 / U-8: `deliver_copy` must use `try_send` semantics -- a
+        // full channel drops the CURRENT copy (never evicting an
+        // already-queued older one) and must never block the caller.
+        let (tx, _rx) = sync_channel::<(Direction, Vec<u8>)>(1);
+        // Fill the one slot; nothing ever drains `_rx` in this test.
+        let first_dropped = deliver_copy(&tx, Direction::ClientToChild, b"first");
+        assert!(
+            !first_dropped,
+            "the first send into an empty slot must succeed"
+        );
+
+        let second_dropped = deliver_copy(&tx, Direction::ClientToChild, b"second");
+        assert!(
+            second_dropped,
+            "a full channel must report the copy as dropped, not block"
+        );
+    }
+
+    #[test]
+    fn deliver_copy_reports_true_once_the_receiver_has_disconnected() {
+        let (tx, rx) = sync_channel::<(Direction, Vec<u8>)>(4);
+        drop(rx);
+        let dropped = deliver_copy(&tx, Direction::ChildToClient, b"anything");
+        assert!(
+            dropped,
+            "a disconnected receiver must count as a dropped copy"
         );
     }
 }

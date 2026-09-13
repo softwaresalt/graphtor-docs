@@ -412,6 +412,15 @@ where
     // summary to the wrapper-owned evidence_output path. This is always
     // best-effort -- neither collection validity nor a write failure
     // ever changes `inner_exit_code` or turns into an `Err` here.
+    //
+    // A transport-level delivery drop (`pump.transport_copies_dropped`)
+    // happens at transport's OWN outer delivery channel, strictly before
+    // `evidence_collector`'s hook (and therefore the collector itself)
+    // ever observes the copy -- the collector has no way to detect this
+    // loss on its own, so it must be told about it explicitly, before
+    // `finalize()`, or a summary with silently missing data could be
+    // finalized as `valid: true`.
+    evidence_collector.note_transport_drops(pump.transport_copies_dropped);
     let evidence_summary = evidence_collector.finalize();
     let evidence_valid = evidence_summary.valid;
     let evidence_write_error =
