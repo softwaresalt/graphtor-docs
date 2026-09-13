@@ -412,3 +412,32 @@ pre-existing, independently tracked `mcp-client-smoke` manual-checkpoint
 condition recorded in the main closure document's Releasability section
 (deferred pending a live MCP client session — not a finding raised by this
 review, and not blocking for a backlog/docs-only change set).
+
+## Supplementary review — GitHub Copilot review remediation (commits `7b57d00`–`d18171d`)
+
+After this review and its remediation (`901644e`) were complete, PR #121's
+GitHub-hosted Copilot review (advisory shadow review per repo policy)
+independently examined the same change set across three review passes and
+raised additional findings, all addressed in five follow-on commits:
+`7b57d00`, `244edde`, `3c47dea` (scratch-file removal, no content change),
+`78fe3ae`, `d18171d`. Every finding was a documentation-accuracy issue of
+the same character as F1–F6 above (broken/stale citation paths, an
+evidence-index claim contradicting its own cited source, an overstated
+causal-attribution claim, and a self-contradictory historical-framing
+annotation) — never a source-code, build, or test change. Each correction
+was independently cross-checked by direct reads of the specific source
+artifact it cites (the pre-archive reconciliation report, the progress-
+checkpoint memory, the H3-A evidence decision doc, and the sibling
+pre-merge adversarial-review artifact) before being applied, following the
+same evidence-first discipline as the V1–V6 verification above. No new
+unverified claims were introduced by these fixes.
+
+**Local review readiness re-affirmed for HEAD `d18171d827ed8c8c0129c5880053612fa6b21e1b`:**
+`READY_WITH_FOLLOWUPS` (unchanged from the outcome above — the only
+follow-up is still the pre-existing `mcp-client-smoke` condition). No new
+P0/P1 findings; all 14 GitHub Copilot review threads (12 original + 2 from
+the third review pass) replied-to with the fixing commit and resolved via
+GraphQL `resolveReviewThread`. Full local build: not applicable (still a
+documentation/backlog-only change set across all follow-on commits — no
+files under `src/`, `tests/`, `Cargo.toml`, or `build.rs` were touched by
+any of them); `cargo check --all-targets` re-run as a sanity check.
