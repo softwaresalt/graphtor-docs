@@ -1746,6 +1746,60 @@ fn collect_pass_spawn_failures(passes: &[PassOutcome]) -> Vec<String> {
         .collect()
 }
 
+/// Fails closed on any pass whose control or treatment leg's wrapper
+/// evidence cannot be trusted for causal classification: an explicit
+/// read/copy/parse failure (`wrapper_evidence_read_error`), a wholly
+/// missing evidence file with no recorded error, or the collector's own
+/// explicit `valid: false` self-report (channel saturation or a caught
+/// correlator panic). `process::run_wrapper` always attempts to
+/// `finalize()` and `write_evidence_output` regardless of whether the
+/// leg's Copilot CLI child ever reached a connected/initialized state,
+/// so a genuinely absent file with no error means the wrapper itself
+/// was never actually invoked or crashed before it could record
+/// anything -- not merely that this leg failed to connect, which
+/// `classify_pass`'s existing branches already handle correctly on
+/// their own terms. Without this gate, one such leg could still be
+/// reported as an ordinary H0a classification, and both legs failing
+/// this way could still produce `terminal: "done"`, directly
+/// contradicting `056.001-T`'s own acceptance criteria (Copilot review,
+/// 2026-09 -- 049-S PR #120, round 7). Mirrors
+/// [`collect_pass_teardown_failures`]'s extraction shape.
+fn collect_pass_evidence_integrity_failures(passes: &[PassOutcome]) -> Vec<String> {
+    passes
+        .iter()
+        .flat_map(|pass| {
+            [
+                (Leg::Control, &pass.control),
+                (Leg::Treatment, &pass.treatment),
+            ]
+        })
+        .filter_map(|(leg, outcome)| {
+            if let Some(err) = &outcome.wrapper_evidence_read_error {
+                return Some(format!(
+                    "pass build {leg:?} wrapper evidence could not be read: {err}"
+                ));
+            }
+            match &outcome.wrapper_evidence {
+                None => Some(format!(
+                    "pass build {leg:?} captured no wrapper evidence at all (missing \
+                     evidence file, no read error recorded); the wrapper always attempts \
+                     to write evidence regardless of connection outcome, so a genuinely \
+                     absent file means capture itself failed"
+                )),
+                Some(value) => (value.get("valid").and_then(serde_json::Value::as_bool)
+                    == Some(false))
+                .then(|| {
+                    let reason = value
+                        .get("invalid_reason")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("no reason recorded");
+                    format!("pass build {leg:?} wrapper evidence is marked invalid: {reason}")
+                }),
+            }
+        })
+        .collect()
+}
+
 /// Builds the `terminal: "blocked"` [`ExactCliOutcome`] for an identity
 /// failure -- either the pre-Gate-1 `identity_failure_message` check
 /// (call with `passes: Vec::new()`) or a post-Gate-1 per-pass identity
@@ -1786,20 +1840,61 @@ fn identity_blocked_outcome(
     }
 }
 
-/// Runs all three post-pass fail-closed gates -- per-pass spawn-ownership
-/// enforcement ([`collect_pass_spawn_failures`], round 6), per-pass
-/// identity enforcement ([`collect_pass_identity_failures`]), and
-/// per-pass teardown-ownership enforcement
-/// ([`collect_pass_teardown_failures`]) -- in that order, returning
-/// `Err` with the `terminal: "blocked"` outcome for whichever gate finds
-/// a failure first, or `Ok(passes)` (handing ownership back unchanged)
-/// once all three gates pass clean. The spawn gate runs first since an
-/// unlaunchable child leaves the other two gates with nothing to
-/// observe (no identity impact, `inner_teardown_incomplete: false`) --
-/// checking it last would let a spawn failure hide behind two gates
-/// that trivially "pass" on a leg that never ran. Extracted purely to
-/// keep [`run_exact_cli`] under `clippy::too_many_lines` (Copilot
-/// review, 2026-09 -- 049-S PR #120, round 5; spawn gate added round 6).
+/// Builds `Err(blocked outcome)` when `failures` is non-empty (handing
+/// `passes` back into [`identity_blocked_outcome`]), or `Ok(passes)`
+/// unchanged otherwise. Shared by every gate in
+/// [`apply_post_pass_gates`] purely to avoid repeating each gate's
+/// identical seven-argument `identity_blocked_outcome` call inline,
+/// which would otherwise push that function over
+/// `clippy::too_many_lines` once a fourth gate was added (Copilot
+/// review, 2026-09 -- 049-S PR #120, round 7).
+#[allow(clippy::too_many_arguments)]
+fn blocked_if_any(
+    failures: Vec<String>,
+    run_nonce: &str,
+    sentinel_value: &str,
+    workspace_root: &Path,
+    affected_identity: &CopilotIdentity,
+    stable_identity: Option<&CopilotIdentity>,
+    inner_identity: &CopilotIdentity,
+    gate1: &Gate1Outcome,
+    passes: Vec<PassOutcome>,
+) -> Result<Vec<PassOutcome>, Box<ExactCliOutcome>> {
+    if failures.is_empty() {
+        return Ok(passes);
+    }
+    Err(Box::new(identity_blocked_outcome(
+        run_nonce.to_string(),
+        sentinel_value.to_string(),
+        workspace_root.to_path_buf(),
+        affected_identity.clone(),
+        stable_identity.cloned(),
+        inner_identity.clone(),
+        gate1.clone(),
+        passes,
+        failures,
+    )))
+}
+
+/// Runs all four post-pass fail-closed gates -- per-pass
+/// spawn-ownership enforcement ([`collect_pass_spawn_failures`], round
+/// 6), per-pass identity enforcement
+/// ([`collect_pass_identity_failures`]), per-pass teardown-ownership
+/// enforcement ([`collect_pass_teardown_failures`]), and per-pass
+/// evidence-integrity enforcement
+/// ([`collect_pass_evidence_integrity_failures`], round 7) -- in that
+/// order, returning `Err` with the `terminal: "blocked"` outcome for
+/// whichever gate finds a failure first, or `Ok(passes)` (handing
+/// ownership back unchanged) once all four gates pass clean. The spawn
+/// gate runs first since an unlaunchable child leaves the other three
+/// gates with nothing to observe (no identity impact,
+/// `inner_teardown_incomplete: false`, no evidence to inspect either
+/// way); evidence integrity runs last since it is the final proof
+/// needed before `classify_pass` may trust what was actually captured.
+/// Extracted purely to keep [`run_exact_cli`] under
+/// `clippy::too_many_lines` (Copilot review, 2026-09 -- 049-S PR #120,
+/// round 5; spawn gate added round 6; evidence-integrity gate added
+/// round 7).
 #[allow(clippy::too_many_arguments)]
 fn apply_post_pass_gates(
     run_nonce: &str,
@@ -1812,52 +1907,57 @@ fn apply_post_pass_gates(
     passes: Vec<PassOutcome>,
 ) -> Result<Vec<PassOutcome>, Box<ExactCliOutcome>> {
     let pass_spawn_failures = collect_pass_spawn_failures(&passes);
-    if !pass_spawn_failures.is_empty() {
-        return Err(Box::new(identity_blocked_outcome(
-            run_nonce.to_string(),
-            sentinel_value.to_string(),
-            workspace_root.to_path_buf(),
-            affected_identity.clone(),
-            stable_identity.cloned(),
-            inner_identity.clone(),
-            gate1.clone(),
-            passes,
-            pass_spawn_failures,
-        )));
-    }
+    let passes = blocked_if_any(
+        pass_spawn_failures,
+        run_nonce,
+        sentinel_value,
+        workspace_root,
+        affected_identity,
+        stable_identity,
+        inner_identity,
+        gate1,
+        passes,
+    )?;
 
     let pass_identity_failures =
         collect_pass_identity_failures(&passes, affected_identity, stable_identity);
-    if !pass_identity_failures.is_empty() {
-        return Err(Box::new(identity_blocked_outcome(
-            run_nonce.to_string(),
-            sentinel_value.to_string(),
-            workspace_root.to_path_buf(),
-            affected_identity.clone(),
-            stable_identity.cloned(),
-            inner_identity.clone(),
-            gate1.clone(),
-            passes,
-            pass_identity_failures,
-        )));
-    }
+    let passes = blocked_if_any(
+        pass_identity_failures,
+        run_nonce,
+        sentinel_value,
+        workspace_root,
+        affected_identity,
+        stable_identity,
+        inner_identity,
+        gate1,
+        passes,
+    )?;
 
     let pass_teardown_failures = collect_pass_teardown_failures(&passes);
-    if !pass_teardown_failures.is_empty() {
-        return Err(Box::new(identity_blocked_outcome(
-            run_nonce.to_string(),
-            sentinel_value.to_string(),
-            workspace_root.to_path_buf(),
-            affected_identity.clone(),
-            stable_identity.cloned(),
-            inner_identity.clone(),
-            gate1.clone(),
-            passes,
-            pass_teardown_failures,
-        )));
-    }
+    let passes = blocked_if_any(
+        pass_teardown_failures,
+        run_nonce,
+        sentinel_value,
+        workspace_root,
+        affected_identity,
+        stable_identity,
+        inner_identity,
+        gate1,
+        passes,
+    )?;
 
-    Ok(passes)
+    let pass_evidence_integrity_failures = collect_pass_evidence_integrity_failures(&passes);
+    blocked_if_any(
+        pass_evidence_integrity_failures,
+        run_nonce,
+        sentinel_value,
+        workspace_root,
+        affected_identity,
+        stable_identity,
+        inner_identity,
+        gate1,
+        passes,
+    )
 }
 
 /// Runs the full `exact-cli` classification: creates the isolated probe
