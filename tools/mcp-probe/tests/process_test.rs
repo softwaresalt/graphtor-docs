@@ -14,9 +14,15 @@
 //! `#[cfg(test)]` unit-test module) wherever it needs to spawn the real
 //! compiled `mcp-probe` binary via `env!("CARGO_BIN_EXE_mcp-probe")`, for
 //! exactly the same `std::env::current_exe()`-inside-`cargo-test`-harness
-//! reason documented there. Scenario 3 needs no real process spawning at
-//! all -- it exercises the injectable `ProcessObserver` seam with a
-//! deterministic fake, exactly as that seam is designed for.
+//! reason documented there. Scenario 3's identity-ambiguity and
+//! wiring-level residual-descendant checks need no real process spawning
+//! at all -- they exercise the injectable `ProcessObserver` seam with a
+//! deterministic fake. Scenario 3 also drives `run_wrapper` itself
+//! through a real spawned `__echo` child with a spawn-aware fake
+//! observer, proving descendant candidates are sampled across the
+//! wrapper's lifecycle (not only once after teardown) so a residual
+//! descendant that gets reparented away before the post-teardown query
+//! is still surfaced.
 
 use mcp_probe::process::{
     is_ambiguous_match, run_wrapper, ChildGuard, ProcessIdentity, ProcessObserver,
@@ -319,4 +325,88 @@ fn wrapper_surfaces_residual_descendants_from_the_observer_without_acting_on_the
     // reaped": the fake, like the real `SysinfoProcessObserver`, simply
     // has nothing callable that could reap it.
     assert!(observer.observe(residual.pid).is_some());
+}
+
+/// A `ProcessObserver` whose `child_pids` answer depends on how many
+/// times it has been queried: it reports a residual descendant on the
+/// FIRST query (modelling a descendant that is still visible immediately
+/// after the inner process spawns, while that parent is freshly alive)
+/// and reports nothing on every later query (modelling a platform that
+/// reparents orphaned children away from the original parent before that
+/// parent's own teardown completes). This drives `run_wrapper` itself
+/// (rather than re-deriving its expression against a static fake) to
+/// prove it samples descendant candidates across the wrapper's lifecycle
+/// instead of relying solely on a single post-teardown snapshot, which
+/// would otherwise silently miss exactly this residual descendant
+/// (Copilot review, 2026-09 -- 049-S PR #120).
+struct SpawnAwareFakeObserver {
+    identities: HashMap<u32, ProcessIdentity>,
+    residual_pid: u32,
+    child_pids_calls: std::sync::atomic::AtomicU32,
+}
+
+impl ProcessObserver for SpawnAwareFakeObserver {
+    fn observe(&self, pid: u32) -> Option<ProcessIdentity> {
+        self.identities.get(&pid).cloned()
+    }
+
+    fn child_pids(&self, _parent_pid: u32) -> Vec<u32> {
+        let call = self
+            .child_pids_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if call == 0 {
+            vec![self.residual_pid]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+#[test]
+fn wrapper_surfaces_a_residual_descendant_sampled_before_teardown_even_when_reparented_away_by_the_post_teardown_query(
+) {
+    let residual_pid = 9002_u32;
+    let mut identities = HashMap::new();
+    identities.insert(
+        residual_pid,
+        ProcessIdentity {
+            pid: residual_pid,
+            start_time_unix_secs: 500,
+            executable: Some("reparented-grandchild".to_string()),
+            parent_pid: None,
+        },
+    );
+    let observer = SpawnAwareFakeObserver {
+        identities,
+        residual_pid,
+        child_pids_calls: std::sync::atomic::AtomicU32::new(0),
+    };
+
+    let config = wrapper_config(vec!["__echo"], None);
+    let outcome = run_wrapper(
+        Cursor::new(Vec::<u8>::new()),
+        CapturingWriter::default(),
+        &config,
+        &observer,
+    )
+    .expect("wrapper run over __echo");
+
+    assert_eq!(
+        outcome.residual_descendants.len(),
+        1,
+        "a descendant sampled while the parent was alive must still be \
+         surfaced even though the post-teardown query no longer sees it"
+    );
+    assert_eq!(outcome.residual_descendants[0].pid, residual_pid);
+    // `child_pids` must have been queried more than once (once while the
+    // parent was freshly alive, and again immediately before teardown),
+    // proving `run_wrapper` samples across the lifecycle rather than
+    // only once after the inner process has already been torn down.
+    assert!(
+        observer
+            .child_pids_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+            >= 2,
+        "run_wrapper must sample descendant candidates more than once across its lifecycle"
+    );
 }

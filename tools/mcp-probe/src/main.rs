@@ -24,7 +24,9 @@
 //! subcommand is the sole caller that composes `workspace::create_probe_workspace`
 //! with the `wrapper` subcommand above into one real run.
 
-use mcp_probe::exact_cli::{outcome_to_json, parse_exact_cli_args, run_exact_cli};
+use mcp_probe::exact_cli::{
+    outcome_to_json, parse_exact_cli_args, persist_outcome_json, run_exact_cli,
+};
 use mcp_probe::process::{parse_wrapper_args, run_wrapper, SysinfoProcessObserver, WrapperConfig};
 use std::io::{Read, Write};
 
@@ -106,6 +108,12 @@ fn run_exact_cli_subcommand(args: impl Iterator<Item = String>) {
 
     match run_exact_cli(&parsed) {
         Ok(outcome) => {
+            if let Err(err) = persist_outcome_json(&outcome) {
+                eprintln!(
+                    "mcp-probe exact-cli: warning: failed to persist result JSON under the \
+                     probe workspace: {err}"
+                );
+            }
             let json = outcome_to_json(&outcome);
             match serde_json::to_string_pretty(&json) {
                 Ok(text) => println!("{text}"),

@@ -361,6 +361,26 @@ where
     // never delay pump completion.
     drop(delivery);
 
+    // The primary pumps can both finish (e.g. the child closed stdout
+    // and stdin) while the child is still alive and holding stderr
+    // open, which would otherwise let the unconditional stderr join
+    // below hang past the configured deadline (Copilot review,
+    // 2026-09 -- 049-S PR #120). When a deadline is configured and the
+    // primary loop did not already time out, give the stderr thread the
+    // SAME remaining deadline budget via bounded polling instead of an
+    // unconditional blocking join; if it does not finish in time, mark
+    // the overall outcome as timed out too so the caller tears the
+    // child down (which then forces stderr closed) instead of treating
+    // this as a clean completion.
+    if !outcome.timed_out {
+        if let Some(deadline) = deadline {
+            let remaining = deadline.saturating_sub(start.elapsed());
+            if !stderr_thread_finished_within(stderr_handle.as_ref(), remaining, poll_interval) {
+                outcome.timed_out = true;
+            }
+        }
+    }
+
     // A timed-out direction's `JoinHandle` is intentionally neither joined
     // nor detached here -- just dropped on return; see
     // `join_stderr_thread`'s doc comment for why the stderr thread below
@@ -368,6 +388,32 @@ where
     join_stderr_thread(stderr_handle, outcome.timed_out);
 
     Ok(outcome)
+}
+
+/// Polls `handle` (if present) for completion within `budget`, without
+/// ever blocking past it. Returns `true` immediately when no stderr
+/// thread was spawned (nothing to wait for) or once `handle.is_finished()`
+/// observes completion; returns `false` if `budget` elapses first. Never
+/// consumes or joins `handle` -- the caller still owns that decision via
+/// [`join_stderr_thread`].
+fn stderr_thread_finished_within(
+    handle: Option<&thread::JoinHandle<()>>,
+    budget: Duration,
+    poll_interval: Duration,
+) -> bool {
+    let Some(handle) = handle else {
+        return true;
+    };
+    let wait_start = Instant::now();
+    loop {
+        if handle.is_finished() {
+            return true;
+        }
+        if wait_start.elapsed() >= budget {
+            return false;
+        }
+        thread::sleep(poll_interval);
+    }
 }
 
 /// Joins a finished primary pump-thread handle, logging (and returning
@@ -396,7 +442,12 @@ fn join_finished_pump_thread(
 /// reaches EOF once the child's stderr closes, which for a wedged,
 /// not-yet-reaped child never happens until strictly after this function
 /// returns, so unconditionally joining here would reintroduce exactly the
-/// hang the deadline exists to bound. A join `Err` (the thread panicked)
+/// hang the deadline exists to bound. Callers set `timed_out` for this
+/// case whether the primary pumps themselves hit the deadline OR the
+/// stderr thread alone outlived the same deadline budget after both
+/// primary directions closed (see [`stderr_thread_finished_within`]) --
+/// either way a live child with stderr still open must never wedge this
+/// join past the caller's requested bound. A join `Err` (the thread panicked)
 /// is logged rather than silently discarded.
 fn join_stderr_thread(handle: Option<thread::JoinHandle<()>>, timed_out: bool) {
     let Some(handle) = handle else {

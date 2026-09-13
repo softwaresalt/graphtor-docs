@@ -279,7 +279,7 @@ pub struct CopilotIdentity {
 fn identify_copilot(exe_path: &str, deadline: Duration) -> CopilotIdentity {
     let mut command = Command::new(exe_path);
     command.arg("--version");
-    let (stdout_bytes, timed_out, exit_code, _stdout_truncated) =
+    let (stdout_bytes, timed_out, exit_code, _stdout_truncated, _spawn_error) =
         spawn_and_capture(command, deadline);
     let version_output = if timed_out || exit_code.is_none() {
         None
@@ -303,6 +303,38 @@ fn identify_copilot(exe_path: &str, deadline: Duration) -> CopilotIdentity {
         Err(err) => CopilotIdentity {
             exe_path: exe_path.to_string(),
             version_output,
+            content_hash_hex: String::new(),
+            content_len: 0,
+            identify_error: Some(err.to_string()),
+        },
+    }
+}
+
+/// Records identity (path, content hash, content length) for the
+/// production `--inner-exe` this run's wrapper handoff encodes, WITHOUT
+/// ever spawning it: unlike [`identify_copilot`]'s Copilot CLI targets,
+/// the inner executable is an arbitrary MCP server binary with no
+/// guaranteed `--version` contract, and invoking it outside the wrapper
+/// handoff this task already owns would be a new, unauthorized execution
+/// with unknown side effects (it might not even be a short-lived CLI).
+/// `version_output` is therefore always `None` here -- this is
+/// read-only, file-hash identity proof, the same proof
+/// [`identify_copilot`] already provides via `fs::read` for the Copilot
+/// targets, just without the extra `--version` invocation step (Copilot
+/// review, 2026-09 -- 049-S PR #120; 056.001-T's own acceptance
+/// criteria: "Record and hash the exact inner executable path").
+fn identify_inner_exe(exe_path: &str) -> CopilotIdentity {
+    match fs::read(exe_path) {
+        Ok(bytes) => CopilotIdentity {
+            exe_path: exe_path.to_string(),
+            version_output: None,
+            content_hash_hex: format!("{:016x}", fnv1a_64(&bytes)),
+            content_len: bytes.len() as u64,
+            identify_error: None,
+        },
+        Err(err) => CopilotIdentity {
+            exe_path: exe_path.to_string(),
+            version_output: None,
             content_hash_hex: String::new(),
             content_len: 0,
             identify_error: Some(err.to_string()),
@@ -462,11 +494,24 @@ fn pump_and_reap(guard: &mut ChildGuard, deadline: Duration) -> (Vec<u8>, bool, 
 /// 1) that need no concurrent sentinel watcher.
 ///
 /// Returns empty output, `timed_out: false`, `exit_code: None`, and
-/// `stdout_truncated: false` if the child could not even be spawned.
-fn spawn_and_capture(command: Command, deadline: Duration) -> (Vec<u8>, bool, Option<i32>, bool) {
+/// `stdout_truncated: false` if the child could not even be spawned; the
+/// fifth element carries `Some(spawn error message)` in that exact case
+/// and `None` in every other case, so a caller that gates a causal
+/// classification on `exit_code`/`timed_out` alone (as plain process
+/// output) can still fail closed on an unlaunchable executable rather
+/// than silently treating it the same as an ordinary non-zero exit
+/// (Copilot review, 2026-09 -- 049-S PR #120).
+fn spawn_and_capture(
+    command: Command,
+    deadline: Duration,
+) -> (Vec<u8>, bool, Option<i32>, bool, Option<String>) {
     match spawn_piped_child(command) {
-        Ok(mut guard) => pump_and_reap(&mut guard, deadline),
-        Err(_) => (Vec::new(), false, None, false),
+        Ok(mut guard) => {
+            let (stdout_bytes, timed_out, exit_code, stdout_truncated) =
+                pump_and_reap(&mut guard, deadline);
+            (stdout_bytes, timed_out, exit_code, stdout_truncated, None)
+        }
+        Err(err) => (Vec::new(), false, None, false, Some(err.to_string())),
     }
 }
 
@@ -605,6 +650,16 @@ pub struct Gate1Outcome {
     pub expected_source_path: String,
     pub raw_stdout: String,
     pub parse_error: Option<String>,
+    /// `Some(message)` only when the exact target CLI could not even be
+    /// spawned for this gate (for example, an unlaunchable or missing
+    /// `--copilot-exe`); `None` for every other outcome, including a
+    /// genuine non-zero exit or timeout. This is the fail-closed signal
+    /// `run_exact_cli` uses to distinguish "isolation was never proven
+    /// because the CLI never ran" from "isolation was proven to have
+    /// failed" -- the two are never collapsed into the same
+    /// `H3-B-candidate` classification (Copilot review, 2026-09 -- 049-S
+    /// PR #120).
+    pub spawn_error: Option<String>,
 }
 
 fn run_gate1(
@@ -627,7 +682,7 @@ fn run_gate1(
     // `LegOutcome`, see `run_leg`) since a bounded config-resolution
     // response truncating would already fail JSON parsing below and be
     // reported via `parse_error`.
-    let (stdout_bytes, timed_out, exit_code, _stdout_truncated) =
+    let (stdout_bytes, timed_out, exit_code, _stdout_truncated, spawn_error) =
         spawn_and_capture(command, deadline);
     let raw_stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     let expected_source_path = workspace
@@ -644,6 +699,7 @@ fn run_gate1(
             expected_source_path,
             raw_stdout,
             parse_error: None,
+            spawn_error,
         };
     }
 
@@ -663,6 +719,7 @@ fn run_gate1(
                 expected_source_path,
                 raw_stdout,
                 parse_error: None,
+                spawn_error: None,
             }
         }
         Err(err) => Gate1Outcome {
@@ -673,6 +730,7 @@ fn run_gate1(
             expected_source_path,
             raw_stdout,
             parse_error: Some(err.to_string()),
+            spawn_error: None,
         },
     }
 }
@@ -1036,6 +1094,11 @@ pub struct ExactCliOutcome {
     pub workspace_root: PathBuf,
     pub affected_identity: CopilotIdentity,
     pub stable_identity: Option<CopilotIdentity>,
+    /// Read-only, file-hash identity (path/content-hash/content-length)
+    /// of the production `--inner-exe` this run's wrapper handoff
+    /// encodes -- see [`identify_inner_exe`]'s doc comment for why this
+    /// is never spawned to obtain a `version_output`.
+    pub inner_identity: CopilotIdentity,
     pub gate1: Gate1Outcome,
     pub passes: Vec<PassOutcome>,
     pub ordered_cause_classification: Vec<String>,
@@ -1096,6 +1159,7 @@ pub fn outcome_to_json(outcome: &ExactCliOutcome) -> serde_json::Value {
         "workspace_root": outcome.workspace_root.to_string_lossy(),
         "affected_identity": copilot_identity_to_json(&outcome.affected_identity),
         "stable_identity": outcome.stable_identity.as_ref().map(copilot_identity_to_json),
+        "inner_identity": copilot_identity_to_json(&outcome.inner_identity),
         "gate1": {
             "passed": outcome.gate1.passed,
             "exit_code": outcome.gate1.exit_code,
@@ -1103,6 +1167,7 @@ pub fn outcome_to_json(outcome: &ExactCliOutcome) -> serde_json::Value {
             "resolved_source_path": outcome.gate1.resolved_source_path,
             "expected_source_path": outcome.gate1.expected_source_path,
             "parse_error": outcome.gate1.parse_error,
+            "spawn_error": outcome.gate1.spawn_error,
         },
         "passes": outcome.passes.iter().map(pass_outcome_to_json).collect::<Vec<_>>(),
         "ordered_cause_classification": outcome.ordered_cause_classification,
@@ -1111,17 +1176,138 @@ pub fn outcome_to_json(outcome: &ExactCliOutcome) -> serde_json::Value {
     })
 }
 
+/// Result file name this task persists under [`ExactCliOutcome::workspace_root`].
+pub const RESULT_FILE_NAME: &str = "exact-cli-result.json";
+
+/// Serializes `outcome` via [`outcome_to_json`] and atomically writes it
+/// under `outcome.workspace_root` as [`RESULT_FILE_NAME`] (temp file plus
+/// rename, the same create-then-rename shape
+/// `evidence::write_evidence_output` uses for its own file), returning
+/// the path written on success.
+///
+/// This is `exact_cli`'s own task-output persistence -- distinct from,
+/// and never a reimplementation of, `056.023-T`'s owned evidence-capture
+/// module -- delivering the durable, on-disk persistence this task's own
+/// doc comments already claimed (see [`outcome_to_json`] and
+/// [`ExactCliOutcome`]) but that previously only ever happened if an
+/// external caller chose to redirect stdout (Copilot review, 2026-09 --
+/// 049-S PR #120).
+///
+/// # Errors
+///
+/// Returns an error if the outcome cannot be serialized, the temporary
+/// file cannot be created/written/flushed, or the final rename fails.
+pub fn persist_outcome_json(outcome: &ExactCliOutcome) -> io::Result<PathBuf> {
+    let json = outcome_to_json(outcome);
+    let bytes = serde_json::to_vec_pretty(&json)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+    let final_path = outcome.workspace_root.join(RESULT_FILE_NAME);
+    let tmp_path = outcome
+        .workspace_root
+        .join(format!(".{RESULT_FILE_NAME}.tmp-{}", std::process::id()));
+
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+        file.write_all(&bytes)?;
+        file.flush()?;
+    }
+    fs::rename(&tmp_path, &final_path)?;
+    Ok(final_path)
+}
+
+/// Builds the terminal [`ExactCliOutcome`] for a Gate 1 failure: either a
+/// genuine spawn-failure `"blocked"` terminal (isolation was never proven
+/// either way) or the pre-existing `"done"` H3-B-candidate terminal (Gate
+/// 1 ran to completion but did not prove shadowing). Extracted from
+/// [`run_exact_cli`] to keep that function under
+/// `clippy::too_many_lines`'s pedantic threshold.
+#[allow(clippy::too_many_arguments)]
+fn gate1_failure_outcome(
+    run_nonce: String,
+    sentinel_value: String,
+    workspace_root: PathBuf,
+    affected_identity: CopilotIdentity,
+    stable_identity: Option<CopilotIdentity>,
+    inner_identity: CopilotIdentity,
+    gate1: Gate1Outcome,
+) -> ExactCliOutcome {
+    // A spawn failure (the exact target CLI could not even be
+    // launched) fails closed here: isolation was never PROVEN
+    // either way, so this is NOT the same signal as a genuine Gate
+    // 1 run that observed a merged/ambiguous ancestor config. Only
+    // the latter is a causal `H3-B-candidate`; the former blocks
+    // evidence capture for this explicit, non-H3-B reason and
+    // reports it as such (Copilot review, 2026-09 -- 049-S PR #120;
+    // 056.001-T's own acceptance criteria: "Fail closed when ...
+    // ancestor config-isolation ... is unproved").
+    if let Some(spawn_error) = gate1.spawn_error.clone() {
+        return ExactCliOutcome {
+            run_nonce,
+            sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
+            sentinel_value,
+            manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
+            workspace_root,
+            affected_identity,
+            stable_identity,
+            inner_identity,
+            gate1,
+            passes: Vec::new(),
+            ordered_cause_classification: vec![format!(
+                "blocked: Gate 1 (ancestor config-isolation) could not even spawn the \
+                 exact target CLI ({spawn_error}); isolation was never proven either way, \
+                 so no causal classification is emitted and this is NOT an H3-B-candidate."
+            )],
+            h3_b_candidate: false,
+            terminal: "blocked",
+        };
+    }
+    ExactCliOutcome {
+        run_nonce,
+        sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
+        sentinel_value,
+        manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
+        workspace_root,
+        affected_identity,
+        stable_identity,
+        inner_identity,
+        gate1,
+        passes: Vec::new(),
+        ordered_cause_classification: vec![
+            "H3-B-candidate: Gate 1 (ancestor config-isolation) did not prove the nearest \
+             child .mcp.json shadowed the sentinel ancestor without merging it; causal H0 \
+             comparison stopped, forwarding to 056.019-T (the sole H3-B terminal)."
+                .to_string(),
+        ],
+        h3_b_candidate: true,
+        terminal: "done",
+    }
+}
+
 /// Runs the full `exact-cli` classification: creates the isolated probe
 /// workspace, records both target identities, proves Gate 1, and -- only
 /// if Gate 1 passes -- runs the bounded one-shot control/treatment
 /// causal pass(es) and emits the ordered cause classification.
 ///
+/// `terminal` is `"done"` for a normal completion (with `h3_b_candidate`
+/// distinguishing a causal classification from a Gate-1-detected
+/// ancestor-merge H3-B-candidate), or `"blocked"` when Gate 1 itself
+/// could not even spawn the exact target CLI -- a genuine, explicit
+/// non-H3-B evidence-capture blocker that must never be reported as an
+/// `H3-B-candidate`, since isolation was never proven either way in that
+/// case (Copilot review, 2026-09 -- 049-S PR #120).
+///
 /// # Errors
 ///
 /// Returns an error string only when the isolated probe workspace itself
 /// could not be created (a genuine, non-H3-B evidence-capture blocker);
-/// every other outcome -- including a Gate 1 failure -- is represented in
-/// the returned [`ExactCliOutcome`], never as an `Err`.
+/// every other outcome -- including a Gate 1 failure or Gate 1 spawn
+/// blocker -- is represented in the returned [`ExactCliOutcome`], never
+/// as an `Err`.
 // The `exact_cli` prefix is deliberate and clearer than a bare `run` for
 // a function re-exported from the crate root's public API surface.
 #[allow(clippy::module_name_repetitions)]
@@ -1152,6 +1338,7 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
         .stable_copilot_exe
         .as_deref()
         .map(|exe| identify_copilot(exe, args.gate1_deadline));
+    let inner_identity = identify_inner_exe(&args.inner_exe);
 
     let gate1 = run_gate1(
         &args.copilot_exe,
@@ -1161,25 +1348,15 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
     );
 
     if !gate1.passed {
-        return Ok(ExactCliOutcome {
+        return Ok(gate1_failure_outcome(
             run_nonce,
-            sentinel_env_var: ENV_INHERITANCE_SENTINEL_VAR.to_string(),
             sentinel_value,
-            manual_verification_invocation: MANUAL_VERIFICATION_INVOCATION.to_string(),
-            workspace_root: workspace.root.clone(),
+            workspace.root.clone(),
             affected_identity,
             stable_identity,
+            inner_identity,
             gate1,
-            passes: Vec::new(),
-            ordered_cause_classification: vec![
-                "H3-B-candidate: Gate 1 (ancestor config-isolation) did not prove the nearest \
-                 child .mcp.json shadowed the sentinel ancestor without merging it; causal H0 \
-                 comparison stopped, forwarding to 056.019-T (the sole H3-B terminal)."
-                    .to_string(),
-            ],
-            h3_b_candidate: true,
-            terminal: "done",
-        });
+        ));
     }
 
     let mut passes = vec![run_pass(
@@ -1211,6 +1388,7 @@ pub fn run_exact_cli(args: &ExactCliArgs) -> Result<ExactCliOutcome, String> {
         workspace_root: workspace.root.clone(),
         affected_identity,
         stable_identity,
+        inner_identity,
         gate1,
         passes,
         ordered_cause_classification,
@@ -1530,6 +1708,7 @@ mod tests {
             expected_source_path: "expected".to_string(),
             raw_stdout: String::new(),
             parse_error: None,
+            spawn_error: None,
         };
         assert!(!outcome.passed);
     }
@@ -1550,6 +1729,13 @@ mod tests {
                 identify_error: None,
             },
             stable_identity: None,
+            inner_identity: CopilotIdentity {
+                exe_path: "inner.exe".to_string(),
+                version_output: None,
+                content_hash_hex: "cafef00d".to_string(),
+                content_len: 7,
+                identify_error: None,
+            },
             gate1: Gate1Outcome {
                 passed: true,
                 exit_code: Some(0),
@@ -1558,6 +1744,7 @@ mod tests {
                 expected_source_path: "resolved".to_string(),
                 raw_stdout: String::new(),
                 parse_error: None,
+                spawn_error: None,
             },
             passes: Vec::new(),
             ordered_cause_classification: vec!["placeholder".to_string()],
@@ -1569,6 +1756,8 @@ mod tests {
         assert_eq!(json["gate1"]["passed"], true);
         assert_eq!(json["terminal"], "done");
         assert_eq!(json["ordered_cause_classification"][0], "placeholder");
+        assert_eq!(json["inner_identity"]["exe_path"], "inner.exe");
+        assert_eq!(json["inner_identity"]["content_hash_hex"], "cafef00d");
     }
 
     // ── Adversarial-review remediation regression tests ──────────────

@@ -367,6 +367,28 @@ where
         .spawn()?;
     let mut guard = ChildGuard::new(child, "inner");
 
+    // Residual/unknown descendants (Copilot review, 2026-09 -- 049-S PR
+    // #120): a platform that reparents orphaned children away from
+    // their original parent typically does so at or before that
+    // parent's own exit, which for a wedged/killed inner process can
+    // happen strictly between this point and the post-teardown
+    // observation below. Querying `child_pids` only after teardown can
+    // therefore silently miss exactly the residual descendants this
+    // diagnostic exists to surface. Take a first, best-effort candidate
+    // snapshot right now while the inner process is freshly alive
+    // (nothing has spawned yet, but an already-detaching child could
+    // already be visible), and take a second snapshot immediately after
+    // the pump returns but strictly before teardown below; the union of
+    // both candidate sets is then re-observed once the guard has torn
+    // the inner process down. This is still best-effort, never a proof
+    // of completeness -- a descendant that both spawns AND is reparented
+    // inside either narrow window between snapshots can still be missed
+    // -- but it materially widens the observation window versus a single
+    // post-teardown-only query.
+    let mut candidate_descendant_pids: Vec<u32> = guard
+        .pid()
+        .map_or_else(Vec::new, |inner_pid| observer.child_pids(inner_pid));
+
     let pump_config = PumpConfig {
         deadline: config.pump_deadline,
         ..PumpConfig::default()
@@ -380,6 +402,10 @@ where
         &pump_config,
         Some(evidence_collector.hook()),
     )?;
+
+    if let Some(inner_pid) = guard.pid() {
+        candidate_descendant_pids.extend(observer.child_pids(inner_pid));
+    }
 
     let inner_exit_code = if pump.timed_out {
         // Deadline/error teardown: the inner child never closed both
@@ -396,17 +422,15 @@ where
     let wrapper_identity = observer.observe(std::process::id());
     let sentinel_inherited = std::env::var(ENV_INHERITANCE_SENTINEL_VAR).ok();
 
-    // Residual/unknown descendants: after the owned guard's teardown
-    // above, ask the observer whether any child processes of the
-    // (already torn-down) inner child remain observable. Diagnostic
+    // Re-observe the union of both pre-teardown candidate snapshots
+    // above, now that the owned guard's teardown has run. Diagnostic
     // only: surfaced, never acted on -- this task never kills them.
-    let residual_descendants = guard.pid().map_or_else(Vec::new, |inner_pid| {
-        observer
-            .child_pids(inner_pid)
-            .into_iter()
-            .filter_map(|pid| observer.observe(pid))
-            .collect()
-    });
+    candidate_descendant_pids.sort_unstable();
+    candidate_descendant_pids.dedup();
+    let residual_descendants = candidate_descendant_pids
+        .into_iter()
+        .filter_map(|pid| observer.observe(pid))
+        .collect();
 
     // 056.023-T: finalize evidence collection and persist the redacted
     // summary to the wrapper-owned evidence_output path. This is always
