@@ -1,0 +1,157 @@
+name: mcp-probe CI
+
+# Dedicated CI for the standalone, non-published `tools/mcp-probe/` diagnostic
+# crate (056.028-T). The crate declares its own empty `[workspace]` table
+# (see `tools/mcp-probe/Cargo.toml`) so it is deliberately excluded from the
+# root Cargo workspace, and the root `.github/workflows/ci.yml` pipeline never
+# reaches it (that pipeline's `build`/`audit` steps only ever target the root
+# manifest). This workflow closes that gap with its own fmt -> clippy -> test
+# -> build -> audit sequence, pinned to the project's MSRV (Rust 1.75), run
+# against `tools/mcp-probe/Cargo.toml` / `tools/mcp-probe/Cargo.lock`.
+#
+# Path-filtered on the probe crate's own tree, this workflow file, the
+# self-test script it executes (probe-ci-selftest invokes
+# scripts/mcp-probe-ci-seeded-violation-check.sh), and the shared
+# .cargo/config.toml this job's cargo invocations rely on for the mold
+# linker rustflags -- so a change to any of those four inputs still
+# triggers this workflow rather than reporting a stale green result.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'tools/mcp-probe/**'
+      - '.github/workflows/mcp-probe-ci.yml'
+      - 'scripts/mcp-probe-ci-seeded-violation-check.sh'
+      - '.cargo/config.toml'
+  pull_request:
+    paths:
+      - 'tools/mcp-probe/**'
+      - '.github/workflows/mcp-probe-ci.yml'
+      - 'scripts/mcp-probe-ci-seeded-violation-check.sh'
+      - '.cargo/config.toml'
+  # Weekly run so the cargo-audit advisory gate keeps a fixed cadence even
+  # during periods where the probe crate itself is untouched for weeks (the
+  # path-filtered triggers above otherwise never re-run the audit step) --
+  # mirrors the identical rationale already used for the root pipeline's
+  # audit gate in .github/workflows/ci.yml.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe-ci:
+    name: mcp-probe standalone gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain (pinned MSRV 1.75.0)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: "1.75.0"
+          components: clippy,rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: tools/mcp-probe -> target
+
+      - name: Install mold linker
+        # The repo-root .cargo/config.toml sets
+        # `target.x86_64-unknown-linux-gnu.rustflags = ["-C", "link-arg=-fuse-ld=mold"]`
+        # for all Linux builds (cargo config discovery walks up from cwd, so
+        # this applies even with --manifest-path pointed at the probe crate).
+        # Mirrors the identical step in ci.yml's `build` job.
+        run: sudo apt-get install -y mold
+
+      - name: fmt
+        run: cargo +1.75.0 fmt --check --manifest-path tools/mcp-probe/Cargo.toml
+
+      - name: clippy
+        # -A clippy::module_name_repetitions: four pre-existing findings in
+        # tools/mcp-probe/src/workspace.rs (WorkspaceError, ProbeWorkspace,
+        # create_probe_workspace, remove_probe_workspace), owned by
+        # 056.022-T/056.023-T. 056.028-T is CI/workflow width only and does
+        # not edit probe source, so this narrow, documented allowance is a
+        # workflow-only decision -- every other clippy::pedantic lint stays
+        # enforced (-D warnings -D clippy::pedantic). The underlying source
+        # lint-debt / possible crate-level ratification is out of scope for
+        # this task and is tracked as a P-021 deferred scope-expansion stash
+        # entry (787C92F9) for a future Stage deliberation session.
+        run: |
+          cargo +1.75.0 clippy --manifest-path tools/mcp-probe/Cargo.toml --locked --all-targets -- \
+            -D warnings \
+            -D clippy::pedantic \
+            -A clippy::module_name_repetitions
+
+      - name: test
+        run: cargo +1.75.0 test --manifest-path tools/mcp-probe/Cargo.toml --locked
+
+      - name: build
+        run: cargo +1.75.0 build --manifest-path tools/mcp-probe/Cargo.toml --locked
+
+      - name: Install toolchain (stable, cargo-audit tooling only)
+        # cargo-audit >=0.22 requires rustc 1.88+, well above this crate's
+        # pinned MSRV (1.75.0). The audit tool only parses
+        # tools/mcp-probe/Cargo.lock against the advisory database -- it does
+        # not compile the probe crate -- so installing/running it under a
+        # newer `stable` toolchain has no bearing on the MSRV that fmt,
+        # clippy, test, and build above already verified with `+1.75.0`.
+        # `rust-toolchain@stable` adds this alongside 1.75.0 rather than
+        # replacing it; the `+stable` selector below pins which one runs.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+
+      - name: audit
+        run: |
+          # Pinned to the 0.22 minor line for the same reason as ci.yml's
+          # audit step: a breaking 0.23+ release should not silently change
+          # gate behavior here either.
+          cargo +stable install cargo-audit --version "^0.22" --locked
+          # --deny warnings: mirrors ci.yml's root audit gate so a new
+          # unmaintained/unsound advisory fails this standalone gate too,
+          # instead of merely printing a warning and exiting 0. There is no
+          # probe-specific audit.toml allowlist at the time of writing, so
+          # no --ignore entries are needed here; if one is later added, keep
+          # --deny warnings so newly reported advisories still fail closed.
+          cargo +stable audit --file tools/mcp-probe/Cargo.lock --deny warnings
+
+  probe-ci-selftest:
+    name: mcp-probe CI seeded-violation self-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain (pinned MSRV 1.75.0)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: "1.75.0"
+          components: clippy,rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: tools/mcp-probe -> target
+
+      - name: Install mold linker
+        # See the identical step/comment in the probe-ci job above.
+        run: sudo apt-get install -y mold
+
+      - name: Test-first dry-run (seeded-violation red proof)
+        # Proves, on every run of this workflow, that the `probe-ci` job's
+        # clippy gate above actually selects the standalone
+        # tools/mcp-probe/Cargo.toml manifest and fails closed on a real
+        # violation -- not merely a job that always reports green. See
+        # scripts/mcp-probe-ci-seeded-violation-check.sh.
+        run: bash scripts/mcp-probe-ci-seeded-violation-check.sh
