@@ -66,16 +66,25 @@ Per the operator's objective 4 (create a precise, tracked tooling-gap artifact r
 stopping at prose), captured the standing tooling gap as a formal P-021 C2
 deferred-scope-expansion stash entry:
 
-- **`7BBDE07A`** (kind: bug, priority: high) — the authoritative, complete six-field capture.
-- **`1C9CD261`** — a malformed duplicate from an earlier attempt in this same session: a
-  PowerShell here-string backtick-escaping defect (`` `b `` → backspace escape, `` `0 `` →
-  NUL byte that truncated the Windows command line, silently dropping the `--kind`/
-  `--priority` flags) produced a truncated (1121 of ~3600 chars), wrongly-defaulted
-  (`kind: task`, `priority: medium`) entry. Ship cannot edit, archive, or remove stash
-  entries under its Role Boundary (Stage-exclusive), so `1C9CD261` is left in place,
-  cross-referenced from `7BBDE07A`'s text, for Stage's normal duplicate-detection/triage.
+- **`7BBDE07A`** (kind: bug, priority: high) — a complete six-field capture of the
+  expansion (created 07:36:40Z).
+- **`1C9CD261`** — a malformed duplicate from an earlier attempt in this same session,
+  created 07:34:24Z (before `7BBDE07A`): a PowerShell here-string backtick-escaping
+  defect (`` `b `` → backspace escape, `` `0 `` → NUL byte that truncated the Windows
+  command line, silently dropping the `--kind`/`--priority` flags) produced a truncated
+  (1121 of ~3600 chars), wrongly-defaulted (`kind: task`, `priority: medium`) entry.
   Root cause fixed for the corrected capture by switching to a verbatim (`@'...'@`)
   here-string with no backtick/escape processing.
+  **Disposition is Stage's authority, not Ship's**: Ship cannot edit, archive, or
+  remove stash entries under its Role Boundary (Stage-exclusive), so `1C9CD261` is
+  left in place, cross-referenced from `7BBDE07A`'s text, for Stage's normal
+  duplicate-detection/triage. Per Stage's anti-duplication rule
+  (`.github/agents/_stage.agent.md:339-345`), reconciliation normally keeps the
+  earliest-captured entry and archives later duplicates — by timestamp that is
+  `1C9CD261`, not `7BBDE07A` — so this record does not presume which stash ID
+  survives; that determination, including whether `1C9CD261`'s malformed/truncated
+  state warrants in-place repair or an explicit documented exception, belongs to
+  Stage's triage.
 - Appended a "Continuation Session Addendum" to
   `.backlogit/reconcile/054-S-halt-20260914T061736Z.md` (status left `open`) documenting the
   re-verification trail and the two stash IDs.
