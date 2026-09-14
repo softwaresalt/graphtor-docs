@@ -91,13 +91,26 @@ jobs:
       - name: build
         run: cargo +1.75.0 build --manifest-path tools/mcp-probe/Cargo.toml
 
+      - name: Install toolchain (stable, cargo-audit tooling only)
+        # cargo-audit >=0.22 requires rustc 1.88+, well above this crate's
+        # pinned MSRV (1.75.0). The audit tool only parses
+        # tools/mcp-probe/Cargo.lock against the advisory database -- it does
+        # not compile the probe crate -- so installing/running it under a
+        # newer `stable` toolchain has no bearing on the MSRV that fmt,
+        # clippy, test, and build above already verified with `+1.75.0`.
+        # `rust-toolchain@stable` adds this alongside 1.75.0 rather than
+        # replacing it; the `+stable` selector below pins which one runs.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+
       - name: audit
         run: |
           # Pinned to the 0.22 minor line for the same reason as ci.yml's
           # audit step: a breaking 0.23+ release should not silently change
           # gate behavior here either.
-          cargo install cargo-audit --version "^0.22" --locked
-          cargo audit --file tools/mcp-probe/Cargo.lock
+          cargo +stable install cargo-audit --version "^0.22" --locked
+          cargo +stable audit --file tools/mcp-probe/Cargo.lock
 
   probe-ci-selftest:
     name: mcp-probe CI seeded-violation self-test
