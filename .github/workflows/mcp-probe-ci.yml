@@ -57,6 +57,14 @@ jobs:
         with:
           workspaces: tools/mcp-probe -> target
 
+      - name: Install mold linker
+        # The repo-root .cargo/config.toml sets
+        # `target.x86_64-unknown-linux-gnu.rustflags = ["-C", "link-arg=-fuse-ld=mold"]`
+        # for all Linux builds (cargo config discovery walks up from cwd, so
+        # this applies even with --manifest-path pointed at the probe crate).
+        # Mirrors the identical step in ci.yml's `build` job.
+        run: sudo apt-get install -y mold
+
       - name: fmt
         run: cargo +1.75.0 fmt --check --manifest-path tools/mcp-probe/Cargo.toml
 
@@ -110,6 +118,10 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: tools/mcp-probe -> target
+
+      - name: Install mold linker
+        # See the identical step/comment in the probe-ci job above.
+        run: sudo apt-get install -y mold
 
       - name: Test-first dry-run (seeded-violation red proof)
         # Proves, on every run of this workflow, that the `probe-ci` job's
