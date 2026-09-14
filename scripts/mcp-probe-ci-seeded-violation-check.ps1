@@ -100,7 +100,13 @@ function ConvertTo-SingleLineCommand([string] $RunBody) {
 # Returns reparse points (symlinks/junctions) under $RootPath, excluding the
 # exact top-level $RootPath/target directory (build output, not source) --
 # mirrors the Bash twin's `find "$PROBE_DIR" -path "$PROBE_DIR/target"
-# -prune -o -type l -print`.
+# -prune -o -type l -print`. Deliberately does NOT swallow enumeration
+# errors (e.g. an inaccessible/permission-denied subdirectory): letting such
+# an error propagate as a terminating exception (the script's global
+# $ErrorActionPreference = 'Stop') is the fail-closed behavior this guard
+# promises -- silently treating an enumeration failure as "no symlinks
+# found" would let an unexamined subtree bypass the path-traversal guard
+# entirely.
 function Get-SymlinksExcludingTarget([string] $RootPath) {
     $targetPath = Join-Path $RootPath 'target'
     $result = New-Object System.Collections.Generic.List[string]
@@ -108,7 +114,7 @@ function Get-SymlinksExcludingTarget([string] $RootPath) {
     # crate-root reparse point) is never visited by Get-ChildItem against its
     # own parent below, so without this explicit check it would be silently
     # traversed and copied, defeating the fail-closed guard entirely.
-    $rootItem = Get-Item -Path $RootPath -Force -ErrorAction SilentlyContinue
+    $rootItem = Get-Item -Path $RootPath -Force
     if ($null -ne $rootItem -and ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
         $result.Add($rootItem.FullName)
         return $result
@@ -117,7 +123,7 @@ function Get-SymlinksExcludingTarget([string] $RootPath) {
     $stack.Push($RootPath)
     while ($stack.Count -gt 0) {
         $current = $stack.Pop()
-        $items = Get-ChildItem -Path $current -Force -ErrorAction SilentlyContinue
+        $items = Get-ChildItem -Path $current -Force
         foreach ($item in $items) {
             if ($item.FullName -eq $targetPath) { continue }
             if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
