@@ -221,11 +221,30 @@ capture-only P-021 entries already created during execution (C5 carve-out):
 7. **Shipment-closure tooling gap** — `054-S`'s open halt handoff
    (`.backlogit/reconcile/054-S-halt-20260914T061736Z.md`) requires an
    explicit operator/Stage-facilitated decision to reach terminal shipment
-   closure. This is not a stash item; it is a standing backlog-tooling
-   condition that should be resolved (ideally by a backlogit CLI/version
+   closure. It should be resolved (ideally by a backlogit CLI/version
    change restoring a non-cascading shipment-status transition, or by a
    deliberate, documented, one-time operator-authorized cascade) before the
    next partial-feature, task-only shipment closure is attempted.
+   **Update (continuation session, 2026-09-14, same day)**: this gap is now
+   formally tracked as P-021 C2 deferred-scope-expansion stash entry
+   **`7BBDE07A`** (kind: bug, priority: high) — a complete six-field capture
+   of the expansion, made per the operator's explicit request to move this
+   out of prose-only handoff and into a precise, tracked artifact. A malformed
+   same-session capture attempt, stash `1C9CD261` (created earlier, at
+   07:34:24Z, truncated mid-sentence with wrong kind/priority due to a shell
+   escaping defect), is a known duplicate of the same expansion.
+   **Disposition is Stage's authority, not Ship's**: per Stage's anti-
+   duplication rule (`.github/agents/_stage.agent.md:339-345`), reconciliation
+   normally keeps the earliest-captured entry and archives later duplicates —
+   which by capture timestamp alone would be `1C9CD261`, not `7BBDE07A`. This
+   record does NOT direct or presume that outcome; it surfaces the conflict
+   (earliest entry is malformed/truncated) for Stage's triage to resolve —
+   whether by repairing `1C9CD261` in place, or by an explicit, documented
+   exception. Ship cannot edit/archive/remove stash entries under its Role
+   Boundary and makes no unilateral disposition here. `054-S` remains
+   `status: active`, unchanged, protected; no cascade, dependency edit, or
+   status fabrication was performed. See the halt record's "Continuation
+   Session Addendum" for the full re-verification trail.
 
 ## Source Artifact Cleanup (handoff only — Ship does not mutate stash)
 
