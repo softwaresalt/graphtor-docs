@@ -11,8 +11,13 @@
 #      to the standalone tools/mcp-probe/Cargo.toml / Cargo.lock
 #      manifest+lockfile (not the root workspace), with --locked and the
 #      required lint/audit flags present in each specific step's own
-#      command block.
-#   2. The job FAILS CLOSED on a seeded clippy::pedantic violation.
+#      *executable* command text -- extracted from the `run:` value only,
+#      with comment lines stripped, so a stale descriptive comment
+#      mentioning the same flags can never satisfy the check on its own.
+#   2. The job FAILS CLOSED on a seeded clippy::pedantic violation, using
+#      the clippy step's *actual* extracted `run:` command (manifest path
+#      substituted to point at the scratch copy) rather than a separately
+#      hand-maintained mirror of its flags.
 #   3. The disposable scratch copy used to seed that violation is never
 #      built from a probe tree containing a symlink/reparse point.
 #
@@ -24,42 +29,72 @@ $PSNativeCommandUseErrorActionPreference = $false
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ProbeDir = Join-Path $RepoRoot 'tools/mcp-probe'
 $WorkflowFile = Join-Path $RepoRoot '.github/workflows/mcp-probe-ci.yml'
-$Toolchain = '+1.75.0'
-$ClippyArgs = @('--locked', '--all-targets', '--', '-D', 'warnings', '-D', 'clippy::pedantic', '-A', 'clippy::module_name_repetitions')
+$RealManifestRel = 'tools/mcp-probe/Cargo.toml'
 
 function Fail([string] $msg) {
     Write-Error "FAIL: $msg"
     exit 1
 }
 
-# Returns the lines belonging to the named workflow step (from its
-# `- name: <step>` marker, exclusive, up to but excluding the next
-# `- name:` line or a job-level key line), so structural assertions below
-# are bound to that exact step's command instead of matching text anywhere
-# in the file. Step names used here (clippy/test/build/audit) are unique
-# to the probe-ci job.
-function Get-StepBlock([string[]] $Lines, [string] $StepName) {
+# Returns only the *executable* text of the named workflow step's `run:`
+# value (single-line `run: <cmd>` or multi-line `run: |` block scalar), as
+# an array of lines with comment lines (leading `#`, after left-trim)
+# filtered out and each line's shared block-scalar indentation stripped.
+# Never returns text from outside the `run:` key itself -- in particular,
+# never the step's own preceding descriptive `#` comments, which live above
+# `run:` at the same indentation and are excluded by construction, not
+# merely by a post-hoc comment filter. Step names used here
+# (clippy/test/build/audit) are unique to the probe-ci job.
+function Get-RunBody([string[]] $Lines, [string] $StepName) {
     $marker = "- name: $StepName"
     $capturing = $false
-    $block = New-Object System.Collections.Generic.List[string]
+    $inRun = $false
+    $runIndent = -1
+    $body = New-Object System.Collections.Generic.List[string]
     foreach ($line in $Lines) {
-        if (-not $capturing) {
+        if (-not $capturing -and -not $inRun) {
             if ($line.TrimStart() -eq $marker) { $capturing = $true }
             continue
         }
-        if ($line -match '^\s*- name:') { break }
-        if ($line -match '^  [A-Za-z0-9_-]+:') { break }
-        $block.Add($line)
+        if ($capturing -and -not $inRun) {
+            if ($line -match '^\s*- name:') { break }
+            if ($line -match '^  [A-Za-z0-9_-]+:') { break }
+            if ($line -match '^\s*run:\s*\|\s*$') {
+                $inRun = $true
+                $runIndent = ($line -replace 'run:.*$', '').Length
+                continue
+            }
+            if ($line -match '^\s*run:\s*(.*)$') {
+                $val = $Matches[1]
+                if ($val -notmatch '^\s*#') { $body.Add($val) }
+                break
+            }
+            continue
+        }
+        if ($inRun) {
+            if ($line -match '^\s*$') { continue }
+            $curIndent = ($line -replace '[^ ].*$', '').Length
+            if ($curIndent -le $runIndent) { break }
+            $trimmed = $line.TrimStart()
+            if ($trimmed -notmatch '^#') { $body.Add($trimmed) }
+        }
     }
-    return ($block -join "`n")
+    return ($body -join "`n")
 }
 
-function Assert-StepContains([string[]] $Lines, [string] $StepName, [string] $Needle) {
-    $block = Get-StepBlock -Lines $Lines -StepName $StepName
-    if ([string]::IsNullOrEmpty($block)) { Fail "workflow step '$StepName' not found" }
-    if (-not $block.Contains($Needle)) {
-        Fail "workflow step '$StepName' does not contain expected: $Needle"
+function Assert-RunBodyContains([string[]] $Lines, [string] $StepName, [string] $Needle) {
+    $body = Get-RunBody -Lines $Lines -StepName $StepName
+    if ([string]::IsNullOrEmpty($body)) { Fail "workflow step '$StepName' run: value not found" }
+    if (-not $body.Contains($Needle)) {
+        Fail "workflow step '$StepName' run: command does not contain expected: $Needle"
     }
+}
+
+# Joins a (possibly multi-line, backslash-continued) run: body into one
+# single-line shell-style command string, for direct invocation.
+function ConvertTo-SingleLineCommand([string] $RunBody) {
+    $lines = $RunBody -split "`n" | ForEach-Object { $_ -replace '\\\s*$', '' }
+    return (($lines -join ' ') -replace '\s+', ' ').Trim()
 }
 
 # Returns reparse points (symlinks/junctions) under $RootPath, excluding the
@@ -88,20 +123,24 @@ function Get-SymlinksExcludingTarget([string] $RootPath) {
     return $result
 }
 
-Write-Host '== Structural check: probe-ci steps bind the standalone manifest/lockfile, --locked, and lint/audit flags =='
+Write-Host '== Structural check: probe-ci steps'' actual run: commands bind the standalone manifest/lockfile, --locked, and lint/audit flags =='
 if (-not (Test-Path $WorkflowFile)) { Fail "workflow file not found: $WorkflowFile" }
 $workflowLines = Get-Content $WorkflowFile
-Assert-StepContains -Lines $workflowLines -StepName 'clippy' -Needle '--manifest-path tools/mcp-probe/Cargo.toml'
-Assert-StepContains -Lines $workflowLines -StepName 'clippy' -Needle '--locked'
-Assert-StepContains -Lines $workflowLines -StepName 'clippy' -Needle '-D warnings'
-Assert-StepContains -Lines $workflowLines -StepName 'clippy' -Needle '-D clippy::pedantic'
-Assert-StepContains -Lines $workflowLines -StepName 'test' -Needle '--manifest-path tools/mcp-probe/Cargo.toml'
-Assert-StepContains -Lines $workflowLines -StepName 'test' -Needle '--locked'
-Assert-StepContains -Lines $workflowLines -StepName 'build' -Needle '--manifest-path tools/mcp-probe/Cargo.toml'
-Assert-StepContains -Lines $workflowLines -StepName 'build' -Needle '--locked'
-Assert-StepContains -Lines $workflowLines -StepName 'audit' -Needle '--file tools/mcp-probe/Cargo.lock'
-Assert-StepContains -Lines $workflowLines -StepName 'audit' -Needle '--deny warnings'
-Write-Host 'OK: probe-ci steps are bound to the standalone manifest/lockfile, --locked, and the required lint/audit flags.'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'clippy' -Needle '--manifest-path tools/mcp-probe/Cargo.toml'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'clippy' -Needle '--locked'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'clippy' -Needle '-D warnings'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'clippy' -Needle '-D clippy::pedantic'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'test' -Needle '--manifest-path tools/mcp-probe/Cargo.toml'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'test' -Needle '--locked'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'build' -Needle '--manifest-path tools/mcp-probe/Cargo.toml'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'build' -Needle '--locked'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'audit' -Needle '--file tools/mcp-probe/Cargo.lock'
+Assert-RunBodyContains -Lines $workflowLines -StepName 'audit' -Needle '--deny warnings'
+Write-Host 'OK: probe-ci run: commands are bound to the standalone manifest/lockfile, --locked, and the required lint/audit flags (comments excluded from the check).'
+
+$ClippyRunBody = Get-RunBody -Lines $workflowLines -StepName 'clippy'
+if ([string]::IsNullOrEmpty($ClippyRunBody)) { Fail 'could not extract the clippy step''s run: command from the workflow' }
+$ClippyCommandLine = ConvertTo-SingleLineCommand $ClippyRunBody
 
 $ScratchDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mcp-probe-seeded-check-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $ScratchDir -Force | Out-Null
@@ -140,10 +179,16 @@ pub fn seeded_violation_probe_must_use_candidate(x: u32) -> u32 {
 '@
     Add-Content -Path (Join-Path $SeedCopy 'src/lib.rs') -Value $seedSnippet
 
-    Write-Host '== RED proof: seeded copy must fail the exact probe-ci clippy invocation =='
-    $seededLog = Join-Path $ScratchDir 'seeded-clippy.log'
+    Write-Host '== RED proof: the workflow''s own extracted clippy command, pointed at the seeded copy, must fail =='
+    # Substitutes only the manifest path so the executed command is
+    # otherwise byte-identical to what probe-ci actually runs -- this is
+    # "share one executable command with the workflow" rather than a
+    # separately maintained mirror of its flags.
     $seedManifest = Join-Path $SeedCopy 'Cargo.toml'
-    & cargo $Toolchain clippy --manifest-path $seedManifest @ClippyArgs *> $seededLog
+    $seededCommandLine = $ClippyCommandLine.Replace($RealManifestRel, $seedManifest)
+    $seededTokens = $seededCommandLine -split '\s+'
+    $seededLog = Join-Path $ScratchDir 'seeded-clippy.log'
+    & $seededTokens[0] @($seededTokens[1..($seededTokens.Length - 1)]) *> $seededLog
     $seededExit = $LASTEXITCODE
     if ($seededExit -eq 0) {
         Get-Content $seededLog | Write-Host
@@ -154,15 +199,21 @@ pub fn seeded_violation_probe_must_use_candidate(x: u32) -> u32 {
         Write-Host $seededOutput
         Fail 'clippy failed, but not for the seeded must_use_candidate violation -- check for an unrelated regression'
     }
-    Write-Host 'OK: seeded clippy::pedantic violation is caught (non-zero exit, must_use_candidate reported).'
+    Write-Host 'OK: seeded clippy::pedantic violation is caught (non-zero exit, must_use_candidate reported) by the workflow''s own extracted command.'
 
-    Write-Host '== GREEN proof: the real, unmodified crate passes the identical invocation =='
-    $realManifest = Join-Path $ProbeDir 'Cargo.toml'
-    & cargo $Toolchain clippy --manifest-path $realManifest @ClippyArgs
-    if ($LASTEXITCODE -ne 0) {
-        Fail 'the real tools/mcp-probe crate unexpectedly failed clippy -- investigate before wiring this job into required checks'
+    Write-Host '== GREEN proof: the workflow''s own extracted clippy command passes against the real, unmodified crate =='
+    Push-Location $RepoRoot
+    try {
+        $realTokens = $ClippyCommandLine -split '\s+'
+        & $realTokens[0] @($realTokens[1..($realTokens.Length - 1)])
+        if ($LASTEXITCODE -ne 0) {
+            Fail 'the real tools/mcp-probe crate unexpectedly failed clippy -- investigate before wiring this job into required checks'
+        }
     }
-    Write-Host 'OK: the real tools/mcp-probe crate passes the probe-ci clippy gate.'
+    finally {
+        Pop-Location
+    }
+    Write-Host 'OK: the real tools/mcp-probe crate passes the probe-ci clippy gate (using the workflow''s own extracted command, executed unmodified).'
 
     Write-Host 'PASS: mcp-probe CI seeded-violation self-test complete.'
 }
