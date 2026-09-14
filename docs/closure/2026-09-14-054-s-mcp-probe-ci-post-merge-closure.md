@@ -179,12 +179,13 @@ runtime surface, no server code path, and no deployed artifact. No
 
 ## Documentation / Knowledge Graduation Review
 
-Reviewed `docs/ARCHITECTURE.md`, `AGENTS.md`, `docs/design-docs/`,
-`docs/product-specs/`, and `CHANGELOG.md` for relevance. No updates applied:
-this is CI/tooling-internal infrastructure for a diagnostic crate with no
-user-facing behavior, API, or architectural surface change, and no existing
-document references `tools/mcp-probe` CI coverage that would need
-correction.
+Reviewed `docs/architecture.md` (this repository has no `docs/ARCHITECTURE.md`
+— the actual, case-sensitive committed path is lowercase), `AGENTS.md`,
+`docs/design-docs/`, `docs/product-specs/`, and `CHANGELOG.md` for relevance.
+No updates applied: this is CI/tooling-internal infrastructure for a
+diagnostic crate with no user-facing behavior, API, or architectural surface
+change, and no existing document references `tools/mcp-probe` CI coverage
+that would need correction.
 
 ## Compound Refresh
 
@@ -236,13 +237,30 @@ recorded for this shipment.
 
 ## Compaction (P-020)
 
-`done`. `compact-context` (`target: memory`) invoked immediately after this
-artifact's creation. Consolidated the three fresh 054-S memory files (Stage's
-assembly + recovery/resume memory, plus this session's Ship lifecycle memory)
-into `docs/memory/compacted/2026-09-14-054-s-compacted.md`; verbose originals
-moved byte-for-byte to `docs/archive/memory/2026-09-14/`. Live backlog-tooling
-artifacts (`.backlogit/reconcile/054-S-*`) and this closure artifact itself
-were left untouched (not memory; not yet stale).
+`done`. `compact-context` invoked with `target: all` (memory, plans, and
+closure), per the mandatory P-020 per-merge trigger:
+
+- **Memory**: consolidated the three fresh 054-S memory files (Stage's
+  assembly + recovery/resume memory, plus this session's Ship lifecycle
+  memory) into `docs/memory/compacted/2026-09-14-054-s-compacted.md`;
+  verbose originals moved byte-for-byte to
+  `docs/archive/memory/2026-09-14/`.
+- **Plans**: `docs/exec-plans/` scanned (6 files, ~313 KB total — well under
+  the 40-file / 500 KB thresholds). No plan file qualifies for compaction
+  this pass: the plan referenced by `056.028-T`
+  (`docs/exec-plans/2026-08-21-mcp-serve-initialize-handshake-regression-plan.md`)
+  belongs to the already-closed `049-S` shipment and was already
+  consolidated as part of that shipment's own prior closure
+  (`docs/closure/2026-09-13-049-s-compound-refresh.md`); it is out of scope
+  to re-touch here.
+- **Closure**: `docs/closure/` scanned (11 files, ~337 KB total — well under
+  thresholds). No closure artifact qualifies for compaction this pass
+  (this shipment's own artifact is fresh; prior closure artifacts are
+  either already compacted or below the age/size threshold).
+
+Live backlog-tooling artifacts (`.backlogit/reconcile/054-S-*`) and this
+closure artifact itself were left untouched (not memory/plan/closure-summary
+targets of this skill; not yet stale).
 
 ## 053-S Eligibility
 

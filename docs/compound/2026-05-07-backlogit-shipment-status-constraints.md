@@ -154,10 +154,16 @@ Independently reconfirmed against a **second**, unrelated shipment during
 `054-S` (task-only manifest `[056.028-T]`, covering feature `056-F`):
 `backlogit move 054-S --status shipped` was refused with the identical
 `shipment_shipped_requires_envelope` error. The P-015 verified
-fully-covered-root exception classifier
-(`.copilot/installed-plugins/autoharness/autoharness/src/autoharness/gates/shipment_closure.py`)
-correctly returned `SAFE_CLOSE` (zero feature members in the manifest, and the
-sole task's ancestry does not lead back to any manifest-member root feature).
+fully-covered-root exception classifier — implemented, for workspaces with a
+Python implementation installed, at
+`.copilot/installed-plugins/autoharness/autoharness/src/autoharness/gates/shipment_closure.py`
+(a gitignored, locally-installed plugin path, not part of this repository's
+committed tree; see the committed
+`.github/skills/shipment-reconcile/SKILL.md` Safe-Close Mode Step 0 and
+`.github/policies/workflow-policies.md` P-015 for the followable,
+repository-committed specification) — correctly returned `SAFE_CLOSE` (zero
+feature members in the manifest, and the sole task's ancestry does not lead
+back to any manifest-member root feature).
 No cascade was attempted; item-level safe-close for `056.028-T` completed and
 verified cleanly, and the shipment record itself was left `status: active`
 pending an explicit operator decision. See
