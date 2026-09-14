@@ -148,9 +148,15 @@ echo "== RED proof: the workflow's own extracted clippy command, pointed at the 
 # Substitutes only the manifest path so the executed command is otherwise
 # byte-identical to what probe-ci actually runs -- this is "share one
 # executable command with the workflow" rather than a separately
-# maintained mirror of its flags.
-SEEDED_RUN_BODY="${CLIPPY_RUN_BODY//$REAL_MANIFEST_REL/$SEED_COPY/Cargo.toml}"
-if bash -c "$SEEDED_RUN_BODY" >"$SCRATCH_DIR/seeded-clippy.log" 2>&1; then
+# maintained mirror of its flags. Substitutes the bare relative
+# "Cargo.toml" (executed with cwd=$SEED_COPY) rather than an absolute
+# $SCRATCH_DIR-rooted path: mirrors the .ps1 twin's defense-in-depth fix
+# for TEMP/profile paths that can contain spaces on Windows -- a lower-risk
+# concern on the Linux CI runner this script actually targets (TMPDIR is
+# always /tmp there), but keeping both twins' seeded invocations identically
+# shaped removes even the theoretical risk and any drift between them.
+SEEDED_RUN_BODY="${CLIPPY_RUN_BODY//$REAL_MANIFEST_REL/Cargo.toml}"
+if (cd "$SEED_COPY" && bash -c "$SEEDED_RUN_BODY") >"$SCRATCH_DIR/seeded-clippy.log" 2>&1; then
   cat "$SCRATCH_DIR/seeded-clippy.log" >&2
   fail "seeded violation did not fail clippy -- the CI job would not have caught it"
 fi

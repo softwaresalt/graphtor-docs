@@ -104,6 +104,15 @@ function ConvertTo-SingleLineCommand([string] $RunBody) {
 function Get-SymlinksExcludingTarget([string] $RootPath) {
     $targetPath = Join-Path $RootPath 'target'
     $result = New-Object System.Collections.Generic.List[string]
+    # Check the root itself first -- a junction/symlink AT $RootPath (e.g. a
+    # crate-root reparse point) is never visited by Get-ChildItem against its
+    # own parent below, so without this explicit check it would be silently
+    # traversed and copied, defeating the fail-closed guard entirely.
+    $rootItem = Get-Item -Path $RootPath -Force -ErrorAction SilentlyContinue
+    if ($null -ne $rootItem -and ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        $result.Add($rootItem.FullName)
+        return $result
+    }
     $stack = New-Object System.Collections.Generic.Stack[string]
     $stack.Push($RootPath)
     while ($stack.Count -gt 0) {
@@ -183,13 +192,24 @@ pub fn seeded_violation_probe_must_use_candidate(x: u32) -> u32 {
     # Substitutes only the manifest path so the executed command is
     # otherwise byte-identical to what probe-ci actually runs -- this is
     # "share one executable command with the workflow" rather than a
-    # separately maintained mirror of its flags.
-    $seedManifest = Join-Path $SeedCopy 'Cargo.toml'
-    $seededCommandLine = $ClippyCommandLine.Replace($RealManifestRel, $seedManifest)
+    # separately maintained mirror of its flags. The substituted value is
+    # kept as the bare relative "Cargo.toml" (executed with cwd=$SeedCopy)
+    # rather than an absolute $env:TEMP-rooted path: %TEMP%/user-profile
+    # paths can legitimately contain spaces on Windows, and the naive
+    # whitespace tokenizer below would otherwise split such a path into
+    # multiple arguments and fail the red proof before clippy even runs --
+    # indistinguishable from a genuinely missing seeded lint.
+    $seededCommandLine = $ClippyCommandLine.Replace($RealManifestRel, 'Cargo.toml')
     $seededTokens = $seededCommandLine -split '\s+'
     $seededLog = Join-Path $ScratchDir 'seeded-clippy.log'
-    & $seededTokens[0] @($seededTokens[1..($seededTokens.Length - 1)]) *> $seededLog
-    $seededExit = $LASTEXITCODE
+    Push-Location $SeedCopy
+    try {
+        & $seededTokens[0] @($seededTokens[1..($seededTokens.Length - 1)]) *> $seededLog
+        $seededExit = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
     if ($seededExit -eq 0) {
         Get-Content $seededLog | Write-Host
         Fail 'seeded violation did not fail clippy -- the CI job would not have caught it'
