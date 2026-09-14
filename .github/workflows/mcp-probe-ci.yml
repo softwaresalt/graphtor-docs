@@ -9,10 +9,12 @@ name: mcp-probe CI
 # -> build -> audit sequence, pinned to the project's MSRV (Rust 1.75), run
 # against `tools/mcp-probe/Cargo.toml` / `tools/mcp-probe/Cargo.lock`.
 #
-# Path-filtered on both the probe crate's own tree and this workflow file
-# itself, so a workflow-only PR that introduces or edits this job still
-# triggers it (verified: PR that only adds this file matches the second
-# path pattern below).
+# Path-filtered on the probe crate's own tree, this workflow file, the
+# self-test script it executes (probe-ci-selftest invokes
+# scripts/mcp-probe-ci-seeded-violation-check.sh), and the shared
+# .cargo/config.toml this job's cargo invocations rely on for the mold
+# linker rustflags -- so a change to any of those four inputs still
+# triggers this workflow rather than reporting a stale green result.
 on:
   push:
     branches:
@@ -20,10 +22,14 @@ on:
     paths:
       - 'tools/mcp-probe/**'
       - '.github/workflows/mcp-probe-ci.yml'
+      - 'scripts/mcp-probe-ci-seeded-violation-check.sh'
+      - '.cargo/config.toml'
   pull_request:
     paths:
       - 'tools/mcp-probe/**'
       - '.github/workflows/mcp-probe-ci.yml'
+      - 'scripts/mcp-probe-ci-seeded-violation-check.sh'
+      - '.cargo/config.toml'
   # Weekly run so the cargo-audit advisory gate keeps a fixed cadence even
   # during periods where the probe crate itself is untouched for weeks (the
   # path-filtered triggers above otherwise never re-run the audit step) --
@@ -80,16 +86,16 @@ jobs:
         # this task and is tracked as a P-021 deferred scope-expansion stash
         # entry (787C92F9) for a future Stage deliberation session.
         run: |
-          cargo +1.75.0 clippy --manifest-path tools/mcp-probe/Cargo.toml --all-targets -- \
+          cargo +1.75.0 clippy --manifest-path tools/mcp-probe/Cargo.toml --locked --all-targets -- \
             -D warnings \
             -D clippy::pedantic \
             -A clippy::module_name_repetitions
 
       - name: test
-        run: cargo +1.75.0 test --manifest-path tools/mcp-probe/Cargo.toml
+        run: cargo +1.75.0 test --manifest-path tools/mcp-probe/Cargo.toml --locked
 
       - name: build
-        run: cargo +1.75.0 build --manifest-path tools/mcp-probe/Cargo.toml
+        run: cargo +1.75.0 build --manifest-path tools/mcp-probe/Cargo.toml --locked
 
       - name: Install toolchain (stable, cargo-audit tooling only)
         # cargo-audit >=0.22 requires rustc 1.88+, well above this crate's
@@ -110,7 +116,13 @@ jobs:
           # audit step: a breaking 0.23+ release should not silently change
           # gate behavior here either.
           cargo +stable install cargo-audit --version "^0.22" --locked
-          cargo +stable audit --file tools/mcp-probe/Cargo.lock
+          # --deny warnings: mirrors ci.yml's root audit gate so a new
+          # unmaintained/unsound advisory fails this standalone gate too,
+          # instead of merely printing a warning and exiting 0. There is no
+          # probe-specific audit.toml allowlist at the time of writing, so
+          # no --ignore entries are needed here; if one is later added, keep
+          # --deny warnings so newly reported advisories still fail closed.
+          cargo +stable audit --file tools/mcp-probe/Cargo.lock --deny warnings
 
   probe-ci-selftest:
     name: mcp-probe CI seeded-violation self-test
