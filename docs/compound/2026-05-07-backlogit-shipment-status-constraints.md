@@ -147,3 +147,26 @@ disposable-copy proof trail):
   pointer/evidence record, not a substitute).
 * `.github/policies/workflow-policies.md` — P-015 (cascade-close
   restrictions and the verified fully-covered-root exception).
+
+## Reconfirmation — 054-S Closure (2026-09-14)
+
+Independently reconfirmed against a **second**, unrelated shipment during
+`054-S` (task-only manifest `[056.028-T]`, covering feature `056-F`):
+`backlogit move 054-S --status shipped` was refused with the identical
+`shipment_shipped_requires_envelope` error. The P-015 verified
+fully-covered-root exception classifier
+(`.copilot/installed-plugins/autoharness/autoharness/src/autoharness/gates/shipment_closure.py`)
+correctly returned `SAFE_CLOSE` (zero feature members in the manifest, and the
+sole task's ancestry does not lead back to any manifest-member root feature).
+No cascade was attempted; item-level safe-close for `056.028-T` completed and
+verified cleanly, and the shipment record itself was left `status: active`
+pending an explicit operator decision. See
+`.backlogit/reconcile/054-S-safe-close-20260914T061736Z.md` and
+`.backlogit/reconcile/054-S-halt-20260914T061736Z.md` (open) for the full
+record, and
+`docs/closure/2026-09-14-054-s-mcp-probe-ci-post-merge-closure.md` for this
+shipment's closure artifact. This reconfirms the entry's classification as
+**KEEP** — no update to the constraint description itself is warranted; a
+future backlogit release or an explicit real-time operator-authorized cascade
+remains the only two paths to fully close a partial-feature, task-only
+shipment on the currently installed version.
